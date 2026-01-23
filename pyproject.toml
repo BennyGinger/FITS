@@ -7,7 +7,9 @@ authors = [
     { name = "Benoit Roux", email = "benoit.roux@gmail.com" }
 ]
 requires-python = ">=3.12, <3.13"
-dependencies = []
+dependencies = [
+    "fits-io",
+]
 
 # To be defined later
 # [project.scripts]
@@ -21,3 +23,6 @@ build-backend = "uv_build"
 members = [
     "fits_io",
 ]
+
+[tool.uv.sources]
+fits-io = { workspace = true }

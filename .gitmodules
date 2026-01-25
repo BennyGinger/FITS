@@ -1,3 +1,4 @@
 [submodule "fits_io"]
 	path = fits_io
 	url = https://github.com/BennyGinger/fits_io.git
+	branch = main

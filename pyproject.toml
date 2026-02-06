@@ -1,6 +1,6 @@
 [project]
 name = "fits"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fluorescent Image Tracking Software, or FITS, is a Python package to analyze fluorescent microscopy images and track individual cells over time."
 readme = "README.md"
 authors = [
@@ -9,6 +9,9 @@ authors = [
 requires-python = ">=3.12, <3.13"
 dependencies = [
     "fits-io",
+    "ipython>=9.10.0",
+    "pydantic>=2.12.5",
+    "pyside6>=6.10.2",
 ]
 
 # To be defined later
@@ -26,3 +29,13 @@ members = [
 
 [tool.uv.sources]
 fits-io = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = [
+  "fits_io/tests",
+  "tests",
+]
+pythonpath = [
+  "src",
+  "fits_io/src",
+]

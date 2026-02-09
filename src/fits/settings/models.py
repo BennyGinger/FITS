@@ -9,6 +9,7 @@ class SettingsModel(BaseModel):
     Pydantic base model for settings classes in the FITS pipeline.
     """
 
+    enabled: bool
     overwrite: bool = False
 
 

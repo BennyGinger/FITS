@@ -4,13 +4,13 @@ from typing import Any, Callable, Generic, Mapping, TypeVar
 from fits.environment.constant import FITS_ARRAY_NAME, DIST_IO, STEP_CONVERT
 from fits.environment.state import ExperimentState
 from fits.settings.models import ConvertSettings, SettingsModel
-from fits.workflows.convert import run_convert
+from fits.workflows.tasks.convert import run_convert
 from fits.workflows.provenance import StepProfile
 
 
 FitsSettings = TypeVar("FitsSettings", bound=SettingsModel)
 
-Runner = Callable[[FitsSettings, ExperimentState, StepProfile, str], ExperimentState]
+Runner = Callable[[FitsSettings, list[ExperimentState], StepProfile, str], list[ExperimentState]]
 
 @dataclass(frozen=True)
 class StepSpec(Generic[FitsSettings]):
@@ -29,7 +29,7 @@ class StepSpec(Generic[FitsSettings]):
         return self.settings_model.model_validate(params)
     
 
-REGISTRY: dict[str, StepSpec] = {
+REGISTRY: dict[str, StepSpec[Any]] = {
     STEP_CONVERT: StepSpec(
                     name=STEP_CONVERT,
                     settings_model=ConvertSettings,

@@ -1,5 +1,3 @@
-
-
 from typing import Any, Mapping
 from fits.environment.state import ExperimentState
 from fits.workflows.registry import REGISTRY
@@ -9,7 +7,7 @@ WORKFLOW_ORDER = [
     "convert",
 ]
 
-def run_workflow(user_cfg: Mapping[str, Any], exp_state: ExperimentState) -> ExperimentState:
+def run_workflow(user_cfg: Mapping[str, Any], exp_states: list[ExperimentState]) -> list[ExperimentState]:
     
     for step_name in WORKFLOW_ORDER:
         step_spec = REGISTRY.get(step_name)
@@ -22,6 +20,6 @@ def run_workflow(user_cfg: Mapping[str, Any], exp_state: ExperimentState) -> Exp
         
         settings = step_spec.model_validate(params)  
         
-        exp_state = step_spec.runner(settings, exp_state, step_spec.step_profile, step_spec.output_name)
+        exp_states = step_spec.runner(settings, exp_states, step_spec.step_profile, step_spec.output_name)
     
-    return exp_state
+    return exp_states

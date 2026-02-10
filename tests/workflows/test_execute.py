@@ -48,8 +48,8 @@ def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
     states = [ExperimentState(original_image=Path("a.nd2"))]
 
     user_cfg = {
-        "convert": (True, {"value": 1}),
-        "other": (True, {"value": 2}),
+        "convert": {"enabled": True, "params": {"value": 1}},
+        "other": {"enabled": True, "params": {"value": 2}},
     }
 
     out = run_workflow(user_cfg, states)
@@ -78,7 +78,7 @@ def test_run_workflow_skips_disabled_step(monkeypatch) -> None:
     monkeypatch.setattr("fits.workflows.execute.REGISTRY", {"convert": convert})
 
     states = [ExperimentState(original_image=Path("a.nd2"))]
-    user_cfg = {"convert": (False, {"value": 1})}
+    user_cfg = {"convert": {"enabled": False, "params": {"value": 1}}}
 
     out = run_workflow(user_cfg, states)
 
@@ -92,7 +92,7 @@ def test_run_workflow_skips_missing_step_in_registry(monkeypatch) -> None:
     monkeypatch.setattr("fits.workflows.execute.REGISTRY", {})  # missing
 
     states = [ExperimentState(original_image=Path("a.nd2"))]
-    user_cfg = {"convert": (True, {"value": 1})}
+    user_cfg = {"convert": {"enabled": True, "params": {"value": 1}}}
 
     out = run_workflow(user_cfg, states)
     assert out == states

@@ -22,7 +22,7 @@ class DummyReader:
         self._save_paths = save_paths
         self.convert_calls: list[dict] = []
 
-    def convert_to_fits(self, **payload):
+    def convert_to_fits(self, **payload: dict) -> list[Path]:
         self.convert_calls.append(payload)
         return self._save_paths
 
@@ -30,7 +30,7 @@ class DummyReader:
 def test_run_convert_wires_everything(monkeypatch) -> None:
     # Arrange
     step_profile = StepProfile(distribution="io", step_name="convert")
-    settings = ConvertSettings(enabled=True, overwrite=False)
+    settings = ConvertSettings(overwrite=False)
     states = [ExperimentState(original_image=Path("in.nd2"))]
     output_name = "fits_array"
 
@@ -56,7 +56,7 @@ def test_run_convert_wires_everything(monkeypatch) -> None:
     # fake FitsIO.from_path -> returns dummy reader
     dummy_reader = DummyReader(save_paths=[Path("out_s1.tif"), Path("out_s2.tif")])
 
-    def fake_from_path(p: Path):
+    def fake_from_path(p: Path, channel_labels=None):
         seen["from_path_arg"] = p
         return dummy_reader
 
@@ -87,7 +87,7 @@ def test_run_convert_wires_everything(monkeypatch) -> None:
 
 def test_run_convert_multiple_inputs(monkeypatch) -> None:
     step_profile = StepProfile(distribution="io", step_name="convert")
-    settings = ConvertSettings(enabled=True)
+    settings = ConvertSettings()
 
     monkeypatch.setattr(
         "fits.workflows.tasks.convert.get_ctx",
@@ -104,7 +104,7 @@ def test_run_convert_multiple_inputs(monkeypatch) -> None:
     }
     monkeypatch.setattr(
         "fits_io.FitsIO.from_path",
-        lambda p: readers[p],
+        lambda p, channel_labels=None: readers[p],
     )
 
     states = [
@@ -124,4 +124,4 @@ def test_run_convert_raises_when_ctx_missing(monkeypatch) -> None:
     )
 
     with pytest.raises(RuntimeError):
-        run_convert(ConvertSettings(enabled=True), [ExperimentState(Path("in.nd2"))], StepProfile("io", "convert"), "fits_array")
+        run_convert(ConvertSettings(), [ExperimentState(Path("in.nd2"))], StepProfile("io", "convert"), "fits_array")

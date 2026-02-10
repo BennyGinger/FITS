@@ -14,7 +14,10 @@ def run_workflow(user_cfg: Mapping[str, Any], exp_states: list[ExperimentState])
         if step_spec is None:
             continue
         
-        enabled, params = user_cfg.get(step_name, (False, {}))
+        step_cfg = user_cfg.get(step_name) or {}
+        enabled = step_cfg.get("enabled", False)
+        params = step_cfg.get("params", {})
+        
         if not enabled:
             continue
         

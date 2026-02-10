@@ -9,7 +9,6 @@ class SettingsModel(BaseModel):
     Pydantic base model for settings classes in the FITS pipeline.
     """
 
-    enabled: bool
     overwrite: bool = False
 
 
@@ -35,8 +34,3 @@ class ConvertSettings(SettingsModel):
     compression: str | None = 'zlib'
     
 
-if __name__ == "__main__":
-    from fits.settings._dev import dev_settings
-    
-    conv = ConvertSettings.model_validate(dev_settings)
-    print(conv.model_dump())

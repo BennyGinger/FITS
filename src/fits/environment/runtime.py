@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator
+from typing import Iterator, cast
 
 from fits.environment.constant import Mode
 from fits.environment.context import ExecutionContext
@@ -44,3 +44,10 @@ def detect_mode() -> Mode:
     if detect_notebook():
         return "notebook"
     return "cli"
+
+def coerce_mode(x: object) -> Mode:
+    """Coerces a string to a Mode, or detects if None."""
+    
+    if x in ("cli", "gui", "notebook"):
+        return cast(Mode, x)
+    return detect_mode()

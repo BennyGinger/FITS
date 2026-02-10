@@ -17,14 +17,15 @@ def run_convert(settings: ConvertSettings, exp_state: list[ExperimentState], ste
     
     # Prepare input and payload
     payload = build_payload(settings, step_profile, ctx.user_name, output_name)
+    channel_labels = payload.get("channel_labels", None)
     logger.debug(f"Payload for conversion: {payload}")
     
     out: list[ExperimentState] = []
     for st in exp_state:
         logger.info(f"Starting conversion for {st.original_image} with settings: {settings}")
     
-        # Initialize reader
-        reader = FitsIO.from_path(st.original_image)
+        # Initialize reader, channel labels are passed to reader for potential use in channel selection during conversion
+        reader = FitsIO.from_path(st.original_image, channel_labels=channel_labels)
     
         # Run conversion
         save_paths = reader.convert_to_fits(**payload)

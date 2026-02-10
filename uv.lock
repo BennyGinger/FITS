@@ -99,13 +99,18 @@ wheels = [
 
 [[package]]
 name = "fits"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "fits-io" },
     { name = "ipython" },
     { name = "pydantic" },
     { name = "pyside6" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
 ]
 
 [package.metadata]
@@ -116,9 +121,12 @@ requires-dist = [
     { name = "pyside6", specifier = ">=6.10.2" },
 ]
 
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
+
 [[package]]
 name = "fits-io"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "fits_io" }
 dependencies = [
     { name = "imagecodecs" },

@@ -13,8 +13,8 @@ def test_registry_step_profile_is_correct() -> None:
 
 def test_registry_settings_model_validates() -> None:
     spec = REGISTRY[STEP_CONVERT]
-    out = spec.model_validate({"enabled": True})  # use a minimal valid payload for ConvertSettings
-    assert out.enabled is True
+    out = spec.model_validate({"overwrite": True})  # minimal valid payload for ConvertSettings
+    assert out.overwrite is True
 
 def test_registry_runner_is_callable() -> None:
     for spec in REGISTRY.values():

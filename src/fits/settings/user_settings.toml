@@ -1,0 +1,40 @@
+# General usage: comment/uncomment (i.e. # or not) settings as needed and adjust values accordingly.
+
+# ============================
+# User identity
+# ============================
+user_name = "test_user"
+run_dir = "/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run2_test" # Directory where the input files are located and where the output files will be saved. It should contain the raw files to be processed.
+
+# ============================
+# Runtime configuration
+# ============================
+[runtime]
+mode = "cli" # Execution mode: cli | gui | notebook
+dry_run = false # If true, it will not write any output files, but will still perform all computations and print logs.
+log_dir = "/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run2_test/logs" # where to save log files, if not specified, log file will not be created
+console_level = "debug" # Console log level: debug | info | warning | error | critical
+file_level = "info" # File log level: debug | info | warning | error | critical
+
+# ============================
+# Optional optimization
+# ============================
+# optimize = "path/to/experiment/file" # If specified, it will run the optimization process on the given experiment file to find the best parameters for the convert step. Else, it will process all supported files collected in the run_dir using default parameters.
+
+# ============================
+# Convert step
+# ============================
+[convert]
+enabled = true
+
+[convert.params]
+channel_labels = ["GFP", "RFP"] # List of channel labels to set in the metadata. The order should match the channel order in the input files. If not specified, it will use default channel labels (e.g. Channel 1, Channel 2, etc.).
+export_channels = ["GFP", 'RFP'] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
+compression = "zlib" # Compression method to use when saving the output files. Supported methods are: zlib, lzma, jpeg. If not specified, it will use the default compression method (zlib).
+overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
+z_projection = "max" # Z-projection method to apply to the input files. Supported methods are: max, mean, sum, std. By default, apply max projection.
+
+
+[convert.params.user_defined_metadata] # Additional user-defined metadata fields to include in the output files. This is optional and can be used to add any custom metadata fields that are not already included by default. The keys are the metadata field names and the values are the corresponding values to set for those fields in the output files.
+Experimenter = "Dr. Smith"
+Date = "2024-06-15"

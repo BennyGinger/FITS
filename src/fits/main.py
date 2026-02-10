@@ -1,29 +1,41 @@
+from __future__ import annotations
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping
+import logging
+from typing import TYPE_CHECKING
 
-from fits.environment.constant import Mode
 from fits.environment.context import ExecutionContext
+from fits.environment.state import ExperimentState
+from fits.workflows.execute import run_workflow
 if TYPE_CHECKING:
     from fits.environment.log import LogEmitter
+from fits.environment.discovery import collect_supported_files
 from fits.environment.log import configure_logging
-from fits.environment.runtime import detect_mode, use_ctx
+from fits.environment.runtime import use_ctx, coerce_mode
+from fits.settings.loader import load_settings
+
+logger = logging.getLogger(__name__)
+
+SETTINGS_PATH = Path("src/fits/settings/user_settings.toml")
 
 
-def start_pipeline(user_cfg: Mapping[str, Any], gui_emitter: LogEmitter | None = None) -> None:
+def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | None = None) -> None:
+    # --- load settings ---
+    cfg_path = (settings_path or SETTINGS_PATH).expanduser().resolve()
+    user_cfg = load_settings(cfg_path)
     
     # --- required globals ---
-    run_dir = user_cfg.get("run_dir", None)
+    run_raw = user_cfg.get("run_dir", None)
     user_name = user_cfg.get("user_name", None)
-    if run_dir is None or user_name is None:
+    if run_raw is None or user_name is None:
         raise ValueError("Both 'run_dir' and 'user_name' must be provided in the configuration.")
-    run_dir = Path(run_dir)
+    run_dir = Path(run_raw).expanduser().resolve()
     
     # --- runtime config ---
     rt_settings = user_cfg.get("runtime", {})
-    mode: Mode = rt_settings.get("mode") or detect_mode()
+    mode = coerce_mode(rt_settings.get("mode"))
     
-    log_dir = rt_settings.get("log_dir", None)
-    log_dir = Path(log_dir) if isinstance(log_dir, str) else log_dir
+    log_raw = rt_settings.get("log_dir", None)
+    log_dir = Path(log_raw).expanduser().resolve() if isinstance(log_raw, str) else log_raw
     console_level = rt_settings.get("console_level", "info")
     file_level = rt_settings.get("file_level", "debug")
     dry_run = rt_settings.get("dry_run", False)
@@ -38,13 +50,33 @@ def start_pipeline(user_cfg: Mapping[str, Any], gui_emitter: LogEmitter | None =
                            dry_run=dry_run,
                            mode=mode)
     
-    # --- Main execution block with context ---
+    # --- main execution block with context ---
     with use_ctx(ctx):
         # --- discover images ---
+        supported_files = collect_supported_files(run_dir)
         
-        # Build ExperimentState for each file
+        # --- optimization ---
+        optimize_raw = user_cfg.get("optimize", None)
+        optimize_path = None
+        if isinstance(optimize_raw, str) and optimize_raw.strip():
+            optimize_path = Path(optimize_raw).expanduser().resolve()
         
-        # Start the workflow
+        if optimize_path is not None:
+            matches = [p for p in supported_files if p.resolve() == optimize_path]
+            if matches: # optimize path is in supported files
+                logger.info(f"Optimization mode: only processing {optimize_path}")
+                supported_files = matches
+            else:
+                logger.warning(
+                    f"optimize path {optimize_path} was provided but was not found among discovered supported files under {run_dir}; "
+                    "continuing with full pipeline.")
         
-    
-        pass
+        # --- build ExperimentState for each file ---
+        states = [ExperimentState(original_image=f) for f in supported_files]
+        
+        # --- start the workflow ---
+        run_workflow(user_cfg, states)
+
+
+if __name__ == "__main__":
+    start_pipeline()

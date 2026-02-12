@@ -4,6 +4,7 @@ from fits_io.client import FitsIO
 
 from fits.environment.state import ExperimentState
 from fits.environment.runtime import get_ctx
+from fits.environment.constant import FITS_FILES
 from fits.workflows.payload import build_payload
 from fits.workflows.provenance import StepProfile
 from fits.settings.models import ConvertSettings
@@ -17,6 +18,7 @@ def run_convert(settings: ConvertSettings, exp_state: list[ExperimentState], ste
     
     # Prepare input and payload
     payload = build_payload(settings, step_profile, ctx.user_name, output_name)
+    payload['expected_filenames'] = FITS_FILES # add expected_filenames to payload for validation in client
     channel_labels = payload.get("channel_labels", None)
     logger.debug(f"Payload for conversion: {payload}")
     

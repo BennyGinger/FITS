@@ -79,4 +79,13 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
 
 
 if __name__ == "__main__":
-    start_pipeline()
+    from fits_io import FitsIO
+    
+    # start_pipeline()
+    
+    out_path = Path('/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run2_test/stimulated/c2z25t23v1_nd2_s1/fits_array.tif')
+    reader = FitsIO.from_path(out_path)
+    print("_________________________")
+    print(reader.fits_metadata)
+    print(reader.channel_labels)
+    

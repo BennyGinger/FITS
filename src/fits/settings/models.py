@@ -1,6 +1,6 @@
 from typing import Any, Mapping, Sequence, TypeVar
 
-from fits_io.image_reader import Zproj
+from fits_io.readers._types import Zproj
 from pydantic import BaseModel
 
 

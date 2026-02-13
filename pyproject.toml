@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12, <3.13"
 dependencies = [
     "fits-io",
+    "progress-bar",
     "ipython>=9.10.0",
     "pydantic>=2.12.5",
     "pyside6>=6.10.2",
@@ -25,6 +26,7 @@ build-backend = "uv_build"
 [tool.uv.workspace]
 members = [
     "fits_io",
+    "progress_bar"
 ]
 
 [tool.uv.sources]

@@ -75,13 +75,14 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
         states = [ExperimentState(original_image=f) for f in supported_files]
         
         # --- start the workflow ---
+        logger.debug(f"Loaded user configuration {user_cfg}")
         run_workflow(user_cfg, states)
 
 
 if __name__ == "__main__":
     from fits_io import FitsIO
     
-    # start_pipeline()
+    start_pipeline()
     
     out_path = Path('/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run2_test/stimulated/c2z25t23v1_nd2_s1/fits_array.tif')
     reader = FitsIO.from_path(out_path)

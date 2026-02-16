@@ -13,7 +13,7 @@ except ImportError:
     Signal = None
     PYSIDE_AVAILABLE = False
 
-from fits.environment.constant import Mode
+from fits.environment.constant import UIMode
 
 
 LevelName = Literal["debug", "info", "warning", "error", "critical"]
@@ -66,7 +66,7 @@ else:
 # Public API
 # ---------------------------------------------------------------------
 
-def configure_logging(*, log_dir: Path | None, mode: Mode = "cli", console_level: LevelName = "info", file_level: LevelName = "debug", gui_emitter: LogEmitter | None = None,) -> None:
+def configure_logging(*, log_dir: Path | None, mode: UIMode = "cli", console_level: LevelName = "info", file_level: LevelName = "debug", gui_emitter: LogEmitter | None = None,) -> None:
     """
     Configure global logging for the FITS pipeline.
 

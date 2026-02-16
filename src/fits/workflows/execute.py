@@ -1,7 +1,11 @@
 from typing import Any, Mapping
+import logging
+
 from fits.environment.state import ExperimentState
 from fits.workflows.registry import REGISTRY
 
+
+logger = logging.getLogger(__name__)
 
 WORKFLOW_ORDER = [
     "convert",
@@ -21,7 +25,8 @@ def run_workflow(user_cfg: Mapping[str, Any], exp_states: list[ExperimentState])
         if not enabled:
             continue
         
-        settings = step_spec.model_validate(params)  
+        settings = step_spec.model_validate(params) 
+        logger.debug(f"Running step '{step_name}' with settings: {settings}") 
         
         exp_states = step_spec.runner(settings, exp_states, step_spec.step_profile, step_spec.output_name)
     

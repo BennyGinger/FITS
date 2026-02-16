@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from fits.environment.constant import Mode
+from fits.environment.constant import UIMode
 
 
 @dataclass
@@ -15,4 +15,4 @@ class ExecutionContext:
     
     user_name: str
     dry_run: bool = False
-    mode: Mode = "cli"
+    mode: UIMode = "cli"

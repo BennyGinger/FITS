@@ -2,6 +2,7 @@
 	path = fits_io
 	url = https://github.com/BennyGinger/fits_io.git
 	branch = main
-[submodule "Progress_bar"]
-	path = Progress_bar
+[submodule "progress_bar"]
+	path = progress_bar
 	url = https://github.com/BennyGinger/Progress_bar.git
+	branch = fits

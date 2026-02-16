@@ -12,4 +12,6 @@ FITS_FILES = {FITS_ARRAY_NAME, FITS_MASK_NAME}
 
 EXCLUDED_PREFIXES = {'fits_'}
 
-Mode = Literal["cli", "gui", "notebook"]
+UIMode = Literal["cli", "gui", "notebook"]
+
+ExecMode = Literal["serial", "thread", "process"]

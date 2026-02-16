@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator, cast
 
-from fits.environment.constant import Mode
+from fits.environment.constant import UIMode
 from fits.environment.context import ExecutionContext
 
 
@@ -37,7 +37,7 @@ def detect_qt_gui_running() -> bool:
     except Exception:
         return False
     
-def detect_mode() -> Mode:
+def detect_mode() -> UIMode:
     # Priority matters
     if detect_qt_gui_running():
         return "gui"
@@ -45,9 +45,9 @@ def detect_mode() -> Mode:
         return "notebook"
     return "cli"
 
-def coerce_mode(x: object) -> Mode:
+def coerce_mode(x: object) -> UIMode:
     """Coerces a string to a Mode, or detects if None."""
     
     if x in ("cli", "gui", "notebook"):
-        return cast(Mode, x)
+        return cast(UIMode, x)
     return detect_mode()

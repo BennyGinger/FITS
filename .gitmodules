@@ -2,10 +2,10 @@
 	path = fits_io
 	url = https://github.com/BennyGinger/fits_io.git
 	branch = main
+[submodule "cellpose_kit"]
+	path = cellpose_kit
+	url = https://github.com/BennyGinger/Cellpose-kit.git
 [submodule "progress_bar"]
 	path = progress_bar
 	url = https://github.com/BennyGinger/Progress_bar.git
 	branch = fits
-[submodule "cellpose_kit"]
-	path = cellpose_kit
-	url = https://github.com/BennyGinger/Cellpose-kit.git

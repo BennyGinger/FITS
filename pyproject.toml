@@ -15,10 +15,17 @@ dependencies = [
     "pyside6>=6.10.2",
     "typer>=0.23.0",
     "cellpose-kit",
+    "fits-server",
 ]
 
 [project.scripts]
 fits = "fits.cli.main:main"
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.129.0",
+    "uvicorn>=0.41.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.8.4,<0.9.0"]
@@ -28,13 +35,15 @@ build-backend = "uv_build"
 members = [
     "fits_io",
     "progress_bar",
-    "cellpose_kit"
+    "cellpose_kit",
+    "fits_server"
 ]
 
 [tool.uv.sources]
 fits-io = { workspace = true }
 progress-bar = { workspace = true }
 cellpose-kit = { workspace = true }
+fits-server = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [

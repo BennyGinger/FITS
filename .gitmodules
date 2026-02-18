@@ -9,3 +9,7 @@
 	path = progress_bar
 	url = https://github.com/BennyGinger/Progress_bar.git
 	branch = fits
+[submodule "fits_server"]
+	path = fits_server
+	url = https://github.com/BennyGinger/cp_server.git
+	branch = fits

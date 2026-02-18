@@ -47,5 +47,6 @@ def run_convert(settings: ConvertSettings, exp_state: list[ExperimentState], ste
 
         return [st.replace(image=p, last_step=step_profile.step_name)
                             for p in save_paths]
+    logger.info("Starting conversion with settings: %s", payload)
     return execute(exp_state, worker, mode=exec_mode, workers=workers, ordered=ordered)
     

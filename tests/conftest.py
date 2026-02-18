@@ -12,7 +12,7 @@ import pytest
 # Common test utilities
 # ============================================================
 
-def touch(p: Path) -> Path:
+def _touch_file(p: Path) -> Path:
     """Create a file at the given path, creating parent directories as needed.
     
     Args:
@@ -48,6 +48,12 @@ class DummyCtx:
 # ============================================================
 
 @pytest.fixture
+def touch():
+    """Fixture that provides the touch utility function."""
+    return _touch_file
+
+
+@pytest.fixture
 def dummy_fits_io():
     """Factory fixture for creating DummyFitsIO instances."""
     def _make(metadata: dict[str, Any] | None = None) -> DummyFitsIO:
@@ -61,3 +67,15 @@ def dummy_ctx():
     def _make(user_name: str = "test_user") -> DummyCtx:
         return DummyCtx(user_name=user_name)
     return _make
+
+
+@pytest.fixture
+def DummyFitsIO_class():
+    """Fixture that provides access to the DummyFitsIO class."""
+    return DummyFitsIO
+
+
+@pytest.fixture
+def DummyCtx_class():
+    """Fixture that provides access to the DummyCtx class."""
+    return DummyCtx

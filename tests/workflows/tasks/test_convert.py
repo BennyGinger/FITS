@@ -8,7 +8,6 @@ from fits.workflows.tasks.convert import run_convert
 from fits.environment.state import ExperimentState
 from fits.workflows.provenance import StepProfile
 from fits.settings.models import ConvertSettings
-from conftest import DummyCtx
 
 
 class DummyReader:
@@ -21,7 +20,7 @@ class DummyReader:
         return self._save_paths
 
 
-def test_run_convert_wires_everything(monkeypatch) -> None:
+def test_run_convert_wires_everything(monkeypatch, DummyCtx_class) -> None:
     # Arrange
     step_profile = StepProfile(distribution="io", step_name="convert")
     settings = ConvertSettings(overwrite=False)
@@ -31,7 +30,7 @@ def test_run_convert_wires_everything(monkeypatch) -> None:
     # fake runtime ctx
     monkeypatch.setattr(
         "fits.workflows.tasks.convert.get_ctx",
-        lambda: DummyCtx(user_name="ben"),
+        lambda: DummyCtx_class(user_name="ben"),
     )
 
     # fake payload builder (and capture args)
@@ -84,13 +83,13 @@ def test_run_convert_wires_everything(monkeypatch) -> None:
     assert all(s.original_image == Path("in.nd2") for s in out)
 
 
-def test_run_convert_multiple_inputs(monkeypatch) -> None:
+def test_run_convert_multiple_inputs(monkeypatch, DummyCtx_class) -> None:
     step_profile = StepProfile(distribution="io", step_name="convert")
     settings = ConvertSettings()
 
     monkeypatch.setattr(
         "fits.workflows.tasks.convert.get_ctx",
-        lambda: DummyCtx(user_name="ben"),
+        lambda: DummyCtx_class(user_name="ben"),
     )
     monkeypatch.setattr(
         "fits.workflows.tasks.convert.build_payload",

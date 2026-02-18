@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from fits.environment.state import ExperimentState
-from conftest import DummyFitsIO
 
 def test_state_replace_returns_new_instance() -> None:
     s1 = ExperimentState(original_image=Path("a.nd2"))
@@ -25,19 +24,19 @@ def test_load_custom_metadata_empty_when_no_image() -> None:
     s = ExperimentState(original_image=Path("a.nd2"))
     assert s.load_custom_metadata() == {}
 
-def test_load_custom_metadata_reads_image_metadata(monkeypatch) -> None:
+def test_load_custom_metadata_reads_image_metadata(monkeypatch, DummyFitsIO_class) -> None:
     def fake_from_path(p: Path):
-        return DummyFitsIO({"a": 1})
+        return DummyFitsIO_class({"a": 1})
     monkeypatch.setattr("fits.environment.state.FitsIO.from_path", fake_from_path)
 
     s = ExperimentState(original_image=Path("a.nd2"), image=Path("img.tif"))
     assert s.load_custom_metadata() == {"a": 1}
 
-def test_load_custom_metadata_merges_masks_with_precedence(monkeypatch) -> None:
+def test_load_custom_metadata_merges_masks_with_precedence(monkeypatch, DummyFitsIO_class) -> None:
     def fake_from_path(p: Path):
         if p.name == "img.tif":
-            return DummyFitsIO({"k": "img", "shared": 1})
-        return DummyFitsIO({"k": "mask", "shared": 2})
+            return DummyFitsIO_class({"k": "img", "shared": 1})
+        return DummyFitsIO_class({"k": "mask", "shared": 2})
 
     monkeypatch.setattr("fits.environment.state.FitsIO.from_path", fake_from_path)
 

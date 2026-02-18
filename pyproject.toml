@@ -14,6 +14,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "pyside6>=6.10.2",
     "typer>=0.23.0",
+    "cellpose-kit",
 ]
 
 [project.scripts]
@@ -26,21 +27,25 @@ build-backend = "uv_build"
 [tool.uv.workspace]
 members = [
     "fits_io",
-    "progress_bar"
+    "progress_bar",
+    "cellpose_kit"
 ]
 
 [tool.uv.sources]
 fits-io = { workspace = true }
 progress-bar = { workspace = true }
+cellpose-kit = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [
   "fits_io/tests",
+  "progress_bar/tests",
   "tests",
 ]
 pythonpath = [
   "src",
   "fits_io/src",
+  "progress_bar/src"
 ]
 
 [dependency-groups]

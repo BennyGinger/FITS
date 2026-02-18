@@ -4,6 +4,7 @@ requires-python = "==3.12.*"
 
 [manifest]
 members = [
+    "cellpose-kit",
     "fits",
     "fits-io",
     "progress-bar",
@@ -44,6 +45,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/be/a5/8e3f9b6771b0b4085
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/39/e7eaf1799466a4aef85b6a4fe7bd175ad2b1c6345066aa33f1f58d4b18d0/asttokens-3.0.1-py3-none-any.whl", hash = "sha256:15a3ebc0f43c2d0a50eeafea25e19046c68398e487b9f1f5b517f7c0f40f976a", size = 27047, upload-time = "2025-11-15T16:43:16.109Z" },
 ]
+
+[[package]]
+name = "cellpose-kit"
+version = "0.2.3"
+source = { editable = "cellpose_kit" }
+dependencies = [
+    { name = "packaging" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "packaging", specifier = ">=25.0" }]
 
 [[package]]
 name = "cffi"
@@ -166,6 +178,7 @@ name = "fits"
 version = "0.4.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cellpose-kit" },
     { name = "fits-io" },
     { name = "ipython" },
     { name = "progress-bar" },
@@ -183,6 +196,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cellpose-kit", editable = "cellpose_kit" },
     { name = "fits-io", editable = "fits_io" },
     { name = "ipython", specifier = ">=9.10.0" },
     { name = "progress-bar", editable = "progress_bar" },
@@ -200,7 +214,7 @@ dev = [
 
 [[package]]
 name = "fits-io"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "fits_io" }
 dependencies = [
     { name = "imagecodecs" },

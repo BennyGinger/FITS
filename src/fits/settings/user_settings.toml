@@ -14,7 +14,7 @@ mode = "cli" # Execution mode: cli | gui | notebook
 dry_run = false # If true, it will not write any output files, but will still perform all computations and print logs.
 log_dir = "/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run2_test/logs" # where to save log files, if not specified, log file will not be created
 console_level = "info" # Console log level: debug | info | warning | error | critical
-file_level = "info" # File log level: debug | info | warning | error | critical
+file_level = "debug" # File log level: debug | info | warning | error | critical
 
 # ============================
 # Optional optimization

@@ -6,3 +6,6 @@
 	path = progress_bar
 	url = https://github.com/BennyGinger/Progress_bar.git
 	branch = fits
+[submodule "cellpose_kit"]
+	path = cellpose_kit
+	url = https://github.com/BennyGinger/Cellpose-kit.git

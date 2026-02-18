@@ -13,7 +13,7 @@ run_dir = "/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run2_test" # 
 mode = "cli" # Execution mode: cli | gui | notebook
 dry_run = false # If true, it will not write any output files, but will still perform all computations and print logs.
 log_dir = "/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run2_test/logs" # where to save log files, if not specified, log file will not be created
-console_level = "debug" # Console log level: debug | info | warning | error | critical
+console_level = "info" # Console log level: debug | info | warning | error | critical
 file_level = "info" # File log level: debug | info | warning | error | critical
 
 # ============================
@@ -29,11 +29,11 @@ enabled = true
 
 [convert.params]
 channel_labels = ["GFP", "RFP"] # List of channel labels to set in the metadata. The order should match the channel order in the input files. If not specified, it will use default channel labels (e.g. Channel 1, Channel 2, etc.).
-export_channels = ["GFP"] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
+export_channels = ["GFP", "RFP"] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
 compression = "zlib" # Compression method to use when saving the output files. Supported methods are: zlib, lzma, jpeg. If not specified, it will use the default compression method (zlib).
 overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 z_projection = "max" # Z-projection method to apply to the input files. Supported methods are: max, mean, sum, std. By default, apply max projection.
-execution = "serial" # Execution mode for the convert step: serial | thread | process. By default, it will use thread-based execution for this step.
+execution = "thread" # Execution mode for the convert step: serial | thread | process. By default, it will use thread-based execution for this step.
 workers = "None" # Number of worker threads or processes to use for the convert step. This is only applicable if the execution mode is set to thread or process. If set to "None", it will use the default number of workers (which is typically the number of CPU plus four).
 ordered_execution = false # Whether to preserve the order of the input files in the output files when using parallel execution. If true, it will ensure that the output files are saved in the same order as the input files. If false, it may save output files in a different order than the input files, which can be faster but may not be desirable in some cases.
 

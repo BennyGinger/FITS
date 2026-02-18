@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-# import your function under test
 from fits.workflows.tasks.convert import run_convert
 from fits.environment.state import ExperimentState
 from fits.workflows.provenance import StepProfile
 from fits.settings.models import ConvertSettings
-
-
-@dataclass
-class DummyCtx:
-    user_name: str
+from conftest import DummyCtx
 
 
 class DummyReader:
@@ -77,7 +71,12 @@ def test_run_convert_wires_everything(monkeypatch) -> None:
     assert seen["from_path_arg"] == Path("in.nd2")
 
     # Assert: convert called with the payload produced above
-    assert dummy_reader.convert_calls == [{"p": 1}]
+    # Note: expected_filenames is added by run_convert before calling convert_to_fits
+    assert len(dummy_reader.convert_calls) == 1
+    call_payload = dummy_reader.convert_calls[0]
+    assert call_payload["p"] == 1
+    assert "expected_filenames" in call_payload
+    assert call_payload["expected_filenames"] == {"fits_array.tif", "fits_mask.tif"}
 
     # Assert: state updates (one input -> two outputs)
     assert [s.image for s in out] == [Path("out_s1.tif"), Path("out_s2.tif")]

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fits.environment.state import ExperimentState
+from conftest import DummyFitsIO
 
 def test_state_replace_returns_new_instance() -> None:
     s1 = ExperimentState(original_image=Path("a.nd2"))
@@ -18,11 +19,8 @@ def test_workdir_none_when_no_image() -> None:
 def test_workdir_is_parent_of_image() -> None:
     s = ExperimentState(original_image=Path("a.nd2"), image=Path("/tmp/run/fits_array.tif"))
     assert s.workdir == Path("/tmp/run")
-    
-class DummyFitsIO:
-    def __init__(self, meta):
-        self.fits_metadata = meta
-        
+
+
 def test_load_custom_metadata_empty_when_no_image() -> None:
     s = ExperimentState(original_image=Path("a.nd2"))
     assert s.load_custom_metadata() == {}

@@ -3,12 +3,7 @@ from pathlib import Path
 
 from fits.environment.discovery import collect_supported_files, find_fits_outputs
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_NAME
-
-
-def touch(p: Path) -> Path:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(b"")  # content irrelevant
-    return p
+from conftest import touch
 
 
 def test_collect_supported_files_recursive_and_filters(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 import pytest
@@ -30,7 +31,12 @@ class DummyStepSpec:
     def runner(self, settings: DummySettings, exp_states: list[ExperimentState], step_profile: Any, output_name: str):
         self.runner_calls.append((settings, exp_states, step_profile, output_name))
         # mutate states in a traceable way: set last_step
-        return [st.replace(last_step=step_profile.step_name) for st in exp_states]
+        return [replace(st, last_step=step_profile.step_name) for st in exp_states]
+
+
+def _state() -> ExperimentState:
+    run_dir = Path("/tmp")
+    return ExperimentState.init(run_dir, run_dir / "a.nd2")
 
 
 def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
@@ -45,7 +51,7 @@ def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
         {"convert": convert, "other": other},
     )
 
-    states = [ExperimentState(original_image=Path("a.nd2"))]
+    states = [_state()]
 
     user_cfg = {
         "convert": {"enabled": True, "params": {"value": 1}},
@@ -66,7 +72,7 @@ def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
     (_, states_passed_to_convert, _, _) = convert.runner_calls[0]
     (_, states_passed_to_other, _, _) = other.runner_calls[0]
     assert states_passed_to_convert == states
-    assert states_passed_to_other == [st.replace(last_step="convert") for st in states]
+    assert states_passed_to_other == [replace(st, last_step="convert") for st in states]
 
     # final output has last step of final runner
     assert [s.last_step for s in out] == ["other"]
@@ -77,7 +83,7 @@ def test_run_workflow_skips_disabled_step(monkeypatch) -> None:
     convert = DummyStepSpec("convert")
     monkeypatch.setattr("fits.workflows.execute.REGISTRY", {"convert": convert})
 
-    states = [ExperimentState(original_image=Path("a.nd2"))]
+    states = [_state()]
     user_cfg = {"convert": {"enabled": False, "params": {"value": 1}}}
 
     out = run_workflow(user_cfg, states)
@@ -91,7 +97,7 @@ def test_run_workflow_skips_missing_step_in_registry(monkeypatch) -> None:
     monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert"])
     monkeypatch.setattr("fits.workflows.execute.REGISTRY", {})  # missing
 
-    states = [ExperimentState(original_image=Path("a.nd2"))]
+    states = [_state()]
     user_cfg = {"convert": {"enabled": True, "params": {"value": 1}}}
 
     out = run_workflow(user_cfg, states)
@@ -104,7 +110,7 @@ def test_run_workflow_default_user_cfg_when_step_missing(monkeypatch) -> None:
     convert = DummyStepSpec("convert")
     monkeypatch.setattr("fits.workflows.execute.REGISTRY", {"convert": convert})
 
-    states = [ExperimentState(original_image=Path("a.nd2"))]
+    states = [_state()]
     user_cfg = {}  # no entry
 
     out = run_workflow(user_cfg, states)

@@ -11,7 +11,7 @@ class SettingsModel(BaseModel):
     Pydantic base model for settings classes in the FITS pipeline.
     """
 
-    overwrite: bool = False
+    overwrite: bool = Field(default=False, exclude=True)
 
 
 FitsSettings = TypeVar("FitsSettings", bound=SettingsModel)
@@ -47,6 +47,13 @@ class ConvertSettings(SettingsModel):
     def parse_workers(cls, v):
         if isinstance(v, str) and v.lower() == 'none':
             return None
+        return v
+    
+    @field_validator('channel_labels', mode='before')
+    @classmethod
+    def parse_channel_labels(cls, v):
+        if isinstance(v, str):
+            return [v]
         return v
     
 

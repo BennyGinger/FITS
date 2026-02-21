@@ -9,14 +9,14 @@ def test_build_payload_combines_settings_and_provenance() -> None:
 
     payload = build_payload(settings, step_profile, "ben", "fits_array")
 
-    assert payload["overwrite"] is True
+    assert "overwrite" not in payload
     assert payload["distribution"] == "io"
     assert payload["step_name"] == "convert"
     assert payload["user_name"] == "ben"
     assert payload["output_name"] == "fits_array"
 
 
-def test_build_payload_includes_default_overwrite() -> None:
+def test_build_payload_excludes_default_overwrite() -> None:
     settings = SettingsModel()
     step_profile = StepProfile(distribution="core", step_name="noop")
 
@@ -27,4 +27,4 @@ def test_build_payload_includes_default_overwrite() -> None:
         output_name="out",
     )
 
-    assert payload["overwrite"] is False
+    assert "overwrite" not in payload

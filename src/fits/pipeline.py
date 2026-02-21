@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from fits.environment.context import ExecutionContext
-from fits.environment.state import ExperimentState
+from fits.environment.state import assemble_experiment_states
 from fits.workflows.execute import run_workflow
 if TYPE_CHECKING:
     from fits.environment.log import LogEmitter
@@ -71,8 +71,8 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
                     f"optimize path {optimize_path} was provided but was not found among discovered supported files under {run_dir}; "
                     "continuing with full pipeline.")
         
-        # --- build ExperimentState for each file ---
-        states = [ExperimentState(original_image=f) for f in supported_files]
+        # --- build ExperimentState list from saved states + newly discovered raw files ---
+        states = assemble_experiment_states(run_dir, supported_files)
         
         # --- start the workflow ---
         logger.debug(f"Loaded user configuration {user_cfg}")

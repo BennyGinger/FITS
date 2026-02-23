@@ -6,7 +6,7 @@ import tempfile
 import pytest
 
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_NAME
-from fits.environment.state import ExperimentState, _discover_saved_states, assemble_experiment_states
+from fits.environment.state import ExperimentState
 
 
 def test_init_stores_original_path_relative_to_run_dir() -> None:
@@ -274,76 +274,6 @@ def test_from_json_raises_on_invalid_field_type() -> None:
 
         with pytest.raises(TypeError, match="series_index must be an integer"):
             ExperimentState.from_json(workdir)
-
-
-def test_discover_saved_states_loads_all_valid_states() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir)
-        raw = run_dir / "a.nd2"
-        raw.touch()
-
-        s1 = ExperimentState.init(run_dir, raw).with_image(run_dir / "a_s1" / "fits_array.tif").commit(series_index=0)
-        s2 = ExperimentState.init(run_dir, raw).with_image(run_dir / "a_s2" / "fits_array.tif").commit(series_index=1)
-        s1.to_json()
-        s2.to_json()
-
-        loaded = _discover_saved_states(run_dir)
-
-        assert len(loaded) == 2
-        assert {state.series_index for state in loaded} == {0, 1}
-        assert {state.original_image_rel for state in loaded} == {Path("a.nd2")}
-
-
-def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCaptureFixture) -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir)
-        valid_raw = run_dir / "a.nd2"
-        valid_raw.touch()
-
-        valid_state = ExperimentState.init(run_dir, valid_raw).with_image(run_dir / "a_s1" / "fits_array.tif")
-        valid_state.to_json()
-
-        bad_workdir = run_dir / "broken"
-        bad_workdir.mkdir(parents=True, exist_ok=True)
-        (bad_workdir / "experiment_state.json").write_text("{ not json", encoding="utf-8")
-
-        caplog.set_level("WARNING")
-        loaded = _discover_saved_states(run_dir)
-
-        assert len(loaded) == 1
-        assert loaded[0].original_image_rel == Path("a.nd2")
-        assert "Failed to load experiment state" in caplog.text
-
-
-def test_assemble_experiment_states_merges_saved_with_only_new_raws() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir)
-        converted_raw = run_dir / "a.nd2"
-        new_raw = run_dir / "b.nd2"
-        converted_raw.touch()
-        new_raw.touch()
-
-        saved0 = (
-            ExperimentState.init(run_dir, converted_raw)
-            .with_image(run_dir / "a_s0" / "fits_array.tif")
-            .commit(series_index=0, experiment_id="a-s0")
-        )
-        saved1 = (
-            ExperimentState.init(run_dir, converted_raw)
-            .with_image(run_dir / "a_s1" / "fits_array.tif")
-            .commit(series_index=1, experiment_id="a-s1")
-        )
-        saved0.to_json()
-        saved1.to_json()
-
-        states = assemble_experiment_states(run_dir, [converted_raw, new_raw])
-
-        assert len(states) == 3
-        assert [state.original_image_rel for state in states].count(Path("a.nd2")) == 2
-        assert Path("b.nd2") in {state.original_image_rel for state in states}
-        assert {state.experiment_id for state in states if state.original_image_rel == Path("a.nd2")} == {"a-s0", "a-s1"}
-        b_state = next(state for state in states if state.original_image_rel == Path("b.nd2"))
-        assert b_state.experiment_id is None
 
 
 def test_to_json_atomic_cleanup_when_replace_fails(monkeypatch: pytest.MonkeyPatch) -> None:

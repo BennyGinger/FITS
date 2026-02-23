@@ -1,7 +1,11 @@
 from __future__ import annotations
 from pathlib import Path
+import tempfile
 
-from fits.environment.discovery import collect_supported_files, find_fits_outputs
+import pytest
+
+from fits.environment.discovery import collect_supported_files, find_fits_outputs, discover_saved_states
+from fits.environment.state import ExperimentState
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_NAME
 
 
@@ -48,3 +52,42 @@ def test_find_fits_outputs_does_not_match_similar_names(tmp_path: Path, touch) -
     touch(tmp_path / f"copy_{FITS_MASK_NAME}")
     out = find_fits_outputs(tmp_path)
     assert out == []
+
+
+def test_discover_saved_states_loads_all_valid_states() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = Path(tmpdir)
+        raw = run_dir / "a.nd2"
+        raw.touch()
+
+        s1 = ExperimentState.init(run_dir, raw).with_image(run_dir / "a_s1" / "fits_array.tif").commit(series_index=0)
+        s2 = ExperimentState.init(run_dir, raw).with_image(run_dir / "a_s2" / "fits_array.tif").commit(series_index=1)
+        s1.to_json()
+        s2.to_json()
+
+        loaded = discover_saved_states(run_dir)
+
+        assert len(loaded) == 2
+        assert {state.series_index for state in loaded} == {0, 1}
+        assert {state.original_image_rel for state in loaded} == {Path("a.nd2")}
+
+
+def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = Path(tmpdir)
+        valid_raw = run_dir / "a.nd2"
+        valid_raw.touch()
+
+        valid_state = ExperimentState.init(run_dir, valid_raw).with_image(run_dir / "a_s1" / "fits_array.tif")
+        valid_state.to_json()
+
+        bad_workdir = run_dir / "broken"
+        bad_workdir.mkdir(parents=True, exist_ok=True)
+        (bad_workdir / "experiment_state.json").write_text("{ not json", encoding="utf-8")
+
+        caplog.set_level("WARNING")
+        loaded = discover_saved_states(run_dir)
+
+        assert len(loaded) == 1
+        assert loaded[0].original_image_rel == Path("a.nd2")
+        assert "Failed to load experiment state" in caplog.text

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
+# TODO: Right now, run_dir is an absolute Path, but given that it might be handled by server, this might be a problem later
 def serialize_experiment_state(state: Any) -> dict[str, Any]:
     return {
         "run_dir": str(state.run_dir),

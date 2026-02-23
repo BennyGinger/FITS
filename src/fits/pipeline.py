@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from fits.environment.context import ExecutionContext
-from fits.environment.state import assemble_experiment_states
+from fits.environment.assembly import assemble_experiment_states
 from fits.workflows.execute import run_workflow
 if TYPE_CHECKING:
     from fits.environment.log import LogEmitter

@@ -4,6 +4,7 @@ from pathlib import Path
 from fits_io import SUPPORTED_EXTENSIONS
 
 from fits.environment.constant import EXCLUDED_PREFIXES, FITS_FILES
+from fits.environment.state import ExperimentState
 
 
 logger = logging.getLogger(__name__)
@@ -47,9 +48,21 @@ def find_fits_outputs(directory: Path) -> list[Path]:
             logger.debug(f"Found FITS output file: {p}")
     return sorted(fits_files)
 
+def discover_saved_states(run_dir: Path) -> list[ExperimentState]:
+    """
+    Discover and load all saved ``experiment_state.json`` files under ``run_dir``.
 
-
-
+    Invalid state files are skipped with a warning.
+    """
+    states: list[ExperimentState] = []
+    for json_path in run_dir.rglob("experiment_state.json"):
+        workdir = json_path.parent
+        try:
+            states.append(ExperimentState.from_json(workdir))
+        except Exception as exc:
+            logger.warning("Failed to load experiment state at %s: %s", json_path, exc)
+            continue
+    return states
 
 
 

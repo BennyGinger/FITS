@@ -72,7 +72,15 @@ class ExperimentState():
         """
         img_rel = self._to_relative(self.run_dir, image_path)
         exp_id = img_rel.parent.as_posix()
-        series = int(img_rel.parent.name.rsplit("_s", 1)[-1])
+        
+        # Try to extract series index from folder name (e.g., "exp1_s0" -> 0)
+        series = self.series_index  # default to existing value
+        parts = img_rel.parent.name.rsplit("_s", 1)
+        if len(parts) == 2 and parts[1]:
+            try:
+                series = int(parts[1])
+            except ValueError:
+                pass
         
         return replace(self, image_rel=img_rel, experiment_id=exp_id, series_index=series, updated_at=datetime.now(), **kwargs)
     
@@ -266,40 +274,6 @@ class ExperimentState():
 
         return False
 
-
-def _discover_saved_states(run_dir: Path) -> list[ExperimentState]:
-    """
-    Discover and load all saved ``experiment_state.json`` files under ``run_dir``.
-
-    Invalid state files are skipped with a warning.
-    """
-    states: list[ExperimentState] = []
-    for json_path in run_dir.rglob("experiment_state.json"):
-        workdir = json_path.parent
-        try:
-            states.append(ExperimentState.from_json(workdir))
-        except Exception as exc:
-            logger.warning("Failed to load experiment state at %s: %s", json_path, exc)
-            continue
-    return states
-
-
-def assemble_experiment_states(run_dir: Path, raw_files: Sequence[Path]) -> list[ExperimentState]:
-    """
-    Build the final experiment state list for a run.
-
-    Keeps all discovered saved states and appends only raw-file states whose
-    ``original_image_rel`` is not already represented by saved states.
-    """
-    raw_states = [ExperimentState.init(run_dir, raw_file) for raw_file in raw_files]
-    saved_states = _discover_saved_states(run_dir)
-
-    converted_originals = {state.original_image_rel for state in saved_states}
-    remaining_raw_states = [
-        state for state in raw_states
-        if state.original_image_rel not in converted_originals
-    ]
-    return saved_states + remaining_raw_states
 
     
     

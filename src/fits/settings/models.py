@@ -56,4 +56,10 @@ class ConvertSettings(SettingsModel):
             return [v]
         return v
     
+    @field_validator('compression', mode='before')
+    @classmethod
+    def parse_compression(cls, v):
+        if isinstance(v, str) and v.lower() == 'none':
+            return None
+        return v    
 

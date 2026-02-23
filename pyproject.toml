@@ -1,6 +1,6 @@
 [project]
 name = "fits"
-version = "0.5.0"
+version = "0.5.1"
 description = "Fluorescent Image Tracking Software, or FITS, is a Python package to analyze fluorescent microscopy images and track individual cells over time."
 readme = "README.md"
 authors = [

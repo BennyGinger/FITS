@@ -141,14 +141,25 @@ gui = [
 
 [[package]]
 name = "cellpose-kit"
-version = "0.2.3"
+version = "1.1.0"
 source = { editable = "cellpose_kit" }
 dependencies = [
+    { name = "numpy" },
     { name = "packaging" },
 ]
 
+[package.optional-dependencies]
+cellpose = [
+    { name = "cellpose" },
+]
+
 [package.metadata]
-requires-dist = [{ name = "packaging", specifier = ">=25.0" }]
+requires-dist = [
+    { name = "cellpose", marker = "extra == 'cellpose'", specifier = ">=3,<5" },
+    { name = "numpy", specifier = ">=1.26.4" },
+    { name = "packaging", specifier = ">=25.0" },
+]
+provides-extras = ["cellpose"]
 
 [[package]]
 name = "certifi"

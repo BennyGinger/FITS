@@ -86,7 +86,7 @@ def test_run_convert_wires_everything(monkeypatch, DummyCtx_class) -> None:
 
 def test_run_convert_multiple_inputs(monkeypatch, DummyCtx_class) -> None:
     step_profile = StepProfile(distribution="io", step_name="convert")
-    settings = ConvertSettings()
+    settings = ConvertSettings(ordered_execution=True)
 
     monkeypatch.setattr(
         "fits.workflows.tasks.convert.get_ctx",

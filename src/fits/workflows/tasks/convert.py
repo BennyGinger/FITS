@@ -25,27 +25,27 @@ def run_convert(settings: ConvertSettings, exp_state: list[ExperimentState], ste
     payload = build_payload(settings, step_profile, ctx.user_name, output_name)
     settings_hash = hash_payload(payload)
     channel_labels = payload.get("channel_labels", None)
-    logger.debug(f"Payload for conversion: {payload}")
+    logger.debug(f"Payload for {step_profile.step_name}: {payload}")
     
     # Prepare the executor
     exec_mode: ExecMode = settings.execution
     workers: int | None = settings.workers
     ordered: bool = settings.ordered_execution
-    logger.debug(f"Executing conversion with mode: {exec_mode} and workers: {workers} in ordered mode: {ordered}")
+    logger.debug(f"Executing {step_profile.step_name} with mode: {exec_mode} and workers: {workers} in ordered mode: {ordered}")
     
     # Set up worker (per experiment)
     def worker(st: ExperimentState) -> list[ExperimentState]:
-        logger.debug("Conversion will be executed with parameters: %s", payload)
+        logger.debug("Will be executed with parameters: %s", payload)
 
         # Check if needed
         if not st.needs_run(step_profile.step_name, settings_hash, settings.overwrite, required_output=output_name):
-            logger.debug("Skipping conversion for %s as it is up to date.", st.original_image)
+            logger.debug("Skipping %s for %s as it is up to date.", step_profile.step_name, st.original_image)
             return [st]
         
         reader = FitsIO.from_path(st.original_image, channel_labels=channel_labels,)
 
         save_paths = reader.convert_to_fits(**payload)
-        logger.info("Conversion completed for %s", st.original_image)
+        logger.info("%s completed for %s", step_profile.step_name, st.original_image)
         logger.debug("Saved FITS files at: %s", save_paths)
 
         out_states = [st.with_image(image_path=p, last_step=step_profile.step_name,)
@@ -57,6 +57,6 @@ def run_convert(settings: ConvertSettings, exp_state: list[ExperimentState], ste
             out_st.to_json()
         return out_states
         
-    logger.info("Starting conversion with settings: %s", payload)
+    logger.info("Starting %s with settings: %s", step_profile.step_name, payload)
     return execute(exp_state, worker, mode=exec_mode, workers=workers, ordered=ordered)
     

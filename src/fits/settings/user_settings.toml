@@ -38,3 +38,23 @@ z_projection = "max" # Z-projection method to apply to the input files. Supporte
 Experimenter = "Smith (TDK)"
 Date = "2024-06-15"
 Note = "Cells were stimulated at ..."
+
+
+# ============================
+# Segment step
+# ============================
+[segment]
+enabled = true
+
+[segment.params]
+channel_to_segment = ["GFP"] # The channel to use for segmentation. This should match one of the channel labels in the input files.
+do_denoise = true # Whether to apply denoising to the input images before segmentation. If true, it will apply a denoising algorithm (e.g. Non-local Means) to the input images to reduce noise and improve segmentation results. If false, it will skip the denoising step and use the raw input images for segmentation. If cellpose v4 is used, it will be ignored.
+use_nuclear_channel = false # Whether to use a nuclear channel for segmentation. If true, it will configure the segmentation process to utilize a nuclear channel (if available) to improve segmentation accuracy, especially for cells with distinct nuclei. If false, it will not use a nuclear channel and will rely solely on the other channels for segmentation. If cellpose v4 is used, it will be ignored.
+
+[segment.params.user_settings] # User-defined settings for Cellpose segmentation. This is a dictionary where the keys are the setting names and the values are the corresponding values to use for those settings. These settings will be passed directly to the Cellpose model during segmentation. You can specify any Cellpose settings here, such as model type, diameter, flow threshold, etc. For example:
+model_type = "cyto3" # Cellpose model type to use for segmentation.
+diameter = 30 # Estimated diameter of the cells to be segmented. This is a crucial parameter for Cellpose and can significantly affect segmentation results. You should adjust this value based on the expected size of the cells in your images. If set to "None", Cellpose will attempt to automatically estimate the diameter, but providing an estimated diameter can often improve results.
+flow_threshold = 0.4 # Flow threshold for Cellpose segmentation. This parameter controls the sensitivity of the segmentation process. A lower value may result in more segmented objects (including false positives), while a higher value may result in fewer segmented objects (potentially missing some cells). You may need to experiment with this value to find the optimal setting for your specific images and cell types.
+cellprob_threshold = 0.0 # Cell probability threshold for Cellpose segmentation. This parameter sets the minimum cell probability required for a pixel to be considered part of a cell. A higher value may result in more conservative segmentation (fewer false positives but potentially missing some cells), while a lower value may result in more aggressive segmentation (more false positives but potentially capturing more cells). You may need to experiment with this value to find the optimal setting for your specific images and cell types.
+do_3D = false # Whether to perform 3D segmentation with Cellpose. If true, it will configure Cellpose to perform 3D segmentation on the input image stacks. If false, it will perform 2D segmentation on each individual slice of the image stacks.
+stich_threshold = 0.0 # Stitching threshold for Cellpose segmentation. This parameter is used when performing 3D segmentation to control the stitching of segmented objects across slices, instead of do_3D. A higher value may result in more aggressive stitching (potentially merging separate cells), while a lower value may result in more conservative stitching (potentially splitting single cells into multiple objects). You may need to experiment with this value to find the optimal setting for your specific images and cell types. This will be ignored if do_3D is set to true.

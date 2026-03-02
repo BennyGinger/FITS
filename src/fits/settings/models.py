@@ -1,7 +1,8 @@
-from typing import Any, Mapping, Sequence, TypeVar
+from collections.abc import Mapping, Sequence
+from typing import Any, TypeVar
 
 from fits_io.readers._types import Zproj
-from pydantic import BaseModel, field_validator, Field
+from pydantic import BaseModel, computed_field, field_validator, Field
 
 from fits.environment.constant import ExecMode
 
@@ -38,6 +39,8 @@ class ConvertSettings(SettingsModel):
     user_defined_metadata: Mapping[str, Any] | None = None
     z_projection: Zproj = 'max'
     compression: str | None = 'zlib'
+    
+    # Execution mode
     execution: ExecMode = Field(default="thread", exclude=True)
     workers: int | None = Field(default=None, exclude=True)
     ordered_execution: bool = Field(default=False, exclude=True)
@@ -63,3 +66,38 @@ class ConvertSettings(SettingsModel):
             return None
         return v    
 
+
+class SegmentSettings(SettingsModel):
+    """
+    Settings for the segmentation process in the FITS pipeline.
+    
+    Attributes:
+        user_settings: Dictionary containing the settings for Cellpose given by the user.
+        channel_to_segment: The channel(s) list to use for segmentation. This should match at least one of the channel labels in the input files.
+        use_nuclear_channel: If True, configures for nuclear channel usage.
+        do_denoise: If True, applies denoising to the input images.
+        model: Optional pre-initialized Cellpose model instance to use instead of creating a new one. Default is None.
+        overwrite: Whether to overwrite existing files during segmentation coming from SettingsModel.
+        threading: If True, adds a lock for thread-safe inference. Will be automatically set to True if execution mode is 'thread'.
+        execution: Execution mode for the convert step: serial | thread | process. By default, it will use thread-based execution for this step.
+        workers: Number of worker threads or processes to use for the convert step. This is only applicable if the execution mode is set to thread or process. If set to "None", it will use the default number of workers (which is typically the number of CPU plus four).
+        ordered_execution: Whether to preserve the order of the input files in the output files when using parallel execution. If true, it will ensure that the output files are saved in the same order as the input files. If false, it may save output files in a different order than the input files, which can be faster but may not be desirable in some cases.
+    """
+    user_settings: dict[str, Any]
+    channel_to_segment: Sequence[str] = Field(exclude=True)
+    use_nuclear_channel: bool = False
+    do_denoise: bool = True
+    model: Any | None = None  
+    
+    # Execution mode
+    execution: ExecMode = Field(default="thread", exclude=True)
+    workers: int | None = Field(default=None, exclude=True)
+    ordered_execution: bool = Field(default=False, exclude=True)
+    
+    @computed_field()
+    @property
+    def threading(self) -> bool:
+        """
+        Returns True if the execution mode is set to 'thread', indicating that thread-safe inference should be used for Cellpose.
+        """
+        return self.execution == "thread"

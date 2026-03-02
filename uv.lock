@@ -141,7 +141,7 @@ gui = [
 
 [[package]]
 name = "cellpose-kit"
-version = "1.1.0"
+version = "1.2.0"
 source = { editable = "cellpose_kit" }
 dependencies = [
     { name = "numpy" },
@@ -574,7 +574,7 @@ dev = [
 
 [[package]]
 name = "fits-io"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "fits_io" }
 dependencies = [
     { name = "imagecodecs" },

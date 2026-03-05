@@ -1,6 +1,7 @@
 from typing import Any, Mapping
 import logging
 
+from fits.environment.constant import STEP_CONVERT, STEP_SEGMENT
 from fits.environment.state import ExperimentState
 from fits.workflows.registry import REGISTRY
 
@@ -8,7 +9,8 @@ from fits.workflows.registry import REGISTRY
 logger = logging.getLogger(__name__)
 
 WORKFLOW_ORDER = [
-    "convert",
+    STEP_CONVERT,
+    STEP_SEGMENT,
 ]
 
 def run_workflow(user_cfg: Mapping[str, Any], exp_states: list[ExperimentState]) -> list[ExperimentState]:

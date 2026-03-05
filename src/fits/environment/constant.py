@@ -3,8 +3,10 @@ from typing import Literal
 
 
 STEP_CONVERT = "convert"
+STEP_SEGMENT = "segment"
 
 DIST_IO = "fits-io"
+DIST_SEG = "cellpose-kit"
 
 FitsName = Literal["fits_array.tif", "fits_mask.tif"]
 FITS_ARRAY_NAME = "fits_array.tif"

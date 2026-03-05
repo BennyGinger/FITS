@@ -8,16 +8,13 @@ from fits.workflows.provenance import StepProfile
 from fits.settings.models import SettingsModel
 
 
-EXCULDE_META_KEYS = {"user_name", "step_name"}
+EXCULDE_META_KEYS = {"step_name"}
 
-def build_payload(settings: SettingsModel, step_profile: StepProfile, user_name: str, output_name: str) -> dict[str, Any]:
+def build_fits_payload(step_profile: StepProfile, **kwargs) -> dict[str, Any]:
     
-    provenance_info = step_profile.dump()
-    payload = settings.model_dump()
-    payload.update(provenance_info)
-    payload['user_name'] = user_name
-    payload['output_name'] = output_name
-    return payload
+    provenance_info: dict[str, Any] = step_profile.dump()
+    provenance_info.update(**kwargs)
+    return provenance_info
 
 def _json_serializer(obj):
     """Custom JSON serializer for non-standard types."""

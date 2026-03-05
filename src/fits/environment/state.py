@@ -1,15 +1,17 @@
 from __future__ import annotations
+from collections.abc import Sequence
 from dataclasses import dataclass, replace, field
 import json
 import logging
 import os
 from pathlib import Path
 import tempfile
-from typing import Literal, Sequence
+from typing import Any, Literal
 from datetime import datetime
 
 from fits.environment.constant import FITS_ARRAY_NAME, FitsName, FITS_MASK_NAME
 from fits.environment.serialization import deserialize_experiment_state, serialize_experiment_state
+from fits.workflows.tasks.metadata import OutputStateMeta
 
 
 OutputKey = Literal["image", "masks"]
@@ -43,8 +45,7 @@ class ExperimentState():
     last_step: str | None = None
     experiment_id: str | None = None
     series_index: int = 0
-    step_status: dict[str, str] = field(default_factory=dict)
-    step_settings_hash: dict[str, str] = field(default_factory=dict)
+    step_meta: dict[str, Any] = field(default_factory=dict)
     last_error: str | None = None
     updated_at: datetime | None = None
     
@@ -90,23 +91,6 @@ class ExperimentState():
         """
         return replace(self, masks_rel=self._to_relative(self.run_dir, masks_path), updated_at=datetime.now(),**kwargs)
     
-    def with_settings_hash(self, step: str, settings_hash: str) -> ExperimentState:
-        """
-        Return a new ExperimentState with the settings (saved as hash) updated for a specific step.
-        """
-        
-        set_h = dict(self.step_settings_hash)
-        
-        set_h[step] = settings_hash
-        
-        return replace(self, step_settings_hash=set_h, updated_at=datetime.now())
-     
-    def commit(self, **kwargs) -> ExperimentState:
-        """
-        Return a new ExperimentState with updated_at set to now and any additional fields updated.
-        """
-        return replace(self, updated_at=datetime.now(), **kwargs)
-
     def to_json(self) -> ExperimentState:
         """
         Serialize the experiment state to ``workdir/experiment_state.json``.
@@ -214,66 +198,77 @@ class ExperimentState():
             return self.run_dir / path
         return path
     
-    def mark_running(self, step: str) -> ExperimentState:
-        """Mark a step as currently running."""
-        step_status = dict(self.step_status)
-        step_status[step] = "running"
-        return replace(self, step_status=step_status, updated_at=datetime.now())
-    
-    def mark_done(self, step: str) -> ExperimentState:
-        """Mark a step as completed."""
-        step_status = dict(self.step_status)
-        step_status[step] = "done"
-        return replace(self, step_status=step_status, updated_at=datetime.now())
-    
-    def mark_failed(self, step: str, err: Exception | str) -> ExperimentState:
-        """Mark a step as failed with an error message."""
-        step_status = dict(self.step_status)
-        step_status[step] = "failed"
-        error_msg = str(err) if isinstance(err, Exception) else err
-        return replace(self, 
-            step_status=step_status,
-            last_error=error_msg,
-            updated_at=datetime.now()
-        )
-    
     def _exists(self, p: Path | None) -> bool:
         return p is not None and p.exists()
 
-    def needs_run(self, step: str, settings_hash: str, overwrite: bool, *,  required_output: FitsName = FITS_ARRAY_NAME, required_files_rel: Sequence[Path] = (),) -> bool:
+    def needs_run(self, step: str, settings_hash: str, required_channel: Sequence[str] | None, overwrite: bool, required_output: FitsName) -> bool:
         """
         Returns True if:
-        - step not done, OR
-        - settings hash changed, OR
-        - required primary outputs missing (image/masks), OR
-        - required relative files missing (optional small sidecars)
+        - overwrite is True, or
+        - any of the required channels for the step are not marked as "done" in the step_meta, or their settings hash does not match the provided settings_hash, or
+        - the required primary output (FITS_ARRAY_NAME or FITS_MASK_NAME) does not exist at the expected location.
         """
-        # 0) overwrite gate
+        # overwrite gate
         if overwrite:
             return True
         
-        # 1) status gate
-        if self.step_status.get(step) != "done":
-            return True
-
-        # 2) settings gate
-        if self.step_settings_hash.get(step) != settings_hash:
-            return True
-
-        # 3) required primary outputs
+        # status/setting gate
+        step_meta = self.step_meta.get(step, {})
+        chan_meta = step_meta.get("channels", {})
+        
+        required_channel = required_channel or []
+        for label in required_channel:
+            label_meta = chan_meta.get(label, {})
+            if label_meta.get("status") != "done":
+                return True
+            if label_meta.get("hashed_settings") != settings_hash:
+                return True
+        
+        # required primary outputs
         if required_output == FITS_ARRAY_NAME and not self._exists(self.image):
             return True
         if required_output == FITS_MASK_NAME and not self._exists(self.masks):
             return True
 
-        # 4) optional sidecar files (relative to run_dir)
-        for rel in required_files_rel:
-            abs_path = self.run_dir / rel
-            if not abs_path.exists():
-                return True
-
         return False
-
+    
+    def with_update(self, output_meta: OutputStateMeta) -> ExperimentState:
+        """
+        Return a new ExperimentState with updated paths and metadata based on the provided OutputStateMeta.
+        """
+        if output_meta.mark_failed and output_meta.mark_done:
+            raise ValueError("OutputStateMeta cannot be both failed and done")
+        
+        st = self
+        output_path = None
+        if output_meta.with_image is not None:
+            st = st.with_image(output_meta.with_image, last_step=output_meta.step)
+            output_path = st.image_rel
+        
+        if output_meta.with_masks is not None:
+            st = st.with_masks(output_meta.with_masks, last_step=output_meta.step)
+            output_path = st.masks_rel
+        
+        step_meta = dict(st.step_meta)
+        meta: dict[str, Any] = dict(step_meta.get(output_meta.step, {}))
+        
+        if output_meta.mark_failed:
+            meta['status'] = "failed"
+            
+        if output_meta.mark_done:
+            meta["axes"] = output_meta.axes
+            if output_path is not None:
+                meta["output_path"] = output_path.as_posix()
+            
+            chan_meta = meta.get("channels", {})
+            
+            for label in output_meta.output_labels:
+                chan_meta[label] = {"status": "done",
+                               "hashed_settings": output_meta.hashed_settings,}
+            meta["channels"] = chan_meta
+        
+        step_meta[output_meta.step] = meta
+        return replace(st, step_meta=step_meta, updated_at=datetime.now())
 
     
     

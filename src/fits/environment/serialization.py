@@ -7,6 +7,8 @@ from typing import Any
 
 # TODO: Right now, run_dir is an absolute Path, but given that it might be handled by server, this might be a problem later
 def serialize_experiment_state(state: Any) -> dict[str, Any]:
+    # NOTE: step_meta should already be JSON-serializable.
+    # If you ever store Paths/datetimes inside it, you’ll need a deeper conversion.
     return {
         "run_dir": str(state.run_dir),
         "original_image_rel": str(state.original_image_rel),
@@ -15,8 +17,7 @@ def serialize_experiment_state(state: Any) -> dict[str, Any]:
         "last_step": state.last_step,
         "experiment_id": state.experiment_id,
         "series_index": state.series_index,
-        "step_status": state.step_status,
-        "step_settings_hash": state.step_settings_hash,
+        "step_meta": state.step_meta,
         "last_error": state.last_error,
         "updated_at": state.updated_at.isoformat() if state.updated_at is not None else None,
     }
@@ -53,16 +54,6 @@ def deserialize_experiment_state(raw: Any) -> dict[str, Any]:
             raise TypeError(f"{name} must be an integer.")
         return value
 
-    def as_str_map(name: str, value: Any) -> dict[str, str]:
-        if not isinstance(value, dict):
-            raise TypeError(f"{name} must be an object of string keys/values.")
-        out: dict[str, str] = {}
-        for k, v in value.items():
-            if not isinstance(k, str) or not isinstance(v, str):
-                raise TypeError(f"{name} must contain only string keys/values.")
-            out[k] = v
-        return out
-
     def as_optional_datetime(name: str, value: Any) -> datetime | None:
         if value is None:
             return None
@@ -73,6 +64,47 @@ def deserialize_experiment_state(raw: Any) -> dict[str, Any]:
         except ValueError as exc:
             raise ValueError(f"{name} is not a valid ISO datetime.") from exc
 
+    def as_step_meta(value: Any) -> dict[str, Any]:
+        """Validate (shallowly) that step_meta is a dict with string keys."""
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise TypeError("step_meta must be an object.")
+        for k in value.keys():
+            if not isinstance(k, str):
+                raise TypeError("step_meta must have string keys.")
+        return value
+
+    def as_str_map(name: str, value: Any) -> dict[str, str]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise TypeError(f"{name} must be an object of string keys/values.")
+        out: dict[str, str] = {}
+        for k, v in value.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                raise TypeError(f"{name} must contain only string keys/values.")
+            out[k] = v
+        return out
+
+    # --- New format: step_meta ---
+    if "step_meta" in raw:
+        step_meta = as_step_meta(raw.get("step_meta"))
+    else:
+        # --- Legacy migration: step_status + step_settings_hash -> step_meta ---
+        step_status = as_str_map("step_status", raw.get("step_status"))
+        step_settings_hash = as_str_map("step_settings_hash", raw.get("step_settings_hash"))
+
+        step_meta = {}
+        all_steps = set(step_status) | set(step_settings_hash)
+        for step in all_steps:
+            meta: dict[str, Any] = {}
+            if step in step_status:
+                meta["status"] = step_status[step]
+            if step in step_settings_hash:
+                meta["hashed_settings"] = step_settings_hash[step]
+            step_meta[step] = meta
+
     return {
         "run_dir": as_path("run_dir", required("run_dir")),
         "original_image_rel": as_path("original_image_rel", required("original_image_rel")),
@@ -81,8 +113,7 @@ def deserialize_experiment_state(raw: Any) -> dict[str, Any]:
         "last_step": as_optional_str("last_step", raw.get("last_step")),
         "experiment_id": as_optional_str("experiment_id", raw.get("experiment_id")),
         "series_index": as_int("series_index", required("series_index")),
-        "step_status": as_str_map("step_status", raw.get("step_status", {})),
-        "step_settings_hash": as_str_map("step_settings_hash", raw.get("step_settings_hash", {})),
+        "step_meta": step_meta,
         "last_error": as_optional_str("last_error", raw.get("last_error")),
         "updated_at": as_optional_datetime("updated_at", raw.get("updated_at")),
     }

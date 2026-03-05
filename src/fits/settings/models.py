@@ -26,7 +26,7 @@ class ConvertSettings(SettingsModel):
         channel_labels: Optional list of channel labels in the image.
         export_channels: Channels to export; can be 'all' or a list of specific channels.
         filename: Optional filename for the converted output.
-        user_defined_metadata: Optional mapping of user-defined metadata to include in the output.
+        custom_metadata: Optional mapping of user-defined metadata to include in the output.
         z_projection: Z-projection method to apply to the input files. Supported methods are: max, mean or None. By default, apply max projection.
         compression: Optional compression method for the output file.
         overwrite: Whether to overwrite existing files during conversion coming from SettingsModel.
@@ -36,7 +36,7 @@ class ConvertSettings(SettingsModel):
     """
     channel_labels: str | Sequence[str] | None = None
     export_channels: str | Sequence[str] = 'all'
-    user_defined_metadata: Mapping[str, Any] | None = None
+    custom_metadata: Mapping[str, Any] | None = None
     z_projection: Zproj = 'max'
     compression: str | None = 'zlib'
     
@@ -83,10 +83,10 @@ class SegmentSettings(SettingsModel):
         workers: Number of worker threads or processes to use for the convert step. This is only applicable if the execution mode is set to thread or process. If set to "None", it will use the default number of workers (which is typically the number of CPU plus four).
         ordered_execution: Whether to preserve the order of the input files in the output files when using parallel execution. If true, it will ensure that the output files are saved in the same order as the input files. If false, it may save output files in a different order than the input files, which can be faster but may not be desirable in some cases.
     """
-    user_settings: dict[str, Any]
     channel_to_segment: Sequence[str] = Field(exclude=True)
-    use_nuclear_channel: bool = False
     do_denoise: bool = True
+    nuclear_channel: Sequence[str] = Field(default_factory=list, exclude=True)
+    user_settings: dict[str, Any] = Field(default_factory=dict)
     model: Any | None = None  
     
     # Execution mode
@@ -101,3 +101,11 @@ class SegmentSettings(SettingsModel):
         Returns True if the execution mode is set to 'thread', indicating that thread-safe inference should be used for Cellpose.
         """
         return self.execution == "thread"
+    
+    @computed_field()
+    @property
+    def use_nuclear_channel(self) -> bool:
+        """
+        Returns True if a nuclear channel is specified in the settings, indicating that nuclear channel mode should be enabled for Cellpose.
+        """
+        return len(self.nuclear_channel) > 0

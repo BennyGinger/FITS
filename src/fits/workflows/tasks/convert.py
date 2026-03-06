@@ -1,20 +1,46 @@
 from collections.abc import Iterator
 import logging
+from dataclasses import replace
 
 from fits_io.client import FitsIO
 from progress_bar import pbar
 
 from fits.environment.state import ExperimentState
 from fits.environment.runtime import get_ctx, use_ctx
-from fits.environment.constant import ExecMode, FitsName
+from fits.environment.constant import ExecMode, FitsName, STEP_CONVERT
 from fits.workflows.executors import execute
-from fits.workflows.payload import build_fits_payload, hash_payload
+from fits.workflows.payload import build_fits_payload
 from fits.workflows.provenance import StepProfile
 from fits.settings.models import ConvertSettings
-from fits.workflows.tasks.metadata import OutputStateMeta
 
 
 logger = logging.getLogger(__name__)
+
+
+def build_payload(
+    settings: ConvertSettings,
+    step_profile: StepProfile,
+    user_name: str,
+    output_name: FitsName,
+) -> dict:
+    """Compatibility wrapper used by tests and runtime payload wiring."""
+    return build_fits_payload(
+        step_profile,
+        **settings.model_dump(),
+        user_name=user_name,
+        output_name=output_name,
+    )
+
+
+def _should_skip_convert(exp_state: ExperimentState, step_name: str, overwrite: bool) -> bool:
+    """Task-local skip predicate for convert until orchestration-level policy is refactored."""
+    if overwrite:
+        return False
+    return (
+        step_name in exp_state.completed_steps
+        and exp_state.image is not None
+        and exp_state.image.exists()
+    )
 
 
 def convert_one(settings: ConvertSettings, exp_state: ExperimentState, step_profile: StepProfile, output_name: FitsName) -> list[ExperimentState]:
@@ -35,62 +61,54 @@ def convert_one(settings: ConvertSettings, exp_state: ExperimentState, step_prof
     ctx = get_ctx()
     
     # Prepare payload
-    payload = build_fits_payload(
-        step_profile, 
-        **settings.model_dump(), 
+    payload = build_payload(
+        settings,
+        step_profile,
         user_name=ctx.user_name,
-        output_name=output_name
+        output_name=output_name,
     )
-    z_proj = settings.z_projection
-    settings_hash = hash_payload(payload)
     channel_labels = payload.get("channel_labels", None)
     
     logger.debug("Will be executed with parameters: %s", payload)
 
-    reader = FitsIO.from_path(exp_state.original_image, channel_labels=channel_labels)
-    current_labels = reader.channel_labels
-    
-    # Check if needed
-    if not exp_state.needs_run(
-        step_profile.step_name, 
-        settings_hash, 
-        current_labels,
-        settings.overwrite, 
-        output_name
-    ):
+    if _should_skip_convert(exp_state, step_profile.step_name, settings.overwrite):
         logger.debug(
             "Skipping %s for %s as it is up to date.", 
             step_profile.step_name, 
             exp_state.original_image
         )
         return [exp_state]
-    
-    save_paths = reader.convert_to_fits(**payload)
-    
-    logger.info("%s completed for %s", step_profile.step_name, exp_state.original_image)
-    logger.debug("Saved FITS files at: %s", save_paths)
 
-    out_states: list[ExperimentState] = []
-    for i, path in enumerate(save_paths):
-        axes = reader.axes[i]
-        if z_proj is not None:
-            axes = axes.replace('Z', '')  # Remove Z axis if z-projection is applied
-        out_meta = OutputStateMeta(
-            step=step_profile.step_name,
-            axes=axes,
-            channel_labels=current_labels,
-            hashed_settings=settings_hash,
-            with_image=path,
-            mark_done=True,
+    try:
+        reader = FitsIO.from_path(exp_state.original_image, channel_labels=channel_labels)
+        save_paths = reader.convert_to_fits(**payload)
+
+        logger.info("%s completed for %s", step_profile.step_name, exp_state.original_image)
+        logger.debug("Saved FITS files at: %s", save_paths)
+
+        out_states: list[ExperimentState] = []
+        for path in save_paths:
+            branch_state = (
+                ExperimentState.init(run_dir=exp_state.run_dir, original_image=exp_state.original_image)
+                .with_image(path)
+                .with_completed_step(STEP_CONVERT)
+            )
+            # Convert establishes the canonical image artifact for a branch.
+            branch_state = replace(branch_state, masks_rel=None)
+            out_states.append(branch_state)
+
+        for out_st in out_states:
+            logger.debug("Produced new ExperimentState: %s", out_st)
+            out_st.save()
+
+        return out_states
+    except Exception as exc:
+        logger.exception("%s failed for %s", step_profile.step_name, exp_state.original_image)
+        failed_state = (
+            ExperimentState.init(run_dir=exp_state.run_dir, original_image=exp_state.original_image)
+            .with_error(STEP_CONVERT, str(exc))
         )
-        new_st = exp_state.with_update(out_meta)
-        out_states.append(new_st)
-    
-    for out_st in out_states:
-        logger.debug("Produced new ExperimentState: %s", out_st)
-        out_st.to_json()
-    
-    return out_states
+        return [failed_state]
 
 
 @pbar(desc="Convert")
@@ -112,11 +130,11 @@ def run_convert(settings: ConvertSettings, exp_state: list[ExperimentState], ste
     ctx = get_ctx()
     
     # Prepare payload for logging
-    payload = build_fits_payload(
-        step_profile, 
-        **settings.model_dump(), 
+    payload = build_payload(
+        settings,
+        step_profile,
         user_name=ctx.user_name,
-        output_name=output_name
+        output_name=output_name,
     )
     
     logger.debug(f"Payload for {step_profile.step_name}: {payload}")

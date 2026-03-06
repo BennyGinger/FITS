@@ -5,13 +5,8 @@ from typing import TYPE_CHECKING
 
 from fits.environment.context import ExecutionContext
 from fits.environment.assembly import assemble_experiment_states
-from fits.environment.constant import STEP_CONVERT
-from fits.workflows.execute import (
-    WORKFLOW_ORDER,
-    first_effective_overwrite_step,
-    resolve_effective_workflow_cfg,
-    run_workflow_scheduler_entry,
-)
+from fits.environment.constant import STEP_CONVERT, RunTimeMode
+from fits.workflows.execute import WORKFLOW_ORDER, first_effective_overwrite_step, resolve_effective_workflow_cfg, run_workflow_scheduler_entry, run_workflow
 if TYPE_CHECKING:
     from fits.environment.log import LogEmitter
 from fits.environment.discovery import collect_supported_files
@@ -39,6 +34,7 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
     # --- runtime config ---
     rt_settings = user_cfg.get("runtime", {})
     mode = coerce_mode(rt_settings.get("mode"))
+    rt_mode: RunTimeMode = rt_settings.get("execution", "batch")
     
     log_raw = rt_settings.get("log_dir", None)
     log_dir = Path(log_raw).expanduser().resolve() if isinstance(log_raw, str) else log_raw
@@ -50,14 +46,6 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
     if mode == "gui" and gui_emitter is None:
         raise ValueError("GUI mode requires gui_emitter (create it in the GUI thread and connect it).")
     configure_logging(log_dir=log_dir, mode=mode, console_level=console_level, file_level=file_level, gui_emitter=gui_emitter)
-
-    # --- reduce noisy third-party logs ---
-    logging.getLogger("cellpose").setLevel(logging.WARNING)
-    logging.getLogger("cellpose.core").setLevel(logging.WARNING)
-    logging.getLogger("cellpose.io").setLevel(logging.WARNING)
-    logging.getLogger("cellpose.models").setLevel(logging.WARNING)
-    logging.getLogger("cellpose.denoise").setLevel(logging.WARNING)
-    logging.getLogger("fits_io.readers.r_nd2").setLevel(logging.ERROR)
 
     # --- context setup once ---
     ctx = ExecutionContext(user_name=user_name,
@@ -89,11 +77,7 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
         for step_name in WORKFLOW_ORDER:
             step_cfg = effective_cfg.get(step_name) or {}
             if step_cfg.get("enabled", False):
-                logger.debug(
-                    "Effective step config: %s overwrite=%s",
-                    step_name,
-                    (step_cfg.get("params") or {}).get("overwrite", False),
-                )
+                logger.debug("Effective step config: %s overwrite=%s", step_name, (step_cfg.get("params") or {}).get("overwrite", False),)
 
         first_overwrite = first_effective_overwrite_step(effective_cfg, WORKFLOW_ORDER)
         ignore_saved_states = first_overwrite == STEP_CONVERT
@@ -101,25 +85,26 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
             logger.info("Effective overwrite starts at '%s'; seeding scheduler from raw states", STEP_CONVERT)
         
         # --- build ExperimentState list from saved states + newly discovered raw files ---
-        states = assemble_experiment_states(
-            run_dir,
-            supported_files,
-            ignore_saved_states=ignore_saved_states,
-        )
+        states = assemble_experiment_states(run_dir, supported_files, ignore_saved_states=ignore_saved_states)
         
         # --- start the workflow ---
         logger.debug(f"Loaded user configuration {user_cfg}")
         
-        final_states = run_workflow_scheduler_entry(effective_cfg, states)
+        match rt_mode:
+            case "batch":
+                logger.info("Starting batch execution of workflow")
+                final_states = run_workflow(effective_cfg, states)
+            case "conveyor":
+                logger.info("Starting conveyor execution of workflow")
+                final_states = run_workflow_scheduler_entry(effective_cfg, states)
+        
         logger.info("Pipeline finished with %d final experiment states", len(final_states))
         for st in final_states:
-            logger.debug(
-                "Final state: exp_id=%s image=%s masks=%s last_step=%s",
-                st.experiment_id,
-                st.image_rel,
-                st.masks_rel,
-                st.last_step,
-            )
+            logger.debug("Final state: exp_id=%s image=%s masks=%s last_step=%s", st.experiment_id,
+                                                                                    st.image_rel,
+                                                                                    st.masks_rel,
+                                                                                    st.last_step,
+                                                                                )
 
 
 if __name__ == "__main__":

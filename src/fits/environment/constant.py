@@ -18,3 +18,5 @@ EXCLUDED_PREFIXES = {'fits_'}
 UIMode = Literal["cli", "gui", "notebook"]
 
 ExecMode = Literal["serial", "thread", "process"]
+
+RunTimeMode = Literal["batch", "conveyor"]

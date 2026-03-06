@@ -120,6 +120,8 @@ def configure_logging(*, log_dir: Path | None, mode: UIMode = "cli", console_lev
 
     # Optional file
     if log_dir is not None:
+        if "log" not in log_dir.name.lower():
+            log_dir = log_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"fits_{datetime.now():%Y%m%d_%H%M%S}.log"
         file_handler = logging.FileHandler(log_path, encoding="utf-8")
@@ -127,3 +129,11 @@ def configure_logging(*, log_dir: Path | None, mode: UIMode = "cli", console_lev
         file_handler.setLevel(_LEVEL_MAP[file_level])
         file_handler.set_name("fits_file")
         root.addHandler(file_handler)
+        
+    # Reduce verbosity of noisy third-party loggers by default
+    _quiet_logger("cellpose")
+    _quiet_logger("fits_io.readers.r_nd2", logging.ERROR)
+
+
+def _quiet_logger(name: str, level: int = logging.WARNING) -> None:
+    logging.getLogger(name).setLevel(level)

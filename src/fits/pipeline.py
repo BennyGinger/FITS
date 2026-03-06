@@ -5,7 +5,13 @@ from typing import TYPE_CHECKING
 
 from fits.environment.context import ExecutionContext
 from fits.environment.assembly import assemble_experiment_states
-from fits.workflows.execute import run_workflow
+from fits.environment.constant import STEP_CONVERT
+from fits.workflows.execute import (
+    WORKFLOW_ORDER,
+    first_effective_overwrite_step,
+    resolve_effective_workflow_cfg,
+    run_workflow_scheduler_entry,
+)
 if TYPE_CHECKING:
     from fits.environment.log import LogEmitter
 from fits.environment.discovery import collect_supported_files
@@ -45,6 +51,14 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
         raise ValueError("GUI mode requires gui_emitter (create it in the GUI thread and connect it).")
     configure_logging(log_dir=log_dir, mode=mode, console_level=console_level, file_level=file_level, gui_emitter=gui_emitter)
 
+    # --- reduce noisy third-party logs ---
+    logging.getLogger("cellpose").setLevel(logging.WARNING)
+    logging.getLogger("cellpose.core").setLevel(logging.WARNING)
+    logging.getLogger("cellpose.io").setLevel(logging.WARNING)
+    logging.getLogger("cellpose.models").setLevel(logging.WARNING)
+    logging.getLogger("cellpose.denoise").setLevel(logging.WARNING)
+    logging.getLogger("fits_io.readers.r_nd2").setLevel(logging.ERROR)
+
     # --- context setup once ---
     ctx = ExecutionContext(user_name=user_name,
                            dry_run=dry_run,
@@ -67,26 +81,49 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
                 logger.info(f"Optimization mode: only processing {optimize_path}")
                 supported_files = matches
             else:
-                logger.warning(
-                    f"optimize path {optimize_path} was provided but was not found among discovered supported files under {run_dir}; "
+                logger.warning(f"optimize path {optimize_path} was provided but was not found among discovered supported files under {run_dir}; "
                     "continuing with full pipeline.")
+
+        effective_cfg = resolve_effective_workflow_cfg(user_cfg, WORKFLOW_ORDER)
+        logger.info("Using effective workflow config with overwrite cascade applied")
+        for step_name in WORKFLOW_ORDER:
+            step_cfg = effective_cfg.get(step_name) or {}
+            if step_cfg.get("enabled", False):
+                logger.debug(
+                    "Effective step config: %s overwrite=%s",
+                    step_name,
+                    (step_cfg.get("params") or {}).get("overwrite", False),
+                )
+
+        first_overwrite = first_effective_overwrite_step(effective_cfg, WORKFLOW_ORDER)
+        ignore_saved_states = first_overwrite == STEP_CONVERT
+        if ignore_saved_states:
+            logger.info("Effective overwrite starts at '%s'; seeding scheduler from raw states", STEP_CONVERT)
         
         # --- build ExperimentState list from saved states + newly discovered raw files ---
-        states = assemble_experiment_states(run_dir, supported_files)
+        states = assemble_experiment_states(
+            run_dir,
+            supported_files,
+            ignore_saved_states=ignore_saved_states,
+        )
         
         # --- start the workflow ---
         logger.debug(f"Loaded user configuration {user_cfg}")
-        run_workflow(user_cfg, states)
+        
+        final_states = run_workflow_scheduler_entry(effective_cfg, states)
+        logger.info("Pipeline finished with %d final experiment states", len(final_states))
+        for st in final_states:
+            logger.debug(
+                "Final state: exp_id=%s image=%s masks=%s last_step=%s",
+                st.experiment_id,
+                st.image_rel,
+                st.masks_rel,
+                st.last_step,
+            )
 
 
 if __name__ == "__main__":
-    from fits_io import FitsIO
-    
     start_pipeline()
     
-    out_path = Path('/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run2_test/stimulated/c2z25t23v1_nd2_s1/fits_array.tif')
-    reader = FitsIO.from_path(out_path)
-    print("_________________________")
-    print(reader.fits_metadata)
-    print(reader.channel_labels)
+    
     

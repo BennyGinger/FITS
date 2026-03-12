@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 import pytest
@@ -30,8 +29,7 @@ class DummyStepSpec:
 
     def runner(self, settings: DummySettings, exp_states: list[ExperimentState], step_profile: Any, output_name: str):
         self.runner_calls.append((settings, exp_states, step_profile, output_name))
-        # mutate states in a traceable way: set last_step
-        return [replace(st, last_step=step_profile.step_name) for st in exp_states]
+        return [st.with_completed_step(step_profile.step_name) for st in exp_states]
 
 
 def _state() -> ExperimentState:
@@ -72,7 +70,7 @@ def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
     (_, states_passed_to_convert, _, _) = convert.runner_calls[0]
     (_, states_passed_to_other, _, _) = other.runner_calls[0]
     assert states_passed_to_convert == states
-    assert states_passed_to_other == [replace(st, last_step="convert") for st in states]
+    assert all(st.last_step == "convert" for st in states_passed_to_other)
 
     # final output has last step of final runner
     assert [s.last_step for s in out] == ["other"]

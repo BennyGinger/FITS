@@ -48,9 +48,7 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
     configure_logging(log_dir=log_dir, mode=mode, console_level=console_level, file_level=file_level, gui_emitter=gui_emitter)
 
     # --- context setup once ---
-    ctx = ExecutionContext(user_name=user_name,
-                           dry_run=dry_run,
-                           mode=mode)
+    ctx = ExecutionContext(user_name=user_name, dry_run=dry_run, mode=mode, run_dir=run_dir)
     
     # --- main execution block with context ---
     with use_ctx(ctx):
@@ -82,7 +80,7 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
         first_overwrite = first_effective_overwrite_step(effective_cfg, WORKFLOW_ORDER)
         ignore_saved_states = first_overwrite == STEP_CONVERT
         if ignore_saved_states:
-            logger.info("Effective overwrite starts at '%s'; seeding scheduler from raw states", STEP_CONVERT)
+            logger.info("Effective overwrite starts at '%s'; seeding raw states for processing", STEP_CONVERT)
         
         # --- build ExperimentState list from saved states + newly discovered raw files ---
         states = assemble_experiment_states(run_dir, supported_files, ignore_saved_states=ignore_saved_states)
@@ -108,7 +106,13 @@ def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | 
 
 
 if __name__ == "__main__":
+    from time import time
+    start_time = time()
+    
     start_pipeline()
+    end_time = time()
+    elapsed = end_time - start_time
+    print(f"Total pipeline execution time: {elapsed:.2f} seconds")
     
     
     

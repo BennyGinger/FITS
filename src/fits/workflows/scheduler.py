@@ -5,6 +5,8 @@ import logging
 import os
 from typing import Any, Mapping
 
+from progress_bar import pbar
+
 from fits.environment.constant import STEP_CONVERT, STEP_SEGMENT
 from fits.environment.runtime import get_ctx, use_ctx
 from fits.environment.state import ExperimentState
@@ -96,29 +98,23 @@ def run_workflow_scheduler(
         else:
             gpu_ready.append(task)
 
-    logger.info("Scheduler seeded %d tasks for first step '%s'", len(exp_states), first_step)
+    initial_task_count = len(exp_states)
+    logger.info("Scheduler seeded %d tasks for first step '%s'", initial_task_count, first_step)
 
     cpu_workers = os.cpu_count() or 1
     final_states: list[ExperimentState] = []
 
-    with ThreadPoolExecutor(max_workers=cpu_workers) as cpu_ex, ThreadPoolExecutor(max_workers=1) as gpu_ex:
+    with ThreadPoolExecutor(max_workers=cpu_workers) as cpu_ex, ThreadPoolExecutor(max_workers=1) as gpu_ex, pbar(total=initial_task_count, desc="Pipeline", logs="off") as pb:
         cpu_running: dict[Future[list[ExperimentState]], Task] = {}
         gpu_running: dict[Future[list[ExperimentState]], Task] = {}
+        total_tasks = initial_task_count
 
-        def submit_task(
-            task: Task,
-            executor: ThreadPoolExecutor,
-            running: dict[Future[list[ExperimentState]], Task],
-        ) -> None:
+        def submit_task(task: Task, executor: ThreadPoolExecutor, running: dict[Future[list[ExperimentState]], Task]) -> None:
             step_name = task.step_name
             settings = settings_by_step[step_name]
             step_spec = step_specs[step_name]
 
-            logger.debug(
-                "Submitting %s for %s",
-                step_name,
-                _task_label(task),
-            )
+            logger.debug("Submitting %s for %s", step_name, _task_label(task),)
 
             def run_task() -> list[ExperimentState]:
                 with use_ctx(ctx):
@@ -153,29 +149,28 @@ def run_workflow_scheduler(
                     task = gpu_running.pop(fut)
 
                 produced_states = fut.result()
-                logger.debug(
-                    "Completed %s for %s -> produced %d state(s)",
-                    task.step_name,
-                    _task_label(task),
-                    len(produced_states),
-                )
+                pb.advance()
+                logger.debug("Completed %s for %s -> produced %d state(s)", task.step_name, _task_label(task), len(produced_states))
 
                 next_step = _next_enabled_step(task.step_name, enabled_steps)
+                newly_queued = 0
                 for produced_state in produced_states:
                     if next_step is None:
                         final_states.append(produced_state)
                         continue
 
                     next_task = Task(step_name=next_step, exp_state=produced_state)
-                    logger.debug(
-                        "Queued %s for %s",
-                        next_step,
-                        produced_state.experiment_id or produced_state.original_image_rel.as_posix(),
-                    )
+                    newly_queued += 1
+                    logger.debug("Queued %s for %s", next_step, produced_state.experiment_id or produced_state.original_image_rel.as_posix())
+                    
                     if _task_pool(next_step) == "cpu":
                         cpu_ready.append(next_task)
                     else:
                         gpu_ready.append(next_task)
+
+                if newly_queued > 0:
+                    total_tasks += newly_queued
+                    pb.update(total=total_tasks)
 
     logger.info("Scheduler completed with %d terminal states", len(final_states))
     return final_states

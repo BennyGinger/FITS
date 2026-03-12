@@ -5,12 +5,7 @@ from fits.environment.discovery import discover_saved_states
 from fits.environment.state import ExperimentState
 
 
-def assemble_experiment_states(
-    run_dir: Path,
-    raw_files: Sequence[Path],
-    *,
-    ignore_saved_states: bool = False,
-) -> list[ExperimentState]:
+def assemble_experiment_states(run_dir: Path, raw_files: Sequence[Path], *, ignore_saved_states: bool = False) -> list[ExperimentState]:
     """
     Build the final experiment state list for a run.
 
@@ -19,15 +14,12 @@ def assemble_experiment_states(
     states whose ``original_image_rel`` is not already represented by saved
     states.
     """
-    raw_states = [ExperimentState.init(run_dir, raw_file) for raw_file in raw_files]
+    raw_states = [ExperimentState.init(raw_file.parent, raw_file) for raw_file in raw_files]
     if ignore_saved_states:
         return raw_states
 
     saved_states = discover_saved_states(run_dir)
 
-    converted_originals = {state.original_image_rel for state in saved_states}
-    remaining_raw_states = [
-        state for state in raw_states
-        if state.original_image_rel not in converted_originals
-    ]
+    converted_originals = {state.original_image for state in saved_states}
+    remaining_raw_states = [state for state in raw_states if state.original_image not in converted_originals]
     return saved_states + remaining_raw_states

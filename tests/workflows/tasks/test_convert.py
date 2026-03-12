@@ -39,14 +39,14 @@ def test_run_convert_wires_everything(monkeypatch, DummyCtx_class) -> None:
 
         # fake payload builder (and capture args)
         seen = {}
-        def fake_build_payload(settings, step_profile, user_name, output_name):
-            seen["user_name"] = user_name
-            seen["output_name"] = output_name
+        def fake_build_payload(step_profile, **kwargs):
+            seen["user_name"] = kwargs["user_name"]
+            seen["output_name"] = kwargs["output_name"]
             seen["step_name"] = step_profile.step_name
             return {"p": 1}
 
         monkeypatch.setattr(
-            "fits.workflows.tasks.convert.build_payload",
+            "fits.workflows.tasks.convert.build_fits_payload",
             fake_build_payload,
         )
 
@@ -93,7 +93,7 @@ def test_run_convert_multiple_inputs(monkeypatch, DummyCtx_class) -> None:
         lambda: DummyCtx_class(user_name="ben"),
     )
     monkeypatch.setattr(
-        "fits.workflows.tasks.convert.build_payload",
+        "fits.workflows.tasks.convert.build_fits_payload",
         lambda *args, **kwargs: {"p": 1},
     )
     with tempfile.TemporaryDirectory() as tmpdir:

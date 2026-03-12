@@ -15,14 +15,14 @@ def test_assemble_experiment_states_merges_saved_with_only_new_raws() -> None:
         new_raw.touch()
 
         saved0 = (
-            ExperimentState.init(run_dir, converted_raw)
+            ExperimentState.init(run_dir / "a_s0", converted_raw)
             .with_image(run_dir / "a_s0" / "fits_array.tif")
-            .commit(series_index=0, experiment_id="a-s0")
+            .with_completed_step("convert")
         )
         saved1 = (
-            ExperimentState.init(run_dir, converted_raw)
+            ExperimentState.init(run_dir / "a_s1", converted_raw)
             .with_image(run_dir / "a_s1" / "fits_array.tif")
-            .commit(series_index=1, experiment_id="a-s1")
+            .with_completed_step("convert")
         )
         saved0.to_json()
         saved1.to_json()
@@ -30,8 +30,11 @@ def test_assemble_experiment_states_merges_saved_with_only_new_raws() -> None:
         states = assemble_experiment_states(run_dir, [converted_raw, new_raw])
 
         assert len(states) == 3
-        assert [state.original_image_rel for state in states].count(Path("a.nd2")) == 2
-        assert Path("b.nd2") in {state.original_image_rel for state in states}
-        assert {state.experiment_id for state in states if state.original_image_rel == Path("a.nd2")} == {"a-s0", "a-s1"}
-        b_state = next(state for state in states if state.original_image_rel == Path("b.nd2"))
-        assert b_state.experiment_id is None
+        assert [state.original_image for state in states].count(converted_raw.resolve()) == 2
+        assert new_raw.resolve() in {state.original_image for state in states}
+        assert {state.experiment_id for state in states if state.original_image == converted_raw.resolve()} == {
+            saved0.experiment_id,
+            saved1.experiment_id,
+        }
+        b_state = next(state for state in states if state.original_image == new_raw.resolve())
+        assert b_state.workdir == run_dir

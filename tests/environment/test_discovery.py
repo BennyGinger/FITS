@@ -60,16 +60,24 @@ def test_discover_saved_states_loads_all_valid_states() -> None:
         raw = run_dir / "a.nd2"
         raw.touch()
 
-        s1 = ExperimentState.init(run_dir, raw).with_image(run_dir / "a_s1" / "fits_array.tif").commit(series_index=0)
-        s2 = ExperimentState.init(run_dir, raw).with_image(run_dir / "a_s2" / "fits_array.tif").commit(series_index=1)
+        s1 = (
+            ExperimentState.init(run_dir / "a_s1", raw)
+            .with_image(run_dir / "a_s1" / "fits_array.tif")
+            .with_completed_step("convert")
+        )
+        s2 = (
+            ExperimentState.init(run_dir / "a_s2", raw)
+            .with_image(run_dir / "a_s2" / "fits_array.tif")
+            .with_completed_step("convert")
+        )
         s1.to_json()
         s2.to_json()
 
         loaded = discover_saved_states(run_dir)
 
         assert len(loaded) == 2
-        assert {state.series_index for state in loaded} == {0, 1}
-        assert {state.original_image_rel for state in loaded} == {Path("a.nd2")}
+        assert {state.series_index for state in loaded} == {1, 2}
+        assert {state.original_image for state in loaded} == {raw.resolve()}
 
 
 def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCaptureFixture) -> None:
@@ -78,7 +86,7 @@ def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCa
         valid_raw = run_dir / "a.nd2"
         valid_raw.touch()
 
-        valid_state = ExperimentState.init(run_dir, valid_raw).with_image(run_dir / "a_s1" / "fits_array.tif")
+        valid_state = ExperimentState.init(run_dir / "a_s1", valid_raw).with_image(run_dir / "a_s1" / "fits_array.tif")
         valid_state.to_json()
 
         bad_workdir = run_dir / "broken"
@@ -89,5 +97,5 @@ def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCa
         loaded = discover_saved_states(run_dir)
 
         assert len(loaded) == 1
-        assert loaded[0].original_image_rel == Path("a.nd2")
+        assert loaded[0].original_image == valid_raw.resolve()
         assert "Failed to load experiment state" in caplog.text

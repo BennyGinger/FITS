@@ -1,0 +1,758 @@
+# FITS Pipeline — Architecture Context Summary
+
+## Overview
+
+The FITS pipeline is a modular image-processing workflow designed to process microscopy experiments. It supports two execution models:
+
+1. **Batch mode** — step-centric processing of experiment lists
+2. **Conveyor mode** — task scheduler with CPU/GPU concurrency
+
+Both modes share the same:
+
+* state model
+* task implementations
+* workflow configuration
+* artifact structure
+
+The scheduler architecture allows efficient overlap of CPU and GPU workloads and prepares the system for future **distributed or server execution**.
+
+---
+
+# High-Level Execution Flow
+
+Pipeline execution begins through:
+
+```
+start_pipeline()
+```
+
+Main responsibilities:
+
+1. Load user configuration
+2. Configure runtime context
+3. Discover input image files
+4. Assemble experiment states
+5. Resolve workflow configuration
+6. Run the workflow (batch or conveyor)
+
+---
+
+# Configuration
+
+User configuration is loaded from:
+
+```
+user_settings.toml
+```
+
+Important fields include:
+
+```
+run_dir
+user_name
+runtime.mode
+runtime.log_dir
+runtime.console_level
+runtime.file_level
+runtime.dry_run
+```
+
+Step configuration:
+
+```
+convert.enabled
+convert.params
+segment.enabled
+segment.params
+```
+
+---
+
+# Runtime Context
+
+A global runtime context is created:
+
+```
+ExecutionContext
+```
+
+Stored via `ContextVar` and accessed with:
+
+```
+get_ctx()
+```
+
+The context contains:
+
+```
+user_name
+mode (cli/gui)
+dry_run flag
+```
+
+Worker threads restore context using:
+
+```
+with use_ctx(ctx):
+```
+
+This ensures thread-safe context propagation.
+
+---
+
+# Image Discovery
+
+Input images are discovered using:
+
+```
+collect_supported_files(run_dir)
+```
+
+Supported formats include:
+
+* ND2
+* TIFF
+* others handled by fits_io
+
+---
+
+# Experiment State Model
+
+Each experiment branch is represented by an immutable dataclass:
+
+```
+ExperimentState
+```
+
+The state contains minimal durable information needed to track pipeline progress.
+
+### Fields
+
+```
+run_dir: Path
+original_image_rel: Path
+image_rel: Path | None
+masks_rel: Path | None
+completed_steps: tuple[str, ...]
+last_error: tuple[str, str] | None
+updated_at: datetime | None
+```
+
+Paths are stored **relative to run_dir**.
+
+### Derived Properties
+
+```
+original_image → absolute path to raw input
+image → absolute path to processed FITS image
+masks → absolute path to segmentation masks
+workdir → experiment directory derived from image path
+experiment_id → stable ID derived from workdir
+series_index → extracted from "_sX" suffix
+last_step → last successful pipeline step
+```
+
+### Mutating Methods
+
+State objects are immutable. Updates return new instances.
+
+```
+with_image(path)
+with_masks(path)
+with_completed_step(step_name)
+with_error(step_name, message)
+```
+
+### Persistence
+
+States are serialized as JSON:
+
+```
+workdir/experiment_state.json
+```
+
+Methods:
+
+```
+save()
+load()
+to_json()
+from_json()
+```
+
+Serialization helpers live in:
+
+```
+fits.environment.serialization
+```
+
+---
+
+# Artifact Structure
+
+All artifacts are written under:
+
+```
+run_dir
+```
+
+Each experiment branch has a unique working directory.
+
+Example:
+
+```
+run_dir/
+    sample1/
+        c3z1t1v3_s1/
+            image.fits
+            masks.fits
+            experiment_state.json
+```
+
+The `_sX` suffix identifies the ND2 series index.
+
+---
+
+# Workflow Steps
+
+The pipeline currently contains two steps:
+
+```
+convert
+segment
+```
+
+Defined in:
+
+```
+fits.workflows.tasks.convert
+fits.workflows.tasks.segment
+```
+
+Each step has two execution levels.
+
+### Task-level functions
+
+Operate on a single experiment state:
+
+```
+convert_one(state, settings)
+segment_one(state, settings)
+```
+
+Return:
+
+```
+list[ExperimentState]
+```
+
+Fan-out is allowed (e.g., ND2 multi-series).
+
+### Batch runners
+
+Operate on lists of states:
+
+```
+run_convert(settings, exp_states, ...)
+run_segment(settings, exp_states, ...)
+```
+
+Batch runners exist for batch-mode execution.
+
+---
+
+# Workflow Order
+
+Defined in:
+
+```
+WORKFLOW_ORDER
+```
+
+Example:
+
+```
+[
+    "convert",
+    "segment"
+]
+```
+
+---
+
+# Step Registry
+
+Workflow steps are registered in:
+
+```
+fits.workflows.registry
+```
+
+Each step specification includes:
+
+```
+settings model
+runner function
+task profile
+output name
+```
+
+---
+
+# Overwrite Logic
+
+Overwrite behavior cascades through steps.
+
+Functions:
+
+```
+resolve_effective_workflow_cfg()
+first_effective_overwrite_step()
+```
+
+Rules:
+
+1. If a step has `overwrite=true`
+2. All downstream steps automatically inherit overwrite
+
+Example:
+
+```
+convert.overwrite=true
+```
+
+forces:
+
+```
+segment.overwrite=true
+```
+
+---
+
+# Batch Execution Mode
+
+Batch execution runs steps sequentially.
+
+```
+run_workflow()
+```
+
+Flow:
+
+```
+for step in WORKFLOW_ORDER:
+    run step runner
+```
+
+Example:
+
+```
+run_convert(exp_states)
+run_segment(exp_states)
+```
+
+Each step processes all experiments before moving to the next step.
+
+---
+
+# Conveyor Execution Mode
+
+Conveyor mode uses a task scheduler.
+
+Entry point:
+
+```
+run_workflow_scheduler_entry()
+```
+
+Core engine:
+
+```
+run_workflow_scheduler()
+```
+
+---
+
+# Scheduler Architecture
+
+The scheduler operates on a task abstraction.
+
+```
+Task:
+    step_name
+    exp_state
+```
+
+Each task processes **one step for one experiment**.
+
+---
+
+# Task Execution
+
+Tasks call step-level functions directly:
+
+```
+convert_one(...)
+segment_one(...)
+```
+
+These return new experiment states.
+
+---
+
+# Task Fan-out
+
+Some steps can produce multiple output states.
+
+Example:
+
+```
+convert_one()
+```
+
+may produce multiple series states from an ND2 file.
+
+Scheduler handles fan-out by creating new tasks for downstream steps.
+
+---
+
+# Execution Pools
+
+Scheduler uses two thread pools.
+
+### CPU Pool
+
+Handles CPU-bound steps.
+
+Example:
+
+```
+convert
+```
+
+Worker count:
+
+```
+os.cpu_count()
+```
+
+### GPU Pool
+
+Handles GPU-bound steps.
+
+Example:
+
+```
+segment
+```
+
+Worker count:
+
+```
+1
+```
+
+This prevents multiple models from competing for GPU memory.
+
+---
+
+# Task Routing
+
+Scheduler routes tasks based on step type.
+
+Example:
+
+```
+convert → CPU pool
+segment → GPU pool
+```
+
+---
+
+# Conveyor Execution Example
+
+Instead of step batches:
+
+```
+convert exp1 exp2 exp3
+segment exp1 exp2 exp3
+```
+
+Scheduler produces:
+
+```
+convert exp1
+convert exp2
+segment exp1
+convert exp3
+segment exp2
+...
+```
+
+This allows CPU and GPU work to overlap.
+
+---
+
+# Cellpose Integration
+
+Segmentation uses Cellpose.
+
+A model cache was implemented to avoid repeated initialization.
+
+Module:
+
+```
+fits.workflows.tasks.model_cache
+```
+
+Behavior:
+
+```
+SegmentModelCache
+```
+
+Caches `CellposeWrapper` instances keyed by model settings.
+
+This ensures:
+
+* model loads once
+* GPU initialization happens once
+* inference remains thread-safe
+
+---
+
+# Logging
+
+Logging is configured globally:
+
+```
+configure_logging()
+```
+
+Supports:
+
+```
+console logging
+file logging
+GUI logging via Qt emitter
+```
+
+---
+
+# Progress Bars
+
+A custom progress library provides progress bars.
+
+Main API:
+
+```
+from progress_bar import pbar
+```
+
+Usage:
+
+```
+with pbar(total=n, desc="Convert", logs="buffered") as pb:
+    ...
+    pb.advance()
+```
+
+Log modes:
+
+```
+off
+buffered
+live
+```
+
+---
+
+# Batch Progress
+
+Batch runners manage their own progress.
+
+```
+run_convert → pbar("Convert")
+run_segment → pbar("Segment")
+```
+
+Each loop iteration advances progress.
+
+---
+
+# Conveyor Progress
+
+Scheduler owns progress.
+
+```
+with pbar(desc="Pipeline", logs="off"):
+```
+
+Progress advances when tasks complete.
+
+Total increases when fan-out schedules new tasks.
+
+---
+
+# Error Handling
+
+Errors are stored in the experiment state:
+
+```
+last_error = (step_name, error_message)
+```
+
+Successful steps append to:
+
+```
+completed_steps
+```
+
+---
+
+# Interactive / Future Features
+
+Planned future features include:
+
+```
+interactive step execution
+step inspection
+distributed task execution
+server pipeline execution
+multiple GPU workers
+```
+
+The current scheduler architecture is designed to support these.
+
+---
+
+# Key Modules
+
+```
+fits.environment.context
+fits.environment.runtime
+fits.environment.state
+fits.environment.serialization
+fits.environment.discovery
+fits.workflows.execute
+fits.workflows.scheduler
+fits.workflows.registry
+fits.workflows.tasks.convert
+fits.workflows.tasks.segment
+fits.workflows.tasks.model_cache
+```
+
+---
+
+# Design Principles
+
+Core architectural principles:
+
+### Immutable state
+
+Tasks return new `ExperimentState` objects.
+
+### Minimal durable metadata
+
+State stores only critical information.
+
+### Scheduler-driven orchestration
+
+Conveyor progress and scheduling live in the scheduler.
+
+### Task purity
+
+Step functions operate on one experiment state.
+
+### Resource isolation
+
+CPU and GPU work run in separate worker pools.
+
+---
+
+# Current Pipeline Steps
+
+```
+convert → image conversion and series extraction
+segment → cell segmentation using Cellpose
+```
+
+Additional steps may be added later using the same task abstraction.
+
+---
+
+# Current Pipeline Tree
+
+```
+.
+├── cellpose_kit
+│   ├── src
+│   │   └── cellpose_kit
+│   │       ├── backend
+│   │       └── workflow
+│   └── tests
+│       ├── backend
+│       └── workflow
+├── fits_io
+│   ├── src
+│   │   └── fits_io
+│   │       ├── metadata
+│   │       ├── readers
+│   │       └── writers
+│   └── tests
+│       ├── metadata
+│       ├── readers
+│       └── writers
+├── progress_bar
+│   ├── src
+│   │   └── progress_bar
+│   └── tests
+├── src
+│   └── fits
+│       ├── cli
+│       ├── environment
+│       ├── settings
+│       └── workflows
+│           └── tasks
+│               └── segment_utils
+└── tests
+    ├── environment
+    └── workflows
+        └── tasks
+```
+
+---
+
+# Coding style requirement
+
+Do not spread function parameters across multiple lines.
+
+Avoid:
+```
+def myfunc(
+    param1,
+    param2,
+    param3,
+):
+```
+Prefer:
+```
+def myfunc(param1, param2, param3):
+```
+Apply the same rule to function calls whenever reasonably possible.
+
+Same with the import.
+Avoids
+```
+import (
+ module1,
+ module2,
+ ...
+ )
+ ```
+ Prefer:
+ ```
+ import module1, module2, ...
+
+
+

@@ -7,7 +7,7 @@ from typing import Any
 
 def serialize_experiment_state(state: Any) -> dict[str, Any]:
     return {
-        "run_dir": str(state.run_dir),
+        "workdir": str(state.workdir),
         "original_image_rel": str(state.original_image_rel),
         "image_rel": str(state.image_rel) if state.image_rel is not None else None,
         "masks_rel": str(state.masks_rel) if state.masks_rel is not None else None,
@@ -148,7 +148,6 @@ def deserialize_experiment_state(raw: Any) -> dict[str, Any]:
     updated_at = as_optional_datetime("updated_at", raw.get("updated_at"))
 
     return {
-        "run_dir": as_path("run_dir", required("run_dir")),
         "original_image_rel": as_path("original_image_rel", required("original_image_rel")),
         "image_rel": as_optional_path("image_rel", raw.get("image_rel")),
         "masks_rel": as_optional_path("masks_rel", raw.get("masks_rel")),

@@ -34,7 +34,7 @@ def segment_one(settings: SegmentSettings, exp_state: ExperimentState, step_prof
         logger.debug("Skipping %s for %s as it is up to date.", step_profile.step_name, exp_state.original_image)
         return exp_state
     
-    # TODO: for ProcessPool execution, pass ExecutionContext explicitly (ContextVar doesn't propagate).
+    # NOTE: for ProcessPool execution, pass ExecutionContext explicitly (ContextVar doesn't propagate).
     ctx = get_ctx()
     run_dir = ctx.run_dir
 

@@ -9,7 +9,7 @@ from fits.environment.constant import FITS_FILES
 
 
 logger = logging.getLogger(__name__)
-
+# TODO: Make sure that this module will modify correctly all fits files, like array and masks.
 
 def _collect_fits_files(exp_dirs: Path | Sequence[Path], recursive: bool) -> list[Path]:
     if isinstance(exp_dirs, Path):

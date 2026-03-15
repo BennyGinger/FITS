@@ -234,11 +234,19 @@ image_rel = fits_array.tif
 original_image_rel = ../c3z1t1v3.nd2
 ```
 
+`fits_array.tif` becomes the canonical downstream image representation used by all later pipeline steps.
+
+Convert may:
+
+* export all channels
+* export a subset of channels
+* optionally apply Z-projection
+
 ---
 
 # Segment Step
 
-`segment` reads the converted array and writes masks:
+`segment` reads the converted array and writes segmentation masks:
 
 ```
 fits_mask.tif
@@ -250,6 +258,141 @@ State update:
 masks_rel = fits_mask.tif
 completed_steps += ("segment",)
 ```
+
+The mask file currently stores the segmentation output for one or more channels.
+
+Future versions will support **incremental segmentation**, where masks for different channels can be produced in separate runs and merged.
+
+---
+
+# Metadata Architecture
+
+Metadata handling is implemented in **fits_io.metadata** and is now explicitly layered.
+
+The metadata pipeline is built from three independent stages.
+
+## 1. Context Resolution
+
+```
+resolve_build_context(...)
+```
+
+This stage:
+
+* resolves effective channel labels
+* determines channel count
+* resolves axis order
+* extracts resolution and timing from the reader
+* initializes the base private payload
+
+The result is a **MetadataBuildContext** describing the output artifact.
+
+---
+
+## 2. Private Metadata Payload
+
+```
+build_private_payload(...)
+```
+
+This stage updates the pipeline metadata payload.
+
+It is responsible for:
+
+* step name generation
+* status updates
+* user tracking
+* z-projection metadata
+* provenance insertion
+* merging step metadata
+
+This metadata is stored in the private TIFF tag.
+
+---
+
+## 3. TIFF / ImageJ Metadata Assembly
+
+```
+build_tiff_metadata(...)
+```
+
+This stage assembles the final metadata models used when writing the TIFF:
+
+* channel metadata
+* stack metadata
+* resolution metadata
+* ImageJ info block
+* encoded private metadata tags
+
+The result is a `TiffMetadata` object used by the writer.
+
+---
+
+# Metadata Design Principles
+
+Two metadata categories are clearly separated.
+
+## ImageJ / Viewer Metadata
+
+Viewer-facing metadata used by ImageJ and other tools.
+
+Examples:
+
+```
+Labels
+axes
+resolution
+color mode
+LUTs
+info summary
+```
+
+These fields describe how the image should be interpreted and displayed.
+
+Channel labels are **human-readable annotations** and may change over time.
+
+---
+
+## Private Pipeline Metadata
+
+Pipeline metadata is stored in a private TIFF tag.
+
+Examples:
+
+```
+status
+user_name
+z_projection_method
+provenance steps
+```
+
+This metadata tracks pipeline state and processing history.
+
+Future structural metadata will also be stored here.
+
+---
+
+# Future Channel Identity Model
+
+Channel labels are **not stable identifiers**.
+
+Labels may change after conversion (for example when users rename channels).
+
+To maintain structural consistency across the pipeline, channel identity will be anchored to **source channel indices**.
+
+Future metadata additions:
+
+```
+source_channel_indices
+source_channel_count
+```
+
+This will allow:
+
+* partial channel export during convert
+* later reintroduction of missing channels
+* incremental segmentation per channel
+* safe merging of downstream artifacts
 
 ---
 
@@ -333,10 +476,12 @@ ExecutionContext
     execution settings
 ```
 
-Logging:
+Metadata pipeline:
 
 ```
-paths displayed relative to run_dir
+resolve_build_context
+→ build_private_payload
+→ build_tiff_metadata
 ```
 
 Filesystem layout remains the **source of truth**.
@@ -385,11 +530,12 @@ Filesystem layout remains the **source of truth**.
 
 ---
 
-# Coding style requirement
+# Coding Style Requirement
 
 Do not spread function parameters across multiple lines.
 
 Avoid:
+
 ```
 def myfunc(
     param1,
@@ -397,24 +543,30 @@ def myfunc(
     param3,
 ):
 ```
+
 Prefer:
+
 ```
 def myfunc(param1, param2, param3):
 ```
+
 Apply the same rule to function calls whenever reasonably possible.
 
-Same with the import.
-Avoids
+Same with imports.
+
+Avoid:
+
 ```
 import (
  module1,
  module2,
  ...
- )
- ```
- Prefer:
- ```
- import module1, module2, ...
+)
+```
 
+Prefer:
 
+```
+import module1, module2
+```
 

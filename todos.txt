@@ -1,0 +1,8 @@
+- Status modify integrated into pipeline
+- merge channels of different step outputs
+- add bg_sub
+- add registration
+- add tracking
+- add extraction data
+- add draw masks
+- build the gui/cli app

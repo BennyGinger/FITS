@@ -242,6 +242,36 @@ Convert may:
 * export a subset of channels
 * optionally apply Z-projection
 
+Convert is also the only step that has access to the original raw channel layout.
+Because of that, it writes structural channel identity metadata into the private TIFF payload:
+
+```
+source_channel_indices
+source_channel_count
+```
+
+Meaning:
+
+```
+source_channel_count
+    total number of channels in the original raw image
+
+source_channel_indices
+    mapping from exported FITS channel index -> original source channel index
+```
+
+Example:
+
+```id="dummy1"
+original raw channels: [0, 1, 2]
+exported FITS channels: [1, 2]
+
+source_channel_count = 3
+source_channel_indices = [1, 2]
+```
+
+These fields are the structural anchor for downstream channel-aware processing.
+
 ---
 
 # Segment Step
@@ -259,15 +289,50 @@ masks_rel = fits_mask.tif
 completed_steps += ("segment",)
 ```
 
+The segment step may run on only a subset of exported channels.
+
+Requested segmentation channels are resolved from the converted TIFF labels, but stable identity is recovered through:
+
+```
+source_channel_indices
+```
+
+stored in the input TIFF private metadata.
+
+This allows segment metadata to be keyed by **original source channel index**, not by mutable labels and not by local Cellpose subset order.
+
+Segment private metadata is step-aware and channel-aware.
+
+Target shape:
+
+```
+payload["segment"] = {
+    "dist": "...",
+    "version": "...",
+    "timestamp": "...",
+    "channels": {
+        "<source_channel_index>": {
+            ...
+        }
+    }
+}
+```
+
+This means:
+
+* step provenance remains at the step level
+* channel-specific metadata is stored under `channels`
+* repeated segment runs may replace one channel entry while preserving the others
+
 The mask file currently stores the segmentation output for one or more channels.
 
-Future versions will support **incremental segmentation**, where masks for different channels can be produced in separate runs and merged.
+Future versions will support true **mask array merging**, where existing masks are read, merged channel-wise, and re-saved without losing already valid channels.
 
 ---
 
 # Metadata Architecture
 
-Metadata handling is implemented in **fits_io.metadata** and is now explicitly layered.
+Metadata handling is implemented in **fits_io.metadata** and is explicitly layered.
 
 The metadata pipeline is built from three independent stages.
 
@@ -286,6 +351,15 @@ This stage:
 * initializes the base private payload
 
 The result is a **MetadataBuildContext** describing the output artifact.
+
+For converted TIFFs, the base payload may already include:
+
+```
+source_channel_indices
+source_channel_count
+```
+
+which are then propagated automatically by later steps unless explicitly changed.
 
 ---
 
@@ -307,6 +381,18 @@ It is responsible for:
 * merging step metadata
 
 This metadata is stored in the private TIFF tag.
+
+Important behavior:
+
+* unrelated top-level metadata is preserved
+* provenance updates preserve existing step metadata
+* step metadata can merge nested channel dictionaries under:
+
+```
+payload[step_name]["channels"]
+```
+
+This is what makes incremental channel-aware segment metadata possible.
 
 ---
 
@@ -351,6 +437,8 @@ These fields describe how the image should be interpreted and displayed.
 
 Channel labels are **human-readable annotations** and may change over time.
 
+Labels are not structural identifiers.
+
 ---
 
 ## Private Pipeline Metadata
@@ -364,35 +452,53 @@ status
 user_name
 z_projection_method
 provenance steps
+source_channel_indices
+source_channel_count
 ```
 
 This metadata tracks pipeline state and processing history.
 
-Future structural metadata will also be stored here.
+For channel-aware steps such as `segment`, private metadata may also contain:
+
+```
+payload[step_name]["channels"]
+```
+
+keyed by original source channel index.
 
 ---
 
-# Future Channel Identity Model
+# Channel Identity Model
 
 Channel labels are **not stable identifiers**.
 
 Labels may change after conversion (for example when users rename channels).
 
-To maintain structural consistency across the pipeline, channel identity will be anchored to **source channel indices**.
+To maintain structural consistency across the pipeline, channel identity is anchored to **source channel indices**.
 
-Future metadata additions:
+Current structural fields:
 
 ```
 source_channel_indices
 source_channel_count
 ```
 
-This will allow:
+This allows:
 
 * partial channel export during convert
 * later reintroduction of missing channels
-* incremental segmentation per channel
-* safe merging of downstream artifacts
+* channel-aware downstream processing
+* safe mapping from exported TIFF channels back to original raw channels
+
+For segment specifically, this enables metadata keyed by original source channel index rather than by label.
+
+Future mask-specific metadata may also introduce:
+
+```
+segmented_source_channel_indices
+```
+
+or equivalent channel-aware mask tracking structures.
 
 ---
 
@@ -434,6 +540,10 @@ Steps are skipped when already completed:
 ```
 state.completed_steps
 ```
+
+Note:
+for channel-aware steps such as future incremental `segment`, step-level completion alone may become too coarse.
+Channel coverage metadata may also need to be inspected.
 
 ---
 
@@ -482,6 +592,13 @@ Metadata pipeline:
 resolve_build_context
 → build_private_payload
 → build_tiff_metadata
+```
+
+Structural channel identity:
+
+```
+source_channel_indices
+source_channel_count
 ```
 
 Filesystem layout remains the **source of truth**.
@@ -569,4 +686,3 @@ Prefer:
 ```
 import module1, module2
 ```
-

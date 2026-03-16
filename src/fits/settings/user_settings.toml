@@ -11,7 +11,7 @@ run_dir = "/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run3_test" # 
 # ============================
 [runtime]
 mode = "cli" # Execution mode: cli | gui | notebook
-execution = "batch" # Type of execution: batch | conveyor.
+execution = "conveyor" # Type of execution: batch | conveyor.
 dry_run = false # If true, it will not write any output files, but will still perform all computations and print logs.
 log_dir = "/media/ben/Analysis/Python/Docker_mount/Test_images/nd2/Run3_test" # where to save log files, if not specified, log file will not be created
 console_level = "info" # Console log level: debug | info | warning | error | critical

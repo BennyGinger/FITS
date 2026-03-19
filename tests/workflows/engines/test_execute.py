@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
-import pytest
 
 from fits.environment.state import ExperimentState
-from fits.workflows.execute import run_workflow
+from fits.workflows.engines.execute import (
+    first_effective_overwrite_step,
+    resolve_effective_workflow_cfg,
+    run_workflow,
+)
 
 
 @dataclass
@@ -38,14 +41,13 @@ def _state() -> ExperimentState:
 
 
 def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
-    # Patch workflow order to have two steps
-    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert", "other"])  # adjust module path
+    monkeypatch.setattr("fits.workflows.engines.execute.WORKFLOW_ORDER", ["convert", "other"])
 
     convert = DummyStepSpec("convert")
     other = DummyStepSpec("other")
 
     monkeypatch.setattr(
-        "fits.workflows.execute.REGISTRY",
+        "fits.workflows.engines.execute.REGISTRY",
         {"convert": convert, "other": other},
     )
 
@@ -77,9 +79,9 @@ def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
 
 
 def test_run_workflow_skips_disabled_step(monkeypatch) -> None:
-    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fits.workflows.engines.execute.WORKFLOW_ORDER", ["convert"])
     convert = DummyStepSpec("convert")
-    monkeypatch.setattr("fits.workflows.execute.REGISTRY", {"convert": convert})
+    monkeypatch.setattr("fits.workflows.engines.execute.REGISTRY", {"convert": convert})
 
     states = [_state()]
     user_cfg = {"convert": {"enabled": False, "params": {"value": 1}}}
@@ -92,8 +94,8 @@ def test_run_workflow_skips_disabled_step(monkeypatch) -> None:
 
 
 def test_run_workflow_skips_missing_step_in_registry(monkeypatch) -> None:
-    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert"])
-    monkeypatch.setattr("fits.workflows.execute.REGISTRY", {})  # missing
+    monkeypatch.setattr("fits.workflows.engines.execute.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fits.workflows.engines.execute.REGISTRY", {})
 
     states = [_state()]
     user_cfg = {"convert": {"enabled": True, "params": {"value": 1}}}
@@ -103,16 +105,40 @@ def test_run_workflow_skips_missing_step_in_registry(monkeypatch) -> None:
 
 
 def test_run_workflow_default_user_cfg_when_step_missing(monkeypatch) -> None:
-    # If user_cfg has no key, it uses default (False, {}) and skips
-    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fits.workflows.engines.execute.WORKFLOW_ORDER", ["convert"])
     convert = DummyStepSpec("convert")
-    monkeypatch.setattr("fits.workflows.execute.REGISTRY", {"convert": convert})
+    monkeypatch.setattr("fits.workflows.engines.execute.REGISTRY", {"convert": convert})
 
     states = [_state()]
-    user_cfg = {}  # no entry
+    user_cfg = {}
 
     out = run_workflow(user_cfg, states)
 
     assert out == states
     assert convert.validate_calls == []
     assert convert.runner_calls == []
+
+
+def test_resolve_effective_workflow_cfg_cascades_overwrite() -> None:
+    resolved = resolve_effective_workflow_cfg(
+        {
+            "convert": {"enabled": True, "params": {"overwrite": True}},
+            "segment": {"enabled": True, "params": {}},
+        },
+        ["convert", "segment"],
+    )
+
+    assert resolved["convert"]["params"]["overwrite"] is True
+    assert resolved["segment"]["params"]["overwrite"] is True
+
+
+def test_first_effective_overwrite_step_returns_first_enabled_overwrite() -> None:
+    step = first_effective_overwrite_step(
+        {
+            "convert": {"enabled": False, "params": {"overwrite": True}},
+            "segment": {"enabled": True, "params": {"overwrite": True}},
+        },
+        ["convert", "segment"],
+    )
+
+    assert step == "segment"

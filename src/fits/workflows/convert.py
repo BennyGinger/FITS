@@ -6,11 +6,10 @@ from progress_bar import pbar
 from fits.environment.state import ExperimentState
 from fits.environment.runtime import get_ctx, use_ctx
 from fits.environment.constant import ExecMode, FitsName, STEP_CONVERT
-from fits.workflows.executors import execute
-from fits.workflows.provenance import StepProfile
+from fits.workflows.engines.executors import execute
+from fits.workflows.engines.provenance import StepProfile, provenance_payload
 from fits.settings.models import ConvertSettings
-from fits.workflows.tasks.utils import build_fits_payload, should_skip_step
-
+from fits.workflows.engines.run_decision import decide_run
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,9 @@ def convert_one(settings: ConvertSettings, exp_state: ExperimentState, step_prof
         List of output experiment states. Single-series returns one state,
         multi-series returns multiple states (one per series).
     """
-    if should_skip_step(exp_state, step_profile.step_name, settings.overwrite):
+    run = decide_run(exp_state, step_profile.step_name, settings.overwrite)
+    
+    if run.is_complete:
         logger.debug("Skipping %s for %s as it is up to date.", step_profile.step_name, exp_state.original_image)
         return [exp_state]
 
@@ -37,7 +38,7 @@ def convert_one(settings: ConvertSettings, exp_state: ExperimentState, step_prof
     ctx = get_ctx()
     
     # Prepare payload
-    payload = build_fits_payload(step_profile, **settings.model_dump(), user_name=ctx.user_name, output_name=output_name,)
+    payload = provenance_payload(step_profile, **settings.model_dump(), user_name=ctx.user_name, output_name=output_name,)
     channel_labels = payload.get("channel_labels", None)
     
     logger.debug("%s will be executed with parameters: %s", step_profile.step_name, payload)
@@ -61,11 +62,11 @@ def convert_one(settings: ConvertSettings, exp_state: ExperimentState, step_prof
             out_st.save()
 
         return out_states
-    except Exception as exc:
+    except Exception as e:
         logger.exception("%s failed for %s", step_profile.step_name, exp_state.original_image)
+        print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.original_image}: {e}")
         failed_state = ExperimentState.init(workdir=exp_state.workdir, original_image=exp_state.original_image)
-        failed_state = failed_state.with_error(STEP_CONVERT, str(exc))
-        return [failed_state]
+        return [failed_state.with_error(STEP_CONVERT, str(e))]
 
 
 def run_convert(settings: ConvertSettings, exp_state: list[ExperimentState], step_profile: StepProfile, output_name: FitsName) -> list[ExperimentState]:

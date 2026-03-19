@@ -133,6 +133,7 @@ def configure_logging(*, log_dir: Path | None, mode: UIMode = "cli", console_lev
     # Reduce verbosity of noisy third-party loggers by default
     _quiet_logger("cellpose")
     _quiet_logger("fits_io.readers.r_nd2", logging.ERROR)
+    _quiet_logger("numba")
 
 
 def _quiet_logger(name: str, level: int = logging.WARNING) -> None:

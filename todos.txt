@@ -1,5 +1,4 @@
 - Status modify integrated into pipeline
-- merge channels of different step outputs
 - add bg_sub
 - add registration
 - add tracking

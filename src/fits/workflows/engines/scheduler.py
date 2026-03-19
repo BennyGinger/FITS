@@ -10,9 +10,9 @@ from progress_bar import pbar
 from fits.environment.constant import STEP_CONVERT, STEP_SEGMENT
 from fits.environment.runtime import get_ctx, use_ctx
 from fits.environment.state import ExperimentState
-from fits.workflows.registry import REGISTRY, StepSpec
-from fits.workflows.tasks.convert import convert_one
-from fits.workflows.tasks.segment import segment_one
+from fits.workflows.engines.registry import REGISTRY, StepSpec
+from fits.workflows.convert import convert_one
+from fits.workflows.segment import segment_one
 
 
 logger = logging.getLogger(__name__)

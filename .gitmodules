@@ -10,3 +10,6 @@
 	path = progress_bar
 	url = https://github.com/BennyGinger/Progress_bar.git
 	branch = fits
+[submodule "tracklink"]
+	path = tracklink
+	url = https://github.com/BennyGinger/tracklink.git

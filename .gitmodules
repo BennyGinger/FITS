@@ -13,3 +13,6 @@
 [submodule "tracklink"]
 	path = tracklink
 	url = https://github.com/BennyGinger/tracklink.git
+[submodule "bg_sub"]
+	path = bg_sub
+	url = https://github.com/BennyGinger/bg_sub.git

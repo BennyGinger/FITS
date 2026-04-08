@@ -2,18 +2,13 @@ import copy
 from typing import Any, Mapping, Sequence
 import logging
 
-from fits.environment.constant import STEP_CONVERT, STEP_SEGMENT
+from fits.environment.constant import WORKFLOW_ORDER
 from fits.environment.state import ExperimentState
 from fits.workflows.engines.registry import REGISTRY
 from fits.workflows.engines.scheduler import run_workflow_scheduler
 
 
 logger = logging.getLogger(__name__)
-
-WORKFLOW_ORDER = [
-    STEP_CONVERT,
-    STEP_SEGMENT,
-]
 
 
 def resolve_effective_workflow_cfg(user_cfg: Mapping[str, Any], workflow_order: Sequence[str]) -> dict[str, Any]:
@@ -75,7 +70,7 @@ def run_workflow(user_cfg: Mapping[str, Any], exp_states: list[ExperimentState])
         settings = step_spec.model_validate(params)
         logger.debug(f"Running step '{step_name}' with settings: {settings}")
 
-        exp_states = step_spec.runner(settings, exp_states, step_spec.step_profile, step_spec.output_name)
+        exp_states = step_spec.batch_runner(settings, exp_states, step_spec.step_profile, step_spec.output_name)
     
     return exp_states
 

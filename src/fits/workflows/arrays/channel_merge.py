@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
+from fits.workflows.arrays.validations import validate_axes_rank, validate_channel_count, validate_no_duplicate_axes
+
 T = TypeVar('T', bound=np.generic)
 
 
@@ -42,7 +44,7 @@ def merge_channel_arrays(existing_array: NDArray[T] | None, existing_axes: str |
     if not new_source:
         raise ValueError("new_source_indices must not be empty.")
 
-    _validate_channel_count(new_norm, new_axes_norm, new_source)
+    validate_channel_count(new_norm, new_axes_norm, new_source)
 
     # No existing array: sort channels and return directly.
     if existing_array is None:
@@ -52,22 +54,22 @@ def merge_channel_arrays(existing_array: NDArray[T] | None, existing_axes: str |
             pos_map = {si: i for i, si in enumerate(new_source)}
             perm_idx = [pos_map[si] for si in merged_source]
             new_norm = np.take(new_norm, perm_idx, axis=c_ax)
-        _validate_array_axes(new_norm, new_axes_norm, label="Merged")
+        validate_axes_rank(new_norm, new_axes_norm, label="Merged")
         return new_norm, new_axes_norm, merged_source
 
     # Validate existing inputs.
     if existing_axes is None or existing_source_indices is None:
         raise ValueError("existing_axes and existing_source_indices must both be provided when existing_array is not None.")
-    _validate_axes(existing_axes)
+    validate_no_duplicate_axes(existing_axes)
     existing_source = list(existing_source_indices)
 
     existing_norm, existing_axes_norm = _ensure_channel_axis(existing_array, existing_axes, reference_axes)
-    _validate_channel_count(existing_norm, existing_axes_norm, existing_source)
+    validate_channel_count(existing_norm, existing_axes_norm, existing_source)
     _validate_merge_compatibility(existing_norm, existing_axes_norm, new_norm, new_axes_norm, new_axes_norm, reference_axes)
 
     merged_source = _merged_channel_indices(existing_source, new_source)
     merged_array = _assemble_channel_stack(existing_norm, new_norm, existing_source, new_source, merged_source, new_axes_norm)
-    _validate_array_axes(merged_array, new_axes_norm, label="Merged")
+    validate_axes_rank(merged_array, new_axes_norm, label="Merged")
     return merged_array, new_axes_norm, merged_source
 
 
@@ -82,21 +84,6 @@ def _merged_channel_indices(existing: Sequence[int], new: Sequence[int]) -> list
     """
     return sorted(set(existing) | set(new))
 
-
-def _validate_channel_count(array: NDArray[Any], axes: str, source_indices: Sequence[int]) -> None:
-    """
-    Validate that the number of channels in the array matches the provided
-    source channel indices.
-
-    If a 'C' axis exists, its size must equal len(source_indices).
-    If no 'C' axis exists, exactly one source index must be provided.
-    """
-    if 'C' in axes:
-        c_ax = _channel_axis_index(axes)
-        if array.shape[c_ax] != len(source_indices):
-            raise ValueError(f"Array has {array.shape[c_ax]} channel(s) but {len(source_indices)} source channel indices were provided.")
-    elif len(source_indices) != 1:
-        raise ValueError(f"Array has no C axis but {len(source_indices)} source channel indices were provided (expected 1).")
 
 
 def _assemble_channel_stack(existing: NDArray[T], new: NDArray[T], existing_source: Sequence[int], new_source: Sequence[int], merged_source: Sequence[int], axes: str) -> NDArray[T]:
@@ -114,21 +101,6 @@ def _assemble_channel_stack(existing: NDArray[T], new: NDArray[T], existing_sour
             parts.append(np.take(existing, [existing_map[si]], axis=c_ax))
     return np.concatenate(parts, axis=c_ax)
 
-
-def _validate_axes(axes: str) -> None:
-    """
-    Raise ValueError if *axes* contains duplicate dimension characters.
-    """
-    if len(set(axes)) != len(axes):
-        raise ValueError(f"Axes string contains duplicate dimensions: {axes!r}")
-
-
-def _validate_array_axes(array: NDArray[Any], axes: str, *, label: str) -> None:
-    """
-    Raise ValueError if the length of *axes* does not match the number of dimensions in *array*.
-    """
-    if len(axes) != array.ndim:
-        raise ValueError(f"{label} axes {axes!r} do not match array shape {array.shape}.")
 
 
 def _channel_axis_index(axes: str) -> int:
@@ -188,15 +160,15 @@ def _ensure_channel_axis(array: NDArray[T], array_axes: str, reference_axes: str
     Returns:
         Tuple of (normalized_array, normalized_axes).
     """
-    _validate_axes(array_axes)
-    _validate_axes(reference_axes)
-    _validate_array_axes(array, array_axes, label="Input")
+    validate_no_duplicate_axes(array_axes)
+    validate_no_duplicate_axes(reference_axes)
+    validate_axes_rank(array, array_axes, label="Input")
     if 'C' not in reference_axes or 'C' in array_axes:
         return array, array_axes
     pos = _c_insertion_position(array_axes, reference_axes)
     expanded = np.expand_dims(array, axis=pos)
     expanded_axes = array_axes[:pos] + 'C' + array_axes[pos:]
-    _validate_array_axes(expanded, expanded_axes, label="Expanded")
+    validate_axes_rank(expanded, expanded_axes, label="Expanded")
     return expanded, expanded_axes
 
 

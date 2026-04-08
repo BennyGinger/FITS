@@ -9,7 +9,7 @@ import numpy as np
 from fits.environment.runtime import get_ctx
 from fits.environment.state import ExperimentState
 from fits.settings.models import SegmentSettings
-from fits.workflows.channels.mask_output import ProcessMaskOutput
+from fits.workflows.arrays.mask_output import ProcessMaskOutput
 from fits.workflows.engines.provenance import StepProfile
 from fits.workflows.engines.run_decision import RunDecision
 from fits.workflows.segment import run_segment, segment_one

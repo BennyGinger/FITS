@@ -8,8 +8,8 @@ from fits.environment.runtime import get_ctx, use_ctx
 from fits.environment.constant import ExecMode, FitsName, STEP_CONVERT
 from fits.workflows.engines.executors import execute
 from fits.workflows.engines.provenance import StepProfile, provenance_payload
-from fits.settings.models import ConvertSettings
 from fits.workflows.engines.run_decision import decide_run
+from fits.settings.models import ConvertSettings
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def run_convert(settings: ConvertSettings, exp_state: list[ExperimentState], ste
             return convert_one(settings, st, step_profile, output_name)
     
     out: list[ExperimentState] = []
-    with pbar(total=len(exp_state), desc="Convert", logs="buffered") as pb:
+    with pbar(total=len(exp_state), desc=step_profile.step_name.capitalize(), logs="buffered") as pb:
         for produced_states in execute(exp_state, worker, mode=exec_mode, workers=workers, ordered=ordered):
             out.extend(produced_states)
             pb.advance()

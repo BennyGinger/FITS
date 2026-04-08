@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fits.workflows.channels.channel_merge import _ensure_channel_axis, merge_channel_arrays
+from fits.workflows.arrays.channel_merge import _ensure_channel_axis, merge_channel_arrays
 
 
 # ── ensure_channel_axis ────────────────────────────────────────────────────────

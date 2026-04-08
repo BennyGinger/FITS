@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from fits.workflows.channels.metadata import build_channel_metadata, labels_to_src_indices, src_indices_to_labels
+from fits.workflows.arrays.metadata import build_channel_metadata, labels_to_src_indices, src_indices_to_labels
 
 
 class DummyReader:

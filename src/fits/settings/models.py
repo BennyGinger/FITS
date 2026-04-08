@@ -1,16 +1,21 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeVar
 
+import numpy as np
+from numpy.typing import NDArray
 from fits_io.readers._types import Zproj
-from pydantic import BaseModel, computed_field, field_validator, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-from fits.environment.constant import ExecMode
+from fits.environment.constant import ExecMode, STATISTIC_MAP, SUPPORTED_STATISTICS
+
 
 
 class SettingsModel(BaseModel):
     """
     Pydantic base model for settings classes in the FITS pipeline.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     overwrite: bool = Field(default=False, exclude=True)
 
@@ -65,6 +70,54 @@ class ConvertSettings(SettingsModel):
         if isinstance(v, str) and v.lower() == 'none':
             return None
         return v    
+
+
+class BGSubSettings(SettingsModel):
+    """
+    Settings for the background subtraction process in the FITS pipeline.
+    
+    Attributes:
+        sigma: The standard deviation for Gaussian kernel used in background estimation. Default is 0.0, which means no smoothing.
+        size: The size of the neighborhood used for background estimation. Default is 3.
+        threshold: The threshold value for background subtraction. Default is 0.05.
+        statistic: The statistic function to use for background estimation. Default is np.median.
+        execution: Execution mode for the convert step: serial | thread | process. By default, it will use thread-based execution for this step.
+        workers: Number of worker threads or processes to use for the convert step. This is only applicable if the execution mode is set to thread or process. If set to "None", it will use the default number of workers (which is typically the number of CPU plus four).
+        ordered_execution: Whether to preserve the order of the input files in the output files when using parallel execution. If true, it will ensure that the output files are saved in the same order as the input files. If false, it may save output files in a different order than the input files, which can be faster but may not be desirable in some cases.
+        overwrite: Whether to overwrite existing files during background subtraction coming from SettingsModel.
+    """
+    sigma: float = 0.0
+    size: int = 3
+    threshold: float = 0.05
+    statistic: Callable[..., NDArray[Any]] = np.median
+    
+    # Execution mode
+    execution: ExecMode = Field(default="thread", exclude=True)
+    workers: int | None = Field(default=None, exclude=True)
+    ordered_execution: bool = Field(default=False, exclude=True)
+
+    @field_validator('mask', mode='before', check_fields=False)
+    @classmethod
+    def parse_mask(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and v.lower() == 'none':
+            return None
+        if isinstance(v, np.ndarray):
+            return v.astype(bool, copy=False)
+        return np.asarray(v, dtype=bool)
+
+    @field_validator('statistic', mode='before')
+    @classmethod
+    def parse_statistic(cls, v):
+        if isinstance(v, str):
+            key = v.strip().lower()
+            if key in STATISTIC_MAP:
+                return STATISTIC_MAP[key]
+            raise ValueError(f"Unsupported statistic '{v}'. Supported values: {SUPPORTED_STATISTICS}.")
+        if callable(v):
+            return v
+        raise TypeError(f"statistic must be a callable or one of: {SUPPORTED_STATISTICS}, got {type(v).__name__}.")
 
 
 class SegmentSettings(SettingsModel):

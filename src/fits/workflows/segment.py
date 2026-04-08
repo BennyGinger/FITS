@@ -6,23 +6,23 @@ from typing import cast
 from fits_io.client import FitsIO
 from progress_bar import pbar
 
-from fits.environment.constant import ExecMode, FitsName, STEP_SEGMENT
+import fits.environment.constant as cst
 from fits.environment.runtime import get_ctx, use_ctx
 from fits.environment.state import ExperimentState
 from fits.settings.models import SegmentSettings
 from fits.workflows.engines.executors import execute
 from fits.workflows.engines.provenance import StepProfile, provenance_payload
-from fits.workflows.channels.metadata import build_channel_metadata, labels_to_src_indices, src_indices_to_labels
 from fits.workflows.engines.model_cache import segment_model_cache
-from fits.workflows.channels.mask_output import merge_step_metadata, prepare_mask_output
-from fits.workflows.channels.loading import get_array
 from fits.workflows.engines.run_decision import decide_run
+from fits.workflows.arrays.metadata import build_channel_metadata, labels_to_src_indices, src_indices_to_labels
+from fits.workflows.arrays.mask_output import merge_step_metadata, prepare_mask_output
+from fits.workflows.arrays.loading import get_array
 
 
 logger = logging.getLogger(__name__)
 
 
-def segment_one(settings: SegmentSettings, exp_state: ExperimentState, step_profile: StepProfile, output_name: FitsName) -> ExperimentState:
+def segment_one(settings: SegmentSettings, exp_state: ExperimentState, step_profile: StepProfile, output_name: cst.FitsName) -> ExperimentState:
     """
     Process a single experiment through the segment step.
 
@@ -36,7 +36,7 @@ def segment_one(settings: SegmentSettings, exp_state: ExperimentState, step_prof
         Single output experiment state.
     """
     if exp_state.image is None:
-        failed_state = exp_state.with_error(STEP_SEGMENT, f"ExperimentState for {exp_state.original_image} has no image set; cannot run {step_profile.step_name}.",)
+        failed_state = exp_state.with_error(cst.STEP_SEGMENT, f"ExperimentState for {exp_state.original_image} has no image set; cannot run {step_profile.step_name}.",)
         logger.error("%s failed for %s: missing image input", step_profile.step_name, exp_state.original_image)
         return failed_state
 
@@ -94,7 +94,7 @@ def segment_one(settings: SegmentSettings, exp_state: ExperimentState, step_prof
 
         # Update experiment state
         new_st = exp_state.with_masks(save_path)
-        new_st = new_st.with_completed_step(STEP_SEGMENT)
+        new_st = new_st.with_completed_step(cst.STEP_SEGMENT)
         logger.debug("Produced new ExperimentState: %s", new_st)
         new_st.save()
         return new_st
@@ -102,10 +102,10 @@ def segment_one(settings: SegmentSettings, exp_state: ExperimentState, step_prof
     except Exception as e:
         logger.exception("%s failed for %s", step_profile.step_name, exp_state.workdir)
         print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.workdir}: {e}")
-        return exp_state.with_error(STEP_SEGMENT, str(e))
+        return exp_state.with_error(cst.STEP_SEGMENT, str(e))
 
 
-def run_segment(settings: SegmentSettings, exp_state: list[ExperimentState], step_profile: StepProfile, output_name: FitsName) -> list[ExperimentState]:
+def run_segment(settings: SegmentSettings, exp_state: list[ExperimentState], step_profile: StepProfile, output_name: cst.FitsName) -> list[ExperimentState]:
     """
     Batch runner for segment step. Maps segment_one across experiments.
 
@@ -120,7 +120,7 @@ def run_segment(settings: SegmentSettings, exp_state: list[ExperimentState], ste
     """
     ctx = get_ctx()
 
-    exec_mode: ExecMode = settings.execution
+    exec_mode: cst.ExecMode = settings.execution
     workers: int | None = settings.workers
     ordered: bool = settings.ordered_execution
     logger.debug(f"Executing {step_profile.step_name} with mode: {exec_mode} and workers: {workers} in ordered mode: {ordered}")
@@ -130,7 +130,7 @@ def run_segment(settings: SegmentSettings, exp_state: list[ExperimentState], ste
             return [segment_one(settings, st, step_profile, output_name)]
 
     out: list[ExperimentState] = []
-    with pbar(total=len(exp_state), desc="Segment", logs="buffered") as pb:
+    with pbar(total=len(exp_state), desc=step_profile.step_name.capitalize(), logs="buffered") as pb:
         for produced_states in execute(exp_state, worker, mode=exec_mode, workers=workers, ordered=ordered):
             out.extend(produced_states)
             pb.advance()

@@ -8,8 +8,9 @@ from fits_io.client import FitsIO
 from numpy.typing import NDArray
 import numpy as np
 
-from fits.workflows.channels.channel_merge import merge_channel_arrays
-from fits.workflows.channels.metadata import src_indices_to_labels
+from fits.workflows.arrays.channel_merge import merge_channel_arrays
+from fits.workflows.arrays.metadata import src_indices_to_labels
+from fits.workflows.arrays.validations import validate_mask_output
 
 
 T = TypeVar("T", bound=np.generic)
@@ -74,7 +75,7 @@ def prepare_mask_output(image_reader: FitsIO, mask_path: Path, new_masks_array: 
     existing = _load_existing_masks(mask_path)
     merged_array, merged_axes, merged_mask_source_indices = _merge_or_initialize_masks(existing, new_masks_array, new_axes, new_mask_source_indices, image_reader.axes[0])
     merged_channel_labels = src_indices_to_labels(image_reader, merged_mask_source_indices)
-    _validate_mask_output(merged_array, merged_axes, merged_channel_labels)
+    validate_mask_output(merged_array, merged_axes, merged_channel_labels)
     # fits_io drops 'C' from ImageJ axes when n_channels==1; squeeze the singleton C axis to match.
     c_ax = merged_axes.find('C')
     if c_ax != -1 and merged_array.shape[c_ax] == 1:
@@ -109,12 +110,4 @@ def _merge_or_initialize_masks(existing: ExistingMaskData | None, new_masks_arra
 
 def _build_mask_structural_metadata(mask_source_channel_indices: list[int]) -> dict[str, Any]:
     return {"mask_source_channel_indices": list(mask_source_channel_indices)}
-
-
-def _validate_mask_output(array: Any, axes: str, channel_labels: list[str]) -> None:
-    if len(axes) != array.ndim:
-        raise ValueError(f"Merged mask output is inconsistent: axes={axes!r}, shape={array.shape}")
-    c_ax = axes.find('C')
-    if c_ax != -1 and array.shape[c_ax] != len(channel_labels):
-        raise ValueError(f"Merged mask labels do not match channel axis: axes={axes!r}, shape={array.shape}, labels={channel_labels}")
 

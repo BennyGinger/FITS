@@ -30,7 +30,7 @@ class DummyStepSpec:
         self.validate_calls.append(params)
         return DummySettings(value=params.get("value", 0))
 
-    def runner(self, settings: DummySettings, exp_states: list[ExperimentState], step_profile: Any, output_name: str):
+    def batch_runner(self, settings: DummySettings, exp_states: list[ExperimentState], step_profile: Any, output_name: str):
         self.runner_calls.append((settings, exp_states, step_profile, output_name))
         return [st.with_completed_step(step_profile.step_name) for st in exp_states]
 

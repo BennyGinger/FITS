@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fits.workflows.channels.loading import get_array
+from fits.workflows.arrays.loading import get_array
 
 
 class DummyReader:
@@ -37,6 +37,36 @@ def test_get_array_returns_full_array_when_all_channels_requested() -> None:
     assert reader.requested_channels == []
 
 
+def test_get_array_returns_full_array_when_requested_channels_is_default() -> None:
+    reader = DummyReader(
+        channel_labels=['GFP', 'RFP'],
+        axes='CYX',
+        array=np.ones((2, 4, 4), dtype=np.uint16),
+        subset_array=np.ones((4, 4), dtype=np.uint16),
+    )
+
+    array, axes = get_array(reader)
+
+    assert axes == 'CYX'
+    assert array.shape == (2, 4, 4)
+    assert reader.requested_channels == []
+
+
+def test_get_array_returns_full_array_when_requested_channels_is_all_sequence() -> None:
+    reader = DummyReader(
+        channel_labels=['GFP', 'RFP'],
+        axes='CYX',
+        array=np.ones((2, 4, 4), dtype=np.uint16),
+        subset_array=np.ones((4, 4), dtype=np.uint16),
+    )
+
+    array, axes = get_array(reader, ['all'])
+
+    assert axes == 'CYX'
+    assert array.shape == (2, 4, 4)
+    assert reader.requested_channels == []
+
+
 def test_get_array_drops_c_axis_for_single_subset_channel() -> None:
     reader = DummyReader(
         channel_labels=['GFP', 'RFP'],
@@ -57,6 +87,15 @@ def test_get_array_requires_channel_labels() -> None:
 
     with pytest.raises(ValueError, match='channel labels'):
         get_array(reader, ['GFP'])
+
+
+def test_get_array_with_all_sequence_does_not_require_channel_labels() -> None:
+    reader = DummyReader(channel_labels=None, axes='CYX', array=np.ones((2, 4, 4)), subset_array=np.ones((4, 4)))
+
+    array, axes = get_array(reader, ['all'])
+
+    assert axes == 'CYX'
+    assert array.shape == (2, 4, 4)
 
 
 def test_get_array_rejects_multi_series_results() -> None:

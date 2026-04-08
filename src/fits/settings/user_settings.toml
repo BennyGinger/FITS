@@ -40,6 +40,19 @@ Experimenter = "Smith (TDK)"
 Date = "2024-06-15"
 Note = "Cells were stimulated at ..."
 
+# ============================
+# Background Substraction step
+# ============================
+[bg_sub]
+enabled = true
+
+[bg_sub.params]
+sigma = 2.0 # The standard deviation for Gaussian kernel used in background estimation. Default is 0.0, which means no smoothing.
+size = 3 # The size of the neighborhood used for background estimation. Default is 3.
+threshold = 0.05 # The threshold value for background subtraction. Default is 0.05.
+statistic = "median" # The statistic function to use for background estimation. Supported values are: mean or median. Default is median.
+overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
+
 
 # ============================
 # Segment step

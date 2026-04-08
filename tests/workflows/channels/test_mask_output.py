@@ -5,10 +5,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fits.workflows.channels.mask_output import merge_step_metadata, prepare_mask_output
+from fits.workflows.arrays.mask_output import merge_step_metadata, prepare_mask_output
 
 
-class DummyReader:
+class DummyReader():
     def __init__(self, *, channel_labels=None, fits_metadata=None, axes='CYX', array=None) -> None:
         self.channel_labels = channel_labels
         self.fits_metadata = fits_metadata or {}
@@ -46,7 +46,7 @@ def test_merge_step_metadata_preserves_existing_channels(monkeypatch, tmp_path: 
     mask_path.write_bytes(b'')
     existing = DummyReader(fits_metadata={'segment': {'channels': {'1': {'model': 'old'}}, 'legacy': 'keep-me'}})
 
-    monkeypatch.setattr('fits.workflows.channels.mask_output.FitsIO.from_path', lambda path: existing)
+    monkeypatch.setattr('fits.workflows.arrays.mask_output.FitsIO.from_path', lambda path: existing)
 
     merged = merge_step_metadata(
         mask_path,
@@ -68,7 +68,7 @@ def test_prepare_mask_output_requires_existing_mask_source_indices(monkeypatch, 
     image_reader = DummyReader(channel_labels=['GFP'], fits_metadata={'source_channel_indices': [1]})
     existing = DummyReader(fits_metadata={})
 
-    monkeypatch.setattr('fits.workflows.channels.mask_output.FitsIO.from_path', lambda path: existing)
+    monkeypatch.setattr('fits.workflows.arrays.mask_output.FitsIO.from_path', lambda path: existing)
 
     with pytest.raises(ValueError, match='mask_source_channel_indices'):
         prepare_mask_output(image_reader, mask_path, np.ones((4, 4), dtype=np.uint16), 'YX', [1])

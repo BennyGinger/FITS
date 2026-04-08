@@ -16,6 +16,7 @@ def test_registry_settings_model_validates() -> None:
     out = spec.model_validate({"overwrite": True})  # minimal valid payload for ConvertSettings
     assert out.overwrite is True
 
-def test_registry_runner_is_callable() -> None:
+def test_registry_runners_are_callable() -> None:
     for spec in REGISTRY.values():
-        assert callable(spec.runner)
+        assert callable(spec.batch_runner)
+        assert callable(spec.item_runner)

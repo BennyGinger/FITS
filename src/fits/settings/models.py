@@ -119,6 +119,13 @@ class BGSubSettings(SettingsModel):
             return v
         raise TypeError(f"statistic must be a callable or one of: {SUPPORTED_STATISTICS}, got {type(v).__name__}.")
 
+    def serialize_statistic_name(self) -> str:
+        """Return a JSON-safe statistic name for metadata serialization."""
+        name = getattr(self.statistic, "__name__", None)
+        if isinstance(name, str) and name:
+            return name
+        return str(self.statistic)
+
 
 class SegmentSettings(SettingsModel):
     """

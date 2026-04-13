@@ -1,14 +1,14 @@
-from collections.abc import Mapping, Sequence
-from typing import Any
+from collections.abc import Sequence
 
 from fits_io.client import FitsIO
+from fits.workflows.metadata.loading import load_source_channel_indices_from_reader
 
 
 # ------ Public API -------
 
 def labels_to_src_indices(reader: FitsIO, chan_seg: Sequence[str]) -> list[int]:
     """
-    Resolve the source channel indices corresponding to the requested process of channel labels. The source channel indices are needed to identify which channels in the input TIFF should be used as sources for the given task.
+    Resolve source channel indices for requested channel labels.
     """
     exported_labels, src_chan_idxs = _get_channel_identity(reader)
 
@@ -21,16 +21,9 @@ def labels_to_src_indices(reader: FitsIO, chan_seg: Sequence[str]) -> list[int]:
     return out_src_chan_idxs
 
 
-def build_channel_metadata(source_channel_indices: Sequence[int], step_meta: Mapping[str, Any]) -> dict[str, Any]:
-    channels: dict[str, dict[str, Any]] = {}
-    for source_channel_index in source_channel_indices:
-        channels[str(source_channel_index)] = dict(step_meta)
-    return {"channels": channels}
-
-
 def src_indices_to_labels(reader: FitsIO, source_indices: Sequence[int]) -> list[str]:
     """
-    Inverse of resolve_source_channel_indices: map source channel indices back to their export labels.
+    Map source channel indices back to exported labels.
     """
     exported_labels, src_chan_idxs = _get_channel_identity(reader)
     index_to_label = {idx: label for idx, label in zip(src_chan_idxs, exported_labels)}
@@ -60,10 +53,7 @@ def _get_channel_identity(reader: FitsIO) -> tuple[list[str], list[int]]:
 
 
 def _get_source_channel_indices(reader: FitsIO) -> list[int]:
-    raw_source_channel_indices = reader.fits_metadata.get("source_channel_indices")
-    if raw_source_channel_indices is None:
+    source_channel_indices = load_source_channel_indices_from_reader(reader)
+    if source_channel_indices is None:
         raise ValueError("Input TIFF metadata is missing source_channel_indices.")
-    if isinstance(raw_source_channel_indices, (str, bytes)) or not isinstance(raw_source_channel_indices, Sequence):
-        raise ValueError("Input TIFF metadata field source_channel_indices must be a sequence of integers.")
-    return [int(index) for index in raw_source_channel_indices]
-
+    return source_channel_indices

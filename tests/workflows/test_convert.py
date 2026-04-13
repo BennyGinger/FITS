@@ -7,7 +7,7 @@ import pytest
 
 from fits.environment.state import ExperimentState
 from fits.environment.runtime import get_ctx
-from fits.workflows.engines.provenance import StepProfile
+from fits.workflows.metadata.provenance import StepProfile
 from fits.workflows.engines.run_decision import RunDecision
 from fits.settings.models import ConvertSettings
 from fits.workflows.convert import convert_one, run_convert
@@ -36,7 +36,7 @@ class DummyPbar:
 
 def test_convert_one_builds_payload_and_branches(monkeypatch, DummyCtx_class) -> None:
     step_profile = StepProfile(distribution="io", step_name="convert")
-    settings = ConvertSettings(overwrite=False, execution="serial")
+    settings = ConvertSettings(overwrite=False, execution="serial", channel_labels=["GFP"])
     output_name = "fits_array.tif"
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -55,15 +55,17 @@ def test_convert_one_builds_payload_and_branches(monkeypatch, DummyCtx_class) ->
 
         seen = {}
 
-        def fake_provenance_payload(step_profile, **kwargs):
-            seen["user_name"] = kwargs["user_name"]
-            seen["output_name"] = kwargs["output_name"]
+        def fake_build_step_project_metadata(*, existing_project_metadata, step_profile, user_name, step_metadata, channel_metadata):
+            seen["existing_project_metadata"] = existing_project_metadata
+            seen["user_name"] = user_name
+            seen["step_metadata"] = step_metadata
             seen["step_name"] = step_profile.step_name
-            return {"p": 1, "channel_labels": ["GFP"]}
+            seen["channel_metadata"] = channel_metadata
+            return {"pipeline": {"distribution": "io"}, "steps": {"convert": {"k": 1}}}
 
         monkeypatch.setattr(
-            "fits.workflows.convert.provenance_payload",
-            fake_provenance_payload,
+            "fits.workflows.convert.build_step_project_metadata",
+            fake_build_step_project_metadata,
         )
 
         dummy_reader = DummyReader(save_paths=[run_dir / "out_s1.tif", run_dir / "out_s2.tif"])
@@ -80,16 +82,61 @@ def test_convert_one_builds_payload_and_branches(monkeypatch, DummyCtx_class) ->
 
         out = convert_one(settings, state, step_profile, output_name)
 
+        assert seen["existing_project_metadata"] is None
         assert seen["user_name"] == "ben"
-        assert seen["output_name"] == "fits_array.tif"
         assert seen["step_name"] == "convert"
+        assert seen["step_metadata"] is None
+        assert seen["channel_metadata"] is None
         assert seen["from_path_arg"] == in_path
         assert seen["channel_labels"] == ["GFP"]
         assert len(dummy_reader.convert_calls) == 1
-        assert dummy_reader.convert_calls[0] == {"p": 1, "channel_labels": ["GFP"]}
+        assert dummy_reader.convert_calls[0]["channel_labels"] == ["GFP"]
+        assert dummy_reader.convert_calls[0]["project_metadata"] == {"pipeline": {"distribution": "io"}, "steps": {"convert": {"k": 1}}}
         assert [s.image for s in out] == [run_dir / "out_s1.tif", run_dir / "out_s2.tif"]
         assert all(s.last_step == "convert" for s in out)
         assert all(s.original_image == in_path for s in out)
+
+
+def test_convert_one_passes_step_metadata_only_when_custom_metadata_present(monkeypatch, DummyCtx_class) -> None:
+    step_profile = StepProfile(distribution="io", step_name="convert")
+    settings = ConvertSettings(
+        overwrite=False,
+        execution="serial",
+        channel_labels=["GFP"],
+        custom_metadata={"run_id": 42},
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = Path(tmpdir)
+        in_path = run_dir / "in.nd2"
+        state = ExperimentState.init(run_dir, in_path)
+
+        monkeypatch.setattr(
+            "fits.workflows.convert.decide_run",
+            lambda *args, **kwargs: RunDecision(["convert"], [], ["convert"]),
+        )
+        monkeypatch.setattr(
+            "fits.workflows.convert.get_ctx",
+            lambda: DummyCtx_class(user_name="ben"),
+        )
+
+        seen: dict[str, object] = {}
+
+        def fake_build_step_project_metadata(*, existing_project_metadata, step_profile, user_name, step_metadata, channel_metadata):
+            seen["step_metadata"] = step_metadata
+            return {"pipeline": {"distribution": "io"}, "steps": {"convert": {"k": 1}}}
+
+        monkeypatch.setattr(
+            "fits.workflows.convert.build_step_project_metadata",
+            fake_build_step_project_metadata,
+        )
+
+        dummy_reader = DummyReader(save_paths=[run_dir / "out_s1.tif"])
+        monkeypatch.setattr("fits.workflows.convert.FitsIO.from_path", lambda p, channel_labels=None: dummy_reader)
+
+        _ = convert_one(settings, state, step_profile, "fits_array.tif")
+
+        assert seen["step_metadata"] == {"custom_metadata": {"run_id": 42}}
 
 
 def test_run_convert_uses_executor_and_worker_context(monkeypatch, DummyCtx_class) -> None:

@@ -11,11 +11,13 @@ from fits.environment.runtime import get_ctx, use_ctx
 from fits.environment.state import ExperimentState
 from fits.settings.models import SegmentSettings
 from fits.workflows.engines.executors import execute
-from fits.workflows.engines.provenance import StepProfile, provenance_payload
+from fits.workflows.metadata.provenance import StepProfile
+from fits.workflows.metadata.builder import build_step_project_metadata
+from fits.workflows.metadata.channel_identity import labels_to_src_indices, src_indices_to_labels
+from fits.workflows.metadata.channel_metadata import build_channel_metadata
 from fits.workflows.engines.model_cache import segment_model_cache
 from fits.workflows.engines.run_decision import decide_run
-from fits.workflows.arrays.metadata import build_channel_metadata, labels_to_src_indices, src_indices_to_labels
-from fits.workflows.arrays.mask_output import merge_step_metadata, prepare_mask_output
+from fits.workflows.arrays.mask_output import prepare_mask_output
 from fits.workflows.arrays.loading import get_array
 
 
@@ -71,25 +73,31 @@ def segment_one(settings: SegmentSettings, exp_state: ExperimentState, step_prof
 
         # Run segmentation and the key 'channels': {src_idx: {seg_meta}; as well as the axis order
         masks_array = cp_wrapper.run(input_array, input_axis_order)
-        segment_metadata = build_channel_metadata(seg_src_chan_idx, cp_wrapper.segmentation_meta)
+        segment_channel_metadata = build_channel_metadata(seg_src_chan_idx, cp_wrapper.segmentation_meta)
         out_axis_order = cp_wrapper.output_axis_order
         if out_axis_order is None:
             raise ValueError("Output axis order from CellposeWrapper is None. Cannot save output without axis order information.")
 
         # Merge with existing mask if present
-        mask_output = prepare_mask_output(reader, mask_path, masks_array, out_axis_order, seg_src_chan_idx)
-        save_metadata = merge_step_metadata(mask_path, step_profile.step_name, segment_metadata, mask_output.structural_metadata)
+        mask_output = prepare_mask_output(reader, mask_path, masks_array, out_axis_order, seg_src_chan_idx, step_profile.step_name)
+        step_metadata = {"mask_source_channel_indices": mask_output.mask_source_indices}
+        project_metadata = build_step_project_metadata(
+            mask_output.existing_project_metadata,
+            step_profile=step_profile,
+            user_name=ctx.user_name,
+            step_metadata=step_metadata,
+            channel_metadata=segment_channel_metadata["channels"],
+        )
         logger.debug("Mask save payload: shape=%s, axes=%s, labels=%s", mask_output.array.shape, mask_output.axes, mask_output.channel_labels)
 
         # Save
-        fits_payload = provenance_payload(step_profile)
-        save_path = reader.save_array(mask_output.array, 
-                                      axis_order=mask_output.axes, 
-                                      channel_labels=mask_output.channel_labels, 
-                                      output_name=output_name, 
-                                      user_name=ctx.user_name, 
-                                      **fits_payload, 
-                                      custom_metadata=save_metadata)
+        save_path = reader.save_array(
+            mask_output.array,
+            axis_order=mask_output.axes,
+            channel_labels=mask_output.channel_labels,
+            output_name=output_name,
+            project_metadata=project_metadata,
+        )
         logger.debug("%s completed for %s", step_profile.step_name, exp_state.workdir_relative(run_dir))
 
         # Update experiment state

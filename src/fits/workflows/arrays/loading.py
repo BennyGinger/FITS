@@ -6,10 +6,7 @@ from numpy.typing import NDArray
 from fits_io.client import FitsIO
 
 
-def get_array(
-    reader: FitsIO,
-    requested_channels: Sequence[str] = ("all",),
-) -> tuple[NDArray[Any], str]:
+def get_array(reader: FitsIO, requested_channels: Sequence[str] = ("all",)) -> tuple[NDArray[Any], str]:
     """
     Get the correct array with the requested channels. It will also return the axis order of that array for downstream processing.
     

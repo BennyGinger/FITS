@@ -172,3 +172,22 @@ def _ensure_channel_axis(array: NDArray[T], array_axes: str, reference_axes: str
     return expanded, expanded_axes
 
 
+# ----------- Coming from fits_io.private -------------
+# def _merge_step_metadata(existing_step_meta: Any, update_meta: Mapping[str, Any]) -> dict[str, Any]:
+#     merged = dict(existing_step_meta) if isinstance(existing_step_meta, Mapping) else {}
+
+#     if 'channels' in update_meta:
+#         new_channels = update_meta.get('channels')
+#         if isinstance(new_channels, Mapping):
+#             existing_channels = merged.get('channels')
+#             merged_channels = dict(existing_channels) if isinstance(existing_channels, Mapping) else {}
+#             merged_channels.update(dict(new_channels))
+#             merged['channels'] = merged_channels
+#         else:
+#             merged['channels'] = new_channels
+
+#     for key, value in update_meta.items():
+#         if key == 'channels':
+#             continue
+#         merged[key] = value
+#     return merged

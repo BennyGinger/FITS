@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import cast
 
 from bg_sub import bg_sub
 from fits_io.client import FitsIO
@@ -14,7 +13,9 @@ from fits.settings.models import BGSubSettings
 from fits.workflows.arrays.converter import flatten_to_frames
 from fits.workflows.arrays.loading import get_array
 from fits.workflows.engines.executors import execute
-from fits.workflows.engines.provenance import StepProfile, provenance_payload
+from fits.workflows.metadata.provenance import StepProfile
+from fits.workflows.metadata.builder import build_step_project_metadata
+from fits.workflows.metadata.loading import load_project_metadata_from_reader
 from fits.workflows.engines.run_decision import decide_run
 
 
@@ -61,14 +62,30 @@ def bg_sub_one(settings: BGSubSettings, exp_state: ExperimentState, step_profile
         
         # Reshape back to original dimensions
         corrected_array = batch.rebuild(list(corrected_batch))
+
+        step_metadata = {
+            "sigma": settings.sigma,
+            "size": settings.size,
+            "threshold": settings.threshold,
+            "statistic": settings.serialize_statistic_name(),
+        }
+        existing_project_metadata = load_project_metadata_from_reader(reader)
+        project_metadata = build_step_project_metadata(
+            existing_project_metadata=existing_project_metadata,
+            step_profile=step_profile,
+            user_name=ctx.user_name,
+            step_metadata=step_metadata,
+            channel_metadata=None,
+        )
         
         # Save output
-        fits_payload = provenance_payload(step_profile)
-        reader.save_array(corrected_array,
-                          axis_order=input_axis_order,
-                          channel_labels=reader.channel_labels,
-                          **fits_payload,
-                          output_name=output_name,)
+        reader.save_array(
+            corrected_array,
+            axis_order=input_axis_order,
+            channel_labels=reader.channel_labels,
+            output_name=output_name,
+            project_metadata=project_metadata,
+        )
         logger.debug("%s completed for %s", step_profile.step_name, exp_state.workdir_relative(run_dir))
         
         # Update and return state

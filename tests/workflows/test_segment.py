@@ -10,7 +10,7 @@ from fits.environment.runtime import get_ctx
 from fits.environment.state import ExperimentState
 from fits.settings.models import SegmentSettings
 from fits.workflows.arrays.mask_output import ProcessMaskOutput
-from fits.workflows.engines.provenance import StepProfile
+from fits.workflows.metadata.provenance import StepProfile
 from fits.workflows.engines.run_decision import RunDecision
 from fits.workflows.segment import run_segment, segment_one
 
@@ -82,7 +82,7 @@ def test_segment_one_saves_mask_for_missing_channels(monkeypatch) -> None:
         input_path = run_dir / 'fits_array.tif'
         input_path.write_bytes(b'')
         state = ExperimentState.init(run_dir, run_dir / 'raw.nd2').with_image(input_path)
-        reader = DummyReader(run_dir / 'fits_mask.tif', channel_labels=['GFP', 'RFP', 'DAPI'], fits_metadata={'source_channel_indices': [1, 2, 3]})
+        reader = DummyReader(run_dir / 'fits_mask.tif', channel_labels=['GFP', 'RFP', 'DAPI'], fits_metadata={'fits_io': {'source_channel_indices': [1, 2, 3]}})
         wrapper = DummyWrapper({'backend': 'v4', 'model_name': 'cpsam'})
         captured: dict[str, Any] = {}
 
@@ -103,19 +103,8 @@ def test_segment_one_saves_mask_for_missing_channels(monkeypatch) -> None:
                 axes='YX',
                 mask_source_indices=[2],
                 channel_labels=['RFP'],
-                structural_metadata={'mask_source_channel_indices': [2]},
+                existing_project_metadata=None,
             ),
-        )
-        monkeypatch.setattr(
-            'fits.workflows.segment.merge_step_metadata',
-            lambda *args, **kwargs: {
-                'channels': {'2': {'backend': 'v4', 'model_name': 'cpsam'}},
-                'mask_source_channel_indices': [2],
-            },
-        )
-        monkeypatch.setattr(
-            'fits.workflows.segment.provenance_payload',
-            lambda step_profile: {'distribution': step_profile.distribution, 'step_name': step_profile.step_name},
         )
 
         out = segment_one(
@@ -133,11 +122,19 @@ def test_segment_one_saves_mask_for_missing_channels(monkeypatch) -> None:
         assert np.array_equal(wrapper.run_calls[0][0], np.ones((4, 4), dtype=np.uint16))
         assert len(reader.save_calls) == 1
         assert reader.save_calls[0]['channel_labels'] == ['RFP']
-        assert reader.save_calls[0]['custom_metadata'] == {
-            'channels': {'2': {'backend': 'v4', 'model_name': 'cpsam'}},
-            'mask_source_channel_indices': [2],
-        }
-        assert reader.save_calls[0]['step_name'] == 'segment'
+        project_metadata = reader.save_calls[0]['project_metadata']
+        assert project_metadata['pipeline']['user_name'] == 'ben'
+        assert project_metadata['pipeline']['distribution'] == 'fits'
+        assert 'version' in project_metadata['pipeline']
+        assert 'timestamp' in project_metadata['pipeline']
+        assert project_metadata['steps']['segment']['distribution'] == 'cellpose-kit'
+        assert 'version' in project_metadata['steps']['segment']
+        assert 'timestamp' in project_metadata['steps']['segment']
+        assert project_metadata['steps']['segment']['mask_source_channel_indices'] == [2]
+        assert project_metadata['steps']['segment']['channels'] == {'2': {'backend': 'v4', 'model_name': 'cpsam'}}
+        assert 'custom_metadata' not in reader.save_calls[0]
+        assert 'user_name' not in reader.save_calls[0]
+        assert 'step_name' not in reader.save_calls[0]
 
 
 def test_segment_one_skips_when_requested_channels_are_complete(monkeypatch) -> None:
@@ -146,7 +143,7 @@ def test_segment_one_skips_when_requested_channels_are_complete(monkeypatch) -> 
         input_path = run_dir / 'fits_array.tif'
         input_path.write_bytes(b'')
         state = ExperimentState.init(run_dir, run_dir / 'raw.nd2').with_image(input_path)
-        reader = DummyReader(input_path, channel_labels=['GFP'], fits_metadata={'source_channel_indices': [1]})
+        reader = DummyReader(input_path, channel_labels=['GFP'], fits_metadata={'fits_io': {'source_channel_indices': [1]}})
 
         monkeypatch.setattr('fits.workflows.segment.get_ctx', lambda: type('Ctx', (), {'user_name': 'ben', 'run_dir': run_dir})())
         monkeypatch.setattr('fits.workflows.segment.FitsIO.from_path', lambda path: reader)

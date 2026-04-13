@@ -63,8 +63,7 @@ def flatten_to_frames(array: NDArray[Any], axis_order: str) -> FlatFrameBatch:
         moved_shape=moved_shape,
         batch_shape=batch_shape,
         yx_shape=yx_shape,
-        spatial_indices=(y_idx, x_idx),
-    )
+        spatial_indices=(y_idx, x_idx))
 
 
 def _get_spatial_indices(axis_order: str) -> tuple[int, int]:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from typing import cast
 
+from fits_io.client import FitsIO
 from fits.workflows.arrays.loading import get_array
 
 
@@ -30,7 +32,7 @@ def test_get_array_returns_full_array_when_all_channels_requested() -> None:
         subset_array=np.ones((4, 4), dtype=np.uint16),
     )
 
-    array, axes = get_array(reader, ['RFP', 'GFP'])
+    array, axes = get_array(cast(FitsIO, reader), ['RFP', 'GFP'])
 
     assert axes == 'CYX'
     assert array.shape == (2, 4, 4)
@@ -45,7 +47,7 @@ def test_get_array_returns_full_array_when_requested_channels_is_default() -> No
         subset_array=np.ones((4, 4), dtype=np.uint16),
     )
 
-    array, axes = get_array(reader)
+    array, axes = get_array(cast(FitsIO, reader))
 
     assert axes == 'CYX'
     assert array.shape == (2, 4, 4)
@@ -60,7 +62,7 @@ def test_get_array_returns_full_array_when_requested_channels_is_all_sequence() 
         subset_array=np.ones((4, 4), dtype=np.uint16),
     )
 
-    array, axes = get_array(reader, ['all'])
+    array, axes = get_array(cast(FitsIO, reader), ['all'])
 
     assert axes == 'CYX'
     assert array.shape == (2, 4, 4)
@@ -75,7 +77,7 @@ def test_get_array_drops_c_axis_for_single_subset_channel() -> None:
         subset_array=np.full((4, 4), 7, dtype=np.uint16),
     )
 
-    array, axes = get_array(reader, ['RFP'])
+    array, axes = get_array(cast(FitsIO, reader), ['RFP'])
 
     assert axes == 'YX'
     assert array.shape == (4, 4)
@@ -86,13 +88,13 @@ def test_get_array_requires_channel_labels() -> None:
     reader = DummyReader(channel_labels=None, axes='CYX', array=np.ones((2, 4, 4)), subset_array=np.ones((4, 4)))
 
     with pytest.raises(ValueError, match='channel labels'):
-        get_array(reader, ['GFP'])
+        get_array(cast(FitsIO, reader), ['GFP'])
 
 
 def test_get_array_with_all_sequence_does_not_require_channel_labels() -> None:
     reader = DummyReader(channel_labels=None, axes='CYX', array=np.ones((2, 4, 4)), subset_array=np.ones((4, 4)))
 
-    array, axes = get_array(reader, ['all'])
+    array, axes = get_array(cast(FitsIO, reader), ['all'])
 
     assert axes == 'CYX'
     assert array.shape == (2, 4, 4)
@@ -107,4 +109,4 @@ def test_get_array_rejects_multi_series_results() -> None:
     )
 
     with pytest.raises(ValueError, match='multi-series'):
-        get_array(reader, ['GFP', 'RFP'])
+        get_array(cast(FitsIO, reader), ['GFP', 'RFP'])

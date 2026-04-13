@@ -51,7 +51,7 @@ All persisted paths inside `ExperimentState` are **relative to `workdir`**.
 
 Absolute paths are reconstructed at runtime:
 
-```text
+```python
 absolute_path = workdir / relative_path
 ```
 
@@ -63,7 +63,7 @@ This ensures experiment folders can be moved without breaking the pipeline.
 
 The pipeline runtime provides an **ExecutionContext** accessible through:
 
-```text
+```python
 get_ctx()
 ```
 
@@ -117,6 +117,38 @@ These define the mapping between exported channels and original raw channels.
 
 ---
 
+# Background Subtraction Step
+
+Reads and rewrites:
+
+```text
+fits_array.tif
+```
+
+Processes all exported channels in place.
+
+Stores step metadata under:
+
+```python
+project_metadata["steps"]["bg_sub"]
+```
+
+Typical bg_sub step metadata includes:
+
+```text
+sigma
+size
+threshold
+statistic
+distribution
+version
+timestamp
+```
+
+There is no per-channel provenance block for bg_sub, because it processes the full current image artifact uniformly.
+
+---
+
 # Segment Step
 
 Creates:
@@ -131,12 +163,24 @@ Uses:
 source_channel_indices
 ```
 
-to maintain stable channel identity.
+to maintain stable channel identity relative to the input image.
 
-Mask structure is defined by:
+Segmentation provenance is stored in pipeline metadata under:
 
-```text
-mask_source_channel_indices
+```python
+project_metadata["steps"]["segment"]
+```
+
+including channel-aware metadata under:
+
+```python
+project_metadata["steps"]["segment"]["channels"]
+```
+
+and mask channel identity under:
+
+```python
+project_metadata["steps"]["segment"]["mask_source_channel_indices"]
 ```
 
 ---
@@ -150,10 +194,21 @@ source_channel_indices
 source_channel_count
 ```
 
-## Mask
+These describe how the current saved image channels map back to the original raw image.
+
+## Step / Derived Artifact Identity
+
+Stored in pipeline project metadata:
+
+```python
+project_metadata["steps"][step_name]
+```
+
+For channel-aware mask-producing steps such as segmentation, this includes:
 
 ```text
 mask_source_channel_indices
+channels
 ```
 
 This separation allows:
@@ -161,6 +216,7 @@ This separation allows:
 * partial segmentation
 * incremental updates
 * stable channel identity independent of labels
+* clear distinction between generic I/O metadata and workflow provenance
 
 ---
 
@@ -169,36 +225,103 @@ This separation allows:
 When segment is re-run:
 
 * existing mask is loaded if present
-* new channels are merged into correct position
+* previously saved mask channel identity is read from:
+
+```python
+project_metadata["steps"]["segment"]["mask_source_channel_indices"]
+```
+
+* new channels are merged into the correct position
 * existing channels are preserved
-* `mask_source_channel_indices` is updated
+* per-channel step metadata is merged by source channel index
+* `mask_source_channel_indices` is updated inside the segment step metadata
+
+Channel identity is determined by **source channel index**, not by label.
 
 ---
 
 # Metadata Architecture
 
-## Viewer Metadata
+## FITS I/O Metadata
 
-Used by ImageJ:
+Stored in the TIFF private payload and mirrored into ImageJ-readable metadata where relevant.
 
-```text
-axes
-Labels
-resolution
+Owned by `fits_io`.
+
+Typical `fits_io` block:
+
+```python
+fits_io.version
+fits_io.axes
+fits_io.channel_labels
+fits_io.n_channels
+fits_io.z_projection
+fits_io.compression
+fits_io.source_channel_indices
+fits_io.source_channel_count
 ```
 
-## Private Metadata
+This block represents **technical image / artifact metadata** and is preserved across in-place rewrites.
 
-Stored in TIFF tag:
+## Pipeline Metadata
+
+Stored under:
 
 ```text
-status
+project_metadata
+```
+
+Owned by the `fits` workflow layer.
+
+Top-level structure:
+
+```python
+project_metadata["pipeline"]
+project_metadata["steps"]
+```
+
+## Pipeline Block
+
+Contains pipeline-wide provenance such as:
+
+```text
+distribution
+version
+timestamp
 user_name
-source_channel_indices
-source_channel_count
-mask_source_channel_indices
-payload[step]["channels"]
 ```
+
+## Steps Block
+
+Contains one entry per workflow step, for example:
+
+```python
+project_metadata["steps"]["convert"]
+project_metadata["steps"]["bg_sub"]
+project_metadata["steps"]["segment"]
+```
+
+Each step block contains provenance such as:
+
+```text
+distribution
+version
+timestamp
+```
+
+plus step-specific metadata.
+
+Examples:
+* convert:
+    * custom conversion metadata if provided
+* bg_sub:
+    * sigma
+    * size
+    * threshold
+    * statistic
+* segment:
+    * mask_source_channel_indices
+    * channels[source_idx] = per-channel segmentation metadata
 
 ---
 
@@ -214,30 +337,76 @@ metadata_change.py
 
 These are orchestration-only.
 
----
+They:
 
-## workflows/channels
+* resolve runtime context
+* load data
+* run the processing engine
+* build/update pipeline-owned `project_metadata`
+* save through `fits_io`
 
-### `metadata.py`
+They no longer build old writer provenance payloads directly.
+
+
+## Workflows/metadata
+
+This layer owns pipeline metadata construction and loading.
+
+Typical responsibilities:
+
+* load existing `project_metadata` from an artifact
+* build / update pipeline-level provenance
+* build / update step-level metadata
+* merge channel-aware step metadata
+* preserve prior metadata during in-place rewrites
+
+This layer is the canonical place for workflow provenance assembly.
+
+## Workflows/arrays
+
+### `channel_identity.py`
 
 * label ↔ source index conversion
-* channel metadata construction
+* exported channel identity resolution
+
+### `channel_metadata.py`
+
+* shaping per-channel workflow metadata
+* building "channels" metadata blocks for channel-aware steps
 
 ### `channel_merge.py`
 
 * pure array merge logic
-* no metadata or saving logic
+* no save logic
+* no workflow provenance logic
 
-### `persistence.py` (conceptually: mask output)
+### `mask_output.py`
 
 * load existing mask
-* prepare merged output (array + axes + labels)
-* build mask structural metadata
-* merge step metadata
+* read prior segment mask source channel indices from step-level project metadata
+* prepare merged mask output (array + axes + labels)
+* preserve stable mask channel identity across incremental runs
 
----
+
+### converter / loading helpers
+
+* array extraction from FITS artifacts
+* flatten / rebuild helpers for frame-wise processing
+* shape / axis normalization helpers
 
 ## workflows/engines
+
+### `provencance.py`
+
+Contains low-level provenance utilities and `StepProfile`.
+
+It may provide utilities such as:
+
+* version lookup
+* UTC timestamp generation
+* provenance stamp construction
+
+It no longer acts as the old workflow save payload entrypoint.
 
 ### `run_decision.py`
 
@@ -246,6 +415,45 @@ These are orchestration-only.
 
   * full-step completion
   * channel-level completion
+
+
+### `executor.py`
+
+* execution backend dispatch
+* ordered / unordered execution
+* worker fan-out
+
+---
+
+# Convert Execution Flow
+
+```text
+1. validate input image
+2. open reader
+3. resolve export channels
+4. extract array
+5. build initial project_metadata through workflow metadata builder
+6. save fits_array.tif through fits_io using project_metadata
+7. update state
+```
+
+---
+
+# Background Subtraction Execution Flow
+
+```text
+1. validate image
+2. open reader
+3. decide whether step must run
+4. load current image array
+5. flatten to processing frames
+6. run background subtraction
+7. rebuild output array
+8. load existing project_metadata from current artifact
+9. update bg_sub step metadata through workflow metadata builder
+10. save fits_array.tif through fits_io using project_metadata
+11. update state
+```
 
 ---
 
@@ -258,11 +466,13 @@ These are orchestration-only.
 4. compute pending channels
 5. load image data
 6. run segmentation
-7. build channel metadata
-8. prepare mask output
-9. merge metadata
-10. save TIFF
-11. update state
+7. build per-channel metadata
+8. load existing mask artifact if present
+9. merge mask arrays by source channel index
+10. load existing project_metadata from mask artifact if present
+11. update segment step metadata through workflow metadata builder
+12. save fits_mask.tif through fits_io using project_metadata
+13. update state
 ```
 
 ---
@@ -307,7 +517,7 @@ At this boundary:
 
 Pattern:
 
-```text
+```python
 try:
     ...
     return [updated_state]
@@ -331,7 +541,7 @@ except Exception as e:
 
 On failure, user must immediately see:
 
-```text
+```python
 [ERROR] Step 'segment' failed for <workdir>: <error message>
 ```
 
@@ -368,7 +578,8 @@ Steps produce consistent outputs.
 ## Restartability
 
 * completed steps are skipped
-* channel-level completion supported via `mask_source_channel_indices`
+* channel-level completion is supported where relevant
+* segmentation restartability is based on stored step-level channel provenance
 
 ## Filesystem-first
 
@@ -383,53 +594,20 @@ fits_mask.tif
 
 Pipeline logic should remain simple and rely on:
 
-* `fits_io` for I/O and metadata
-* workflows/channels for channel logic
+* `fits_io` for I/O and technical metadata persistence
+* workflow metadata builder for pipeline provenance
+* workflows/arrays for channel logic
 
 Avoid over-engineering.
 
----
+## Ownership separation
 
-# Current Pipeline Tree
+Keep this rule strict:
 
-```text
-.
-├── cellpose_kit
-│   ├── src
-│   │   └── cellpose_kit
-│   │       ├── backend
-│   │       └── workflow
-│   └── tests
-│       ├── backend
-│       └── workflow
-├── fits_io
-│   ├── src
-│   │   └── fits_io
-│   │       ├── metadata
-│   │       ├── readers
-│   │       └── writers
-│   └── tests
-│       ├── metadata
-│       ├── readers
-│       └── writers
-├── progress_bar
-│   ├── src
-│   │   └── progress_bar
-│   └── tests
-├── src
-│   └── fits
-│       ├── cli
-│       ├── environment
-│       ├── settings
-│       └── workflows
-│           ├── channels
-│           └── engines
-└── tests
-    ├── environment
-    └── workflows
-        ├── channels
-        └── engines
-```
+* `fits_io` owns technical image / artifact metadata
+* `fits` workflow layer owns semantic provenance in project_metadata
+
+Do not push workflow provenance back into `fits_io`.
 
 ---
 
@@ -439,7 +617,7 @@ Do not spread function parameters across multiple lines.
 
 Avoid:
 
-```text
+```python
 def myfunc(
     param1,
     param2,
@@ -449,7 +627,7 @@ def myfunc(
 
 Prefer:
 
-```text
+```python
 def myfunc(param1, param2, param3):
 ```
 
@@ -459,7 +637,7 @@ Same with imports.
 
 Avoid:
 
-```text
+```python
 import (
     module1,
     module2,
@@ -468,6 +646,6 @@ import (
 
 Prefer:
 
-```text
+```python
 import module1, module2
 ```

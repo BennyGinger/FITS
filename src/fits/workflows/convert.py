@@ -7,7 +7,8 @@ from fits.environment.state import ExperimentState
 from fits.environment.runtime import get_ctx, use_ctx
 from fits.environment.constant import ExecMode, FitsName, STEP_CONVERT
 from fits.workflows.engines.executors import execute
-from fits.workflows.engines.provenance import StepProfile, provenance_payload
+from fits.workflows.metadata.provenance import StepProfile
+from fits.workflows.metadata.builder import build_step_project_metadata
 from fits.workflows.engines.run_decision import decide_run
 from fits.settings.models import ConvertSettings
 
@@ -36,16 +37,33 @@ def convert_one(settings: ConvertSettings, exp_state: ExperimentState, step_prof
 
     # Get the current execution context
     ctx = get_ctx()
-    
-    # Prepare payload
-    payload = provenance_payload(step_profile, **settings.model_dump(), user_name=ctx.user_name, output_name=output_name,)
-    channel_labels = payload.get("channel_labels", None)
-    
-    logger.debug("%s will be executed with parameters: %s", step_profile.step_name, payload)
+
+    channel_labels = settings.channel_labels
+    reader_channel_labels = None if channel_labels is None else list(channel_labels)
+    step_metadata: dict[str, object] | None = None
+    if settings.custom_metadata is not None:
+        step_metadata = {"custom_metadata": dict(settings.custom_metadata)}
+
+    project_metadata = build_step_project_metadata(
+        existing_project_metadata=None,
+        step_profile=step_profile,
+        user_name=ctx.user_name,
+        step_metadata=step_metadata,
+        channel_metadata=None,
+    )
+
+    logger.debug("%s will be executed with settings: %s", step_profile.step_name, settings.model_dump())
 
     try:
-        reader = FitsIO.from_path(exp_state.original_image, channel_labels=channel_labels)
-        save_paths = reader.convert_to_fits(**payload)
+        reader = FitsIO.from_path(exp_state.original_image, channel_labels=reader_channel_labels)
+        save_paths = reader.convert_to_fits(
+            channel_labels=settings.channel_labels,
+            export_channels=settings.export_channels,
+            output_name=output_name,
+            project_metadata=project_metadata,
+            z_projection=settings.z_projection,
+            compression=settings.compression,
+        )
 
         logger.debug("%s completed for %s", step_profile.step_name, exp_state.original_image)
         logger.debug("Saved FITS files at: %s", save_paths)

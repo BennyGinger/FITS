@@ -4,7 +4,7 @@ from typing import Any, Callable, Generic, Literal, Mapping, TypeVar
 import fits.environment.constant as cst
 from fits.environment.state import ExperimentState
 from fits.settings.models import ConvertSettings, SettingsModel, SegmentSettings, BGSubSettings
-from fits.workflows.engines.provenance import StepProfile
+from fits.workflows.metadata.provenance import StepProfile
 from fits.workflows.convert import run_convert, convert_one
 from fits.workflows.bg_sub import run_bg_sub, bg_sub_one
 from fits.workflows.segment import run_segment, segment_one

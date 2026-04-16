@@ -16,6 +16,7 @@ members = [
     "fits",
     "fits-io",
     "progress-bar",
+    "stackalign",
     "tracklink",
 ]
 
@@ -403,6 +404,7 @@ dependencies = [
     { name = "progress-bar" },
     { name = "pydantic" },
     { name = "pyside6" },
+    { name = "stackalign" },
     { name = "tracklink" },
     { name = "typer" },
 ]
@@ -424,6 +426,7 @@ requires-dist = [
     { name = "progress-bar", editable = "progress_bar" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyside6", specifier = ">=6.10.2" },
+    { name = "stackalign", editable = "stackalign" },
     { name = "tracklink", editable = "tracklink" },
     { name = "typer", specifier = ">=0.23.0" },
 ]
@@ -1418,8 +1421,27 @@ wheels = [
 ]
 
 [[package]]
+name = "pystackreg"
+version = "0.2.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7a/15/17cbdce2348da6a0127816dc6380fc9b8343baea96ed959ee8460f2bc25a/pystackreg-0.2.8.tar.gz", hash = "sha256:fb615e9fb791298a196f7468cf0d2db1d5a008cde58d74c71afc2acb6a092dfc", size = 3733031, upload-time = "2024-10-03T08:53:49.919Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/00/5d8ddccbddc28871f40b5c84b55e121dac836e5efa407c11d3a00002e85d/pystackreg-0.2.8-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:cc82203cde0a1909180d0ab7067071ac13d9558632f602ca72cce40415a3f339", size = 71775, upload-time = "2024-10-03T08:58:01.075Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/64/696c92593465defd31eee1a9ad5d08d008d52efdec7623735cd750e69452/pystackreg-0.2.8-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:83242b0fd0353d2598f381cf8677956d527b01f613309c2ccc7a99b7288f88e3", size = 843679, upload-time = "2024-10-03T08:22:47.777Z" },
+    { url = "https://files.pythonhosted.org/packages/64/29/e2520896fb6b333eca35512bc6cbbf7a60e23e2a9c196891d1c46952dbee/pystackreg-0.2.8-cp312-cp312-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:e549326568456886c7b908068a85fc87de13f4b042af0e92a8fa1a20646d0f12", size = 825312, upload-time = "2024-10-03T08:22:49.58Z" },
+    { url = "https://files.pythonhosted.org/packages/47/fb/3d1abc7cca039a2bddc2e868a0efa7d10461611161ad828f3f093f94f802/pystackreg-0.2.8-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:13647efcb5d87a290a8ba4ee27fa2094fd2213369efd4755b43df244a0a27e32", size = 1813009, upload-time = "2024-10-03T08:22:51.056Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/7b/eef105cec19d266893fcff2727fd2206a110275256f659a303ad7d19a52e/pystackreg-0.2.8-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:13ca10ddae376e42bef7bacfc898db9766e16b7bb3ca4e9e41d83e1eef0527fd", size = 1729003, upload-time = "2024-10-03T08:22:53.06Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/03/119ad7c9538846b093ebffa30c6c128b4f1f5a4ac97409f5a123d61767bb/pystackreg-0.2.8-cp312-cp312-win32.whl", hash = "sha256:bb1a541297d595604e02c545c96d8fd71d3592ac16e7d56ddca48aac427ba201", size = 55969, upload-time = "2024-10-03T09:10:21.547Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/3f/204aca0da3fe0221365618979527096ad55bdc708a3def3e09551d5c4ffe/pystackreg-0.2.8-cp312-cp312-win_amd64.whl", hash = "sha256:0e7cb59bcf9f667a4988fdaa166442422188f01913d74b8eb7edc44215e838e7", size = 64677, upload-time = "2024-10-03T09:10:22.785Z" },
+]
+
+[[package]]
 name = "pytest"
-version = "9.0.2"
+version = "9.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
@@ -1428,9 +1450,9 @@ dependencies = [
     { name = "pluggy" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d1/db/7ef3487e0fb0049ddb5ce41d3a49c235bf9ad299b6a25d5780a89f19230f/pytest-9.0.2.tar.gz", hash = "sha256:75186651a92bd89611d1d9fc20f0b4345fd827c41ccd5c299a868a05d70edf11", size = 1568901, upload-time = "2025-12-06T21:30:51.014Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/549bd94f1a0a402dc8cf64563a117c0f3765662e2e668477624baeec44d5/pytest-9.0.3.tar.gz", hash = "sha256:b86ada508af81d19edeb213c681b1d48246c1a91d304c6c81a427674c17eb91c", size = 1572165, upload-time = "2026-04-07T17:16:18.027Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/ab/b3226f0bd7cdcf710fbede2b3548584366da3b19b5021e74f5bde2a8fa3f/pytest-9.0.2-py3-none-any.whl", hash = "sha256:711ffd45bf766d5264d487b917733b453d917afd2b0ad65223959f59089f875b", size = 374801, upload-time = "2025-12-06T21:30:49.154Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl", hash = "sha256:2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9", size = 375249, upload-time = "2026-04-07T17:16:16.13Z" },
 ]
 
 [[package]]
@@ -1670,6 +1692,25 @@ sdist = { url = "https://files.pythonhosted.org/packages/28/e3/55dcc2cfbc3ca9c29
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/7b/ce1eafaf1a76852e2ec9b22edecf1daa58175c090266e9f6c64afcd81d91/stack_data-0.6.3-py3-none-any.whl", hash = "sha256:d5558e0c25a4cb0853cddad3d77da9891a08cb85dd9f9f91b9f8cd66e511e695", size = 24521, upload-time = "2023-09-30T13:58:03.53Z" },
 ]
+
+[[package]]
+name = "stackalign"
+version = "0.2.0"
+source = { editable = "stackalign" }
+dependencies = [
+    { name = "pystackreg" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pystackreg", specifier = ">=0.2.8" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "superqt"

@@ -16,3 +16,6 @@
 [submodule "bg_sub"]
 	path = bg_sub
 	url = https://github.com/BennyGinger/bg_sub.git
+[submodule "stackalign"]
+	path = stackalign
+	url = https://github.com/BennyGinger/stackalign.git

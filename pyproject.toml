@@ -18,6 +18,7 @@ dependencies = [
     "cellpose[gui]>=4",
     "tracklink",
     "bg-sub",
+    "stackalign",
 ]
 
 [project.scripts]
@@ -33,7 +34,8 @@ members = [
     "progress_bar",
     "cellpose_kit",
     "tracklink",
-    "bg_sub"
+    "bg_sub",
+    "stackalign",
 ]
 
 [tool.uv.sources]
@@ -42,6 +44,7 @@ progress-bar = { workspace = true }
 cellpose-kit = { workspace = true }
 tracklink = { workspace = true }
 bg-sub = { workspace = true }
+stackalign = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [

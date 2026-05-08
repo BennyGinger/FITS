@@ -16,7 +16,7 @@ from fits.settings.loader import load_settings
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_PATH = Path("src/fits/settings/user_settings.toml")
+SETTINGS_PATH = Path(__file__).parent / "settings" / "user_settings.toml"
 
 
 def start_pipeline(settings_path: Path | None = None, gui_emitter: LogEmitter | None = None) -> None:

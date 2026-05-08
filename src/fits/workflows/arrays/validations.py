@@ -52,3 +52,29 @@ def validate_mask_output(array: Any, axes: str, channel_labels: list[str]) -> No
     c_ax = axes.find('C')
     if c_ax != -1 and array.shape[c_ax] != len(channel_labels):
         raise ValueError(f"Merged mask labels do not match channel axis: axes={axes!r}, shape={array.shape}, labels={channel_labels}")
+
+
+def resolve_channel_index(channel: int | str | None, channel_labels: list[str] | None, field_name: str) -> int | None:
+    """Resolve a channel specified as an int index or a string label to its integer index."""
+    if channel is None:
+        return None
+    if isinstance(channel, str) and channel.strip().lower() == "none":
+        return None
+    if isinstance(channel, int):
+        return channel
+    if channel_labels is None:
+        raise ValueError(f"Cannot resolve {field_name}='{channel}' because channel labels are missing.")
+    if channel not in channel_labels:
+        raise ValueError(f"Unknown {field_name}='{channel}'. Available labels: {channel_labels}.")
+    return channel_labels.index(channel)
+
+
+def validate_channel_labels_exist(requested_labels: Sequence[str], channel_labels: list[str] | None, field_name: str) -> None:
+    """Raise ValueError if any requested labels are missing from available channel labels."""
+    if not requested_labels:
+        return
+    if channel_labels is None:
+        raise ValueError(f"Cannot resolve {field_name}: channel labels are missing.")
+    missing = [label for label in requested_labels if label not in channel_labels]
+    if missing:
+        raise ValueError(f"Unknown {field_name} {missing}. Available labels: {channel_labels}.")

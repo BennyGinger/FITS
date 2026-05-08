@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fits.workflows.arrays.validations import validate_axes_rank, validate_axis_order, validate_channel_count, validate_mask_output, validate_no_duplicate_axes
+from fits.workflows.arrays.validations import validate_axes_rank, validate_axis_order, validate_channel_count, validate_channel_labels_exist, validate_mask_output, validate_no_duplicate_axes
 
 
 # ---- validate_no_duplicate_axes ----
@@ -106,3 +106,19 @@ def test_validate_mask_output_raises_on_axes_rank_mismatch() -> None:
 def test_validate_mask_output_raises_on_channel_label_mismatch() -> None:
     with pytest.raises(ValueError, match="do not match channel axis"):
         validate_mask_output(np.zeros((2, 4, 4)), "CYX", ["GFP"])
+
+
+# ---- validate_channel_labels_exist ----
+
+def test_validate_channel_labels_exist_accepts_known_labels() -> None:
+    validate_channel_labels_exist(["GFP"], ["GFP", "RFP"], "exclude_channel")
+
+
+def test_validate_channel_labels_exist_raises_when_labels_missing() -> None:
+    with pytest.raises(ValueError, match="Unknown exclude_channel"):
+        validate_channel_labels_exist(["DAPI"], ["GFP", "RFP"], "exclude_channel")
+
+
+def test_validate_channel_labels_exist_raises_when_channel_labels_missing() -> None:
+    with pytest.raises(ValueError, match="channel labels are missing"):
+        validate_channel_labels_exist(["GFP"], None, "exclude_channel")

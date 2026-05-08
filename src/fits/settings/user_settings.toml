@@ -3,8 +3,8 @@
 # ============================
 # User identity
 # ============================
-user_name = "test_user"
-run_dir = "/media/ben/Analysis/Python/Images/nd2/Run2_test" # Directory where the input files are located and where the output files will be saved. It should contain the raw files to be processed.
+user_name = "Benny"
+run_dir = "/media/ben/Analysis/Python/Images/NeutrophilTrackingTest/dia" # Directory where the input files are located and where the output files will be saved. It should contain the raw files to be processed.
 
 # ============================
 # Runtime configuration
@@ -13,7 +13,7 @@ run_dir = "/media/ben/Analysis/Python/Images/nd2/Run2_test" # Directory where th
 mode = "cli" # Execution mode: cli | gui | notebook
 execution = "batch" # Type of execution: batch | conveyor.
 dry_run = false # If true, it will not write any output files, but will still perform all computations and print logs.
-log_dir = "/media/ben/Analysis/Python/Images/nd2/Run2_test" # where to save log files, if not specified, log file will not be created
+log_dir = "/media/ben/Analysis/Python/Images/NeutrophilTrackingTest/dia" # where to save log files, if not specified, log file will not be created
 console_level = "info" # Console log level: debug | info | warning | error | critical
 file_level = "debug" # File log level: debug | info | warning | error | critical
 
@@ -29,8 +29,8 @@ file_level = "debug" # File log level: debug | info | warning | error | critical
 enabled = true
 
 [convert.params]
-channel_labels = ["GFP", "RFP"] # List of channel labels to set in the metadata. The order should match the channel order in the input files. If not specified, it will use default channel labels (e.g. Channel 1, Channel 2, etc.).
-export_channels = ["GFP", "RFP"] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
+channel_labels = ["GFP", "RFP", "BF", "BF2"] # List of channel labels to set in the metadata. The order should match the channel order in the input files. If not specified, it will use default channel labels (e.g. Channel 1, Channel 2, etc.).
+export_channels = ["GFP", "RFP", "BF"] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
 compression = "zlib" # Compression method to use when saving the output files. Supported methods are: zlib, lzma, jpeg or "None". If not specified, it will use the default compression method (zlib).
 overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 z_projection = "max" # Z-projection method to apply to the input files. Supported methods are: max, mean, sum, std. By default, apply max projection.
@@ -41,6 +41,38 @@ Date = "2024-06-15"
 Note = "Cells were stimulated at ..."
 
 # ============================
+# Register Time step
+# ============================
+[register_time]
+enabled = true
+
+[register_time.params]
+context = "linear_drift" # Time-wise context. Supported: linear_drift, rotational_drift, complex_drift.
+overwrite = true # Whether to overwrite existing output files for this step.
+reference_strategy = "previous" # Time-wise reference strategy: previous | first | mean.
+fit_channel = "BF" # Time-wise fitting channel. Can be an int channel index, channel label string, or "None".
+
+# Expert override settings
+backend = "None" # Optional expert override: scikit | pystackreg | cv2.
+method = "None" # Optional expert override: translation | rigid_body | affine.
+
+# ============================
+# Register Channel step
+# ============================
+[register_channel]
+enabled = true
+
+[register_channel.params]
+context = "channel_shift" # Channel-wise context. Supported: channel_shift, channel_shift_dual_cam, channel_shift_complex.
+overwrite = true # Whether to overwrite existing output files for this step.
+reference_channel = "RFP" # Channel-wise reference channel. Can be an int channel index, channel label string, or "None".
+exclude_channel = "BF" # Channel label(s) to skip from registration. Can be a single label string, a list of labels, or "None".
+reference_frame = 0 # Channel-wise reference frame index.
+
+# Expert override settings
+backend = "None" # Optional expert override: scikit | pystackreg | cv2.
+method = "None" # Optional expert override: translation | rigid_body | affine.
+# ============================
 # Background Substraction step
 # ============================
 [bg_sub]
@@ -50,6 +82,7 @@ enabled = true
 sigma = 2.0 # The standard deviation for Gaussian kernel used in background estimation. Default is 0.0, which means no smoothing.
 size = 3 # The size of the neighborhood used for background estimation. Default is 3.
 threshold = 0.05 # The threshold value for background subtraction. Default is 0.05.
+exclude_channel = "BF" # Channel label(s) to skip from background subtraction. Can be a single label string, a list of labels, or "None".
 statistic = "median" # The statistic function to use for background estimation. Supported values are: mean or median. Default is median.
 overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 
@@ -58,7 +91,7 @@ overwrite = true # Whether to overwrite existing output files. If false, it will
 # Segment step
 # ============================
 [segment]
-enabled = true
+enabled = false
 
 [segment.params]
 channel_to_segment = ["GFP"] # The channel to use for segmentation. This should match one of the channel labels in the input files.

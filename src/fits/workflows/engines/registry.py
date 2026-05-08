@@ -3,9 +3,11 @@ from typing import Any, Callable, Generic, Literal, Mapping, TypeVar
 
 import fits.environment.constant as cst
 from fits.environment.state import ExperimentState
-from fits.settings.models import ConvertSettings, SettingsModel, SegmentSettings, BGSubSettings
+from fits.settings.models import BGSubSettings, ConvertSettings, RegisterChannelSettings, RegisterTimeSettings, SegmentSettings, SettingsModel
 from fits.workflows.metadata.provenance import StepProfile
 from fits.workflows.convert import run_convert, convert_one
+from fits.workflows.register_channel import register_channel_one, run_register_channel
+from fits.workflows.register_time import register_time_one, run_register_time
 from fits.workflows.bg_sub import run_bg_sub, bg_sub_one
 from fits.workflows.segment import run_segment, segment_one
 
@@ -59,6 +61,22 @@ REGISTRY: dict[str, StepSpec[Any]] = {
                     batch_runner=run_bg_sub,
                     item_runner=_wrap_single_state_runner(bg_sub_one),
                     distribution=cst.DIST_BG_SUB,
+                    pool="cpu"),
+    cst.STEP_REGISTER_TIME: StepSpec(
+                    name=cst.STEP_REGISTER_TIME,
+                    settings_model=RegisterTimeSettings,
+                    output_name=cst.FITS_ARRAY_NAME,
+                    batch_runner=run_register_time,
+                    item_runner=_wrap_single_state_runner(register_time_one),
+                    distribution=cst.DIST_REGISTER,
+                    pool="cpu"),
+    cst.STEP_REGISTER_CHANNEL: StepSpec(
+                    name=cst.STEP_REGISTER_CHANNEL,
+                    settings_model=RegisterChannelSettings,
+                    output_name=cst.FITS_ARRAY_NAME,
+                    batch_runner=run_register_channel,
+                    item_runner=_wrap_single_state_runner(register_channel_one),
+                    distribution=cst.DIST_REGISTER,
                     pool="cpu"),
     cst.STEP_SEGMENT: StepSpec(
                     name=cst.STEP_SEGMENT,

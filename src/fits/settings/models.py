@@ -1,12 +1,13 @@
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 from fits_io.readers._types import Zproj
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
-from fits.environment.constant import ExecMode, STATISTIC_MAP, SUPPORTED_STATISTICS
+from fits.environment.constant import ExecMode, RegistrationContext, STATISTIC_MAP, SUPPORTED_STATISTICS
+from fits.workflows.engines.registration_resolver import resolve_registration_plan
 
 
 
@@ -18,6 +19,16 @@ class SettingsModel(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     overwrite: bool = Field(default=False, exclude=True)
+    execution: ExecMode = Field(default="thread", exclude=True)
+    workers: int | None = Field(default=None, exclude=True)
+    ordered_execution: bool = Field(default=False, exclude=True)
+
+    @field_validator('workers', mode='before', check_fields=False)
+    @classmethod
+    def parse_workers(cls, v):
+        if isinstance(v, str) and v.lower() == 'none':
+            return None
+        return v
 
 
 FitsSettings = TypeVar("FitsSettings", bound=SettingsModel)
@@ -44,18 +55,6 @@ class ConvertSettings(SettingsModel):
     custom_metadata: Mapping[str, Any] | None = None
     z_projection: Zproj = 'max'
     compression: str | None = 'zlib'
-    
-    # Execution mode
-    execution: ExecMode = Field(default="thread", exclude=True)
-    workers: int | None = Field(default=None, exclude=True)
-    ordered_execution: bool = Field(default=False, exclude=True)
-    
-    @field_validator('workers', mode='before')
-    @classmethod
-    def parse_workers(cls, v):
-        if isinstance(v, str) and v.lower() == 'none':
-            return None
-        return v
     
     @field_validator('channel_labels', mode='before')
     @classmethod
@@ -89,12 +88,17 @@ class BGSubSettings(SettingsModel):
     sigma: float = 0.0
     size: int = 3
     threshold: float = 0.05
+    exclude_channel: list[str] | None = None
     statistic: Callable[..., NDArray[Any]] = np.median
-    
-    # Execution mode
-    execution: ExecMode = Field(default="thread", exclude=True)
-    workers: int | None = Field(default=None, exclude=True)
-    ordered_execution: bool = Field(default=False, exclude=True)
+
+    @field_validator('exclude_channel', mode='before')
+    @classmethod
+    def parse_exclude_channel(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return None if v.lower() == 'none' else [v]
+        return list(v)
 
     @field_validator('mask', mode='before', check_fields=False)
     @classmethod
@@ -127,6 +131,75 @@ class BGSubSettings(SettingsModel):
         return str(self.statistic)
 
 
+class RegisterSettings(SettingsModel):
+    """Base settings for registration steps. Not meant to be used directly."""
+
+    backend: Literal["scikit", "pystackreg", "cv2"] | None = None
+    method: Literal["translation", "rigid_body", "affine"] | None = None
+
+    @field_validator('fit_channel', 'reference_channel', mode='before', check_fields=False)
+    @classmethod
+    def parse_optional_channel(cls, v):
+        if isinstance(v, str) and v.lower() == 'none':
+            return None
+        return v
+
+    @field_validator('backend', 'method', mode='before')
+    @classmethod
+    def parse_optional_literals(cls, v):
+        if isinstance(v, str) and v.lower() == 'none':
+            return None
+        return v
+    
+
+class RegisterTimeSettings(RegisterSettings):
+    """Settings for time-wise registration (drift correction over time)."""
+    context: RegistrationContext = "linear_drift"
+    reference_strategy: Literal["previous", "first", "mean"] = "previous"
+    fit_channel: int | str | None = None
+
+    workers: int | None = Field(default=1, exclude=True)
+    
+    @field_validator('context')
+    @classmethod
+    def validate_time_context(cls, v: RegistrationContext) -> RegistrationContext:
+        plan = resolve_registration_plan(v)
+        if plan.mode != "time":
+            raise ValueError(f"context '{v}' is not a time-wise registration preset.")
+        return v
+
+
+class RegisterChannelSettings(RegisterSettings):
+    """Settings for channel-wise registration (cross-channel alignment)."""
+    context: RegistrationContext = "channel_shift"
+    reference_channel: int | str | None = None
+    exclude_channel: list[str] | None = None
+    reference_frame: int = 0
+
+    @field_validator('exclude_channel', mode='before')
+    @classmethod
+    def parse_exclude_channel(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return None if v.lower() == 'none' else [v]
+        return list(v)
+
+    @field_validator('context')
+    @classmethod
+    def validate_channel_context(cls, v: RegistrationContext) -> RegistrationContext:
+        plan = resolve_registration_plan(v)
+        if plan.mode != "channel":
+            raise ValueError(f"context '{v}' is not a channel-wise registration preset.")
+        return v
+
+    @model_validator(mode='after')
+    def validate_reference_not_excluded(self) -> 'RegisterChannelSettings':
+        if isinstance(self.reference_channel, str) and self.exclude_channel and self.reference_channel in self.exclude_channel:
+            raise ValueError(f"reference_channel '{self.reference_channel}' cannot be excluded in register_channel.exclude_channel.")
+        return self
+
+
 class SegmentSettings(SettingsModel):
     """
     Settings for the segmentation process in the FITS pipeline.
@@ -148,11 +221,6 @@ class SegmentSettings(SettingsModel):
     nuclear_channel: Sequence[str] = Field(default_factory=list, exclude=True)
     user_settings: dict[str, Any] = Field(default_factory=dict)
     model: Any | None = None  
-    
-    # Execution mode
-    execution: ExecMode = Field(default="thread", exclude=True)
-    workers: int | None = Field(default=None, exclude=True)
-    ordered_execution: bool = Field(default=False, exclude=True)
     
     @computed_field()
     @property

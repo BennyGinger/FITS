@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fits.workflows.arrays.channel_merge import _ensure_channel_axis, merge_channel_arrays
+from fits.workflows.arrays.channel_merge import _ensure_channel_axis, apply_on_included_channels, merge_channel_arrays
 
 
 # ── ensure_channel_axis ────────────────────────────────────────────────────────
@@ -183,3 +183,65 @@ def test_merge_raises_on_dimensionality_mismatch_after_normalization() -> None:
     new_arr = np.ones((1, 4, 4), dtype=np.uint16)      # CYX
     with pytest.raises(ValueError, match='do not match array shape'):
         merge_channel_arrays(existing, 'CYX', [0], new_arr, 'CYX', [1], 'CYX')
+
+
+# ── apply_on_included_channels ────────────────────────────────────────────────
+
+def test_apply_on_included_channels_processes_full_array_without_exclusion() -> None:
+    arr = np.stack([np.full((3, 3), 1, dtype=np.uint16), np.full((3, 3), 5, dtype=np.uint16)], axis=0)
+    seen: dict[str, object] = {}
+
+    def process_included(array_subset: np.ndarray, labels_subset: list[str] | None) -> np.ndarray:
+        seen['shape'] = array_subset.shape
+        seen['labels'] = labels_subset
+        return array_subset + 2
+
+    out = apply_on_included_channels(arr, 'CYX', ['GFP', 'RFP'], None, process_included)
+    assert seen['shape'] == (2, 3, 3)
+    assert seen['labels'] == ['GFP', 'RFP']
+    assert np.all(out[0] == 3)
+    assert np.all(out[1] == 7)
+
+
+def test_apply_on_included_channels_preserves_excluded_channel_values() -> None:
+    arr = np.stack(
+        [
+            np.full((3, 3), 1, dtype=np.uint16),
+            np.full((3, 3), 5, dtype=np.uint16),
+            np.full((3, 3), 9, dtype=np.uint16),
+        ],
+        axis=0,
+    )
+
+    def process_included(array_subset: np.ndarray, labels_subset: list[str] | None) -> np.ndarray:
+        assert labels_subset == ['GFP', 'BF']
+        return array_subset + 10
+
+    out = apply_on_included_channels(arr, 'CYX', ['GFP', 'RFP', 'BF'], ['RFP'], process_included)
+    assert np.all(out[0] == 11)
+    assert np.all(out[1] == 5)
+    assert np.all(out[2] == 19)
+
+
+def test_apply_on_included_channels_returns_copy_when_all_channels_excluded() -> None:
+    arr = np.stack([np.full((3, 3), 1, dtype=np.uint16), np.full((3, 3), 5, dtype=np.uint16)], axis=0)
+    called = {'process': False}
+
+    def process_included(array_subset: np.ndarray, labels_subset: list[str] | None) -> np.ndarray:
+        called['process'] = True
+        return array_subset + 100
+
+    out = apply_on_included_channels(arr, 'CYX', ['GFP', 'RFP'], ['GFP', 'RFP'], process_included)
+    assert called['process'] is False
+    assert np.array_equal(out, arr)
+    assert out is not arr
+
+
+def test_apply_on_included_channels_raises_for_unknown_excluded_label() -> None:
+    arr = np.stack([np.full((3, 3), 1, dtype=np.uint16)], axis=0)
+
+    def process_included(array_subset: np.ndarray, labels_subset: list[str] | None) -> np.ndarray:
+        return array_subset
+
+    with pytest.raises(ValueError, match='Unknown exclude_channel'):
+        apply_on_included_channels(arr, 'CYX', ['GFP'], ['RFP'], process_included)

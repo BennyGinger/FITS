@@ -7,16 +7,21 @@ import numpy as np
 
 
 STEP_CONVERT = "convert"
+STEP_REGISTER_TIME = "register_time"
+STEP_REGISTER_CHANNEL = "register_channel"
 STEP_BG_SUB = "bg_sub"
 STEP_SEGMENT = "segment"
 
 WORKFLOW_ORDER = [
     STEP_CONVERT,
+    STEP_REGISTER_TIME,
+    STEP_REGISTER_CHANNEL,
     STEP_BG_SUB,
     STEP_SEGMENT,
 ]
 
 DIST_IO = "fits-io"
+DIST_REGISTER = "stackalign"
 DIST_BG_SUB = "bg-sub"
 DIST_SEG = "cellpose-kit"
 
@@ -32,6 +37,18 @@ UIMode = Literal["cli", "gui", "notebook"]
 ExecMode = Literal["serial", "thread", "process"]
 
 RunTimeMode = Literal["batch", "conveyor"]
+
+RegistrationMode = Literal["time", "channel"]
+RegistrationBackend = Literal["scikit", "pystackreg", "cv2"]
+RegistrationMethod = Literal["translation", "rigid_body", "affine"]
+RegistrationContext = Literal[
+    "linear_drift",
+    "rotational_drift",
+    "complex_drift",
+    "channel_shift",
+    "channel_shift_dual_cam",
+    "channel_shift_complex",
+]
 
 STATISTIC_MAP: dict[str, Callable[..., NDArray[Any]]] = {
     "median": np.median,

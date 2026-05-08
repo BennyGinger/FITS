@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from bg_sub import bg_sub
 from fits_io.client import FitsIO
+from numpy.typing import NDArray
 from progress_bar import pbar
 
 import fits.environment.constant as cst
 from fits.environment.runtime import get_ctx, use_ctx
 from fits.environment.state import ExperimentState
 from fits.settings.models import BGSubSettings
+from fits.workflows.arrays.channel_merge import apply_on_included_channels
 from fits.workflows.arrays.converter import flatten_to_frames
 from fits.workflows.arrays.loading import get_array
 from fits.workflows.engines.executors import execute
@@ -53,30 +56,40 @@ def bg_sub_one(settings: BGSubSettings, exp_state: ExperimentState, step_profile
         
         # Get image array and associated axis order
         input_array, input_axis_order = get_array(reader)
-        
-        # Flatten to list of 2D arrays for processing
-        batch = flatten_to_frames(input_array, input_axis_order)
-        
-        # Run background subtraction
-        corrected_batch = bg_sub(batch.frames, sigma=settings.sigma, size=settings.size, threshold=settings.threshold, statistic=settings.statistic)
-        
-        # Reshape back to original dimensions
-        corrected_array = batch.rebuild(list(corrected_batch))
 
-        step_metadata = {
+        def process_bg_sub(array_subset: NDArray[Any], channel_labels_subset: list[str] | None) -> NDArray[Any]:
+            _ = channel_labels_subset
+            # Flatten to list of 2D arrays for processing
+            batch = flatten_to_frames(array_subset, input_axis_order)
+
+            # Run background subtraction
+            corrected_batch = bg_sub(batch.frames, sigma=settings.sigma, size=settings.size, threshold=settings.threshold, statistic=settings.statistic)
+
+            # Reshape back to original dimensions
+            return batch.rebuild(list(corrected_batch))
+
+        # Apply background subtraction on included channels
+        corrected_array = apply_on_included_channels(
+            input_array,
+            input_axis_order,
+            reader.channel_labels,
+            settings.exclude_channel,
+            process_bg_sub,)
+
+        step_metadata: dict[str, object] = {
             "sigma": settings.sigma,
             "size": settings.size,
             "threshold": settings.threshold,
-            "statistic": settings.serialize_statistic_name(),
-        }
+            "exclude_channel": settings.exclude_channel,
+            "statistic": settings.serialize_statistic_name(),}
+        
         existing_project_metadata = load_project_metadata_from_reader(reader)
         project_metadata = build_step_project_metadata(
             existing_project_metadata=existing_project_metadata,
             step_profile=step_profile,
             user_name=ctx.user_name,
             step_metadata=step_metadata,
-            channel_metadata=None,
-        )
+            channel_metadata=None,)
         
         # Save output
         reader.save_array(
@@ -84,8 +97,8 @@ def bg_sub_one(settings: BGSubSettings, exp_state: ExperimentState, step_profile
             axis_order=input_axis_order,
             channel_labels=reader.channel_labels,
             output_name=output_name,
-            project_metadata=project_metadata,
-        )
+            project_metadata=project_metadata,)
+        
         logger.debug("%s completed for %s", step_profile.step_name, exp_state.workdir_relative(run_dir))
         
         # Update and return state

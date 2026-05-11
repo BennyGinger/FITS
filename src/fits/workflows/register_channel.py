@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import numpy as np
 from fits_io.client import FitsIO
 from progress_bar import pbar
 from stackalign import RegisterModel
@@ -69,9 +68,13 @@ def register_channel_one(settings: RegisterChannelSettings, exp_state: Experimen
             raise ValueError(f"Context '{settings.context}' requires a reference_channel but none was provided. Set 'reference_channel' to a channel label or local channel index.")
 
         register = RegisterModel(backend=plan.backend)
-        register.fit_channel(array=fit_array, axes=input_axis_order, method=plan.method, reference_channel=resolved_reference_channel, reference_frame=settings.reference_frame)
+        register.fit_channel(array=fit_array, 
+                             axes=input_axis_order, 
+                             method=plan.method, 
+                             reference_channel=resolved_reference_channel, 
+                             reference_frame=settings.reference_frame)
         transformed_included = register.apply(array=fit_array, axes=input_axis_order)
-
+        
         if len(included_indices) == input_array.shape[c_idx]:
             registered_array = transformed_included
         else:
@@ -88,8 +91,8 @@ def register_channel_one(settings: RegisterChannelSettings, exp_state: Experimen
             "reference_frame": settings.reference_frame,
             "exclude_channel": settings.exclude_channel,
             "included_channel_indices": included_indices,
-            "included_channel_labels": included_channel_labels,
-        }
+            "included_channel_labels": included_channel_labels,}
+        
         project_metadata = build_step_project_metadata(existing_project_metadata=existing_project_metadata, step_profile=step_profile, user_name=ctx.user_name, step_metadata=step_metadata, channel_metadata=None)
 
         reader.save_array(registered_array, axis_order=input_axis_order, channel_labels=reader.channel_labels, output_name=output_name, project_metadata=project_metadata)

@@ -18,6 +18,12 @@ from fits.workflows.engines.registry import REGISTRY, StepSpec
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_STEP_CONCURRENCY_CAPS: dict[str, int] = {
+    cst.STEP_REGISTER_TIME: 1,
+}
+WAIT_HEARTBEAT_SECONDS = 60.0
+
+
 
 @dataclass(frozen=True)
 class Task:
@@ -34,6 +40,7 @@ def run_workflow_scheduler(user_cfg: Mapping[str, Any], exp_states: list[Experim
         return exp_states
 
     settings_by_step, step_specs = _resolve_step_runtime(user_cfg, enabled_steps)
+    step_caps = _resolve_step_concurrency_caps(enabled_steps)
 
     cpu_ready: deque[Task] = deque()
     gpu_ready: deque[Task] = deque()
@@ -44,6 +51,7 @@ def run_workflow_scheduler(user_cfg: Mapping[str, Any], exp_states: list[Experim
 
     initial_task_count = len(exp_states)
     logger.info("Scheduler seeded %d tasks for first step '%s'", initial_task_count, first_step)
+    logger.info("Scheduler per-step concurrency caps: %s", step_caps)
 
     cpu_workers = os.cpu_count() or 1
     final_states: list[ExperimentState] = []
@@ -59,19 +67,19 @@ def run_workflow_scheduler(user_cfg: Mapping[str, Any], exp_states: list[Experim
                 cpu_running,
                 cpu_workers,
                 cpu_ex,
+                step_caps=step_caps,
                 ctx=ctx,
                 settings_by_step=settings_by_step,
-                step_specs=step_specs,
-            )
+                step_specs=step_specs,)
             _submit_ready_tasks(
                 gpu_ready,
                 gpu_running,
                 1,
                 gpu_ex,
+                step_caps=step_caps,
                 ctx=ctx,
                 settings_by_step=settings_by_step,
-                step_specs=step_specs,
-            )
+                step_specs=step_specs,)
 
             if not cpu_running and not gpu_running and not cpu_ready and not gpu_ready:
                 break
@@ -80,7 +88,18 @@ def run_workflow_scheduler(user_cfg: Mapping[str, Any], exp_states: list[Experim
             if not running_union:
                 continue
 
-            done, _ = wait(running_union, return_when=FIRST_COMPLETED)
+            done, _ = wait(running_union, timeout=WAIT_HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
+            if not done:
+                running_labels = [f"{task.step_name}:{_task_label(task)}" for task in [*cpu_running.values(), *gpu_running.values()]]
+                logger.warning(
+                    "Scheduler heartbeat: no completion for %.1fs | running=%d ready_cpu=%d ready_gpu=%d in_flight=%s",
+                    WAIT_HEARTBEAT_SECONDS,
+                    len(running_union),
+                    len(cpu_ready),
+                    len(gpu_ready),
+                    running_labels,
+                )
+                continue
 
             newly_queued = _drain_completed_tasks(
                 done,
@@ -91,8 +110,7 @@ def run_workflow_scheduler(user_cfg: Mapping[str, Any], exp_states: list[Experim
                 cpu_ready=cpu_ready,
                 gpu_ready=gpu_ready,
                 final_states=final_states,
-                pb=pb,
-            )
+                pb=pb,)
             if newly_queued > 0:
                 total_tasks += newly_queued
                 pb.update(total=total_tasks)
@@ -146,6 +164,15 @@ def _resolve_step_runtime(user_cfg: Mapping[str, Any], enabled_steps: list[str])
     return settings_by_step, step_specs
 
 
+def _resolve_step_concurrency_caps(enabled_steps: list[str]) -> dict[str, int]:
+    # Keep this internal for now; override support can be added later.
+    return {
+        step_name: cap
+        for step_name, cap in DEFAULT_STEP_CONCURRENCY_CAPS.items()
+        if step_name in enabled_steps and cap > 0
+    }
+
+
 def _enqueue_task(task: Task, step_specs: Mapping[str, StepSpec[Any]], cpu_ready: deque[Task], gpu_ready: deque[Task]) -> None:
     pool = step_specs[task.step_name].pool
     if pool == "cpu":
@@ -172,10 +199,39 @@ def _submit_task(task: Task, executor: ThreadPoolExecutor, running: dict[Future[
     running[fut] = task
 
 
-def _submit_ready_tasks(ready: deque[Task], running: dict[Future[list[ExperimentState]], Task], max_running: int, executor: ThreadPoolExecutor, *, ctx: ExecutionContext, settings_by_step: Mapping[str, Any], step_specs: Mapping[str, StepSpec[Any]]) -> None:
+def _running_count_for_step(running: Mapping[Future[list[ExperimentState]], Task], step_name: str) -> int:
+    return sum(1 for task in running.values() if task.step_name == step_name)
+
+
+def _within_step_cap(task: Task, running: Mapping[Future[list[ExperimentState]], Task], step_caps: Mapping[str, int]) -> bool:
+    cap = step_caps.get(task.step_name)
+    if cap is None:
+        return True
+    return _running_count_for_step(running, task.step_name) < cap
+
+
+def _pop_next_eligible_task(ready: deque[Task], running: Mapping[Future[list[ExperimentState]], Task], step_caps: Mapping[str, int]) -> Task | None:
+    if not ready:
+        return None
+
+    scan_count = len(ready)
+    for _ in range(scan_count):
+        task = ready[0]
+        if _within_step_cap(task, running, step_caps):
+            return ready.popleft()
+        ready.rotate(-1)
+    return None
+
+
+def _submit_ready_tasks(ready: deque[Task], running: dict[Future[list[ExperimentState]], Task], max_running: int, executor: ThreadPoolExecutor, *, step_caps: Mapping[str, int], ctx: ExecutionContext, settings_by_step: Mapping[str, Any], step_specs: Mapping[str, StepSpec[Any]]) -> None:
     while ready and len(running) < max_running:
+        task = _pop_next_eligible_task(ready, running, step_caps)
+        if task is None:
+            # No currently eligible task due to per-step running caps.
+            return
+
         _submit_task(
-            ready.popleft(),
+            task,
             executor,
             running,
             ctx=ctx,

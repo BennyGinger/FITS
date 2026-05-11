@@ -14,7 +14,7 @@ class RegistrationPlan:
 
 
 _PRESET_PLANS: dict[RegistrationContext, RegistrationPlan] = {
-    "linear_drift": RegistrationPlan(mode="time", backend="scikit", method="translation"),
+    "linear_drift": RegistrationPlan(mode="time", backend="pystackreg", method="translation"),
     "rotational_drift": RegistrationPlan(mode="time", backend="pystackreg", method="rigid_body"),
     "complex_drift": RegistrationPlan(mode="time", backend="pystackreg", method="affine"),
     "channel_shift": RegistrationPlan(mode="channel", backend="cv2", method="translation"),

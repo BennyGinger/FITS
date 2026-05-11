@@ -41,14 +41,17 @@ RunTimeMode = Literal["batch", "conveyor"]
 RegistrationMode = Literal["time", "channel"]
 RegistrationBackend = Literal["scikit", "pystackreg", "cv2"]
 RegistrationMethod = Literal["translation", "rigid_body", "affine"]
-RegistrationContext = Literal[
+TimeRegiContext = Literal[
     "linear_drift",
     "rotational_drift",
     "complex_drift",
+]
+ChannelRegiContext = Literal[
     "channel_shift",
     "channel_shift_dual_cam",
     "channel_shift_complex",
 ]
+RegistrationContext = TimeRegiContext | ChannelRegiContext
 
 STATISTIC_MAP: dict[str, Callable[..., NDArray[Any]]] = {
     "median": np.median,

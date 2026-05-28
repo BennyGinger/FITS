@@ -2,7 +2,8 @@ version = 1
 revision = 2
 requires-python = "==3.12.*"
 resolution-markers = [
-    "sys_platform == 'darwin'",
+    "platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "platform_machine != 'x86_64' and sys_platform == 'darwin'",
     "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "sys_platform == 'win32'",
     "sys_platform == 'emscripten'",
@@ -81,26 +82,26 @@ dev = [
 
 [[package]]
 name = "cellpose"
-version = "4.0.9"
+version = "3.1.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastremap" },
     { name = "fill-voids" },
     { name = "imagecodecs" },
+    { name = "llvmlite" },
     { name = "natsort" },
+    { name = "numba" },
     { name = "numpy" },
     { name = "opencv-python-headless" },
     { name = "roifile" },
     { name = "scipy" },
-    { name = "segment-anything" },
     { name = "tifffile" },
     { name = "torch" },
-    { name = "torchvision" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/55/d6/da87cca992c6da101851451831da9f94718a354401cbaf99c1f21c228b8e/cellpose-4.0.9.tar.gz", hash = "sha256:d911bdcdfe2b24afa2c3d71afd2b502ce0ac3bb8693f2952d6d850f9b57311fc", size = 4252393, upload-time = "2026-03-04T19:52:13.122Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/85/47833e0b8f3fc3e9b54dfa1f3b0e11741a936749f98198c884a11980bdb3/cellpose-3.1.1.3.tar.gz", hash = "sha256:df505785d79fc5071211da008864f75edeff0588cdb76446ca89eced303a67f1", size = 23333246, upload-time = "2026-01-09T16:34:10.078Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/cf/d7de46b5268d5bf43fba02d8ace65d4c4064d8761c559cc8fb3bab617e7a/cellpose-4.0.9-py3-none-any.whl", hash = "sha256:bc0dacce83074fab2ff90f4cd2b0e9f7e65b528affa139caa37be6961f2e19cf", size = 213074, upload-time = "2026-03-04T19:52:11.8Z" },
+    { url = "https://files.pythonhosted.org/packages/55/24/4c327f57a6dc3f672b956cc47a46a966475b9ddbf8b675bc0b1603e0f327/cellpose-3.1.1.3-py3-none-any.whl", hash = "sha256:0c309f306a8356ba2779054dfd8a1b4a88ea7d6c3388a6fdac99b91b21ce7ff2", size = 226352, upload-time = "2026-01-09T16:34:08.004Z" },
 ]
 
 [package.optional-dependencies]
@@ -419,7 +420,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bg-sub", editable = "bg_sub" },
-    { name = "cellpose", extras = ["gui"], specifier = ">=4" },
+    { name = "cellpose", extras = ["gui"], specifier = "<=4" },
     { name = "cellpose-kit", editable = "cellpose_kit" },
     { name = "fits-io", editable = "fits_io" },
     { name = "ipython", specifier = ">=9.10.0" },
@@ -1636,15 +1637,6 @@ wheels = [
 ]
 
 [[package]]
-name = "segment-anything"
-version = "1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4f/88/7725f418f2bb4a7ac2e5e8295fbbca2900c70c8fe5ba48b3aff5788af9a2/segment_anything-1.0.tar.gz", hash = "sha256:ed0c9f6fb07bbef9c6238a7028a13c8272f1ba6b6305ca73e3e064266503736b", size = 31191, upload-time = "2023-04-06T18:04:40.816Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/77/8e0c16abf151a1dd076b562febc0da2ecf1132b0b41826087af96f101f42/segment_anything-1.0-py3-none-any.whl", hash = "sha256:86f67d417a915823c3302098effe9008b688945772517310956bb49de0e7f02e", size = 36560, upload-time = "2023-04-06T18:04:38.834Z" },
-]
-
-[[package]]
 name = "setuptools"
 version = "82.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1906,8 +1898,16 @@ dependencies = [
     { name = "trackastra" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "opencv-python" },
+]
+
 [package.metadata]
 requires-dist = [{ name = "trackastra", specifier = ">=0.5.2" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "opencv-python", specifier = ">=4.11.0.86" }]
 
 [[package]]
 name = "traitlets"

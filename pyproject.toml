@@ -15,7 +15,7 @@ dependencies = [
     "pyside6>=6.10.2",
     "typer>=0.23.0",
     "cellpose-kit",
-    "cellpose[gui]>=4",
+    "cellpose[gui]<=4",
     "tracklink",
     "bg-sub",
     "stackalign",

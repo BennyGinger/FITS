@@ -1,88 +1,92 @@
-from dataclasses import dataclass
-from typing import Any, Callable, Generic, Literal, Mapping, TypeVar
+from __future__ import annotations
+
+from typing import Any
 
 import fits.environment.constant as cst
-from fits.environment.state import ExperimentState
-from fits.settings.models import BGSubSettings, ConvertSettings, RegisterChannelSettings, RegisterTimeSettings, SegmentSettings, SettingsModel
-from fits.workflows.metadata.provenance import StepProfile
-from fits.workflows.convert import run_convert, convert_one
-from fits.workflows.register_channel import register_channel_one, run_register_channel
-from fits.workflows.register_time import register_time_one, run_register_time
-from fits.workflows.bg_sub import run_bg_sub, bg_sub_one
-from fits.workflows.segment import run_segment, segment_one
+from fits.environment.constant import StepName
+from fits.settings.models import (BGSubSettings, ConvertSettings, RegisterChannelSettings, 
+                                  RegisterTimeSettings, SegmentSettings, TrackSettings)
+from fits.workflows.engines.models import StepProfile, StepSpec
+from fits.tasks import run_convert
+# from fits.tasks.registration.register_channel import register_channel_one
+# from fits.tasks.registration.register_time import register_time_one
+from fits.tasks.bg_sub import bg_sub_one
+from fits.tasks.segmentation.segment import run_segmentation
+# from fits.tasks.track import track_one
 
-
-FitsSettings = TypeVar("FitsSettings", bound=SettingsModel)
-
-BatchRunner = Callable[[FitsSettings, list[ExperimentState], StepProfile, cst.FitsName], list[ExperimentState]]
-TaskPool = Literal["cpu", "gpu"]
-ItemRunner = Callable[[FitsSettings, ExperimentState, StepProfile, cst.FitsName], list[ExperimentState]]
-SingleStateRunner = Callable[[FitsSettings, ExperimentState, StepProfile, cst.FitsName], ExperimentState]
-
-
-def _wrap_single_state_runner(runner: SingleStateRunner[FitsSettings]) -> ItemRunner[FitsSettings]:
-    def wrapped(settings: FitsSettings, exp_state: ExperimentState, step_profile: StepProfile, output_name: cst.FitsName) -> list[ExperimentState]:
-        return [runner(settings, exp_state, step_profile, output_name)]
-
-    return wrapped
-
-@dataclass(frozen=True)
-class StepSpec(Generic[FitsSettings]):
-    name: str
-    settings_model: type[FitsSettings]
-    output_name: cst.FitsName
-    batch_runner: BatchRunner[FitsSettings]
-    item_runner: ItemRunner[FitsSettings]
-    distribution: str
-    pool: TaskPool
-    
-    @property
-    def step_profile(self) -> StepProfile:
-        return StepProfile(self.distribution, self.name)
-    
-    def model_validate(self, params: Mapping[str, Any]) -> SettingsModel:
-        """Convenience method to validate settings using the associated settings model."""
-        return self.settings_model.model_validate(params)
-    
 
 REGISTRY: dict[str, StepSpec[Any]] = {
-    cst.STEP_CONVERT: StepSpec(
-                    name=cst.STEP_CONVERT,
-                    settings_model=ConvertSettings,
-                    output_name=cst.FITS_ARRAY_NAME,
-                    batch_runner=run_convert,
-                    item_runner=convert_one,
-                    distribution=cst.DIST_IO,
-                    pool="cpu"),
-    cst.STEP_BG_SUB: StepSpec(
-                    name=cst.STEP_BG_SUB,
-                    settings_model=BGSubSettings,
-                    output_name=cst.FITS_ARRAY_NAME, 
-                    batch_runner=run_bg_sub,
-                    item_runner=_wrap_single_state_runner(bg_sub_one),
-                    distribution=cst.DIST_BG_SUB,
-                    pool="cpu"),
-    cst.STEP_REGISTER_TIME: StepSpec(
-                    name=cst.STEP_REGISTER_TIME,
-                    settings_model=RegisterTimeSettings,
-                    output_name=cst.FITS_ARRAY_NAME,
-                    batch_runner=run_register_time,
-                    item_runner=_wrap_single_state_runner(register_time_one),
-                    distribution=cst.DIST_REGISTER,
-                    pool="cpu"),
-    cst.STEP_REGISTER_CHANNEL: StepSpec(
-                    name=cst.STEP_REGISTER_CHANNEL,
-                    settings_model=RegisterChannelSettings,
-                    output_name=cst.FITS_ARRAY_NAME,
-                    batch_runner=run_register_channel,
-                    item_runner=_wrap_single_state_runner(register_channel_one),
-                    distribution=cst.DIST_REGISTER,
-                    pool="cpu"),
-    cst.STEP_SEGMENT: StepSpec(
-                    name=cst.STEP_SEGMENT,
-                    settings_model=SegmentSettings,
-                    output_name=cst.FITS_MASK_NAME,
-                    batch_runner=run_segment,
-                    item_runner=_wrap_single_state_runner(segment_one),
-                    distribution=cst.DIST_SEG,
-                    pool="gpu"),}
+    StepName.CONVERT: StepSpec(
+        profile=StepProfile(
+            step_name=StepName.CONVERT,
+            distribution=cst.DIST_IO,
+            input_artifact=cst.ARTI_RAW,
+            output_artifact=cst.ARTI_IMG,
+            output_name=cst.FITS_ARRAY_NAME,
+        ),
+        settings_model=ConvertSettings,
+        item_runner=run_convert,
+        pool="cpu"
+    ),
+    StepName.BG_SUB: StepSpec(
+        profile=StepProfile(
+            step_name=StepName.BG_SUB,
+            distribution=cst.DIST_BG_SUB,
+            input_artifact=cst.ARTI_IMG,
+            output_artifact=cst.ARTI_IMG,
+            output_name=cst.FITS_ARRAY_NAME,
+        ),
+        settings_model=BGSubSettings,
+        item_runner=bg_sub_one,
+        pool="cpu"
+    ),
+    # StepName.REGISTER_TIME: StepSpec(
+    #     profile=StepProfile(
+    #         step_name=StepName.REGISTER_TIME,
+    #         distribution=cst.DIST_REGISTER,
+    #         input_artifact=cst.ARTI_IMG,
+    #         output_artifact=cst.ARTI_IMG,
+    #         output_name=cst.FITS_ARRAY_NAME,
+    #     ),
+    #     settings_model=RegisterTimeSettings,
+    #     item_runner=register_time_one,
+    #     pool="cpu",
+    #     max_concurrency=1
+    # ),
+    # StepName.REGISTER_CHANNEL: StepSpec(
+    #     profile=StepProfile(
+    #         step_name=StepName.REGISTER_CHANNEL,
+    #         distribution=cst.DIST_REGISTER,
+    #         input_artifact=cst.ARTI_IMG,
+    #         output_artifact=cst.ARTI_IMG,
+    #         output_name=cst.FITS_ARRAY_NAME,
+    #     ),
+    #     settings_model=RegisterChannelSettings,
+    #     item_runner=register_channel_one,
+    #     pool="cpu"
+    # ),
+    StepName.SEGMENT: StepSpec(
+        profile=StepProfile(
+            step_name=StepName.SEGMENT,
+            distribution=cst.DIST_SEG,
+            input_artifact=cst.ARTI_IMG,
+            output_artifact=cst.ARTI_SEG,
+            output_name=cst.FITS_MASK_SEG,
+        ),
+        settings_model=SegmentSettings,
+        item_runner=run_segmentation,
+        pool="gpu"
+    ),
+    # StepName.TRACK: StepSpec(
+    #     profile=StepProfile(
+    #         step_name=StepName.TRACK,
+    #         distribution=cst.DIST_TRACK,
+    #         input_artifact=cst.ARTI_SEG,
+    #         output_artifact=cst.ARTI_TRACK,
+    #         output_name=cst.FITS_MASK_TRACK,
+    #     ),
+    #     settings_model=TrackSettings,
+    #     item_runner=track_one,
+    #     pool="gpu"
+    # ),
+    }

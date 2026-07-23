@@ -11,9 +11,9 @@ from fits.environment.state import ExperimentState
 from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
 from fits.workflows.engines.registry import REGISTRY
 from fits.workflows.engines.run_decision import RunDecision
-from fits.workflows.metadata.provenance import StepProfile
-from fits.workflows.register_channel import register_channel_one
-from fits.workflows.register_time import register_time_one
+from fits.workflows.engines.models import StepProfile
+from fits.tasks.registration.register_channel import register_channel_one
+from fits.tasks.registration.register_time import register_time_one
 
 
 class DummyReader:

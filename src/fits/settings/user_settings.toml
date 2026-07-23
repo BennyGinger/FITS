@@ -4,16 +4,14 @@
 # User identity
 # ============================
 user_name = "Benny"
-run_dir = "/media/ben/Analysis/Python/Images/zymosan" # Directory where the input files are located and where the output files will be saved. It should contain the raw files to be processed.
+run_dir = "/media/ben/Analysis/Python/Images/nd2/Run2_test" # Directory where the input files are located and where the output files will be saved. It should contain the raw files to be processed.
 
 # ============================
 # Runtime configuration
 # ============================
 [runtime]
-mode = "cli" # Execution mode: cli | gui | notebook
-execution = "conveyor" # Type of execution: batch | conveyor.
-dry_run = false # If true, it will not write any output files, but will still perform all computations and print logs.
-log_dir = "/media/ben/Analysis/Python/Images/zymosan" # where to save log files, if not specified, log file will not be created
+execution = "batch" # Type of execution: batch | conveyor.
+log_dir = "/media/ben/Analysis/Python/Images/nd2/Run2_test" # where to save log files, if not specified, log file will not be created
 console_level = "info" # Console log level: debug | info | warning | error | critical
 file_level = "debug" # File log level: debug | info | warning | error | critical
 
@@ -29,16 +27,11 @@ file_level = "debug" # File log level: debug | info | warning | error | critical
 enabled = true
 
 [convert.params]
-channel_labels = ["BF", "GFP", "BFP"] # List of channel labels to set in the metadata. The order should match the channel order in the input files. If not specified, it will use default channel labels (e.g. Channel 1, Channel 2, etc.).
-export_channels = ["BFP", "GFP"] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
+channel_labels = ["GFP", "RFP"] # List of channel labels to set in the metadata. The order should match the channel order in the input files. If not specified, it will use default channel labels (e.g. Channel 1, Channel 2, etc.).
+export_channels = ["RFP", "GFP"] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
 compression = "zlib" # Compression method to use when saving the output files. Supported methods are: zlib, lzma, jpeg or "None". If not specified, it will use the default compression method (zlib).
-overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
+overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 z_projection = "max" # Z-projection method to apply to the input files. Supported methods are: max, mean, sum, std. By default, apply max projection.
-
-[convert.params.user_defined_metadata] # Additional user-defined metadata fields to include in the output files. This is optional and can be used to add any custom metadata fields that are not already included by default. The keys are the metadata field names and the values are the corresponding values to set for those fields in the output files.
-Experimenter = "Smith (TDK)"
-Date = "2024-06-15"
-Note = "Cells were stimulated at ..."
 
 # ============================
 # Register Time step
@@ -79,8 +72,8 @@ method = "None" # Optional expert override: translation | rigid_body | affine.
 enabled = true
 
 [bg_sub.params]
-sigma = 2.0 # The standard deviation for Gaussian kernel used in background estimation. Default is 0.0, which means no smoothing.
-size = 3 # The size of the neighborhood used for background estimation. Default is 3.
+sigma = 0.0 # The standard deviation for Gaussian kernel used in background estimation. Default is 0.0, which means no smoothing.
+size = 7 # The size of the neighborhood used for background estimation. Default is 7.
 threshold = 0.05 # The threshold value for background subtraction. Default is 0.05.
 exclude_channel = "None" # Channel label(s) to skip from background subtraction. Can be a single label string, a list of labels, or "None".
 statistic = "median" # The statistic function to use for background estimation. Supported values are: mean or median. Default is median.
@@ -94,10 +87,10 @@ overwrite = false # Whether to overwrite existing output files. If false, it wil
 enabled = true
 
 [segment.params]
-channel_to_segment = ["BFP"] # The channel to use for segmentation. This should match one of the channel labels in the input files.
+channel_to_segment = ["RFP", "GFP"] # The channel to use for segmentation. This should match one of the channel labels in the input files.
 do_denoise = true # Whether to apply denoising to the input images before segmentation. If cellpose v4 is used, it will be ignored.
 nuclear_channel = [] # The additional nuclear channel to help with the segmentation. If empty or 'None', it won't be used.
-overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
+overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 
 [segment.params.user_settings] # User-defined settings for Cellpose segmentation. This is a dictionary where the keys are the setting names and the values are the corresponding values to use for those settings. These settings will be passed directly to the Cellpose model during segmentation. You can specify any Cellpose settings here, such as model type, diameter, flow threshold, etc. For example:
 model_type = "cyto3" # Cellpose model type to use for segmentation.
@@ -106,3 +99,21 @@ flow_threshold = 0.4 # Flow threshold for Cellpose segmentation. This parameter 
 cellprob_threshold = 0.0 # Cell probability threshold for Cellpose segmentation. This parameter sets the minimum cell probability required for a pixel to be considered part of a cell. A higher value may result in more conservative segmentation (fewer false positives but potentially missing some cells), while a lower value may result in more aggressive segmentation (more false positives but potentially capturing more cells). You may need to experiment with this value to find the optimal setting for your specific images and cell types.
 do_3D = false # Whether to perform 3D segmentation with Cellpose. If true, it will configure Cellpose to perform 3D segmentation on the input image stacks. If false, it will perform 2D segmentation on each individual slice of the image stacks.
 stitch_threshold = 0.0 # Stitching threshold for Cellpose segmentation. This parameter is used when performing 3D segmentation to control the stitching of segmented objects across slices, instead of do_3D. A higher value may result in more aggressive stitching (potentially merging separate cells), while a lower value may result in more conservative stitching (potentially splitting single cells into multiple objects). You may need to experiment with this value to find the optimal setting for your specific images and cell types. This will be ignored if do_3D is set to true.
+
+# ============================
+# Tracking step
+# ============================
+[track]
+enabled = false
+
+[track.params]
+channel_to_track = ["BFP"] # The channel to use for segmentation. This should match one of the channel labels in the input files.
+backend = "trackastra" # Tracking backend to use. Supported values are: trackastra.
+filter_by_length = 120 # Minimum track length (in frames) to keep. Tracks shorter than this length will be filtered out. Default is 0, which means no filtering based on track length.
+overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
+
+[track.params.trackastra] # User-defined settings for tracking. This is a dictionary where the keys are the setting names and the values are the corresponding values to use for those settings. These settings will be passed directly to the tracking algorithm during tracking. You can specify any tracking settings here, such as max distance, max frame gap, etc. For example:
+
+mode = "greedy_nodiv" # Tracking mode to use. Supported values are: greedy, greedy_nodiv, ilp.
+pretrained_model = "general_2d" # Pretrained model to use for feature extraction in tracking. Allowed values are: "ctc", "general_2d", "general_2d_w_SAM2_features"
+max_distance = 150.0 # Maximum distance (in pixels) between objects in consecutive frames to be considered the same object for tracking purposes. 

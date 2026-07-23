@@ -163,7 +163,7 @@ def test_from_json_raises_on_invalid_field_type() -> None:
         )
 
         with pytest.raises(TypeError, match="original_image_rel must be a string path"):
-            ExperimentState.from_json(workdir)
+            ExperimentState._from_json(workdir)
 
 
 def test_to_json_atomic_cleanup_when_replace_fails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -182,7 +182,7 @@ def test_to_json_atomic_cleanup_when_replace_fails(monkeypatch: pytest.MonkeyPat
         monkeypatch.setattr("fits.environment.state.os.replace", fail_replace)
 
         with pytest.raises(OSError, match="replace failed"):
-            state.to_json()
+            state._to_json()
 
         leftovers = list(workdir.glob(".experiment_state.json.*.tmp"))
         assert leftovers == []

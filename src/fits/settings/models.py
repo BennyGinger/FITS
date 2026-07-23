@@ -7,7 +7,6 @@ from fits_io.readers._types import Zproj
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from fits.environment.constant import ExecMode, TimeRegiContext, ChannelRegiContext, STATISTIC_MAP, SUPPORTED_STATISTICS
-from fits.workflows.engines.registration_resolver import resolve_registration_plan
 
 
 ############### Base settings model ############
@@ -44,7 +43,6 @@ class ConvertSettings(SettingsModel):
         channel_labels: Optional list of channel labels in the image.
         export_channels: Channels to export; can be 'all' or a list of specific channels.
         filename: Optional filename for the converted output.
-        custom_metadata: Optional mapping of user-defined metadata to include in the output.
         z_projection: Z-projection method to apply to the input files. Supported methods are: max, mean or None. By default, apply max projection.
         compression: Optional compression method for the output file.
         overwrite: Whether to overwrite existing files during conversion coming from SettingsModel.
@@ -54,7 +52,6 @@ class ConvertSettings(SettingsModel):
     """
     channel_labels: str | Sequence[str] | None = None
     export_channels: str | Sequence[str] = 'all'
-    custom_metadata: Mapping[str, Any] | None = None
     z_projection: Zproj = 'max'
     compression: str | None = 'zlib'
     
@@ -147,6 +144,14 @@ class BGSubSettings(SettingsModel):
     threshold: float = 0.05
     exclude_channel: list[str] | None = None
     statistic: Callable[..., NDArray[Any]] = np.median
+    
+    # NOTE: Background subtraction manages its own frame-level threading.
+    # Therefore this FITS step defaults to serial experiment execution to
+    # avoid nested executors. Revisit only if future benchmarks suggest
+    # experiment-level parallelism performs better.
+    execution: ExecMode = Field(default="serial", exclude=True) # i.e. how to run the task
+    bg_execution: Literal["sequential", "thread"] = Field(default="thread", exclude=True) # i.e. how it's processed within the task
+    bg_workers: int | None = Field(default=None, exclude=True) # i.e. how many threads to use for the bg_sub() call
 
     @field_validator('exclude_channel', mode='before')
     @classmethod
@@ -186,6 +191,20 @@ class BGSubSettings(SettingsModel):
         if isinstance(name, str) and name:
             return name
         return str(self.statistic)
+    
+    def to_payload_dict(self) -> dict[str, Any]:
+        """
+        Convert the BGSubSettings instance to a metadata dictionary suitable for serialization.
+        Excludes any fields that are not relevant for metadata.
+        """
+        payload = {
+            "sigma": self.sigma,
+            "size": self.size,
+            "threshold": self.threshold,
+            "exclude_channel": list(self.exclude_channel) if self.exclude_channel else None,
+            "statistic": self.serialize_statistic_name(),
+        }
+        return payload
 
 ############ Segmentation settings ############
 
@@ -194,10 +213,10 @@ class SegmentSettings(SettingsModel):
     Settings for the segmentation process in the FITS pipeline.
     
     Attributes:
-        user_settings: Dictionary containing the settings for Cellpose given by the user.
         channel_to_segment: The channel(s) list to use for segmentation. This should match at least one of the channel labels in the input files.
-        use_nuclear_channel: If True, configures for nuclear channel usage.
         do_denoise: If True, applies denoising to the input images.
+        nuclear_channel: The channel(s) list to use as nuclear channel(s) for segmentation. If specified, it will enable nuclear channel mode in Cellpose.
+        user_settings: Dictionary containing the settings for Cellpose given by the user.
         model: Optional pre-initialized Cellpose model instance to use instead of creating a new one. Default is None.
         overwrite: Whether to overwrite existing files during segmentation coming from SettingsModel.
         threading: If True, adds a lock for thread-safe inference. Will be automatically set to True if execution mode is 'thread'.
@@ -226,3 +245,34 @@ class SegmentSettings(SettingsModel):
         Returns True if a nuclear channel is specified in the settings, indicating that nuclear channel mode should be enabled for Cellpose.
         """
         return len(self.nuclear_channel) > 0
+    
+    def to_payload_dict(self) -> dict[str, Any]:
+        """
+        Convert the SegmentSettings instance to a metadata dictionary suitable for serialization.
+        Excludes any fields that are not relevant for metadata.
+        """
+        payload = {"channel_to_segment": list(self.channel_to_segment),
+                   "do_denoise": self.do_denoise,
+                   "nuclear_channel": list(self.nuclear_channel),
+                   "user_settings": self.user_settings,}
+        return payload
+############# Tracking settings ############
+
+class TrackSettings(SettingsModel):
+    """
+    Settings for the tracking process in the FITS pipeline.
+    
+    Attributes:
+        channel_to_track: The channel(s) list to use for tracking. This should match at least one of the channel labels in the input files.
+        backend: The tracking backend to use. Supported options are 'trackastra' and 'to_be_dev'. Default is 'trackastra'.
+        filter_by_length: Minimum track length in frames to keep after tracking. Tracks shorter than this length will be filtered out. Default is 0 (no filtering).
+        user_settings: Dictionary containing the settings for the chosen tracking backend given by the user. The specific settings will depend on the backend used.
+        overwrite: Whether to overwrite existing files during tracking coming from SettingsModel.
+    """
+    channel_to_track: Sequence[str] = Field(exclude=True)
+    backend: str = "trackastra"
+    filter_by_length: int = 0
+    workers: int | None = Field(default=1, exclude=True)
+    
+    # Backend specific settings
+    trackastra: dict[str, Any] = Field(default_factory=dict)

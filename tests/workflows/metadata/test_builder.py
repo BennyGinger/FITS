@@ -1,4 +1,4 @@
-from fits.workflows.metadata.provenance import StepProfile
+from fits.workflows.engines.models import StepProfile
 from fits.workflows.metadata.builder import build_step_project_metadata
 
 

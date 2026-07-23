@@ -26,7 +26,7 @@ def _saved_state(run_dir: Path, raw_path: Path, workdir_name: str, series_index:
         .with_image(run_dir / workdir_name / "fits_array.tif")
         .with_completed_step("convert")
     )
-    state.to_json()
+    state._to_json()
     return state
 
 

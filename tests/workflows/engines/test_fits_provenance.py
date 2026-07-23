@@ -1,5 +1,5 @@
-from fits.workflows.metadata.provenance import StepProfile
-from fits.workflows.metadata.provenance import build_provenance_stamp
+from fits.workflows.engines.models import StepProfile
+from fits.workflows.engines.models import build_provenance_stamp
 
 
 def test_step_profile_holds_distribution_and_step_name() -> None:

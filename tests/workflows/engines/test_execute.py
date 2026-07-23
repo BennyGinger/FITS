@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from fits.environment.state import ExperimentState
-from fits.workflows.engines.execute import (
+from fits.workflows.execute import (
     first_effective_overwrite_step,
-    resolve_effective_workflow_cfg,
+    apply_overwrite_cascade,
     run_workflow,
 )
 
@@ -120,7 +120,7 @@ def test_run_workflow_default_user_cfg_when_step_missing(monkeypatch) -> None:
 
 
 def test_resolve_effective_workflow_cfg_cascades_overwrite() -> None:
-    resolved = resolve_effective_workflow_cfg(
+    resolved = apply_overwrite_cascade(
         {
             "convert": {"enabled": True, "params": {"overwrite": True}},
             "segment": {"enabled": True, "params": {}},

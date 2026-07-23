@@ -8,9 +8,9 @@ import numpy as np
 
 from fits.environment.state import ExperimentState
 from fits.settings.models import BGSubSettings
-from fits.workflows.metadata.provenance import StepProfile
+from fits.workflows.engines.models import StepProfile
 from fits.workflows.engines.run_decision import RunDecision
-from fits.workflows.bg_sub import bg_sub_one
+from fits.tasks.bg_sub import bg_sub_one
 
 
 class DummyReader:

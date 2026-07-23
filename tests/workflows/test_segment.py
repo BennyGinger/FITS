@@ -10,9 +10,9 @@ from fits.environment.runtime import get_ctx
 from fits.environment.state import ExperimentState
 from fits.settings.models import SegmentSettings
 from fits.workflows.arrays.mask_output import ProcessMaskOutput
-from fits.workflows.metadata.provenance import StepProfile
+from fits.workflows.engines.models import StepProfile
 from fits.workflows.engines.run_decision import RunDecision
-from fits.workflows.segment import run_segment, segment_one
+from fits.tasks.segmentation.segment import run_segment, run_segmentation
 
 
 class DummyReader:
@@ -64,7 +64,7 @@ class DummyWrapper:
 def test_segment_one_returns_error_when_image_is_missing() -> None:
     state = ExperimentState.init(Path('/tmp'), Path('/tmp/raw.nd2'))
 
-    out = segment_one(
+    out = run_segmentation(
         SegmentSettings(channel_to_segment=['RFP'], nuclear_channel=[], user_settings={}, execution='serial'),
         state,
         StepProfile(distribution='cellpose-kit', step_name='segment'),
@@ -107,7 +107,7 @@ def test_segment_one_saves_mask_for_missing_channels(monkeypatch) -> None:
             ),
         )
 
-        out = segment_one(
+        out = run_segmentation(
             SegmentSettings(channel_to_segment=['GFP', 'RFP'], nuclear_channel=['DAPI'], user_settings={}, execution='serial'),
             state,
             StepProfile(distribution='cellpose-kit', step_name='segment'),
@@ -153,7 +153,7 @@ def test_segment_one_skips_when_requested_channels_are_complete(monkeypatch) -> 
             lambda payload: (_ for _ in ()).throw(AssertionError('wrapper should not be created')),
         )
 
-        out = segment_one(
+        out = run_segmentation(
             SegmentSettings(channel_to_segment=['GFP'], nuclear_channel=[], user_settings={}, execution='serial'),
             state,
             StepProfile(distribution='cellpose-kit', step_name='segment'),

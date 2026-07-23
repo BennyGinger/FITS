@@ -7,10 +7,10 @@ import pytest
 
 from fits.environment.state import ExperimentState
 from fits.environment.runtime import get_ctx
-from fits.workflows.metadata.provenance import StepProfile
+from fits.workflows.engines.models import StepProfile
 from fits.workflows.engines.run_decision import RunDecision
 from fits.settings.models import ConvertSettings
-from fits.workflows.convert import convert_one, run_convert
+from fits.tasks.convert import run_convert, run_convert
 
 
 class DummyReader:
@@ -80,7 +80,7 @@ def test_convert_one_builds_payload_and_branches(monkeypatch, DummyCtx_class) ->
             fake_from_path,
         )
 
-        out = convert_one(settings, state, step_profile, output_name)
+        out = run_convert(settings, state, step_profile, output_name)
 
         assert seen["existing_project_metadata"] is None
         assert seen["user_name"] == "ben"
@@ -134,7 +134,7 @@ def test_convert_one_passes_step_metadata_only_when_custom_metadata_present(monk
         dummy_reader = DummyReader(save_paths=[run_dir / "out_s1.tif"])
         monkeypatch.setattr("fits.workflows.convert.FitsIO.from_path", lambda p, channel_labels=None: dummy_reader)
 
-        _ = convert_one(settings, state, step_profile, "fits_array.tif")
+        _ = run_convert(settings, state, step_profile, "fits_array.tif")
 
         assert seen["step_metadata"] == {"custom_metadata": {"run_id": 42}}
 

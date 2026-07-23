@@ -4,9 +4,9 @@ import tempfile
 
 import pytest
 
-from fits.environment.discovery import collect_supported_files, find_fits_outputs, discover_saved_states
+from fits.environment.discovery import collect_supported_files, _find_fits_outputs, discover_saved_states
 from fits.environment.state import ExperimentState
-from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_NAME
+from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_SEG
 
 
 def test_collect_supported_files_recursive_and_filters(tmp_path: Path, touch) -> None:
@@ -38,10 +38,10 @@ def test_collect_supported_files_extension_is_case_insensitive(tmp_path: Path, t
 
 def test_find_fits_outputs_finds_expected_names_recursively(tmp_path: Path, touch) -> None:
     a = touch(tmp_path / FITS_ARRAY_NAME)
-    b = touch(tmp_path / "sub" / FITS_MASK_NAME)
+    b = touch(tmp_path / "sub" / FITS_MASK_SEG)
     touch(tmp_path / "sub" / "other.tif")
 
-    out = find_fits_outputs(tmp_path)
+    out = _find_fits_outputs(tmp_path)
 
     assert set(out) == {a, b}
     assert out == sorted(out)
@@ -49,8 +49,8 @@ def test_find_fits_outputs_finds_expected_names_recursively(tmp_path: Path, touc
 
 def test_find_fits_outputs_does_not_match_similar_names(tmp_path: Path, touch) -> None:
     touch(tmp_path / (FITS_ARRAY_NAME.replace(".tif", "_copy.tif")))
-    touch(tmp_path / f"copy_{FITS_MASK_NAME}")
-    out = find_fits_outputs(tmp_path)
+    touch(tmp_path / f"copy_{FITS_MASK_SEG}")
+    out = _find_fits_outputs(tmp_path)
     assert out == []
 
 
@@ -70,8 +70,8 @@ def test_discover_saved_states_loads_all_valid_states() -> None:
             .with_image(run_dir / "a_s2" / "fits_array.tif")
             .with_completed_step("convert")
         )
-        s1.to_json()
-        s2.to_json()
+        s1._to_json()
+        s2._to_json()
 
         loaded = discover_saved_states(run_dir)
 
@@ -87,7 +87,7 @@ def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCa
         valid_raw.touch()
 
         valid_state = ExperimentState.init(run_dir / "a_s1", valid_raw).with_image(run_dir / "a_s1" / "fits_array.tif")
-        valid_state.to_json()
+        valid_state._to_json()
 
         bad_workdir = run_dir / "broken"
         bad_workdir.mkdir(parents=True, exist_ok=True)

@@ -20,12 +20,14 @@ class SegmentModelCache:
         model_settings = self._extract_model_settings(segment_settings)
         key = self._make_key(model_settings)
 
+        # Check if the wrapper is already cached
         cached = self._cache.get(key)
         if cached is not None:
             logger.debug("Reusing cached CellposeWrapper for key=%s", key)
             return cached
 
         with self._lock:
+            # Double-check if the wrapper was cached while waiting for the lock, e.g. in a multi-threaded context
             cached = self._cache.get(key)
             if cached is not None:
                 logger.debug("Reusing cached CellposeWrapper for key=%s", key)

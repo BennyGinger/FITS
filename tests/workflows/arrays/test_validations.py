@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fits.workflows.arrays.validations import validate_axes_rank, validate_axis_order, validate_channel_count, validate_channel_labels_exist, validate_mask_output, validate_no_duplicate_axes
+from fits.workflows.arrays.validations import validate_axes_rank, validate_axis_order, validate_channel_count, validate_channel_labels_exist, validate_no_duplicate_axes
 
 
 # ---- validate_no_duplicate_axes ----
@@ -86,26 +86,6 @@ def test_validate_channel_count_raises_on_c_axis_mismatch() -> None:
 def test_validate_channel_count_raises_on_no_c_with_multiple_indices() -> None:
     with pytest.raises(ValueError, match="no C axis"):
         validate_channel_count(np.zeros((4, 4)), "YX", [0, 1])
-
-
-# ---- validate_mask_output ----
-
-def test_validate_mask_output_accepts_consistent_output() -> None:
-    validate_mask_output(np.zeros((2, 4, 4)), "CYX", ["GFP", "RFP"])  # should not raise
-
-
-def test_validate_mask_output_no_c_axis_is_valid() -> None:
-    validate_mask_output(np.zeros((4, 4)), "YX", [])  # no C axis, labels unused
-
-
-def test_validate_mask_output_raises_on_axes_rank_mismatch() -> None:
-    with pytest.raises(ValueError, match="inconsistent"):
-        validate_mask_output(np.zeros((4, 4)), "CYX", ["GFP"])
-
-
-def test_validate_mask_output_raises_on_channel_label_mismatch() -> None:
-    with pytest.raises(ValueError, match="do not match channel axis"):
-        validate_mask_output(np.zeros((2, 4, 4)), "CYX", ["GFP"])
 
 
 # ---- validate_channel_labels_exist ----

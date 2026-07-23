@@ -1,19 +1,10 @@
 from __future__ import annotations
+
 import logging
 import sys
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
-
-try:
-    from PySide6.QtCore import QObject, Signal
-    PYSIDE_AVAILABLE = True
-except ImportError:
-    QObject = None
-    Signal = None
-    PYSIDE_AVAILABLE = False
-
-from fits.environment.constant import UIMode
 
 
 LevelName = Literal["debug", "info", "warning", "error", "critical"]
@@ -26,115 +17,70 @@ _LEVEL_MAP: dict[LevelName, int] = {
     "critical": logging.CRITICAL,
 }
 
-# ---------------------------------------------------------------------
-# GUI logging (Qt handler)
-# ---------------------------------------------------------------------
 
-if PYSIDE_AVAILABLE and QObject is not None and Signal is not None:
-
-    class LogEmitter(QObject):
-        """
-        QObject living in the main GUI thread.
-        Emits formatted log messages via Qt signals.
-        """
-        message = Signal(str)
-
-    class QtLogHandler(logging.Handler):
-        """
-        Thread-safe logging handler that forwards records
-        to a Qt signal (safe for background threads).
-        """
-
-        def __init__(self, emitter: LogEmitter):
-            super().__init__()
-            self._emitter = emitter
-
-        def emit(self, record: logging.LogRecord) -> None:
-            try:
-                msg = self.format(record)
-                self._emitter.message.emit(msg)
-            except Exception:
-                self.handleError(record)
-
-
-else:
-    # Dummy placeholders so type-checkers don’t complain
-    LogEmitter = None # type: ignore
-    QtLogHandler = None # type: ignore
-
-# ---------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------
-
-def configure_logging(*, log_dir: Path | None, mode: UIMode = "cli", console_level: LevelName = "info", file_level: LevelName = "debug", gui_emitter: LogEmitter | None = None,) -> None:
+def configure_logging(
+    *,
+    log_dir: Path | None,
+    console_level: LevelName = "info",
+    file_level: LevelName = "debug",
+) -> None:
     """
     Configure global logging for the FITS pipeline.
 
-    This function should be called ONCE at the top-level
-    entry point (CLI / GUI / notebook).
+    This function should be called once from the top-level CLI entry point.
 
     Parameters
     ----------
     log_dir:
-        Optional directory to write log files to
-    mode:
-        Execution mode ("cli", "gui", "notebook")
+        Optional directory in which to write log files.
     console_level:
-        Verbosity shown in console / notebook / GUI
+        Verbosity shown in the console.
     file_level:
-        Verbosity written to log file
-    gui_emitter:
-        Required for GUI mode; receives log messages via Qt signals
+        Verbosity written to the log file.
     """
-    
     root = logging.getLogger()
-    for h in root.handlers[:]:
-        root.removeHandler(h)
+
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+
     root.propagate = False
 
-    # Let everything flow; handlers decide what to show.
+    # Let all records flow through the root logger.
+    # Individual handlers decide which levels to emit.
     root.setLevel(logging.DEBUG)
 
-    fmt = logging.Formatter(
+    formatter = logging.Formatter(
         "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
     )
 
-    # Console / notebook
-    if mode == "gui" and gui_emitter is not None:
-        if gui_emitter is None:
-            raise ValueError("GUI mode requires a LogEmitter instance")
-        
-        if not PYSIDE_AVAILABLE:
-            raise RuntimeError("PySide6 is not available but GUI mode was requested")
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(_LEVEL_MAP[console_level])
+    console_handler.set_name("fits_console")
+    root.addHandler(console_handler)
 
-        handler: logging.Handler = QtLogHandler(gui_emitter)
-    else:
-        # CLI & notebook use stdout
-        handler = logging.StreamHandler(sys.stdout)
-    
-    handler.setFormatter(fmt)
-    handler.setLevel(_LEVEL_MAP[console_level])
-    handler.set_name("fits_console")
-    root.addHandler(handler)
-    
-
-    # Optional file
     if log_dir is not None:
         if "log" not in log_dir.name.lower():
             log_dir = log_dir / "logs"
+
         log_dir.mkdir(parents=True, exist_ok=True)
+
         log_path = log_dir / f"fits_{datetime.now():%Y%m%d_%H%M%S}.log"
+
         file_handler = logging.FileHandler(log_path, encoding="utf-8")
-        file_handler.setFormatter(fmt)
+        file_handler.setFormatter(formatter)
         file_handler.setLevel(_LEVEL_MAP[file_level])
         file_handler.set_name("fits_file")
         root.addHandler(file_handler)
-        
-    # Reduce verbosity of noisy third-party loggers by default
+
+    # Reduce verbosity of noisy third-party loggers by default.
     _quiet_logger("cellpose")
     _quiet_logger("fits_io.readers.r_nd2", logging.ERROR)
     _quiet_logger("numba")
 
 
-def _quiet_logger(name: str, level: int = logging.WARNING) -> None:
+def _quiet_logger(
+    name: str,
+    level: int = logging.WARNING,
+) -> None:
     logging.getLogger(name).setLevel(level)

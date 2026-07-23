@@ -78,7 +78,7 @@ wheels = [
 
 [[package]]
 name = "bg-sub"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "bg_sub" }
 dependencies = [
     { name = "smo" },
@@ -413,7 +413,7 @@ wheels = [
 
 [[package]]
 name = "fits"
-version = "0.8.0"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "bg-sub" },
@@ -460,7 +460,7 @@ dev = [
 
 [[package]]
 name = "fits-io"
-version = "1.0.0"
+version = "2.0.0"
 source = { editable = "fits_io" }
 dependencies = [
     { name = "imagecodecs" },

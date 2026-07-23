@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from fits.workflows.engines.registration_resolver import resolve_registration_plan
+from fits.tasks.registration.registration_resolver import resolve_registration_plan
 
 
 def test_resolve_registration_plan_uses_context_preset() -> None:

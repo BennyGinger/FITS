@@ -24,8 +24,8 @@ def test_assemble_experiment_states_merges_saved_with_only_new_raws() -> None:
             .with_image(run_dir / "a_s1" / "fits_array.tif")
             .with_completed_step("convert")
         )
-        saved0.to_json()
-        saved1.to_json()
+        saved0._to_json()
+        saved1._to_json()
 
         states = assemble_experiment_states(run_dir, [converted_raw, new_raw])
 

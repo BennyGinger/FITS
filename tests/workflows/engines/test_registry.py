@@ -1,6 +1,6 @@
 from fits.workflows.engines.registry import REGISTRY
 from fits.environment.constant import STEP_CONVERT, DIST_IO
-from fits.workflows.metadata.provenance import StepProfile
+from fits.workflows.engines.models import StepProfile
 
 
 def test_registry_keys_match_stepspec_name() -> None:

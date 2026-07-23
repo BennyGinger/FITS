@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fits.workflows.engines.model_cache import SegmentModelCache
+from fits.tasks.segmentation.model_cache import SegmentModelCache
 
 
 class FakeWrapper:

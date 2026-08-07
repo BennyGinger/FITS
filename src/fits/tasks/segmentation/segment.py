@@ -14,7 +14,7 @@ from fits.tasks.segmentation.model_cache import segment_model_cache
 logger = logging.getLogger(__name__)
 
 
-def run_segmentation(settings: SegmentSettings, exp_state: ExperimentState, step_profile: StepProfile) -> list[ExperimentState]:
+def segment(settings: SegmentSettings, exp_state: ExperimentState, step_profile: StepProfile) -> list[ExperimentState]:
     """
     Process a single experiment through the segmentation step.
     
@@ -41,16 +41,24 @@ def run_segmentation(settings: SegmentSettings, exp_state: ExperimentState, step
         if run.is_complete:
             logger.debug("Skipping %s for %s: all requested channels already covered.",
                          step_profile.step_name, 
-                         exp_state.workdir)
+                         exp_state.experiment_id)
             return [exp_state]
         
         # Get the input array
         seg_idx = run.pending_items
-        nuc_idx = reader.labels_to_indices(settings.nuclear_channel)
-        input_idx = list(dict.fromkeys([*seg_idx, *nuc_idx]))
-        input_results = reader.get_channel(input_idx)
+        seg_labels = reader.indices_to_labels(seg_idx)
         
-        logger.debug("%s will be executed for channel(s): %s", step_profile.step_name, input_idx)
+        input_labels = seg_labels
+        if settings.nuclear_channel is not None:
+            if settings.nuclear_channel in input_labels:
+                logger.warning("Nuclear channel '%s' is already in the segmentation channels %s; it will then be ignored.", 
+                               settings.nuclear_channel,
+                               input_labels)
+            input_labels = list(dict.fromkeys([*seg_labels, settings.nuclear_channel]))  # Ensure unique labels while preserving order
+            
+        input_results = reader.get_channel(input_labels)
+        
+        logger.debug("%s will be executed for channel(s): %s", step_profile.step_name, input_labels)
 
         # Get the segmentation model wrapper
         cp_wrapper = segment_model_cache.get_wrapper(segment_settings=settings.model_dump())
@@ -75,7 +83,7 @@ def run_segmentation(settings: SegmentSettings, exp_state: ExperimentState, step
         
         updated_state = exp_state.with_metadata(step_name=step_profile.step_name,
                                                 created_by=step_profile.distribution,
-                                                exported_channel_indices=merging.channel_indices,
+                                                exported_channel=merging.channel_indices,
                                                 channels_params=settings.to_payload_dict(),)
         
         merged_labels = reader.indices_to_labels(merging.channel_indices)
@@ -91,7 +99,7 @@ def run_segmentation(settings: SegmentSettings, exp_state: ExperimentState, step
                                       created_by=step_profile.distribution,
                                       custom_metadata=updated_state.metadata_dump,)
         
-        logger.debug("%s completed for %s", step_profile.step_name, exp_state.workdir)
+        logger.debug("%s completed for %s", step_profile.step_name, exp_state.experiment_id)
 
         new_st = updated_state.with_complete_step(step_name=step_profile.step_name,
                                                 artifact_kind=step_profile.output_artifact,
@@ -102,6 +110,6 @@ def run_segmentation(settings: SegmentSettings, exp_state: ExperimentState, step
         return [new_st]
 
     except Exception as e:
-        logger.exception("%s failed for %s", step_profile.step_name, exp_state.workdir)
-        print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.workdir}: {e}")
+        logger.exception("%s failed for %s", step_profile.step_name, exp_state.experiment_id)
+        print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.experiment_id}: {e}")
         return []

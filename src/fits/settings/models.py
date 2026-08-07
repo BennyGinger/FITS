@@ -99,6 +99,20 @@ class RegisterTimeSettings(RegisterSettings):
     fit_channel: int | str | None = None
 
     workers: int | None = Field(default=1, exclude=True)
+    
+    def to_payload_dict(self) -> dict[str, Any]:
+        """
+        Convert the RegisterTimeSettings instance to a metadata dictionary suitable for serialization.
+        Excludes any fields that are not relevant for metadata.
+        """
+        payload = {
+            "backend": self.backend,
+            "method": self.method,
+            "context": self.context,
+            "reference_strategy": self.reference_strategy,
+            "fit_channel": self.fit_channel,
+        }
+        return payload
 
 
 class RegisterChannelSettings(RegisterSettings):
@@ -122,6 +136,21 @@ class RegisterChannelSettings(RegisterSettings):
         if isinstance(self.reference_channel, str) and self.exclude_channel and self.reference_channel in self.exclude_channel:
             raise ValueError(f"reference_channel '{self.reference_channel}' cannot be excluded in register_channel.exclude_channel.")
         return self
+    
+    def to_payload_dict(self) -> dict[str, Any]:
+        """
+        Convert the RegisterChannelSettings instance to a metadata dictionary suitable for serialization.
+        Excludes any fields that are not relevant for metadata.
+        """
+        payload = {
+            "backend": self.backend,
+            "method": self.method,
+            "context": self.context,
+            "reference_channel": self.reference_channel,
+            "exclude_channel": list(self.exclude_channel) if self.exclude_channel else None,
+            "reference_frame": self.reference_frame,
+        }
+        return payload
 
 ############ Background subtraction settings ############
 
@@ -226,7 +255,7 @@ class SegmentSettings(SettingsModel):
     """
     channel_to_segment: Sequence[str] = Field(exclude=True)
     do_denoise: bool = True
-    nuclear_channel: Sequence[str] = Field(default_factory=list, exclude=True)
+    nuclear_channel: str | None = Field(default=None, exclude=True)
     user_settings: dict[str, Any] = Field(default_factory=dict)
     model: Any | None = None  
     
@@ -244,7 +273,7 @@ class SegmentSettings(SettingsModel):
         """
         Returns True if a nuclear channel is specified in the settings, indicating that nuclear channel mode should be enabled for Cellpose.
         """
-        return len(self.nuclear_channel) > 0
+        return self.nuclear_channel is not None
     
     def to_payload_dict(self) -> dict[str, Any]:
         """
@@ -253,7 +282,7 @@ class SegmentSettings(SettingsModel):
         """
         payload = {"channel_to_segment": list(self.channel_to_segment),
                    "do_denoise": self.do_denoise,
-                   "nuclear_channel": list(self.nuclear_channel),
+                   "nuclear_channel": self.nuclear_channel,
                    "user_settings": self.user_settings,}
         return payload
 ############# Tracking settings ############
@@ -276,3 +305,16 @@ class TrackSettings(SettingsModel):
     
     # Backend specific settings
     trackastra: dict[str, Any] = Field(default_factory=dict)
+    
+    def to_payload_dict(self) -> dict[str, Any]:
+        """
+        Convert the TrackSettings instance to a metadata dictionary suitable for serialization.
+        Excludes any fields that are not relevant for metadata.
+        """
+        payload = {
+            "channel_to_track": list(self.channel_to_track),
+            "backend": self.backend,
+            "filter_by_length": self.filter_by_length,
+            **getattr(self, self.backend, {}),
+        }
+        return payload

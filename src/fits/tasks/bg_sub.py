@@ -14,7 +14,7 @@ from fits.workflows.engines.run_decision import decide_run
 logger = logging.getLogger(__name__)
 
 
-def bg_sub_one(settings: BGSubSettings, exp_state: ExperimentState, step_profile: StepProfile) -> list[ExperimentState]:
+def remove_bg(settings: BGSubSettings, exp_state: ExperimentState, step_profile: StepProfile) -> list[ExperimentState]:
     """
     Process a single experiment through the background substraction step.
 
@@ -40,7 +40,7 @@ def bg_sub_one(settings: BGSubSettings, exp_state: ExperimentState, step_profile
         if run.is_complete:
             logger.debug("Skipping %s for %s: all requested channels already covered.",
                          step_profile.step_name, 
-                         exp_state.workdir)
+                         exp_state.experiment_id)
             return [exp_state]
         
         # Select the channels to be processed
@@ -56,9 +56,10 @@ def bg_sub_one(settings: BGSubSettings, exp_state: ExperimentState, step_profile
         
         corrected_array = selection.rebuild(processed)
 
+        exporter_channel = selection.processed_indices if settings.exclude_channel is not None else 'all'
         updated_state = exp_state.with_metadata(step_name=step_profile.step_name,
                                                created_by=step_profile.distribution,
-                                               exported_channel_indices=selection.processed_indices,
+                                               exported_channel=exporter_channel,
                                                channels_params=settings.to_payload_dict())
 
         # Save output
@@ -69,7 +70,7 @@ def bg_sub_one(settings: BGSubSettings, exp_state: ExperimentState, step_profile
                                       created_by=step_profile.distribution,
                                       custom_metadata=updated_state.metadata_dump,)
 
-        logger.debug("%s completed for %s", step_profile.step_name, exp_state.workdir)
+        logger.debug("%s completed for %s", step_profile.step_name, exp_state.experiment_id)
         
         # Update and return state
         new_st = updated_state.with_complete_step(step_name=step_profile.step_name,
@@ -80,6 +81,6 @@ def bg_sub_one(settings: BGSubSettings, exp_state: ExperimentState, step_profile
         return [new_st]
     
     except Exception as e:
-        logger.exception("%s failed for %s", step_profile.step_name, exp_state.workdir)
-        print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.workdir}: {e}")
+        logger.exception("%s failed for %s", step_profile.step_name, exp_state.experiment_id)
+        print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.experiment_id}: {e}")
         return []

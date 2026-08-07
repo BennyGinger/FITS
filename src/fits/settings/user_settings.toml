@@ -4,14 +4,14 @@
 # User identity
 # ============================
 user_name = "Benny"
-run_dir = "/media/ben/Analysis/Python/Images/nd2/Run2_test" # Directory where the input files are located and where the output files will be saved. It should contain the raw files to be processed.
+run_dir = "/media/ben/Analysis/Python/Images/zymosan" # Directory where the input files are located and where the output files will be saved. It should contain the raw files to be processed.
 
 # ============================
 # Runtime configuration
 # ============================
 [runtime]
 execution = "batch" # Type of execution: batch | conveyor.
-log_dir = "/media/ben/Analysis/Python/Images/nd2/Run2_test" # where to save log files, if not specified, log file will not be created
+log_dir = "/media/ben/Analysis/Python/Images/zymosan" # where to save log files, if not specified, log file will not be created
 console_level = "info" # Console log level: debug | info | warning | error | critical
 file_level = "debug" # File log level: debug | info | warning | error | critical
 
@@ -27,10 +27,10 @@ file_level = "debug" # File log level: debug | info | warning | error | critical
 enabled = true
 
 [convert.params]
-channel_labels = ["GFP", "RFP"] # List of channel labels to set in the metadata. The order should match the channel order in the input files. If not specified, it will use default channel labels (e.g. Channel 1, Channel 2, etc.).
-export_channels = ["RFP", "GFP"] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
+channel_labels = ["BF", "GFP", "BFP"] # List of channel labels to set in the metadata. The order should match the channel order in the input files. If not specified, it will use default channel labels (e.g. Channel 1, Channel 2, etc.).
+export_channels = ["GFP", "BFP"] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
 compression = "zlib" # Compression method to use when saving the output files. Supported methods are: zlib, lzma, jpeg or "None". If not specified, it will use the default compression method (zlib).
-overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
+overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 z_projection = "max" # Z-projection method to apply to the input files. Supported methods are: max, mean, sum, std. By default, apply max projection.
 
 # ============================
@@ -41,9 +41,9 @@ enabled = false
 
 [register_time.params]
 context = "linear_drift" # Time-wise context. Supported: linear_drift, rotational_drift, complex_drift.
-overwrite = true # Whether to overwrite existing output files for this step.
+overwrite = false # Whether to overwrite existing output files for this step.
 reference_strategy = "previous" # Time-wise reference strategy: previous | first | mean.
-fit_channel = "BF" # Time-wise fitting channel. Can be an int channel index, channel label string, or "None".
+fit_channel = "BF" # Time-wise fitting channel for mutlichannel only. Can be an int channel index, channel label string, or "None". "None" is for single-channel files. If None, and multiple channels are present, it will use the first channel as the fitting channel. If only one channel is present, it will be ignored.
 
 # Expert override settings
 backend = "None" # Optional expert override: scikit | pystackreg | cv2.
@@ -57,7 +57,7 @@ enabled = false
 
 [register_channel.params]
 context = "channel_shift" # Channel-wise context. Supported: channel_shift, channel_shift_dual_cam, channel_shift_complex.
-overwrite = true # Whether to overwrite existing output files for this step.
+overwrite = false # Whether to overwrite existing output files for this step.
 reference_channel = "RFP" # Channel-wise reference channel. Can be an int channel index, channel label string, or "None".
 exclude_channel = "None" # Channel label(s) to skip from registration. Can be a single label string, a list of labels, or "None".
 reference_frame = 0 # Channel-wise reference frame index.
@@ -87,9 +87,9 @@ overwrite = false # Whether to overwrite existing output files. If false, it wil
 enabled = true
 
 [segment.params]
-channel_to_segment = ["RFP", "GFP"] # The channel to use for segmentation. This should match one of the channel labels in the input files.
+channel_to_segment = ["BFP"] # The channel to use for segmentation. This should match one of the channel labels in the input files.
 do_denoise = true # Whether to apply denoising to the input images before segmentation. If cellpose v4 is used, it will be ignored.
-nuclear_channel = [] # The additional nuclear channel to help with the segmentation. If empty or 'None', it won't be used.
+nuclear_channel = "None" # The additional nuclear channel to help with the segmentation. If 'None', it won't be used.
 overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 
 [segment.params.user_settings] # User-defined settings for Cellpose segmentation. This is a dictionary where the keys are the setting names and the values are the corresponding values to use for those settings. These settings will be passed directly to the Cellpose model during segmentation. You can specify any Cellpose settings here, such as model type, diameter, flow threshold, etc. For example:
@@ -104,13 +104,13 @@ stitch_threshold = 0.0 # Stitching threshold for Cellpose segmentation. This par
 # Tracking step
 # ============================
 [track]
-enabled = false
+enabled = true
 
 [track.params]
 channel_to_track = ["BFP"] # The channel to use for segmentation. This should match one of the channel labels in the input files.
 backend = "trackastra" # Tracking backend to use. Supported values are: trackastra.
 filter_by_length = 120 # Minimum track length (in frames) to keep. Tracks shorter than this length will be filtered out. Default is 0, which means no filtering based on track length.
-overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
+overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 
 [track.params.trackastra] # User-defined settings for tracking. This is a dictionary where the keys are the setting names and the values are the corresponding values to use for those settings. These settings will be passed directly to the tracking algorithm during tracking. You can specify any tracking settings here, such as max distance, max frame gap, etc. For example:
 

@@ -1,4 +1,9 @@
 from __future__ import annotations
+
+import os
+
+os.environ["TQDM_DISABLE"] = "1" 
+
 from pathlib import Path
 import logging
 

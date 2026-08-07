@@ -1,110 +1,116 @@
-# from __future__ import annotations
+from __future__ import annotations
 
-# import logging
-# from typing import Any
+import logging
 
-# import numpy as np
-# from fits_io.client import FitsIO
-# from stackalign import RegisterModel
+from stackalign import RegisterModel
+from fits_io.client import FitsIO
 
-# from fits.environment.constant import FitsName, StepName
-# from fits.environment.runtime import get_ctx
-# from fits.environment.state import ExperimentState
-# from fits.settings.models import RegisterTimeSettings
-# from fits.workflows.arrays.loading import get_array
-# from fits.workflows.arrays.validations import resolve_channel_index
-# from fits.tasks.registration.registration_resolver import resolve_registration_plan
-# from fits.workflows.engines.run_decision import decide_run
-# from fits.workflows.metadata.builder import build_step_project_metadata
-# from fits.workflows.metadata.loading import load_project_metadata_from_reader
-# from fits.workflows.engines.models import StepProfile
+from fits.environment.state import ExperimentState
+from fits.settings.models import RegisterTimeSettings
+from fits.workflows.engines.run_decision import decide_run
+from fits.workflows.engines.models import StepProfile
+from fits.tasks.registration.registration_resolver import resolve_registration_plan
 
 
-# logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
-# def register_time_one(settings: RegisterTimeSettings, exp_state: ExperimentState, step_profile: StepProfile, output_name: FitsName) -> ExperimentState:
-#     if exp_state.image is None:
-#         failed_state = exp_state.with_error(StepName.REGISTER_TIME, f"ExperimentState for {exp_state.original_image} has no image set; cannot run {step_profile.step_name}.")
-#         logger.error("%s failed for %s: missing image input", step_profile.step_name, exp_state.original_image)
-#         return failed_state
+def register_time(settings: RegisterTimeSettings,
+                  exp_state: ExperimentState, 
+                  step_profile: StepProfile
+                  ) -> list[ExperimentState]:
+    """
+    Process a single experiment through the time-wise registration step.
+    
+    Args:
+        settings: RegisterTime step settings
+        exp_state: Single experiment state to process
+        step_profile: Step metadata 
+    
+    Returns:
+        List of one output experiment state. Time-wise registration produces a single output artifact.
+    """
+    input_path = exp_state.artifact(step_profile.input_artifact)
+    if input_path is None:
+        logger.error("%s failed for loading %s: missing input",
+                     step_profile.step_name,
+                     step_profile.input_artifact)
+        return []
 
-#     ctx = get_ctx()
-#     run_dir = ctx.run_dir
+    try:
+        reader = FitsIO.from_path(input_path)
+        run = decide_run(exp_state, step_profile, settings.overwrite)
+        if run.is_complete:
+            logger.debug("Skipping %s for %s: already completed.", 
+                         step_profile.step_name, 
+                         exp_state.experiment_id)
+            return [exp_state]
 
-#     try:
-#         reader = FitsIO.from_path(exp_state.image)
-#         run = decide_run(exp_state, step_profile.step_name, settings.overwrite)
-#         if run.is_complete:
-#             logger.debug("Skipping %s for %s: already completed.", step_profile.step_name, exp_state.original_image)
-#             return exp_state
+        plan = resolve_registration_plan(settings.context, 
+                                         backend=settings.backend, 
+                                         method=settings.method)
+        if plan.mode != "time":
+            raise ValueError(f"Registration context {settings.context!r} resolves to "
+                            f"{plan.mode!r}, not time-wise registration.")
 
-#         input_array, input_axis_order = get_array(reader)
-#         plan = resolve_registration_plan(settings.context, backend=settings.backend, method=settings.method)
-#         if plan.mode != "time":
-#             raise ValueError(f"Context '{settings.context}' is not a time-wise registration preset.")
+        input_result = reader.get_array()
+        input_array = input_result.array
+        input_axes = input_result.axes
+        
+        fit_channel: int | None = None
+        if 'C' in input_axes:
+            if settings.fit_channel is None:
+                fit_channel = 0  # default to first channel if not specified
+                logger.warning("No fit_channel specified for TCYX data. Defaulting to channel 0.")
+            else:
+                fit_channel = reader.resolve_channel_positions(settings.fit_channel)[0]
+        
+        logger.debug("%s will be executed | context=%s backend=%s method=%s "
+                     "reference_strategy=%s fit_channel=%s input_shape=%s input_axes=%s",
+                     step_profile.step_name,
+                     settings.context,
+                     plan.backend,
+                     plan.method,
+                     settings.reference_strategy,
+                     fit_channel,
+                     input_array.shape,
+                     input_axes,)
 
-#         if 'C' in input_axis_order and settings.fit_channel is None:
-#             raise ValueError("Time-wise registration on multi-channel data requires fit_channel. "
-#                 "Set it to the channel label or local channel index used for fitting.")
-
-#         resolved_fit_channel = resolve_channel_index(settings.fit_channel, reader.channel_labels, "fit_channel")
-#         fit_array = input_array
-#         fit_axes = input_axis_order
-#         if 'C' in input_axis_order:
-#             c_idx = input_axis_order.index('C')
-#             assert resolved_fit_channel is not None
-#             fit_array = np.take(input_array, resolved_fit_channel, axis=c_idx)
-#             fit_axes = input_axis_order.replace('C', '')
-
-#         logger.debug(
-#             "Register time-fit | context=%s plan=%s input_shape=%s input_axes=%s fit_channel_requested=%s fit_channel_resolved=%s fit_shape=%s fit_axes=%s reference_strategy=%s",
-#             settings.context,
-#             plan,
-#             input_array.shape,
-#             input_axis_order,
-#             settings.fit_channel,
-#             resolved_fit_channel,
-#             fit_array.shape,
-#             fit_axes,
-#             settings.reference_strategy,
-#         )
-
-#         register = RegisterModel(backend=plan.backend)
-#         register.fit_time(array=fit_array, axes=fit_axes, method=plan.method, reference_strategy=settings.reference_strategy, fit_channel=None)
-#         try:
-#             registered_array = register.apply(array=input_array, axes=input_axis_order)
-#         except Exception:
-#             if 'C' not in input_axis_order:
-#                 raise
-#             c_idx = input_axis_order.index('C')
-#             apply_axes = input_axis_order.replace('C', '')
-#             transformed_channels: list[np.ndarray[Any, Any]] = []
-#             for ch in range(input_array.shape[c_idx]):
-#                 channel_array = np.take(input_array, ch, axis=c_idx)
-#                 transformed_channels.append(register.apply(array=channel_array, axes=apply_axes))
-#             registered_array = np.stack(transformed_channels, axis=c_idx)
-
-#         existing_project_metadata = load_project_metadata_from_reader(reader)
-#         step_metadata: dict[str, Any] = {
-#             "context": settings.context,
-#             "mode": plan.mode,
-#             "backend": plan.backend,
-#             "method": plan.method,
-#             "reference_strategy": settings.reference_strategy,
-#             "fit_channel": settings.fit_channel,
-#             "resolved_fit_channel": resolved_fit_channel,
-#         }
-#         project_metadata = build_step_project_metadata(existing_project_metadata=existing_project_metadata, step_profile=step_profile, user_name=ctx.user_name, step_metadata=step_metadata, channel_metadata=None)
-
-#         reader.save_array(registered_array, axis_order=input_axis_order, channel_labels=reader.channel_labels, output_name=output_name, custom_metadata=project_metadata)
-#         logger.debug("%s completed for %s", step_profile.step_name, exp_state.workdir_relative(run_dir))
-
-#         new_st = exp_state.with_completed_step(StepName.REGISTER_TIME)
-#         logger.debug("Produced new ExperimentState: %s", new_st)
-#         new_st.save()
-#         return new_st
-#     except Exception as e:
-#         logger.exception("%s failed for %s", step_profile.step_name, exp_state.workdir)
-#         print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.workdir}: {e}")
-#         return exp_state.with_error(StepName.REGISTER_TIME, str(e))
+        register = RegisterModel(backend=plan.backend)
+        register.fit_time(array=input_array, 
+                          axes=input_axes, 
+                          method=plan.method, 
+                          reference_strategy=settings.reference_strategy, 
+                          fit_channel=fit_channel)
+        
+        registered_array = register.apply(array=input_array, 
+                                          axes=input_axes)
+        
+        params = settings.to_payload_dict()
+        params.update({'backend': plan.backend, 'method': plan.method})
+        updated_state = exp_state.with_metadata(step_name=step_profile.step_name,
+                                                created_by=step_profile.distribution,
+                                                exported_channel='all',
+                                                channels_params=params)
+        
+        save_path = reader.save_array(registered_array,
+                                      output_name=step_profile.output_name,
+                                      export_channels=reader.channel_labels,
+                                      artifact_kind=step_profile.output_artifact,
+                                      created_by=step_profile.distribution,
+                                      custom_metadata=updated_state.metadata_dump)
+        
+        new_state = updated_state.with_complete_step(step_name=step_profile.step_name,
+                                                     artifact_kind=step_profile.output_artifact,
+                                                     artifact_path=save_path)
+        logger.debug("%s completed for %s",
+                     step_profile.step_name,
+                     exp_state.experiment_id,)
+        logger.debug("Produced new ExperimentState: %s", new_state)
+        new_state.save_state()
+        return [new_state]
+    
+    except Exception as e:
+            logger.exception("%s failed for %s", step_profile.step_name, exp_state.experiment_id)
+            print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.experiment_id}: {e}")
+            return []

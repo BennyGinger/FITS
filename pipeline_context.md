@@ -1,651 +1,363 @@
-# FITS Pipeline – Architecture Context
+# FITS Pipeline Architecture Context
 
-## Overview
+## Purpose
 
-The FITS pipeline processes microscopy experiments in a structured, reproducible way.
+FITS is the orchestration layer for a microscopy image-processing pipeline. It discovers raw images, creates durable experiment states, validates user settings, runs the enabled workflow steps, and records enough state and metadata to restart safely.
 
-The pipeline operates on **ExperimentState** objects, which represent the processing state of a single experiment unit (usually a single image series).
+The project deliberately keeps image-processing implementations in independent packages. Those packages must remain usable without importing or knowing about `fits`:
 
-The pipeline is composed of independent workflow steps such as:
+| Package | Responsibility |
+| --- | --- |
+| `fits_io` | Read, normalize, select, merge, and write microscopy image data and technical image metadata |
+| `bg_sub` | Background subtraction |
+| `stackalign` | Time-wise and channel-wise image registration |
+| `cellpose_kit` | Cellpose setup and segmentation |
+| `tracklink` | Object tracking |
+| `progress_bar` | Terminal progress display and log handling |
 
-* `convert`
-* `segment`
-* `metadata_change`
+The code in `src/fits/` adapts these generic modules to the FITS workflow. Pipeline state, step ordering, restart decisions, configuration, and provenance belong in `fits`, not in the independent packages.
 
-Each step takes one or more `ExperimentState` objects and returns updated states.
+`fits_io` is the closest integration point because every task uses it to exchange artifacts, channel identity, axes, and metadata. Its API can serve the main workflow, but it must not depend on `ExperimentState`, FITS settings, task names, scheduling, or other `fits` mechanics.
 
-Steps are designed to be:
+## Design Priorities
 
-* deterministic
-* restartable
-* filesystem-based
-* resilient to folder reorganization
+1. Keep the pipeline and module APIs simple.
+2. Keep processing packages independent of FITS orchestration.
+3. Make artifacts and saved state portable and restartable.
+4. Put each responsibility in one clear layer.
+5. Add abstractions only when they remove real duplication or enable a concrete extension.
 
----
-
-# Core Concepts
-
-## Experiment Unit
-
-An experiment unit corresponds to a **workdir folder** containing all artifacts produced by the pipeline for a single raw image (or series).
-
-Example layout:
+## Repository Layout
 
 ```text
-Run3_test/
-├── control/
-│   ├── c3z1t1v3.nd2
-│   └── c3z1t1v3_s1/
-│       ├── fits_array.tif
-│       ├── fits_mask.tif
-│       └── experiment_state.json
+fits/
+├── src/fits/
+│   ├── pipeline.py             # top-level startup
+│   ├── environment/            # discovery, durable state, logging, constants
+│   ├── settings/               # TOML loading, validation, overwrite cascade
+│   ├── tasks/                  # adapters from FITS state/settings to modules
+│   ├── workflows/engines/      # registry, run decisions, executors, scheduler
+│   └── workflows/metadata/     # pipeline provenance models
+├── fits_io/                    # independent workspace package / submodule
+├── bg_sub/                     # independent workspace package / submodule
+├── stackalign/                 # independent workspace package / submodule
+├── cellpose_kit/               # independent workspace package / submodule
+├── tracklink/                  # independent workspace package / submodule
+├── progress_bar/               # independent workspace package / submodule
+└── tests/                      # FITS integration and workflow tests
 ```
 
----
+The independent modules are workspace dependencies, not internal folders of the `fits` Python package.
 
-# Path Anchoring Model
+## Top-Level Pipeline Flow
 
-## Durable Anchor: `workdir`
-
-All persisted paths inside `ExperimentState` are **relative to `workdir`**.
-
-Absolute paths are reconstructed at runtime:
-
-```python
-absolute_path = workdir / relative_path
-```
-
-This ensures experiment folders can be moved without breaking the pipeline.
-
----
-
-# Runtime Context
-
-The pipeline runtime provides an **ExecutionContext** accessible through:
-
-```python
-get_ctx()
-```
-
-This includes:
+`fits.pipeline.start_pipeline()` is the application entry point:
 
 ```text
-run_dir
-user_name
-logging settings
-execution mode
+load TOML settings
+    ↓
+resolve run directory, runtime mode, and logging
+    ↓
+discover supported raw images
+    ↓
+apply the overwrite cascade
+    ↓
+load saved ExperimentState files and create states for new inputs
+    ↓
+run enabled steps in batch or conveyor mode
+    ↓
+return/log terminal experiment states
 ```
 
-`run_dir` is **not persisted**.
+`run_dir` and runtime/logging configuration are process inputs. There is no global `ExecutionContext` or `get_ctx()` object.
 
----
+## Workflow Order and Artifacts
 
-# ExperimentState
+The canonical order is defined once by `WORKFLOW_ORDER`:
 
-Represents pipeline progress.
+```text
+convert
+→ register_time
+→ register_channel
+→ bg_sub
+→ segment
+→ track
+```
 
-Key attributes:
+The artifact contracts are:
+
+| Step | Input artifact | Output artifact | Filename |
+| --- | --- | --- | --- |
+| `convert` | `raw_image` | `image` | `fits_array.tif` |
+| `register_time` | `image` | `image` | `fits_array.tif` |
+| `register_channel` | `image` | `image` | `fits_array.tif` |
+| `bg_sub` | `image` | `image` | `fits_array.tif` |
+| `segment` | `image` | `segmentation` | `fits_mask.tif` |
+| `track` | `segmentation` plus `image` | `tracking` | `fits_track.tif` |
+
+Registration and background subtraction intentionally rewrite the current image artifact. Segmentation and tracking create derived artifacts.
+
+## ExperimentState
+
+`ExperimentState` is an immutable dataclass representing one experiment branch. Its durable fields are:
 
 ```text
 workdir
-original_image_rel
-image_rel
-masks_rel
+artifacts
 completed_steps
-last_error
 updated_at
+metadata (FitsMeta)
 ```
 
----
-
-# Convert Step
-
-Creates:
-
-```text
-fits_array.tif
-```
-
-Also writes structural metadata:
-
-```text
-source_channel_indices
-source_channel_count
-```
-
-These define the mapping between exported channels and original raw channels.
-
----
-
-# Background Subtraction Step
-
-Reads and rewrites:
-
-```text
-fits_array.tif
-```
-
-Processes all exported channels in place.
-
-Stores step metadata under:
+`artifacts` maps semantic artifact kinds to paths:
 
 ```python
-project_metadata["steps"]["bg_sub"]
+{
+    "raw_image": Path(...),
+    "image": Path(...),
+    "segmentation": Path(...),
+    "tracking": Path(...),
+}
 ```
 
-Typical bg_sub step metadata includes:
+Artifact paths are stored relative to `workdir` in `experiment_state.json` and resolved to absolute paths at runtime. Relative paths may contain `..`, allowing the original raw file to remain outside a series-specific output directory while preserving portability of the surrounding experiment tree.
+
+State changes return a new object:
+
+- `with_metadata(...)` returns a state with updated `FitsMeta`.
+- `with_complete_step(...)` records an artifact and completed step.
+- `save_state()` atomically writes `experiment_state.json` through a temporary file and `os.replace`.
+- `load_state(workdir)` treats the supplied workdir as authoritative.
+
+The state currently does not persist a `last_error` field. A failed task logs the exception, prints a concise error, and returns no output state.
+
+## Experiment Branching
+
+Before conversion, a raw file is represented by a state whose workdir is the raw file's parent. `fits_io.split_series()` may produce one or several readers. Conversion creates one output state per series and moves each branch's authoritative workdir to the saved artifact's parent.
+
+Typical single-series layout:
 
 ```text
-sigma
-size
-threshold
-statistic
-distribution
-version
-timestamp
+experiment/
+├── input.nd2
+└── input_s1/
+    ├── fits_array.tif
+    ├── fits_mask.tif
+    ├── fits_track.tif
+    └── experiment_state.json
 ```
 
-There is no per-channel provenance block for bg_sub, because it processes the full current image artifact uniformly.
+The exact series folder name is decided by `fits_io`, not by the orchestration layer.
 
----
+## Discovery and Restartability
 
-# Segment Step
+Discovery recursively finds extensions supported by `fits_io` and excludes generated files whose names start with `fits_`.
 
-Creates:
+Unless conversion is enabled with `overwrite = true`, startup:
+
+1. loads valid `experiment_state.json` files below `run_dir`;
+2. skips invalid saved states with a warning;
+3. creates fresh states only for raw images not already represented by saved states.
+
+If conversion overwrite is enabled, saved states are ignored and branches are rebuilt from raw inputs.
+
+`decide_run()` implements two restart modes:
+
+- Whole-step: complete only when the step is in `completed_steps` and its output artifact exists.
+- Channel-level: complete per source channel using the step's channel metadata.
+
+`overwrite = true` clears completion for the current decision. Settings resolution also applies an overwrite cascade to downstream steps so stale derived results are not reused after an upstream rewrite.
+
+## Step Registry
+
+`workflows/engines/registry.py` is the integration map. Each `StepSpec` binds:
+
+- a `StepProfile` (`step_name`, owning distribution, input/output artifact, output filename);
+- a Pydantic settings model;
+- a single-state task runner;
+- a CPU or GPU pool;
+- an optional concurrency cap.
+
+This keeps the execution engines generic. Adding a step normally requires a constant/order entry, settings model, task adapter, and registry entry. The processing package itself should not need FITS-specific changes.
+
+## Execution Modes
+
+### Batch
+
+Batch mode runs each enabled step across all current states before advancing to the next step. Per-step execution can be serial, threaded, or process-based according to its validated settings.
+
+### Conveyor
+
+Conveyor mode advances experiment branches independently. It uses separate thread pools for CPU and GPU work so one branch can move downstream while another is still upstream. GPU work is serialized; individual steps may additionally declare a concurrency cap. `register_time` currently has a cap of one.
+
+Both modes use the same workflow order, registry, settings models, task functions, and state contracts.
+
+## Task Adapter Contract
+
+Files under `src/fits/tasks/` are thin integration adapters. A task receives:
+
+```python
+(settings, exp_state, step_profile) -> list[ExperimentState]
+```
+
+A task should:
+
+1. resolve its input artifact from the state;
+2. ask `decide_run()` whether work is pending;
+3. use `FitsIO` to read/select normalized data;
+4. call the independent processing module;
+5. use `FitsIO` to merge and save the result;
+6. add pipeline metadata and mark the step complete;
+7. atomically save the new state;
+8. return zero, one, or multiple output states.
+
+Returning a list is intentional: most tasks return one branch, conversion may split a multi-series input into several branches, and failure currently returns an empty list.
+
+Task adapters may know both FITS and a processing module. Processing modules must know neither FITS state nor the scheduler.
+
+## Current Step Behavior
+
+### Convert
+
+- Opens the raw source through `FitsIO`.
+- Resolves channel labels and export selection.
+- Splits multi-series inputs.
+- Prepares/saves `fits_array.tif`, including optional Z projection and compression.
+- Produces one durable state per series.
+
+### Register Time
+
+- Resolves a registration preset from context, with optional backend/method overrides.
+- Fits time-wise transforms with `stackalign.RegisterModel` and applies them to the full image.
+- Uses one fitting channel for multichannel input.
+- Rewrites `fits_array.tif` and records shared step parameters.
+
+### Register Channel
+
+- Resolves the channel-registration preset and optional overrides.
+- Fits and applies per-channel transforms with `stackalign.RegisterModel`.
+- Rewrites `fits_array.tif` and records shared step parameters.
+
+### Background Subtraction
+
+- Selects included channels through `FitsIO`.
+- Calls the independent `bg_sub` function.
+- Rebuilds the full array so excluded channels are preserved.
+- Rewrites `fits_array.tif`.
+- Stores shared metadata when all channels run, or channel metadata when channels are excluded.
+
+### Segment
+
+- Resolves requested labels to stable source channel indices.
+- Runs only pending channels.
+- Uses the cached `cellpose_kit` wrapper.
+- Optionally includes a nuclear channel as model input without making it a mask output channel.
+- Merges new masks with an existing `fits_mask.tif` by source channel index.
+- Records per-channel parameters and completion.
+
+### Track
+
+- Reads the segmentation artifact and the corresponding image channels.
+- Runs only pending channels with `tracklink.TrackModel`.
+- Filters tracks by length when configured.
+- Merges results with an existing `fits_track.tif` by source channel index.
+- Records per-channel parameters and completion.
+
+## Metadata Ownership
+
+There are two distinct metadata concerns.
+
+### Technical artifact metadata: owned by `fits_io`
+
+Examples include axes, channel labels, source channel indices, channel count, artifact kind, compression, and other details required to interpret an image file. `fits_io` must preserve this information through reads, selections, merges, and rewrites.
+
+### Pipeline provenance: owned by `fits`
+
+`FitsMeta` is stored in `ExperimentState` and passed to `fits_io` as `custom_metadata` when an artifact is written. Its serialized structure is:
+
+```python
+{
+    "pipeline_meta": {
+        "user_name": ...,
+        "created_by": "fits",
+        "version": ...,
+        "timestamp": ...,
+    },
+    "steps": {
+        "segment": {
+            "step_name": "segment",
+            "created_by": "cellpose-kit",
+            "version": ...,
+            "timestamp": ...,
+            "params": {},
+            "channels": {
+                "1": {
+                    "channel": 1,
+                    ...,
+                    "timestamp": ...,
+                }
+            },
+        }
+    },
+}
+```
+
+`FitsMeta`, `RunMetadata`, `StepsMetadata`, and `ChannelStepMeta` are immutable value-style models. Updating a step preserves metadata for other steps and previously processed channels.
+
+Do not move workflow provenance construction into `fits_io`. `fits_io` accepts and persists an opaque custom metadata mapping; `fits` defines what that mapping means.
+
+## Channel Identity
+
+Labels are user-facing selectors. Source channel indices are the durable identity used for provenance, incremental segmentation/tracking, and mask merging.
+
+The rule is:
 
 ```text
-fits_mask.tif
+label → resolve through fits_io → source index → persist/merge by source index
 ```
 
-Uses:
+Never use a label alone as the identity of a derived channel. Labels may change; source indices preserve the relationship to the converted image.
+
+Shared whole-image parameters are stored in a step's `params`. Channel-specific parameters are stored in `channels[str(source_index)]`. `ExperimentState.completed_channels()` reads those channel records.
+
+## Error Handling
+
+Independent modules and `fits_io` should fail fast by raising useful exceptions. They must not decide whether the pipeline continues.
+
+The current FITS task boundary catches exceptions, writes the full traceback to logging, prints a concise message, and returns an empty state list:
 
 ```text
-source_channel_indices
+[ERROR] Step '<step>' failed for <experiment>: <message>
 ```
 
-to maintain stable channel identity relative to the input image.
-
-Segmentation provenance is stored in pipeline metadata under:
-
-```python
-project_metadata["steps"]["segment"]
-```
-
-including channel-aware metadata under:
-
-```python
-project_metadata["steps"]["segment"]["channels"]
-```
-
-and mask channel identity under:
-
-```python
-project_metadata["steps"]["segment"]["mask_source_channel_indices"]
-```
-
----
-
-# Channel Identity Model
-
-## Image
-
-```text
-source_channel_indices
-source_channel_count
-```
-
-These describe how the current saved image channels map back to the original raw image.
-
-## Step / Derived Artifact Identity
-
-Stored in pipeline project metadata:
-
-```python
-project_metadata["steps"][step_name]
-```
-
-For channel-aware mask-producing steps such as segmentation, this includes:
-
-```text
-mask_source_channel_indices
-channels
-```
-
-This separation allows:
-
-* partial segmentation
-* incremental updates
-* stable channel identity independent of labels
-* clear distinction between generic I/O metadata and workflow provenance
-
----
-
-# Incremental Mask Behavior
-
-When segment is re-run:
-
-* existing mask is loaded if present
-* previously saved mask channel identity is read from:
-
-```python
-project_metadata["steps"]["segment"]["mask_source_channel_indices"]
-```
-
-* new channels are merged into the correct position
-* existing channels are preserved
-* per-channel step metadata is merged by source channel index
-* `mask_source_channel_indices` is updated inside the segment step metadata
-
-Channel identity is determined by **source channel index**, not by label.
-
----
-
-# Metadata Architecture
-
-## FITS I/O Metadata
-
-Stored in the TIFF private payload and mirrored into ImageJ-readable metadata where relevant.
-
-Owned by `fits_io`.
-
-Typical `fits_io` block:
-
-```python
-fits_io.version
-fits_io.axes
-fits_io.channel_labels
-fits_io.n_channels
-fits_io.z_projection
-fits_io.compression
-fits_io.source_channel_indices
-fits_io.source_channel_count
-```
-
-This block represents **technical image / artifact metadata** and is preserved across in-place rewrites.
-
-## Pipeline Metadata
-
-Stored under:
-
-```text
-project_metadata
-```
-
-Owned by the `fits` workflow layer.
-
-Top-level structure:
-
-```python
-project_metadata["pipeline"]
-project_metadata["steps"]
-```
-
-## Pipeline Block
-
-Contains pipeline-wide provenance such as:
-
-```text
-distribution
-version
-timestamp
-user_name
-```
-
-## Steps Block
-
-Contains one entry per workflow step, for example:
-
-```python
-project_metadata["steps"]["convert"]
-project_metadata["steps"]["bg_sub"]
-project_metadata["steps"]["segment"]
-```
-
-Each step block contains provenance such as:
-
-```text
-distribution
-version
-timestamp
-```
-
-plus step-specific metadata.
-
-Examples:
-* convert:
-    * custom conversion metadata if provided
-* bg_sub:
-    * sigma
-    * size
-    * threshold
-    * statistic
-* segment:
-    * mask_source_channel_indices
-    * channels[source_idx] = per-channel segmentation metadata
-
----
-
-# Workflow Layering
-
-## Root APIs
-
-```text
-convert.py
-segment.py
-metadata_change.py
-```
-
-These are orchestration-only.
-
-They:
-
-* resolve runtime context
-* load data
-* run the processing engine
-* build/update pipeline-owned `project_metadata`
-* save through `fits_io`
-
-They no longer build old writer provenance payloads directly.
-
-
-## Workflows/metadata
-
-This layer owns pipeline metadata construction and loading.
-
-Typical responsibilities:
-
-* load existing `project_metadata` from an artifact
-* build / update pipeline-level provenance
-* build / update step-level metadata
-* merge channel-aware step metadata
-* preserve prior metadata during in-place rewrites
-
-This layer is the canonical place for workflow provenance assembly.
-
-## Workflows/arrays
-
-### `channel_identity.py`
-
-* label ↔ source index conversion
-* exported channel identity resolution
-
-### `channel_metadata.py`
-
-* shaping per-channel workflow metadata
-* building "channels" metadata blocks for channel-aware steps
-
-### `channel_merge.py`
-
-* pure array merge logic
-* no save logic
-* no workflow provenance logic
-
-### `mask_output.py`
-
-* load existing mask
-* read prior segment mask source channel indices from step-level project metadata
-* prepare merged mask output (array + axes + labels)
-* preserve stable mask channel identity across incremental runs
-
-
-### converter / loading helpers
-
-* array extraction from FITS artifacts
-* flatten / rebuild helpers for frame-wise processing
-* shape / axis normalization helpers
-
-## workflows/engines
-
-### `provencance.py`
-
-Contains low-level provenance utilities and `StepProfile`.
-
-It may provide utilities such as:
-
-* version lookup
-* UTC timestamp generation
-* provenance stamp construction
-
-It no longer acts as the old workflow save payload entrypoint.
-
-### `run_decision.py`
-
-* determine what remains to run
-* supports both:
-
-  * full-step completion
-  * channel-level completion
-
-
-### `executor.py`
-
-* execution backend dispatch
-* ordered / unordered execution
-* worker fan-out
-
----
-
-# Convert Execution Flow
-
-```text
-1. validate input image
-2. open reader
-3. resolve export channels
-4. extract array
-5. build initial project_metadata through workflow metadata builder
-6. save fits_array.tif through fits_io using project_metadata
-7. update state
-```
-
----
-
-# Background Subtraction Execution Flow
-
-```text
-1. validate image
-2. open reader
-3. decide whether step must run
-4. load current image array
-5. flatten to processing frames
-6. run background subtraction
-7. rebuild output array
-8. load existing project_metadata from current artifact
-9. update bg_sub step metadata through workflow metadata builder
-10. save fits_array.tif through fits_io using project_metadata
-11. update state
-```
-
----
-
-# Segment Execution Flow
-
-```text
-1. validate image
-2. open reader
-3. resolve requested channels
-4. compute pending channels
-5. load image data
-6. run segmentation
-7. build per-channel metadata
-8. load existing mask artifact if present
-9. merge mask arrays by source channel index
-10. load existing project_metadata from mask artifact if present
-11. update segment step metadata through workflow metadata builder
-12. save fits_mask.tif through fits_io using project_metadata
-13. update state
-```
-
----
-
-# Error Handling & Logging
-
-## Design Principle
-
-**Failures must never be silent, but must not stop the entire batch.**
-
-A failure in one experiment:
-
-* must be visible immediately in the console
-* must be logged with full traceback
-* must mark the corresponding `ExperimentState` as failed
-* must **not stop processing of other experiments**
-
----
-
-## Execution Model
-
-### 1. Low-level modules (helpers, fits_io, channel logic)
-
-* must **raise exceptions on failure**
-* may log using `logger.exception(...)`
-* must **not swallow errors**
-* must **not decide pipeline continuation**
-
----
-
-### 2. Per-state workflow execution
-
-Each step processes one `ExperimentState` at a time.
-
-At this boundary:
-
-* exceptions are **caught once**
-* full traceback is logged
-* a concise error is printed to console
-* the state is updated using `with_error(...)`
-* execution continues with next state
-
-Pattern:
-
-```python
-try:
-    ...
-    return [updated_state]
-except Exception as e:
-    logger.exception(...)
-    print("[ERROR] ...")
-    return [state.with_error(...)]
-```
-
----
-
-### 3. Batch / pipeline level
-
-* continues processing remaining states
-* does not stop on single failure
-* may optionally summarize successes/failures at the end
-
----
-
-## Console Behavior
-
-On failure, user must immediately see:
-
-```python
-[ERROR] Step 'segment' failed for <workdir>: <error message>
-```
-
-Traceback remains in log file.
-
----
-
-## State Behavior
-
-* `ExperimentState` is updated **only on success or explicit failure**
-* failed states contain:
-
-  * `last_error`
-  * failed step name
-* failed steps are **not marked as completed**
-
----
-
-## Expected Behavior
-
-* no silent failures
-* no missing output without explanation
-* one bad experiment does not stop the pipeline
-* clear visibility for debugging
-
----
-
-# Design Principles
-
-## Deterministic execution
-
-Steps produce consistent outputs.
-
-## Restartability
-
-* completed steps are skipped
-* channel-level completion is supported where relevant
-* segmentation restartability is based on stored step-level channel provenance
-
-## Filesystem-first
-
-Artifacts are files:
-
-```text
-fits_array.tif
-fits_mask.tif
-```
-
-## Thin pipeline layer
-
-Pipeline logic should remain simple and rely on:
-
-* `fits_io` for I/O and technical metadata persistence
-* workflow metadata builder for pipeline provenance
-* workflows/arrays for channel logic
-
-Avoid over-engineering.
-
-## Ownership separation
-
-Keep this rule strict:
-
-* `fits_io` owns technical image / artifact metadata
-* `fits` workflow layer owns semantic provenance in project_metadata
-
-Do not push workflow provenance back into `fits_io`.
-
----
-
-# Coding Style Requirement
-
-Do not spread function parameters across multiple lines.
-
-Avoid:
-
-```python
-def myfunc(
-    param1,
-    param2,
-    param3,
-):
-```
-
-Prefer:
-
-```python
-def myfunc(param1, param2, param3):
-```
-
-Apply the same rule to function calls whenever reasonably possible.
-
-Same with imports.
-
-Avoid:
-
-```python
-import (
-    module1,
-    module2,
-)
-```
-
-Prefer:
-
-```python
-import module1, module2
-```
+An empty result removes that branch from subsequent work while other branches continue. Failed steps are not marked complete and no error is currently saved in `ExperimentState`.
+
+Configuration, registry, or scheduler failures outside a task boundary are allowed to propagate because they indicate a pipeline-level problem rather than one bad experiment.
+
+## Boundary Rules for Future Work
+
+- A reusable processing package accepts arrays and explicit domain parameters; it does not accept `ExperimentState` or FITS settings models.
+- `fits_io` owns file formats, normalized axes, channel selection/identity, merging, and technical metadata persistence.
+- `src/fits/tasks` owns adaptation between pipeline state/settings and module APIs.
+- `workflows/engines` owns execution policy, not image processing.
+- `workflows/metadata` owns pipeline provenance, not file-format metadata.
+- `environment` owns discovery and durable experiment state.
+- Prefer direct functions and small dataclasses over plugin frameworks or deep class hierarchies.
+- Keep one authoritative workflow order and one registry.
+- Preserve existing artifacts and metadata during incremental channel work.
+- Add a new abstraction only when at least one concrete use requires it.
+
+## Practical Extension Checklist
+
+When adding a new independent module or workflow step:
+
+1. Give the module a FITS-agnostic array/domain API and its own focused tests.
+2. Add the step name and its position to `WORKFLOW_ORDER`.
+3. Add a validated settings model.
+4. Write one thin task adapter.
+5. Register its artifact contract, distribution, runner, and execution pool.
+6. Record provenance with `ExperimentState.with_metadata()`.
+7. Save through `FitsIO` when the output is an image artifact.
+8. Test skip, overwrite, failure, state persistence, and channel-incremental behavior as applicable.
+
+This is the intended scaling path: independent modules stay small, while FITS remains a thin, explicit composition layer.

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 STEP_CONVERT = StepName.CONVERT
 
 
-def run_convert(settings: ConvertSettings, exp_state: ExperimentState, step_profile: StepProfile) -> list[ExperimentState]:
+def convert(settings: ConvertSettings, exp_state: ExperimentState, step_profile: StepProfile) -> list[ExperimentState]:
     """
     Process a single experiment through the convert step.
     
@@ -47,8 +47,7 @@ def run_convert(settings: ConvertSettings, exp_state: ExperimentState, step_prof
         series_readers = source.split_series()
         
         pending_state = exp_state.with_metadata(step_name=step_profile.step_name,
-                                               created_by=step_profile.distribution,
-                                               exported_channel_indices=selection.export_indices,)
+                                               created_by=step_profile.distribution,)
         
         out_states: list[ExperimentState] = []
         for reader in series_readers:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
-from fits.environment.constant import ArtifactType, StepName
+from fits.environment.constant import ArtifactType, ChannelScope, StepName, ARTI_RAW
 from fits.workflows.metadata.models import FitsMeta
 
 
@@ -54,7 +54,7 @@ class ExperimentState:
                         *,
                         step_name: StepName,
                         created_by: str,
-                        exported_channel_indices: Sequence[int] | None = None,
+                        exported_channel: ChannelScope = None,
                         channels_params: Mapping[str, Any] | None = None,
                         ) -> ExperimentState:
         """
@@ -63,8 +63,8 @@ class ExperimentState:
         return replace(self,
                        metadata=self.metadata.with_step(step_name=step_name,
                                                         created_by=created_by,
-                                                        exported_channel_indices=exported_channel_indices,
-                                                        channels_params=channels_params,),)
+                                                        exported_channel=exported_channel,
+                                                        params=channels_params,),)
     
     def with_complete_step(self, 
                          *, 
@@ -150,23 +150,8 @@ class ExperimentState:
     @property
     def original_image(self) -> Path:
         """Get the absolute path to the original image."""
-        return self._to_absolute(self.artifacts["raw_image"])
+        return self._to_absolute(self.artifacts[ARTI_RAW])
 
-    @property
-    def image(self) -> Path | None:
-        """Get the absolute path to the FITS image, or None if not set."""
-        return self.artifact("image")
-
-    @property
-    def seg_masks(self) -> Path | None:
-        """Get the absolute path to the FITS masks, or None if not set."""
-        return self.artifact("segmentation")
-
-    @property
-    def track_masks(self) -> Path | None:
-        """Get the absolute path to the FITS tracking masks, or None if not set."""
-        return self.artifact("tracking")
-    
     @property
     def experiment_id(self) -> str:
         """Stable branch id derived from the materialized workdir."""

@@ -1,6 +1,6 @@
 
-from collections.abc import Callable
-from typing import Any, Literal, TypeAlias
+from collections.abc import Callable, Sequence
+from typing import Any, Literal
 from enum import StrEnum
 
 from numpy.typing import NDArray
@@ -49,6 +49,10 @@ ARTI_RAW = "raw_image"
 ARTI_IMG = "image"
 ARTI_SEG = "segmentation"
 ARTI_TRACK = "tracking"
+
+
+ChannelScope = Literal['all'] | Sequence[int] | None
+
 
 RegistrationMode = Literal["time", "channel"]
 RegistrationBackend = Literal["scikit", "pystackreg", "cv2"]

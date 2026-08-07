@@ -77,6 +77,9 @@ def configure_logging(
     _quiet_logger("cellpose")
     _quiet_logger("fits_io.readers.r_nd2", logging.ERROR)
     _quiet_logger("numba")
+    _quiet_logger("numcodecs")
+    _quiet_logger("hydra.core.utils")
+    _quiet_logger("trackastra.model.model_api")
 
 
 def _quiet_logger(

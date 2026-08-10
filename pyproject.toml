@@ -19,6 +19,7 @@ dependencies = [
     "tracklink",
     "bg-sub",
     "stackalign",
+    "labelquant",
 ]
 
 [project.scripts]
@@ -36,6 +37,7 @@ members = [
     "tracklink",
     "bg_sub",
     "stackalign",
+    "labelquant",
 ]
 
 [tool.uv.sources]
@@ -45,6 +47,7 @@ cellpose-kit = { workspace = true }
 tracklink = { workspace = true }
 bg-sub = { workspace = true }
 stackalign = { workspace = true }
+labelquant = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [

@@ -19,3 +19,6 @@
 [submodule "stackalign"]
 	path = stackalign
 	url = https://github.com/BennyGinger/stackalign.git
+[submodule "labelquant"]
+	path = labelquant
+	url = https://github.com/BennyGinger/labelquant.git

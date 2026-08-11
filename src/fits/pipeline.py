@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-os.environ["TQDM_DISABLE"] = "1" 
+os.environ["TQDM_DISABLE"] = "1" # Silence tqdm progress bars of trackastra pkg
 
 from pathlib import Path
 import logging

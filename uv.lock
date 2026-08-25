@@ -837,6 +837,7 @@ name = "labelquant"
 version = "0.1.0"
 source = { editable = "labelquant" }
 dependencies = [
+    { name = "joblib" },
     { name = "numpy" },
     { name = "pandas", extra = ["parquet"] },
     { name = "scikit-image" },
@@ -844,6 +845,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "joblib", specifier = ">=1.5.3" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "pandas", extras = ["parquet"], specifier = ">=3.0.1" },
     { name = "scikit-image", specifier = ">=0.26.0" },

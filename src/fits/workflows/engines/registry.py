@@ -9,14 +9,16 @@ from fits.settings.models import (BGSubSettings,
                                   RegisterChannelSettings, 
                                   RegisterTimeSettings, 
                                   SegmentSettings, 
-                                  TrackSettings)
+                                  TrackSettings,
+                                  ExtractSettings)
 from fits.workflows.engines.models import StepProfile, StepSpec
 from fits.tasks import (convert, 
                         segment, 
                         remove_bg, 
                         register_channel, 
                         register_time,
-                        track)
+                        track,
+                        extract)
 
 
 REGISTRY: dict[str, StepSpec[Any]] = {
@@ -87,5 +89,18 @@ REGISTRY: dict[str, StepSpec[Any]] = {
         settings_model=TrackSettings,
         item_runner=track,
         pool="gpu"
+    ),
+    StepName.EXTRACT: StepSpec(
+        profile=StepProfile(
+            step_name=StepName.EXTRACT,
+            distribution=cst.DIST_EXTRACT,
+            input_artifact=cst.ARTI_IMG,
+            output_artifact=cst.ARTI_QUANTI,
+            output_name=cst.FITS_QUANTI_NAME,
+        ),
+        settings_model=ExtractSettings,
+        item_runner=extract,
+        pool="cpu",
+        max_concurrency=1
     ),
     }

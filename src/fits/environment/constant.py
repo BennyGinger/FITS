@@ -14,6 +14,7 @@ class StepName(StrEnum):
     BG_SUB = "bg_sub"
     SEGMENT = "segment"
     TRACK = "track"
+    EXTRACT = "extract"
 
 WORKFLOW_ORDER: tuple[StepName, ...] = (
         StepName.CONVERT,
@@ -22,6 +23,7 @@ WORKFLOW_ORDER: tuple[StepName, ...] = (
         StepName.BG_SUB,
         StepName.SEGMENT,
         StepName.TRACK,
+        StepName.EXTRACT,
         )
 
 
@@ -31,12 +33,14 @@ DIST_REGISTER = "stackalign"
 DIST_BG_SUB = "bg-sub"
 DIST_SEG = "cellpose-kit"
 DIST_TRACK = "tracklink"
+DIST_EXTRACT = "labelquant"
 
-FitsName = Literal["fits_array.tif", "fits_mask.tif", "fits_track.tif"]
+FitsName = Literal["fits_array.tif", "fits_mask.tif", "fits_track.tif", "fits_quantification.parquet"]
 FITS_ARRAY_NAME = "fits_array.tif"
 FITS_MASK_SEG = "fits_mask.tif"
 FITS_MASK_TRACK = "fits_track.tif"
-FITS_FILES: set[FitsName] = {FITS_ARRAY_NAME, FITS_MASK_SEG, FITS_MASK_TRACK}
+FITS_QUANTI_NAME = "fits_quantification.parquet"
+FITS_FILES: set[FitsName] = {FITS_ARRAY_NAME, FITS_MASK_SEG, FITS_MASK_TRACK, FITS_QUANTI_NAME}
 
 EXCLUDED_PREFIXES = {'fits_'}
 
@@ -44,11 +48,12 @@ ExecMode = Literal["serial", "thread", "process"]
 
 RunTimeMode = Literal["batch", "conveyor"]
 
-ArtifactType = Literal["raw_image", "image", "segmentation", "tracking"]
+ArtifactType = Literal["raw_image", "image", "segmentation", "tracking", "quantification"]
 ARTI_RAW = "raw_image"
 ARTI_IMG = "image"
 ARTI_SEG = "segmentation"
 ARTI_TRACK = "tracking"
+ARTI_QUANTI = "quantification"
 
 
 ChannelScope = Literal['all'] | Sequence[int] | None

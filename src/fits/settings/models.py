@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Literal, TypeVar
 
 import numpy as np
@@ -12,21 +12,28 @@ from fits.environment.constant import ExecMode, TimeRegiContext, ChannelRegiCont
 ############### Base settings model ############
 
 class SettingsModel(BaseModel):
-    """
-    Pydantic base model for settings classes in the FITS pipeline.
+    """Shared execution settings for FITS workflow steps.
+
+    Attributes:
+        overwrite: Recompute a step even when its output is already complete.
+        execution: Experiment-level execution mode used by the batch workflow.
+        workers: Maximum experiment-level workers. ``None`` delegates the
+            worker count to the selected executor.
+        ordered_execution: Preserve input experiment order when collecting
+            results from a parallel batch executor.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     overwrite: bool = Field(default=False, exclude=True)
     execution: ExecMode = Field(default="thread", exclude=True)
-    workers: int | None = Field(default=None, exclude=True)
+    workers: int | None = Field(default=None, ge=1, exclude=True)
     ordered_execution: bool = Field(default=False, exclude=True)
 
     @field_validator('workers', mode='before', check_fields=False)
     @classmethod
     def parse_workers(cls, v):
-        if isinstance(v, str) and v.lower() == 'none':
+        if isinstance(v, str) and v.strip().lower() == 'none':
             return None
         return v
 
@@ -36,19 +43,24 @@ FitsSettings = TypeVar("FitsSettings", bound=SettingsModel)
 ############# Conversion settings ############
 
 class ConvertSettings(SettingsModel):
-    """
-    Settings for the conversion process in the FITS pipeline.
-    
+    """Settings for converting source images into FITS image artifacts.
+
     Attributes:
-        channel_labels: Optional list of channel labels in the image.
-        export_channels: Channels to export; can be 'all' or a list of specific channels.
-        filename: Optional filename for the converted output.
-        z_projection: Z-projection method to apply to the input files. Supported methods are: max, mean or None. By default, apply max projection.
-        compression: Optional compression method for the output file.
-        overwrite: Whether to overwrite existing files during conversion coming from SettingsModel.
-        execution: Execution mode for the convert step: serial | thread | process. By default, it will use thread-based execution for this step.
-        workers: Number of worker threads or processes to use for the convert step. This is only applicable if the execution mode is set to thread or process. If set to "None", it will use the default number of workers (which is typically the number of CPU plus four).
-        ordered_execution: Whether to preserve the order of the input files in the output files when using parallel execution. If true, it will ensure that the output files are saved in the same order as the input files. If false, it may save output files in a different order than the input files, which can be faster but may not be desirable in some cases.
+        channel_labels: Optional source-channel labels, in source channel order.
+            A single string is normalized to a one-item sequence.
+        export_channels: Channel labels to retain, or ``"all"`` to retain every
+            channel.
+        z_projection: Z projection applied while loading the source image.
+        compression: TIFF compression passed to the output writer. The string
+            ``"None"`` is normalized to ``None``.
+
+    Inherited attributes:
+        overwrite: Recompute conversion even when its output already exists.
+        execution: Experiment-level execution mode. Defaults to ``"thread"``.
+        workers: Maximum experiment-level workers. ``None`` uses the executor
+            default.
+        ordered_execution: Preserve input experiment order when collecting
+            parallel results. Defaults to ``False``.
     """
     channel_labels: str | Sequence[str] | None = None
     export_channels: str | Sequence[str] = 'all'
@@ -65,14 +77,32 @@ class ConvertSettings(SettingsModel):
     @field_validator('compression', mode='before')
     @classmethod
     def parse_compression(cls, v):
-        if isinstance(v, str) and v.lower() == 'none':
+        if isinstance(v, str) and v.strip().lower() == 'none':
             return None
         return v    
 
 #### Registration settings and related constants ############
 
 class RegisterSettings(SettingsModel):
-    """Base settings for registration steps. Not meant to be used directly."""
+    """Common backend overrides for registration settings.
+
+    Attributes:
+        backend: Optional registration backend override. ``None`` lets the
+            registration context choose its backend.
+        method: Optional transform-method override. ``None`` lets the
+            registration context choose its method.
+
+    Inherited attributes:
+        overwrite: Recompute registration even when its output already exists.
+        execution: Experiment-level execution mode. Defaults to ``"thread"``
+            unless a subclass overrides it.
+        workers: Maximum experiment-level workers. ``None`` uses the executor
+            default unless a subclass overrides it.
+        ordered_execution: Preserve input experiment order when collecting
+            parallel results. Defaults to ``False``.
+
+    This model is intended to be subclassed rather than used directly.
+    """
 
     backend: Literal["scikit", "pystackreg", "cv2"] | None = None
     method: Literal["translation", "rigid_body", "affine"] | None = None
@@ -80,25 +110,44 @@ class RegisterSettings(SettingsModel):
     @field_validator('fit_channel', 'reference_channel', mode='before', check_fields=False)
     @classmethod
     def parse_optional_channel(cls, v):
-        if isinstance(v, str) and v.lower() == 'none':
+        if isinstance(v, str) and v.strip().lower() == 'none':
             return None
         return v
 
     @field_validator('backend', 'method', mode='before')
     @classmethod
     def parse_optional_literals(cls, v):
-        if isinstance(v, str) and v.lower() == 'none':
+        if isinstance(v, str) and v.strip().lower() == 'none':
             return None
         return v
     
 
 class RegisterTimeSettings(RegisterSettings):
-    """Settings for time-wise registration (drift correction over time)."""
+    """Settings for time-wise registration and drift correction.
+
+    Attributes:
+        context: Registration scenario used to resolve default backend and
+            transform method.
+        reference_strategy: Frame reference used to estimate transforms.
+        fit_channel: Channel index or label used to estimate transforms. A
+            value of ``None`` delegates channel selection to the backend.
+
+    Inherited attributes:
+        backend: Optional registration backend override.
+        method: Optional transform-method override.
+        overwrite: Recompute time registration even when its output exists.
+        execution: Experiment-level execution mode. Defaults to ``"serial"``.
+        workers: Maximum experiment-level workers. Defaults to ``1`` and is
+            ignored during serial execution.
+        ordered_execution: Preserve input experiment order when collecting
+            parallel results. Defaults to ``False``.
+    """
     context: TimeRegiContext = "linear_drift"
     reference_strategy: Literal["previous", "first", "mean"] = "previous"
     fit_channel: int | str | None = None
 
-    workers: int | None = Field(default=1, exclude=True)
+    execution: ExecMode = Field(default="serial", exclude=True)
+    workers: int | None = Field(default=1, ge=1, exclude=True)
     
     def to_payload_dict(self) -> dict[str, Any]:
         """
@@ -116,7 +165,25 @@ class RegisterTimeSettings(RegisterSettings):
 
 
 class RegisterChannelSettings(RegisterSettings):
-    """Settings for channel-wise registration (cross-channel alignment)."""
+    """Settings for cross-channel registration.
+
+    Attributes:
+        context: Registration scenario used to resolve default backend and
+            transform method.
+        reference_channel: Channel index or label used as the fixed channel.
+        exclude_channel: Channel labels excluded from registration.
+        reference_frame: Frame index used to estimate channel transforms.
+
+    Inherited attributes:
+        backend: Optional registration backend override.
+        method: Optional transform-method override.
+        overwrite: Recompute channel registration even when its output exists.
+        execution: Experiment-level execution mode. Defaults to ``"thread"``.
+        workers: Maximum experiment-level workers. ``None`` uses the executor
+            default.
+        ordered_execution: Preserve input experiment order when collecting
+            parallel results. Defaults to ``False``.
+    """
     context: ChannelRegiContext = "channel_shift"
     reference_channel: int | str | None = None
     exclude_channel: list[str] | None = None
@@ -128,7 +195,7 @@ class RegisterChannelSettings(RegisterSettings):
         if v is None:
             return None
         if isinstance(v, str):
-            return None if v.lower() == 'none' else [v]
+            return None if v.strip().lower() == 'none' else [v]
         return list(v)
 
     @model_validator(mode='after')
@@ -155,18 +222,26 @@ class RegisterChannelSettings(RegisterSettings):
 ############ Background subtraction settings ############
 
 class BGSubSettings(SettingsModel):
-    """
-    Settings for the background subtraction process in the FITS pipeline.
-    
+    """Settings for image background subtraction.
+
     Attributes:
-        sigma: The standard deviation for Gaussian kernel used in background estimation. Default is 0.0, which means no smoothing.
-        size: The size of the neighborhood used for background estimation. Default is 3.
-        threshold: The threshold value for background subtraction. Default is 0.05.
-        statistic: The statistic function to use for background estimation. Default is np.median.
-        execution: Execution mode for the convert step: serial | thread | process. By default, it will use thread-based execution for this step.
-        workers: Number of worker threads or processes to use for the convert step. This is only applicable if the execution mode is set to thread or process. If set to "None", it will use the default number of workers (which is typically the number of CPU plus four).
-        ordered_execution: Whether to preserve the order of the input files in the output files when using parallel execution. If true, it will ensure that the output files are saved in the same order as the input files. If false, it may save output files in a different order than the input files, which can be faster but may not be desirable in some cases.
-        overwrite: Whether to overwrite existing files during background subtraction coming from SettingsModel.
+        sigma: Gaussian smoothing sigma used during background estimation.
+        size: Neighborhood size used to estimate the background.
+        threshold: Background-subtraction threshold.
+        exclude_channel: Channel labels copied without background subtraction.
+        statistic: Callable used to summarize the local background. The strings
+            ``"median"`` and ``"mean"`` are resolved to NumPy callables.
+        bg_execution: Internal execution mode passed to :func:`bg_sub.bg_sub`.
+        bg_workers: Maximum workers used internally by :func:`bg_sub.bg_sub`.
+
+    Inherited attributes:
+        overwrite: Recompute background subtraction even when its output exists.
+        execution: Experiment-level execution mode. Defaults to ``"serial"``
+            to avoid nesting it with the internal frame executor.
+        workers: Maximum experiment-level workers. ``None`` uses the executor
+            default and is ignored during serial execution.
+        ordered_execution: Preserve input experiment order when collecting
+            parallel results. Defaults to ``False``.
     """
     sigma: float = 0.0
     size: int = 3
@@ -180,7 +255,7 @@ class BGSubSettings(SettingsModel):
     # experiment-level parallelism performs better.
     execution: ExecMode = Field(default="serial", exclude=True) # i.e. how to run the task
     bg_execution: Literal["sequential", "thread"] = Field(default="thread", exclude=True) # i.e. how it's processed within the task
-    bg_workers: int | None = Field(default=None, exclude=True) # i.e. how many threads to use for the bg_sub() call
+    bg_workers: int | None = Field(default=None, ge=1, exclude=True) # i.e. how many threads to use for the bg_sub() call
 
     @field_validator('exclude_channel', mode='before')
     @classmethod
@@ -188,19 +263,15 @@ class BGSubSettings(SettingsModel):
         if v is None:
             return None
         if isinstance(v, str):
-            return None if v.lower() == 'none' else [v]
+            return None if v.strip().lower() == 'none' else [v]
         return list(v)
 
-    @field_validator('mask', mode='before', check_fields=False)
+    @field_validator("bg_workers", mode="before")
     @classmethod
-    def parse_mask(cls, v):
-        if v is None:
+    def parse_bg_workers(cls, value):
+        if isinstance(value, str) and value.strip().lower() == "none":
             return None
-        if isinstance(v, str) and v.lower() == 'none':
-            return None
-        if isinstance(v, np.ndarray):
-            return v.astype(bool, copy=False)
-        return np.asarray(v, dtype=bool)
+        return value
 
     @field_validator('statistic', mode='before')
     @classmethod
@@ -238,20 +309,27 @@ class BGSubSettings(SettingsModel):
 ############ Segmentation settings ############
 
 class SegmentSettings(SettingsModel):
-    """
-    Settings for the segmentation process in the FITS pipeline.
-    
+    """Settings for Cellpose-based image segmentation.
+
     Attributes:
-        channel_to_segment: The channel(s) list to use for segmentation. This should match at least one of the channel labels in the input files.
-        do_denoise: If True, applies denoising to the input images.
-        nuclear_channel: The channel(s) list to use as nuclear channel(s) for segmentation. If specified, it will enable nuclear channel mode in Cellpose.
-        user_settings: Dictionary containing the settings for Cellpose given by the user.
-        model: Optional pre-initialized Cellpose model instance to use instead of creating a new one. Default is None.
-        overwrite: Whether to overwrite existing files during segmentation coming from SettingsModel.
-        threading: If True, adds a lock for thread-safe inference. Will be automatically set to True if execution mode is 'thread'.
-        execution: Execution mode for the convert step: serial | thread | process. By default, it will use thread-based execution for this step.
-        workers: Number of worker threads or processes to use for the convert step. This is only applicable if the execution mode is set to thread or process. If set to "None", it will use the default number of workers (which is typically the number of CPU plus four).
-        ordered_execution: Whether to preserve the order of the input files in the output files when using parallel execution. If true, it will ensure that the output files are saved in the same order as the input files. If false, it may save output files in a different order than the input files, which can be faster but may not be desirable in some cases.
+        channel_to_segment: Channel labels to segment.
+        do_denoise: Enable Cellpose denoising where supported by the installed
+            Cellpose backend.
+        nuclear_channel: Optional additional channel supplied as nuclear input.
+        user_settings: Backend-specific Cellpose configuration.
+        model: Optional pre-initialized Cellpose model.
+        threading: Computed flag enabling the Cellpose inference lock when
+            experiment-level execution uses threads.
+        use_nuclear_channel: Computed flag indicating whether a nuclear channel
+            was configured.
+
+    Inherited attributes:
+        overwrite: Recompute segmentation even when its output already exists.
+        execution: Experiment-level execution mode. Defaults to ``"thread"``.
+        workers: Maximum experiment-level workers. ``None`` uses the executor
+            default.
+        ordered_execution: Preserve input experiment order when collecting
+            parallel results. Defaults to ``False``.
     """
     channel_to_segment: Sequence[str] = Field(exclude=True)
     do_denoise: bool = True
@@ -285,27 +363,44 @@ class SegmentSettings(SettingsModel):
                    "nuclear_channel": self.nuclear_channel,
                    "user_settings": self.user_settings,}
         return payload
+
+    @field_validator('nuclear_channel', mode='before')
+    @classmethod
+    def parse_nuclear_chan(cls, v):
+        if isinstance(v, str) and v.strip().lower() == 'none':
+            return None
+        return v
+
 ############# Tracking settings ############
 
 class TrackSettings(SettingsModel):
-    """
-    Settings for the tracking process in the FITS pipeline.
-    
+    """Settings for converting segmentation masks into tracked labels.
+
     Attributes:
-        channel_to_track: The channel(s) list to use for tracking. This should match at least one of the channel labels in the input files.
-        backend: The tracking backend to use. Supported options are 'trackastra' and 'to_be_dev'. Default is 'trackastra'.
-        filter_by_length: Minimum track length in frames to keep after tracking. Tracks shorter than this length will be filtered out. Default is 0 (no filtering).
-        user_settings: Dictionary containing the settings for the chosen tracking backend given by the user. The specific settings will depend on the backend used.
-        overwrite: Whether to overwrite existing files during tracking coming from SettingsModel.
+        channel_to_track: Segmentation channel labels to track.
+        backend: Tracking backend name.
+        filter_by_length: Minimum track length, in frames, retained in the
+            output. Zero disables length filtering.
+        trackastra: Configuration passed to the Trackastra backend.
+
+    Inherited attributes:
+        overwrite: Recompute tracking even when its output already exists.
+        execution: Experiment-level execution mode. Defaults to ``"serial"``.
+        workers: Maximum experiment-level workers. Defaults to ``1`` and is
+            ignored during serial execution.
+        ordered_execution: Preserve input experiment order when collecting
+            parallel results. Defaults to ``False``.
     """
     channel_to_track: Sequence[str] = Field(exclude=True)
     backend: str = "trackastra"
-    filter_by_length: int = 0
-    workers: int | None = Field(default=1, exclude=True)
-    
+    filter_by_length: int = Field(default=0, ge=0)
+
+    execution: ExecMode = Field(default="serial", exclude=True)
+    workers: int | None = Field(default=1, ge=1, exclude=True)
+
     # Backend specific settings
     trackastra: dict[str, Any] = Field(default_factory=dict)
-    
+
     def to_payload_dict(self) -> dict[str, Any]:
         """
         Convert the TrackSettings instance to a metadata dictionary suitable for serialization.
@@ -318,3 +413,34 @@ class TrackSettings(SettingsModel):
             **getattr(self, self.backend, {}),
         }
         return payload
+
+####### Quantification settings ############
+
+class ExtractSettings(SettingsModel):
+    """Settings for region-based intensity quantification.
+
+    Attributes:
+        additional_properties: Extra scikit-image region properties appended to
+            labelquant's defaults.
+        frame_workers: Labelquant worker processes used to quantify frames
+            within one experiment.
+
+    Inherited attributes:
+        overwrite: Recompute quantification even when its output already exists.
+        execution: Experiment-level execution mode. Defaults to ``"serial"``
+            to avoid nesting experiment and frame process pools.
+        workers: Maximum experiment-level workers. ``None`` uses the executor
+            default and is ignored during serial execution.
+        ordered_execution: Preserve input experiment order when collecting
+            parallel results. Defaults to ``False``.
+    """
+    additional_properties: str | Sequence[str] | None = None
+    execution: ExecMode = Field(default="serial", exclude=True)
+    frame_workers: int = Field(default=8, ge=1, exclude=True)
+
+    @field_validator('additional_properties', mode='before')
+    @classmethod
+    def parse_properties(cls, v):
+        if isinstance(v, str) and v.strip().lower() == 'none':
+            return None
+        return v

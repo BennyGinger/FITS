@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+
 os.environ["TQDM_DISABLE"] = "1" # Silence tqdm progress bars of trackastra pkg
 
 from pathlib import Path
@@ -13,6 +14,7 @@ from fits.workflows.execute import run_workflow_scheduler_entry, run_workflow
 from fits.environment.discovery import collect_supported_files, assemble_experiment_states
 from fits.environment.log import configure_logging
 from fits.settings.loader import load_settings
+from fits.tasks import aggregate_quantification
 
 
 logger = logging.getLogger(__name__)
@@ -77,10 +79,14 @@ def start_pipeline(settings_path: Path | None = None) -> None:
             logger.info("Starting conveyor execution of workflow")
             final_states = run_workflow_scheduler_entry(effective_cfg, states)
     
-    logger.info("Pipeline finished with %d final experiment states", len(final_states))
+    # --- log final states ---
     for st in final_states:
         logger.debug("Final state: exp_id=%s last_step=%s", st.experiment_id, st.last_step,)
 
+    # --- aggregate quantification artifacts into a master Parquet file, only if needed ---
+    aggregate_quantification(effective_cfg, final_states, run_dir)
+    
+    logger.info("Pipeline finished with %d final experiment states", len(final_states))
 
 if __name__ == "__main__":
     from time import time

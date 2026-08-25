@@ -43,6 +43,7 @@ def extract(settings: ExtractSettings, exp_state: ExperimentState, step_profile:
             additional_properties=settings.additional_properties,
             workers=settings.frame_workers,
         )
+        dataframe.insert(0, "experiment_id", exp_state.experiment_id)
 
         output_path = (exp_state.workdir / step_profile.output_name)
 
@@ -87,6 +88,7 @@ def _save_quantification(dataframe: pd.DataFrame, output_path: Path,) -> Path:
     
     except Exception:
         temporary_path.unlink(missing_ok=True)
+        logger.error("Failed to save quantification to %s", output_path)
         raise
 
     return output_path

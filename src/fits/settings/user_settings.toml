@@ -125,5 +125,5 @@ max_distance = 150.0 # Maximum distance (in pixels) between objects in consecuti
 enabled = true
 
 [extract.params]
-overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
+overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 additional_properties = "None" # Additional properties from skimage.measure.regionprops_table to extract. This should be a list of property names as strings. If 'None', it will not extract any additional properties beyond the default ones (label, area, centroid, etc.). You can specify any valid property names supported by skimage.measure.regionprops_table, such as "eccentricity", "bbox", "slice", etc. For example: ["eccentricity", "bbox", "slice"].

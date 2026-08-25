@@ -2,6 +2,7 @@ from collections.abc import Mapping, Sequence
 import os
 from pathlib import Path
 import logging
+from typing import Any
 
 import pandas as pd
 
@@ -12,7 +13,7 @@ from fits.environment.state import ExperimentState
 logger = logging.getLogger(__name__)
 
 
-def aggregate_quantification(effective_cfg: Mapping, final_states: Sequence[ExperimentState], run_dir: Path,) -> None:
+def aggregate_quantification(effective_cfg: Mapping[str, Any], final_states: Sequence[ExperimentState], run_dir: Path,) -> None:
     extract_cfg = effective_cfg.get(StepName.EXTRACT)
 
     if isinstance(extract_cfg, Mapping) and extract_cfg.get("enabled", False):
@@ -35,18 +36,43 @@ def _save_master_quantification(states: Sequence[ExperimentState], run_dir: Path
     Returns:
         Path to the saved master Parquet file, or None if no quantification artifacts were found.
     """
-    quant_paths: list[Path] = []
+    quantifications: list[tuple[Path, tuple[str, ...]]] = []
+
     for state in states:
         quant_path = state.artifact(ARTI_QUANTI)
         if quant_path is not None and quant_path.exists():
-            quant_paths.append(quant_path)
+            conditions = _condition_values(state, run_dir)
+            quantifications.append((quant_path, conditions))
 
-    if not quant_paths:
+    if not quantifications:
         return None
 
-    
-    # Read and concatenate all Parquet files into a single DataFrame
-    dataframes = [pd.read_parquet(path) for path in quant_paths]
+    condition_depth = max(
+        len(conditions)
+        for _, conditions in quantifications
+    )
+
+    dataframes: list[pd.DataFrame] = []
+
+    for quant_path, conditions in quantifications:
+        dataframe = pd.read_parquet(quant_path)
+        insert_at = 1 if "experiment_id" in dataframe.columns else 0
+
+        for level in range(condition_depth):
+            value = conditions[level] if level < len(conditions) else None
+            condition_column = pd.Series(
+                value,
+                index=dataframe.index,
+                dtype="string",
+            )
+            dataframe.insert(
+                insert_at + level,
+                f"condition_level_{level + 1}",
+                condition_column,
+            )
+
+        dataframes.append(dataframe)
+
     master_df = pd.concat(dataframes, ignore_index=True)
 
     # Save the master DataFrame to a Parquet file
@@ -63,3 +89,15 @@ def _save_master_quantification(states: Sequence[ExperimentState], run_dir: Path
         raise
 
     return master_path
+
+
+def _condition_values(state: ExperimentState, run_dir: Path,) -> tuple[str, ...]:
+    """Return user-created parent folders between ``run_dir`` and the source image."""
+    try:
+        relative_parent = state.original_image.parent.relative_to(run_dir)
+    except ValueError as exc:
+        raise ValueError(
+            f"Original image {state.original_image} is outside run directory {run_dir}."
+        ) from exc
+
+    return relative_parent.parts

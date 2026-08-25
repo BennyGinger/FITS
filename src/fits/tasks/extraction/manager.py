@@ -7,8 +7,6 @@ from labelquant import ExtractData
 from fits.environment.constant import ARTI_IMG, ARTI_SEG, ARTI_TRACK
 from fits.environment.state import ExperimentState
 
-
-
 @dataclass
 class ExtractionManager:
     state: ExperimentState
@@ -51,7 +49,7 @@ class ExtractionManager:
         image = image_reader.get_array()
         labels = label_reader.get_array()
 
-        extractor = ExtractData()
+        extractor = ExtractData(interval=image_reader.interval)
 
         extractor.add_array(
             "intensity",

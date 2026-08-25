@@ -43,8 +43,10 @@ def extract(settings: ExtractSettings, exp_state: ExperimentState, step_profile:
             additional_properties=settings.additional_properties,
             workers=settings.frame_workers,
         )
+        # Add FITS-specific provenance to the extracted measurements.
         dataframe.insert(0, "experiment_id", exp_state.experiment_id)
 
+        # Save the quantification DataFrame to a Parquet file in the experiment's workdir
         output_path = (exp_state.workdir / step_profile.output_name)
 
         save_path = _save_quantification(

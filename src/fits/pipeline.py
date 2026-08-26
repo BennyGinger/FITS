@@ -22,7 +22,10 @@ logger = logging.getLogger(__name__)
 SETTINGS_PATH = Path(__file__).parent / "settings" / "user_settings.toml"
 
 
-def start_pipeline(settings_path: Path | None = None) -> None:
+def start_pipeline(
+    settings_path: Path | None = None,
+    console_handler: logging.Handler | None = None,
+) -> None:
     # --- load settings ---
     cfg_path = (settings_path or SETTINGS_PATH).expanduser().resolve()
     user_cfg = load_settings(cfg_path)
@@ -44,7 +47,12 @@ def start_pipeline(settings_path: Path | None = None) -> None:
     file_level = rt_settings.get("file_level", "debug")
     
     # --- logging setup once ---
-    configure_logging(log_dir=log_dir,console_level=console_level, file_level=file_level)
+    configure_logging(
+        log_dir=log_dir,
+        console_level=console_level,
+        file_level=file_level,
+        console_handler=console_handler,
+    )
 
     # --- discover images ---
     supported_files = collect_supported_files(run_dir)
@@ -91,11 +99,8 @@ def start_pipeline(settings_path: Path | None = None) -> None:
 if __name__ == "__main__":
     from time import time
     start_time = time()
-    
+
     start_pipeline()
     end_time = time()
     elapsed = end_time - start_time
     print(f"Total pipeline execution time: {elapsed:.2f} seconds")
-    
-    
-    

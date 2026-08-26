@@ -1,0 +1,151 @@
+# FITS settings template.
+#
+# The GUI loads this file as its initial configuration and saves an edited copy
+# as "fits_settings.toml" in the selected run directory. Required values that
+# depend on the experiment are intentionally empty.
+
+# ============================
+# User and input
+# ============================
+user_name = ""
+run_dir = ""
+
+# ============================
+# Runtime configuration
+# ============================
+[runtime]
+execution = "batch" # batch | conveyor
+console_level = "info" # debug | info | warning | error | critical
+file_level = "debug" # debug | info | warning | error | critical
+# log_dir = "path/to/log/directory" # Optional; FITS creates a logs subdirectory.
+
+# optimize = "path/to/one/input/file" # Optional; process only this input file.
+
+# ============================
+# Convert
+# ============================
+[convert]
+enabled = true
+
+[convert.params]
+channel_labels = [] # Source-channel labels in source order; leave empty to use reader defaults.
+export_channels = "all" # "all", one channel label, or a list of channel labels.
+z_projection = "max" # max | mean | sum | std
+compression = "zlib" # zlib | lzma | jpeg | "None"
+overwrite = false
+execution = "thread" # serial | thread | process
+workers = "None" # "None" lets the executor select the worker count; ignored when execution = "serial".
+# ordered_execution = false # Internal ordering control; not exposed in the GUI.
+
+# ============================
+# Register across time
+# ============================
+[register_time]
+enabled = false
+
+[register_time.params]
+context = "linear_drift" # linear_drift | rotational_drift | complex_drift
+reference_strategy = "previous" # previous | first | mean
+fit_channel = "None" # Channel index, channel label, or "None".
+backend = "None" # scikit | pystackreg | cv2 | "None"
+method = "None" # translation | rigid_body | affine | "None"
+overwrite = false
+execution = "serial" # serial | thread | process
+workers = 1 # Ignored when execution = "serial".
+# ordered_execution = false # Internal ordering control; not exposed in the GUI.
+
+# ============================
+# Register across channels
+# ============================
+[register_channel]
+enabled = false
+
+[register_channel.params]
+context = "channel_shift" # channel_shift | channel_shift_dual_cam | channel_shift_complex
+reference_channel = "None" # Channel index, channel label, or "None".
+exclude_channel = "None" # One label, a list of labels, or "None".
+reference_frame = 0
+backend = "None" # scikit | pystackreg | cv2 | "None"
+method = "None" # translation | rigid_body | affine | "None"
+overwrite = false
+execution = "thread" # serial | thread | process
+workers = "None" # "None" lets the executor select the worker count; ignored when execution = "serial".
+# ordered_execution = false # Internal ordering control; not exposed in the GUI.
+
+# ============================
+# Background subtraction
+# ============================
+[bg_sub]
+enabled = false
+
+[bg_sub.params]
+sigma = 0.0
+size = 7
+threshold = 0.05
+exclude_channel = "None" # One label, a list of labels, or "None".
+statistic = "median" # median | mean
+overwrite = false
+bg_execution = "thread" # sequential | thread
+bg_workers = "None" # "None" lets bg_sub select the frame-level worker count.
+execution = "serial" # Experiment-level execution mode.
+workers = "None" # "None" lets the executor select the worker count; ignored when execution = "serial".
+# ordered_execution = false # Internal ordering control; not exposed in the GUI.
+
+# ============================
+# Segmentation
+# ============================
+[segment]
+enabled = false
+
+[segment.params]
+channel_to_segment = [] # Required when segmentation is enabled.
+do_denoise = true
+nuclear_channel = "None" # Additional nuclear channel label or "None".
+overwrite = false
+execution = "thread" # serial | thread | process
+workers = "None" # "None" lets the executor select the worker count; ignored when execution = "serial".
+# ordered_execution = false # Internal ordering control; not exposed in the GUI.
+
+[segment.params.user_settings]
+# Backend-specific Cellpose settings can be added here. Examples:
+model_type = "cyto3"
+diameter = 15
+flow_threshold = 0.4
+cellprob_threshold = 0.0
+do_3D = false
+stitch_threshold = 0.0
+
+# ============================
+# Tracking
+# ============================
+[track]
+enabled = false
+
+[track.params]
+channel_to_track = [] # Required when tracking is enabled.
+backend = "trackastra"
+filter_by_length = 0
+overwrite = false
+execution = "serial" # serial | thread | process
+workers = 1 # Ignored when execution = "serial".
+# ordered_execution = false # Internal ordering control; not exposed in the GUI.
+
+[track.params.trackastra]
+# Backend-specific Trackastra settings can be added here. Examples:
+mode = "greedy_nodiv"
+pretrained_model = "general_2d"
+max_distance = 150.0
+
+# ============================
+# Quantification
+# ============================
+[extract]
+enabled = false
+
+[extract.params]
+additional_properties = "None" # A property, list of properties, or "None".
+overwrite = false
+execution = "serial" # Experiment-level execution mode.
+workers = "None" # "None" lets the executor select the worker count; ignored when execution = "serial".
+frame_workers = 8
+# ordered_execution = false # Internal ordering control; not exposed in the GUI.

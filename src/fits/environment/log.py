@@ -23,6 +23,7 @@ def configure_logging(
     log_dir: Path | None,
     console_level: LevelName = "info",
     file_level: LevelName = "debug",
+    console_handler: logging.Handler | None = None,
 ) -> None:
     """
     Configure global logging for the FITS pipeline.
@@ -37,6 +38,9 @@ def configure_logging(
         Verbosity shown in the console.
     file_level:
         Verbosity written to the log file.
+    console_handler:
+        Optional application-provided handler. The CLI uses stdout by default;
+        the GUI supplies a Qt signal handler.
     """
     root = logging.getLogger()
 
@@ -53,7 +57,7 @@ def configure_logging(
         "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
     )
 
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = console_handler or logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     console_handler.setLevel(_LEVEL_MAP[console_level])
     console_handler.set_name("fits_console")

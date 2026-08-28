@@ -135,7 +135,7 @@ gui = [
 
 [[package]]
 name = "cellpose-kit"
-version = "1.3.0"
+version = "1.4.0"
 source = { editable = "cellpose_kit" }
 dependencies = [
     { name = "numpy" },
@@ -426,6 +426,7 @@ dependencies = [
     { name = "progress-bar" },
     { name = "pydantic" },
     { name = "pyside6" },
+    { name = "pyqtgraph" },
     { name = "stackalign" },
     { name = "tomlkit" },
     { name = "tracklink" },
@@ -450,6 +451,7 @@ requires-dist = [
     { name = "progress-bar", editable = "progress_bar" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyside6", specifier = ">=6.10.2" },
+    { name = "pyqtgraph", specifier = ">=0.14.0" },
     { name = "stackalign", editable = "stackalign" },
     { name = "tomlkit", specifier = ">=0.15.1" },
     { name = "tracklink", editable = "tracklink" },

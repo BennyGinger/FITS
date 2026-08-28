@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from fits.environment.constant import WORKFLOW_ORDER, StepName
 from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, STEP_LAYOUTS, SettingsAdapter
 from fits.gui.settings_editor import RuntimeSettingsEditor, StepSettingsEditor
+from fits.gui.run_browser import RunDirectoryBrowser
 from fits.pipeline import start_pipeline
 
 
@@ -87,7 +88,7 @@ class FitsMainWindow(QMainWindow):
         self.runtime_editor: RuntimeSettingsEditor | None = None
 
         self.setWindowTitle("FITS")
-        self.resize(1100, 760)
+        self.resize(1200, 850)
         self._build_ui()
         self._populate_from_adapter()
 
@@ -95,20 +96,44 @@ class FitsMainWindow(QMainWindow):
         central = QWidget()
         outer = QVBoxLayout(central)
 
-        identity = QFormLayout()
+        top_splitter = QSplitter(Qt.Orientation.Horizontal)
+        top_splitter.setMinimumHeight(230)
+        top_splitter.setMaximumHeight(280)
+
+        identity_panel = QWidget()
+        identity = QVBoxLayout(identity_panel)
+        identity.setContentsMargins(0, 0, 8, 0)
+        identity_form = QFormLayout()
+
         run_dir_row = QWidget()
         run_dir_layout = QHBoxLayout(run_dir_row)
         run_dir_layout.setContentsMargins(0, 0, 0, 0)
         self.run_dir_edit = QLineEdit()
+        self.run_dir_edit.returnPressed.connect(self._run_dir_entered)
+        self.run_dir_edit.textChanged.connect(self._run_dir_text_changed)
         self.browse_button = QPushButton("Browse…")
         self.browse_button.clicked.connect(self._browse_run_dir)
         run_dir_layout.addWidget(self.run_dir_edit)
         run_dir_layout.addWidget(self.browse_button)
-        identity.addRow("Run directory", run_dir_row)
+        identity_form.addRow("Run directory", run_dir_row)
 
         self.user_name_edit = QLineEdit()
-        identity.addRow("User name", self.user_name_edit)
-        outer.addLayout(identity)
+        identity_form.addRow("User name", self.user_name_edit)
+        identity.addLayout(identity_form)
+
+        self.runtime_host = QWidget()
+        self.runtime_host_layout = QVBoxLayout(self.runtime_host)
+        self.runtime_host_layout.setContentsMargins(0, 6, 0, 0)
+        identity.addWidget(self.runtime_host)
+        identity.addStretch()
+        top_splitter.addWidget(identity_panel)
+
+        self.run_browser = RunDirectoryBrowser()
+        top_splitter.addWidget(self.run_browser)
+        top_splitter.setStretchFactor(0, 2)
+        top_splitter.setStretchFactor(1, 1)
+        top_splitter.setSizes([760, 400])
+        outer.addWidget(top_splitter)
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.step_tree = QTreeWidget()
@@ -121,6 +146,7 @@ class FitsMainWindow(QMainWindow):
         self.settings_stack = QStackedWidget()
         main_splitter.addWidget(self.settings_stack)
         main_splitter.setStretchFactor(1, 1)
+        main_splitter.setSizes([230, 900])
 
         vertical_splitter = QSplitter(Qt.Orientation.Vertical)
         vertical_splitter.addWidget(main_splitter)
@@ -136,7 +162,7 @@ class FitsMainWindow(QMainWindow):
         vertical_splitter.addWidget(console_container)
         vertical_splitter.setStretchFactor(0, 2)
         vertical_splitter.setStretchFactor(1, 1)
-        vertical_splitter.setSizes([430, 250])
+        vertical_splitter.setSizes([390, 180])
         outer.addWidget(vertical_splitter)
 
         buttons = QHBoxLayout()
@@ -157,23 +183,21 @@ class FitsMainWindow(QMainWindow):
     def _populate_from_adapter(self) -> None:
         self.run_dir_edit.setText(self.adapter.run_dir)
         self.user_name_edit.setText(self.adapter.user_name)
+        self.run_browser.set_root(self.adapter.run_dir)
 
         self.step_tree.blockSignals(True)
         self.step_tree.clear()
         self._step_items.clear()
         if self.runtime_editor is not None:
-            self.settings_stack.removeWidget(self.runtime_editor)
+            self.runtime_host_layout.removeWidget(self.runtime_editor)
             self.runtime_editor.deleteLater()
         for editor in self._editors.values():
             self.settings_stack.removeWidget(editor)
             editor.deleteLater()
         self._editors.clear()
 
-        runtime_item = QTreeWidgetItem(["Runtime settings"])
-        runtime_item.setData(0, Qt.ItemDataRole.UserRole, "runtime")
-        self.step_tree.addTopLevelItem(runtime_item)
         self.runtime_editor = RuntimeSettingsEditor(self.adapter)
-        self.settings_stack.addWidget(self.runtime_editor)
+        self.runtime_host_layout.addWidget(self.runtime_editor)
 
         for step in WORKFLOW_ORDER:
             item = QTreeWidgetItem([STEP_LAYOUTS[step].title])
@@ -203,9 +227,8 @@ class FitsMainWindow(QMainWindow):
             if first_item is not None:
                 self.step_tree.setCurrentItem(first_item)
 
-    def _step_from_item(self, item: QTreeWidgetItem) -> StepName | None:
-        value = item.data(0, Qt.ItemDataRole.UserRole)
-        return None if value == "runtime" else StepName(value)
+    def _step_from_item(self, item: QTreeWidgetItem) -> StepName:
+        return StepName(item.data(0, Qt.ItemDataRole.UserRole))
 
     @Slot(QTreeWidgetItem, QTreeWidgetItem)
     def _selected_step_changed(
@@ -217,18 +240,12 @@ class FitsMainWindow(QMainWindow):
         if current is None:
             return
         step = self._step_from_item(current)
-        if step is None:
-            if self.runtime_editor is not None:
-                self.settings_stack.setCurrentWidget(self.runtime_editor)
-            return
         self.settings_stack.setCurrentWidget(self._editors[step])
 
     @Slot(QTreeWidgetItem, int)
     def _step_enabled_changed(self, item: QTreeWidgetItem, column: int) -> None:
         del column
         step = self._step_from_item(item)
-        if step is None:
-            return
         enabled = item.checkState(0) == Qt.CheckState.Checked
         self.adapter.set_step_enabled(step, enabled)
         self._editors[step].set_editable(enabled)
@@ -243,15 +260,40 @@ class FitsMainWindow(QMainWindow):
             self.run_dir_edit.text() or str(Path.home()),
         )
         if directory:
-            self.run_dir_edit.setText(directory)
-            self.adapter.run_dir = directory
-            saved_settings = Path(directory) / SAVED_SETTINGS_NAME
-            if saved_settings.is_file():
-                self._load_settings_path(saved_settings)
+            self._switch_run_dir(directory)
+
+    @Slot()
+    def _run_dir_entered(self) -> None:
+        self._switch_run_dir(self.run_dir_edit.text())
+
+    @Slot(str)
+    def _run_dir_text_changed(self, value: str) -> None:
+        if value.strip():
+            return
+        self.adapter.run_dir = ""
+        self.run_browser.set_root("")
+
+    def _switch_run_dir(self, directory: str) -> None:
+        raw_directory = directory.strip()
+        if not raw_directory:
+            self.run_dir_edit.clear()
+            self.adapter.run_dir = ""
+            self.run_browser.set_root("")
+            return
+
+        resolved = Path(raw_directory).expanduser().resolve()
+        self.run_dir_edit.setText(str(resolved))
+        self.adapter.run_dir = str(resolved)
+        self.run_browser.set_root(resolved)
+
+        saved_settings = resolved / SAVED_SETTINGS_NAME
+        if saved_settings.is_file():
+            self._load_settings_path(saved_settings)
 
     def _sync_identity(self) -> None:
         self.adapter.run_dir = self.run_dir_edit.text().strip()
         self.adapter.user_name = self.user_name_edit.text().strip()
+        self.run_browser.set_root(self.adapter.run_dir)
         if self.runtime_editor is not None:
             self.runtime_editor.sync_to_adapter()
         for editor in self._editors.values():

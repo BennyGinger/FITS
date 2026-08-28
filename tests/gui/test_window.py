@@ -20,7 +20,7 @@ def test_main_window_builds_all_steps_and_dynamic_editors() -> None:
     adapter = SettingsAdapter()
     window = FitsMainWindow(adapter)
 
-    assert window.step_tree.topLevelItemCount() == 8
+    assert window.step_tree.topLevelItemCount() == 7
     assert set(window._editors) == set(StepName)
     assert window.runtime_editor is not None
     assert window.runtime_editor.widgets["execution"].isEnabled() is False
@@ -79,6 +79,27 @@ def test_browsing_run_directory_loads_existing_settings(
     assert window.adapter.user_name == "Saved user"
     assert window.adapter.step_enabled(StepName.TRACK) is True
     assert window._step_items[StepName.TRACK].checkState(0) == Qt.CheckState.Checked
+    window.close()
+
+
+def test_run_directory_text_switches_on_enter_and_clears_when_empty(
+    tmp_path: Path,
+) -> None:
+    _application()
+    window = FitsMainWindow(SettingsAdapter())
+
+    window.run_dir_edit.setText(str(tmp_path))
+    window.run_dir_edit.returnPressed.emit()
+
+    assert window.adapter.run_dir == str(tmp_path.resolve())
+    assert window.run_browser.root_path == tmp_path.resolve()
+
+    window.run_dir_edit.clear()
+
+    assert window.adapter.run_dir == ""
+    assert window.run_browser.root_path is None
+    assert window.run_browser.tree.isHidden() is False
+    assert window.run_browser.tree.model() is window.run_browser.empty_model
     window.close()
 
 

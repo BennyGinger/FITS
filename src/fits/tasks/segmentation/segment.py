@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 
+from cellpose_kit.client import CellposeWrapper
 from fits_io import FitsIO
 
 from fits.environment.state import ExperimentState
 from fits.settings.models import SegmentSettings
 from fits.workflows.engines.models import StepProfile
 from fits.workflows.engines.run_decision import decide_run
-from fits.tasks.segmentation.model_cache import segment_model_cache
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,8 @@ def segment(settings: SegmentSettings, exp_state: ExperimentState, step_profile:
         logger.debug("%s will be executed for channel(s): %s", step_profile.step_name, input_labels)
 
         # Get the segmentation model wrapper
-        cp_wrapper = segment_model_cache.get_wrapper(segment_settings=settings.model_dump())
+        cp_wrapper = CellposeWrapper.from_dict(settings.model_dump())
+        cp_wrapper.setup()
 
         # Run the segmentation model on the input array
         masks_array = cp_wrapper.run(input_results.array, input_results.axes)

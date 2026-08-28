@@ -148,14 +148,9 @@ class RuntimeSettingsEditor(QWidget):
         self.widgets: dict[str, ValueWidget] = {}
 
         outer = QVBoxLayout(self)
-        outer.addWidget(QLabel("<h2>Runtime settings</h2>"))
-        description = QLabel(
-            "Advanced controls for workflow scheduling and log verbosity."
-        )
-        description.setStyleSheet("color: #b8b8b8;")
-        outer.addWidget(description)
+        outer.setContentsMargins(0, 0, 0, 0)
 
-        group = QGroupBox("Advanced settings")
+        group = QGroupBox("Advanced runtime settings")
         group.setCheckable(True)
         form = QFormLayout(group)
         for name in ("execution", "console_level", "file_level"):
@@ -173,7 +168,6 @@ class RuntimeSettingsEditor(QWidget):
         group.toggled.connect(self._set_fields_enabled)
         self._advanced_group = group
         outer.addWidget(group)
-        outer.addStretch()
         self._set_fields_enabled(group.isChecked())
 
     def _set_fields_enabled(self, enabled: bool) -> None:

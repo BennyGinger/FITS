@@ -22,6 +22,7 @@ dependencies = [
     "stackalign",
     "labelquant",
     "tomlkit>=0.15.1",
+    "mask-interpolation",
 ]
 
 [project.scripts]
@@ -42,6 +43,7 @@ members = [
     "bg_sub",
     "stackalign",
     "labelquant",
+    "mask_interpolation",
 ]
 
 [tool.uv.sources]
@@ -52,6 +54,7 @@ tracklink = { workspace = true }
 bg-sub = { workspace = true }
 stackalign = { workspace = true }
 labelquant = { workspace = true }
+mask-interpolation = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [

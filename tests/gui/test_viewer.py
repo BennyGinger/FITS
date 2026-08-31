@@ -9,9 +9,9 @@ from PySide6.QtWidgets import QApplication
 
 from fits.environment.constant import FITS_ARRAY_NAME
 from fits.gui.run_browser import DirectoryBrowser, RunDirectoryBrowser
-from fits.gui.segmentation_viewer.image_viewer import SegmentationImageViewer
-from fits.gui.segmentation_viewer.settings_panel import CellposeSettingsPanel
-from fits.gui.segmentation_viewer.window import SegmentationViewerWindow
+from fits.gui.viewer.image_viewer import FitsImageViewer
+from fits.gui.viewer.tools.segmentation.settings_panel import CellposeSettingsPanel
+from fits.gui.viewer.window import FitsViewerWindow
 from fits.settings.models import SegmentSettings
 
 
@@ -72,7 +72,7 @@ def test_cellpose_panel_disables_volume_settings_without_z_stack() -> None:
 
 def test_image_viewer_displays_image_and_mask() -> None:
     _app()
-    viewer = SegmentationImageViewer()
+    viewer = FitsImageViewer()
 
     viewer.set_image(np.arange(16).reshape(4, 4))
     viewer.set_mask(np.asarray([[0, 0, 1, 1]] * 4))
@@ -83,7 +83,7 @@ def test_image_viewer_displays_image_and_mask() -> None:
 
 def test_image_viewer_uses_channel_colour_mapping() -> None:
     _app()
-    viewer = SegmentationImageViewer()
+    viewer = FitsImageViewer()
 
     viewer.set_channel_lut("GFP")
     assert viewer.lut_color == "green"
@@ -94,7 +94,7 @@ def test_image_viewer_uses_channel_colour_mapping() -> None:
 
 def test_lut_controls_levels_and_removes_selected_marker() -> None:
     _app()
-    viewer = SegmentationImageViewer()
+    viewer = FitsImageViewer()
     image = np.arange(100, dtype=float).reshape(10, 10)
     image[-1, -1] = 10000
     viewer.set_image(image)
@@ -112,7 +112,7 @@ def test_lut_controls_levels_and_removes_selected_marker() -> None:
 
 def test_viewer_browser_filters_non_fits_artifacts() -> None:
     _app()
-    window = SegmentationViewerWindow()
+    window = FitsViewerWindow()
 
     assert window.directory_browser.model.nameFilters() == [FITS_ARRAY_NAME]
     assert window.directory_browser.model.nameFilterDisables() is False
@@ -154,9 +154,9 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
             pass
 
     monkeypatch.setattr(
-        "fits.gui.segmentation_viewer.window.SegmentationTuningSession",
+        "fits.gui.viewer.window.SegmentationTuningSession",
         FakeSession,)
-    window = SegmentationViewerWindow(tmp_path)
+    window = FitsViewerWindow(tmp_path)
     emitted: list[SegmentSettings] = []
     window.settings_applied.connect(emitted.append)
     preview_requests: list[bool] = []

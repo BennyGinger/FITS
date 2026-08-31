@@ -4,15 +4,15 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from fits.gui.segmentation_viewer.window import SegmentationViewerWindow
 from fits.gui.theme import apply_dark_theme
+from fits.gui.viewer.window import FitsViewerWindow
 
 
 def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("FITS Segmentation Viewer")
+    app.setApplicationName("FITS Viewer")
     apply_dark_theme(app)
-    window = SegmentationViewerWindow()
+    window = FitsViewerWindow()
     window.show()
     raise SystemExit(app.exec())
 

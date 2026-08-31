@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QColorDialog, QDialog, QPushButton, QVBoxLayout, Q
 from fits_io.metadata.imageJ_meta import COLOR_MAP, LABEL_TO_COLOR
 
 
-class SegmentationImageViewer(QWidget):
+class FitsImageViewer(QWidget):
     """
     Display a 2D image with a labelled-mask overlay.
     """

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from cellpose_kit.backend.versioning import get_cellpose_version
-from fits.gui.segmentation_viewer.cellpose_options import installed_model_options
+from fits.gui.viewer.tools.segmentation.cellpose_options import installed_model_options
 from fits.settings.models import SegmentSettings
 
 

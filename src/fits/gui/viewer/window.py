@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSplitter,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -29,16 +30,16 @@ from PySide6.QtWidgets import (
 
 from fits.environment.constant import FITS_ARRAY_NAME
 from fits.gui.run_browser import DirectoryBrowser
-from fits.gui.segmentation_viewer.image_viewer import SegmentationImageViewer
-from fits.gui.segmentation_viewer.settings_panel import CellposeSettingsPanel
-from fits.gui.segmentation_viewer.worker import PreviewOutcome, PreviewRequest, PreviewWorker
 from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, SettingsAdapter
+from fits.gui.viewer.image_viewer import FitsImageViewer
+from fits.gui.viewer.tools.segmentation.settings_panel import CellposeSettingsPanel
+from fits.gui.viewer.tools.segmentation.worker import PreviewOutcome, PreviewRequest, PreviewWorker
 from fits.settings.models import SegmentSettings
 from fits.tasks.segmentation.preview_cache import SegmentationPreview
 from fits.tasks.segmentation.tuning import SegmentationTuningSession
 
 
-class SegmentationViewerWindow(QMainWindow):
+class FitsViewerWindow(QMainWindow):
     """
     Browse FITS experiments and tune segmentation on selected stack planes.
 
@@ -55,7 +56,7 @@ class SegmentationViewerWindow(QMainWindow):
                  parent: QWidget | None = None,
                  ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("FITS Segmentation Viewer")
+        self.setWindowTitle("FITS Viewer")
         self.resize(1700, 1150)
 
         self._provided_settings = (SegmentSettings.model_validate(segment_settings)
@@ -109,7 +110,7 @@ class SegmentationViewerWindow(QMainWindow):
         lut_title = QLabel("Image LUT")
         lut_title.setStyleSheet("font-weight: bold;")
         lut_layout.addWidget(lut_title)
-        self.image_viewer = SegmentationImageViewer()
+        self.image_viewer = FitsImageViewer()
         channel_row = QHBoxLayout()
         channel_row.addWidget(QLabel("Channel"))
         self.channel_combo = QComboBox()
@@ -138,7 +139,9 @@ class SegmentationViewerWindow(QMainWindow):
         left_splitter.addWidget(lut_container)
 
         self.settings_panel = CellposeSettingsPanel()
-        left_splitter.addWidget(self.settings_panel)
+        self.tool_tabs = QTabWidget()
+        self.tool_tabs.addTab(self.settings_panel, "Segmentation")
+        left_splitter.addWidget(self.tool_tabs)
         left_splitter.setStretchFactor(0, 2)
         left_splitter.setStretchFactor(1, 2)
         left_splitter.setStretchFactor(2, 6)
@@ -207,10 +210,10 @@ class SegmentationViewerWindow(QMainWindow):
         fits_version = self._package_version("fits")
         kit_version = self._package_version("cellpose-kit")
         text = (
-            "Preview Cellpose segmentation on individual frames or Z volumes "
-            "before applying the selected settings to a FITS pipeline. Browse "
-            "experiments, adjust image contrast, compare channels and restore "
-            "cached preview masks without modifying pipeline artifacts.\n\n"
+            "Browse normalized FITS experiments, inspect frames, channels and "
+            "Z planes, and adjust image contrast. Tool tabs add focused image "
+            "workflows; the Segmentation tab previews Cellpose settings without "
+            "modifying pipeline artifacts.\n\n"
             "Keyboard shortcuts\n"
             "X    Toggle mask overlay\n"
             "R    Run preview\n"
@@ -221,7 +224,7 @@ class SegmentationViewerWindow(QMainWindow):
             f"FITS {fits_version}\n"
             f"cellpose-kit {kit_version}\n"
             f"{self.settings_panel.version_label.text()}")
-        QMessageBox.information(self, "About FITS Segmentation Viewer", text)
+        QMessageBox.information(self, "About FITS Viewer", text)
 
     @staticmethod
     def _package_version(distribution: str) -> str:

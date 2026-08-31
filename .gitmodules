@@ -22,3 +22,6 @@
 [submodule "labelquant"]
 	path = labelquant
 	url = https://github.com/BennyGinger/labelquant.git
+[submodule "mask_interpolation"]
+	path = mask_interpolation
+	url = https://github.com/BennyGinger/mask_interpolation.git

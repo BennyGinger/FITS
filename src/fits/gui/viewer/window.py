@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
-from PySide6.QtCore import QEvent, QObject, QThread, Qt, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QKeyEvent
+from PySide6.QtCore import QEvent, QObject, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtGui import QCloseEvent, QColor, QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
+    QColorDialog,
     QFileDialog,
     QButtonGroup,
     QHBoxLayout,
@@ -28,24 +29,30 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 
-from fits.environment.constant import FITS_ARRAY_NAME
+from fits.environment.constant import FITS_ARRAY_NAME, FITS_REFERENCE_TEMPLATE
 from fits.gui.run_browser import DirectoryBrowser
 from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, SettingsAdapter
 from fits.gui.viewer.image_viewer import FitsImageViewer
+from fits.gui.viewer.tools.reference_mask.settings_panel import ReferenceMaskPanel
 from fits.gui.viewer.tools.segmentation.settings_panel import CellposeSettingsPanel
 from fits.gui.viewer.tools.segmentation.worker import PreviewOutcome, PreviewRequest, PreviewWorker
 from fits.settings.models import SegmentSettings
+from fits.tasks.reference_mask import ReferenceMaskSession
 from fits.tasks.segmentation.preview_cache import SegmentationPreview
 from fits.tasks.segmentation.tuning import SegmentationTuningSession
 
 
+ViewerTool = Literal["segmentation", "reference-mask", "all"]
+
+
 class FitsViewerWindow(QMainWindow):
     """
-    Browse FITS experiments and tune segmentation on selected stack planes.
+    Browse FITS experiments, tune segmentation and draw reference masks.
 
     The window can run independently or be embedded in a FITS workflow. When
     Apply settings is clicked, ``settings_applied`` emits a complete validated
-    ``SegmentSettings`` instance for the currently displayed channel.
+    ``SegmentSettings`` instance for the currently displayed channel. Switching
+    tool tabs preserves both sessions; selecting another image replaces them.
     """
 
     settings_applied = Signal(object)
@@ -53,17 +60,23 @@ class FitsViewerWindow(QMainWindow):
     def __init__(self,
                  experiments_dir: str | Path | None = None,
                  segment_settings: SegmentSettings | Mapping[str, Any] | None = None,
+                 tool: ViewerTool = "segmentation",
                  parent: QWidget | None = None,
                  ) -> None:
         super().__init__(parent)
+        if tool not in ("segmentation", "reference-mask", "all"):
+            raise ValueError(f"Unknown FITS viewer tool: {tool!r}.")
+        self._visible_tool = tool
         self.setWindowTitle("FITS Viewer")
         self.resize(1700, 1150)
 
         self._provided_settings = (SegmentSettings.model_validate(segment_settings)
                                    if segment_settings is not None
                                    else None)
-        self._session: SegmentationTuningSession | None = None
+        self._segmentation_session: SegmentationTuningSession | None = None
+        self._reference_session: ReferenceMaskSession | None = None
         self._source_path: Path | None = None
+        self._reference_path: Path | None = None
         self._thread: QThread | None = None
         self._worker: PreviewWorker | None = None
         self._active_request: PreviewRequest | None = None
@@ -72,6 +85,7 @@ class FitsViewerWindow(QMainWindow):
 
         self._build_ui()
         self._connect_signals()
+        self._refresh_mask_colour_controls()
         self._install_keyboard_shortcuts()
         self._set_source_controls_enabled(False)
         if experiments_dir is not None:
@@ -99,9 +113,13 @@ class FitsViewerWindow(QMainWindow):
         left_layout.addLayout(directory_row)
 
         left_splitter = QSplitter(Qt.Orientation.Vertical)
+        file_filters = ((FITS_ARRAY_NAME,)
+                        if self._visible_tool == "segmentation"
+                        else (FITS_ARRAY_NAME,
+                              FITS_REFERENCE_TEMPLATE.format(label="*")))
         self.directory_browser = DirectoryBrowser(
             "Experiments directory contents",
-            file_name_filters=(FITS_ARRAY_NAME,),)
+            file_name_filters=file_filters,)
         left_splitter.addWidget(self.directory_browser)
 
         lut_container = QWidget()
@@ -136,11 +154,25 @@ class FitsViewerWindow(QMainWindow):
         self.full_range_button = QPushButton("Full range")
         lut_actions.addWidget(self.full_range_button)
         lut_layout.addLayout(lut_actions)
+        mask_colour_row = QHBoxLayout()
+        mask_colour_row.addWidget(QLabel("Mask colours"))
+        self.segmentation_mask_colours = QLabel("Label palette")
+        mask_colour_row.addWidget(self.segmentation_mask_colours)
+        self.reference_mask_colour = QColor(255, 215, 0)
+        self.reference_mask_colour_button = QPushButton("Reference mask")
+        self._set_reference_mask_colour_button()
+        mask_colour_row.addWidget(self.reference_mask_colour_button)
+        mask_colour_row.addStretch(1)
+        lut_layout.addLayout(mask_colour_row)
         left_splitter.addWidget(lut_container)
 
         self.settings_panel = CellposeSettingsPanel()
+        self.reference_panel = ReferenceMaskPanel()
         self.tool_tabs = QTabWidget()
-        self.tool_tabs.addTab(self.settings_panel, "Segmentation")
+        if self._visible_tool in ("segmentation", "all"):
+            self.tool_tabs.addTab(self.settings_panel, "Segmentation")
+        if self._visible_tool in ("reference-mask", "all"):
+            self.tool_tabs.addTab(self.reference_panel, "Reference mask")
         left_splitter.addWidget(self.tool_tabs)
         left_splitter.setStretchFactor(0, 2)
         left_splitter.setStretchFactor(1, 2)
@@ -200,10 +232,33 @@ class FitsViewerWindow(QMainWindow):
             self.image_viewer.set_mask_visible)
         self.settings_panel.mask_opacity_changed.connect(
             self.image_viewer.set_mask_opacity)
+        self.reference_panel.drawing_options_changed.connect(
+            self._update_drawing_options)
+        self.reference_panel.apply_requested.connect(
+            self._apply_reference_drawing)
+        self.reference_panel.cancel_requested.connect(
+            self._cancel_reference_drawing)
+        self.reference_panel.undo_requested.connect(
+            self._undo_reference_drawing)
+        self.reference_panel.clear_requested.connect(
+            self._clear_reference_drawing)
+        self.reference_panel.save_requested.connect(
+            self._save_reference_mask)
+        self.reference_panel.mask_visibility_changed.connect(
+            self.image_viewer.set_mask_visible)
+        self.reference_panel.mask_opacity_changed.connect(
+            self.image_viewer.set_mask_opacity)
+        self.image_viewer.drawing_changed.connect(
+            self._reference_drawing_changed)
+        self.image_viewer.drawing_finished.connect(
+            self._replace_reference_drawing)
+        self.tool_tabs.currentChanged.connect(self._tool_changed)
         self.colour_lut_button.toggled.connect(self.image_viewer.set_coloured_lut)
         self.auto_scale_button.clicked.connect(self.image_viewer.auto_scale)
         self.full_range_button.clicked.connect(self.image_viewer.full_range)
         self.info_button.clicked.connect(self._show_information)
+        self.reference_mask_colour_button.clicked.connect(
+            self._choose_reference_mask_colour)
 
     @Slot()
     def _show_information(self) -> None:
@@ -212,15 +267,20 @@ class FitsViewerWindow(QMainWindow):
         text = (
             "Browse normalized FITS experiments, inspect frames, channels and "
             "Z planes, and adjust image contrast. Tool tabs add focused image "
-            "workflows; the Segmentation tab previews Cellpose settings without "
-            "modifying pipeline artifacts.\n\n"
+            "workflows. Segmentation previews Cellpose settings; Reference mask "
+            "draws and saves binary masks with optional interpolation.\n\n"
             "Keyboard shortcuts\n"
             "X    Toggle mask overlay\n"
             "R    Run preview\n"
             "← / →    Previous / next frame\n"
             "↑ / ↓    Previous / next Z plane\n"
+            "A / D    Previous / next frame\n"
+            "W / Z    Next / previous Z plane\n"
             "C    Next channel\n"
-            "S    Apply settings\n\n"
+            "S    Apply segmentation settings or save a reference mask\n"
+            "Ctrl + Z    Undo the latest reference drawing\n"
+            "Ctrl + mouse drag    Pan image\n"
+            "Ctrl + mouse wheel   Zoom image\n\n"
             f"FITS {fits_version}\n"
             f"cellpose-kit {kit_version}\n"
             f"{self.settings_panel.version_label.text()}")
@@ -245,15 +305,22 @@ class FitsViewerWindow(QMainWindow):
                 or not isinstance(event, QKeyEvent)
                 or not self.isActiveWindow()):
             return super().eventFilter(watched, event)
+        focus = self.focusWidget()
+        numeric_editor = self._parent_spin_box(focus)
+        key = event.key()
+        if isinstance(focus, QLineEdit) and numeric_editor is None:
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                QTimer.singleShot(0, self.image_viewer.setFocus)
+            return super().eventFilter(watched, event)
+
+        if (event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                and key == Qt.Key.Key_Z
+                and self._reference_tool_active()):
+            self._undo_reference_drawing()
+            return True
         if event.modifiers() not in (Qt.KeyboardModifier.NoModifier,
                                      Qt.KeyboardModifier.ShiftModifier):
             return super().eventFilter(watched, event)
-        focus = self.focusWidget()
-        numeric_editor = self._parent_spin_box(focus)
-        if isinstance(focus, (QLineEdit, QComboBox)) and numeric_editor is None:
-            return super().eventFilter(watched, event)
-
-        key = event.key()
         if numeric_editor is not None and key in (
                 Qt.Key.Key_Left,
                 Qt.Key.Key_Right,
@@ -261,29 +328,36 @@ class FitsViewerWindow(QMainWindow):
                 Qt.Key.Key_Down,):
             return super().eventFilter(watched, event)
         if key == Qt.Key.Key_X:
-            if self._session is not None:
-                self.settings_panel.show_mask.toggle()
+            if self._segmentation_session is not None:
+                panel = (self.reference_panel
+                         if self._reference_tool_active()
+                         else self.settings_panel)
+                panel.show_mask.toggle()
             return True
         if key == Qt.Key.Key_R:
-            self._run_preview()
+            if not self._reference_tool_active():
+                self._run_preview()
             return True
-        if key == Qt.Key.Key_Right:
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_D):
             self._step_slider(self.frame_slider, 1)
             return True
-        if key == Qt.Key.Key_Left:
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_A):
             self._step_slider(self.frame_slider, -1)
             return True
-        if key == Qt.Key.Key_Up:
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_W):
             self._step_slider(self.z_slider, 1)
             return True
-        if key == Qt.Key.Key_Down:
+        if key in (Qt.Key.Key_Down, Qt.Key.Key_Z):
             self._step_slider(self.z_slider, -1)
             return True
         if key == Qt.Key.Key_C:
             self._next_channel()
             return True
         if key == Qt.Key.Key_S:
-            self._apply_settings()
+            if self._reference_tool_active():
+                self._save_reference_mask()
+            else:
+                self._apply_settings()
             return True
         return super().eventFilter(watched, event)
 
@@ -350,14 +424,30 @@ class FitsViewerWindow(QMainWindow):
             if source.is_file() and self.directory_browser.select_path(source):
                 return
         else:
+            reference_pattern = FITS_REFERENCE_TEMPLATE.format(label="*")
+            if path.match(reference_pattern):
+                source = path.with_name(FITS_ARRAY_NAME)
+                if not source.is_file():
+                    self.status_label.setText(
+                        f"Reference mask has no sibling {FITS_ARRAY_NAME}.")
+                    return
+                reference_index = self.tool_tabs.indexOf(self.reference_panel)
+                if reference_index >= 0:
+                    self.tool_tabs.setCurrentIndex(reference_index)
+                self._open_source(source, reference_path=path)
+                return
             source = path
         if source.name != FITS_ARRAY_NAME or not source.is_file():
             self.status_label.setText(f"Select an experiment containing {FITS_ARRAY_NAME}.")
             return
         self._open_source(source)
 
-    def _open_source(self, source: Path) -> None:
-        if source == self._source_path:
+    def _open_source(self,
+                     source: Path,
+                     *,
+                     reference_path: Path | None = None,
+                     ) -> None:
+        if source == self._source_path and reference_path == self._reference_path:
             return
         if self._thread is not None:
             self.status_label.setText("Wait for the current preview before changing experiment.")
@@ -365,28 +455,49 @@ class FitsViewerWindow(QMainWindow):
         self._close_session()
         try:
             baseline = self._settings_for_source(source)
-            self._session = SegmentationTuningSession(source, segment_settings=baseline)
+            self._segmentation_session = SegmentationTuningSession(
+                source, segment_settings=baseline)
+            self._reference_session = ReferenceMaskSession(
+                source, reference_path=reference_path)
         except Exception as error:
+            if self._segmentation_session is not None:
+                self._segmentation_session.close()
+            self._segmentation_session = None
+            self._reference_session = None
             self.status_label.setText(str(error))
             return
         self._source_path = source
-        settings = self._session.segment_settings
+        self._reference_path = reference_path
+        settings = self._segmentation_session.segment_settings
         self.settings_panel.set_settings(settings)
-        self.settings_panel.set_channels(self._session.channel_labels, settings.nuclear_channel)
-        self.settings_panel.set_3d_available(self._session.plane_count > 1)
+        self.settings_panel.set_channels(
+            self._segmentation_session.channel_labels, settings.nuclear_channel)
+        self.settings_panel.set_3d_available(
+            self._segmentation_session.plane_count > 1)
+        self.reference_panel.set_available_axes(
+            self._reference_session.axes, self._reference_session.shape)
+        self.reference_panel.set_edit_dirty(False)
         self.channel_combo.clear()
-        self.channel_combo.addItems(self._session.channel_labels)
+        self.channel_combo.addItems(self._segmentation_session.channel_labels)
         selected_channel = settings.channel_to_segment[0] if settings.channel_to_segment else None
+        if self._reference_session.loaded_channels:
+            selected_channel = self._reference_session.loaded_channels[0]
         channel_index = self.channel_combo.findText(str(selected_channel))
         self.channel_combo.setCurrentIndex(max(channel_index, 0))
-        self.frame_slider.setRange(0, self._session.frame_count - 1)
-        self.z_slider.setRange(0, self._session.plane_count - 1)
+        self.frame_slider.setRange(0, self._segmentation_session.frame_count - 1)
+        self.z_slider.setRange(0, self._segmentation_session.plane_count - 1)
         self.frame_slider.setValue(0)
         self.z_slider.setValue(0)
         self._set_source_controls_enabled(True)
+        self.reference_panel.label_edit.setText(
+            self._reference_session.reference_label or "")
+        self._update_drawing_options()
         self._display_selection()
-        self.status_label.setText(f"Loaded {source.parent.name} — axes {self._session.axes}, shape {self._session.shape}.")
-        self._run_preview()
+        self.status_label.setText(
+            f"Loaded {source.parent.name} — axes "
+            f"{self._segmentation_session.axes}, shape {self._segmentation_session.shape}.")
+        if self._segmentation_tool_available():
+            self._run_preview()
 
     def _settings_for_source(self, source: Path) -> SegmentSettings | None:
         if self._provided_settings is not None:
@@ -405,7 +516,7 @@ class FitsViewerWindow(QMainWindow):
 
     @Slot()
     def _display_selection(self) -> None:
-        if self._session is None or self.channel_combo.currentIndex() < 0:
+        if self._segmentation_session is None or self.channel_combo.currentIndex() < 0:
             return
         frame = self.frame_slider.value()
         z_index = self.z_slider.value()
@@ -414,7 +525,7 @@ class FitsViewerWindow(QMainWindow):
             if self._displayed_channel is not None and self._displayed_channel != channel:
                 self._channel_levels[self._displayed_channel] = self.image_viewer.display_levels
             self.image_viewer.set_channel_lut(channel)
-            image = self._session.display_frame(frame, channel, z_index)
+            image = self._segmentation_session.display_frame(frame, channel, z_index)
             self.image_viewer.set_image(image)
             if self._displayed_channel != channel:
                 if channel in self._channel_levels:
@@ -424,28 +535,47 @@ class FitsViewerWindow(QMainWindow):
                     self._channel_levels[channel] = self.image_viewer.display_levels
             self._displayed_channel = channel
             self.image_viewer.clear_mask()
-            settings = self.current_settings()
-            self._session.set_segment_settings(settings)
-            cached = self._session.load_cached_preview(
-                frame,
-                channel,
-                z_index,
-                self.settings_panel.user_settings(),)
-            if cached is not None:
-                self._display_preview_mask(cached, z_index)
+            if self._reference_tool_active():
+                if self._reference_session is None:
+                    return
+                self.image_viewer.set_drawing_mask(
+                    self._reference_session.mask_plane(frame, channel, z_index))
+                self.reference_panel.set_undo_available(False)
+                self.image_viewer.set_drawing_enabled(True)
+                self.image_viewer.set_mask_visible(
+                    self.reference_panel.show_mask.isChecked())
+                self.image_viewer.set_mask_opacity(
+                    self.reference_panel.mask_opacity.value() / 100.0)
+            else:
+                self.image_viewer.set_drawing_enabled(False)
+                settings = self.current_settings()
+                self._segmentation_session.set_segment_settings(settings)
+                cached = self._segmentation_session.load_cached_preview(
+                    frame,
+                    channel,
+                    z_index,
+                    self.settings_panel.user_settings(),)
+                if cached is not None:
+                    self._display_preview_mask(cached, z_index)
+                self.image_viewer.set_mask_visible(
+                    self.settings_panel.show_mask.isChecked())
+                self.image_viewer.set_mask_opacity(
+                    self.settings_panel.mask_opacity.value() / 100.0)
         except Exception as error:
             self.status_label.setText(str(error))
             return
-        self.frame_value.setText(f"{frame + 1} / {self._session.frame_count}")
-        self.z_value.setText(f"{z_index + 1} / {self._session.plane_count}")
+        self.frame_value.setText(
+            f"{frame + 1} / {self._segmentation_session.frame_count}")
+        self.z_value.setText(
+            f"{z_index + 1} / {self._segmentation_session.plane_count}")
 
     @Slot()
     def _run_preview(self) -> None:
-        if self._session is None or self._thread is not None:
+        if self._segmentation_session is None or self._thread is not None:
             return
         try:
             settings = self.current_settings()
-            self._session.set_segment_settings(settings)
+            self._segmentation_session.set_segment_settings(settings)
         except Exception as error:
             self.status_label.setText(f"Invalid Cellpose settings: {error}")
             return
@@ -456,7 +586,7 @@ class FitsViewerWindow(QMainWindow):
             user_settings=self.settings_panel.user_settings(),)
         self._active_request = request
         self._thread = QThread(self)
-        self._worker = PreviewWorker(self._session, request)
+        self._worker = PreviewWorker(self._segmentation_session, request)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._preview_finished)
@@ -497,6 +627,230 @@ class FitsViewerWindow(QMainWindow):
             raise ValueError(f"Cannot display preview axes {preview.mask_axes!r}.")
         self.image_viewer.set_mask(mask)
 
+    def _reference_tool_active(self) -> bool:
+        return self.tool_tabs.currentWidget() is self.reference_panel
+
+    def _segmentation_tool_available(self) -> bool:
+        return self.tool_tabs.indexOf(self.settings_panel) >= 0
+
+    def _set_tool_enabled(self, panel: QWidget, enabled: bool) -> None:
+        index = self.tool_tabs.indexOf(panel)
+        if index >= 0:
+            self.tool_tabs.setTabEnabled(index, enabled)
+
+    @Slot(int)
+    def _tool_changed(self, _: int) -> None:
+        if self.reference_panel.edit_dirty:
+            return
+        self._refresh_mask_colour_controls()
+        self._update_drawing_options()
+        self._display_selection()
+
+    def _refresh_mask_colour_controls(self) -> None:
+        reference = self._reference_tool_active()
+        self.segmentation_mask_colours.setVisible(not reference)
+        self.reference_mask_colour_button.setVisible(reference)
+        self.image_viewer.set_mask_color(
+            self.reference_mask_colour if reference else None)
+
+    def _set_reference_mask_colour_button(self) -> None:
+        color = self.reference_mask_colour.name()
+        self.reference_mask_colour_button.setStyleSheet(
+            f"QPushButton {{ background-color: {color}; color: black; }}")
+
+    @Slot()
+    def _choose_reference_mask_colour(self) -> None:
+        selected = QColorDialog.getColor(
+            self.reference_mask_colour, self, "Reference mask colour")
+        if not selected.isValid():
+            return
+        self.reference_mask_colour = selected
+        self._set_reference_mask_colour_button()
+        if self._reference_tool_active():
+            self.image_viewer.set_mask_color(selected)
+
+    @Slot()
+    def _update_drawing_options(self) -> None:
+        self.image_viewer.set_drawing_options(
+            self.reference_panel.drawing_mode,
+            self.reference_panel.drawing_tool,
+            self.reference_panel.drawing_operation,
+            self.reference_panel.brush_size.value(),)
+        self.image_viewer.set_drawing_enabled(
+            self._reference_tool_active() and self._reference_session is not None)
+
+    @Slot()
+    def _reference_drawing_changed(self) -> None:
+        if not self._reference_tool_active():
+            return
+        self.reference_panel.set_undo_available(
+            self.image_viewer.can_undo_drawing)
+        if self.reference_panel.drawing_mode == "edit":
+            self.reference_panel.set_edit_dirty(True)
+            self._set_reference_edit_locked(True)
+            self.status_label.setText(
+                "Reference drawing modified — Apply or Cancel before navigating.")
+
+    @Slot(object)
+    def _replace_reference_drawing(self, mask: object) -> None:
+        if (self._reference_session is None
+                or not self._reference_tool_active()
+                or self.reference_panel.drawing_mode != "replace"):
+            return
+        try:
+            self._reference_session.set_mask_plane(
+                np.asarray(mask),
+                frame_index=self.frame_slider.value(),
+                channel=self.channel_combo.currentText(),
+                z_index=self.z_slider.value(),)
+        except Exception as error:
+            self.status_label.setText(f"Could not store reference drawing: {error}")
+            return
+        self.status_label.setText("Reference drawing saved in the current session.")
+
+    @Slot()
+    def _apply_reference_drawing(self) -> None:
+        if (self._reference_session is None
+                or self.reference_panel.drawing_mode != "edit"
+                or not self.reference_panel.edit_dirty):
+            return
+        try:
+            self._reference_session.set_mask_plane(
+                self.image_viewer.drawing_mask,
+                frame_index=self.frame_slider.value(),
+                channel=self.channel_combo.currentText(),
+                z_index=self.z_slider.value(),)
+        except Exception as error:
+            self.status_label.setText(f"Could not apply reference drawing: {error}")
+            return
+        self.reference_panel.set_edit_dirty(False)
+        self._set_reference_edit_locked(False)
+        self.status_label.setText("Reference drawing applied to the current plane.")
+
+    @Slot()
+    def _cancel_reference_drawing(self) -> None:
+        if self._reference_session is None or not self.reference_panel.edit_dirty:
+            return
+        mask = self._reference_session.mask_plane(
+            self.frame_slider.value(),
+            self.channel_combo.currentText(),
+            self.z_slider.value(),)
+        self.image_viewer.set_drawing_mask(mask)
+        self.reference_panel.set_edit_dirty(False)
+        self.reference_panel.set_undo_available(False)
+        self._set_reference_edit_locked(False)
+        self.status_label.setText("Unapplied reference drawing changes discarded.")
+
+    @Slot()
+    def _undo_reference_drawing(self) -> None:
+        if self._reference_session is None or not self._reference_tool_active():
+            return
+        mask = self.image_viewer.undo_drawing()
+        if mask is None:
+            return
+        self.reference_panel.set_undo_available(
+            self.image_viewer.can_undo_drawing)
+        if self.reference_panel.drawing_mode == "replace":
+            self._reference_session.set_mask_plane(
+                mask,
+                frame_index=self.frame_slider.value(),
+                channel=self.channel_combo.currentText(),
+                z_index=self.z_slider.value(),)
+        else:
+            saved = self._reference_session.mask_plane(
+                self.frame_slider.value(),
+                self.channel_combo.currentText(),
+                self.z_slider.value(),)
+            dirty = not np.array_equal(mask, saved)
+            self.reference_panel.set_edit_dirty(dirty)
+            self._set_reference_edit_locked(dirty)
+        self.status_label.setText("Restored the previous reference drawing.")
+
+    @Slot()
+    def _clear_reference_drawing(self) -> None:
+        if self._reference_session is None:
+            return
+        if self.reference_panel.drawing_mode == "edit":
+            self.image_viewer.clear_drawing_mask()
+            self.reference_panel.set_undo_available(True)
+            self.reference_panel.set_edit_dirty(True)
+            self._set_reference_edit_locked(True)
+            return
+        self._reference_session.clear_mask_plane(
+            frame_index=self.frame_slider.value(),
+            channel=self.channel_combo.currentText(),
+            z_index=self.z_slider.value(),)
+        self.image_viewer.clear_drawing_mask()
+        self.reference_panel.set_undo_available(True)
+        self.status_label.setText("Reference drawing cleared from the current plane.")
+
+    @Slot()
+    def _save_reference_mask(self) -> None:
+        if self._reference_session is None:
+            return
+        if self.reference_panel.edit_dirty:
+            self.status_label.setText("Apply or Cancel the current drawing before saving.")
+            return
+        try:
+            label = self.reference_panel.reference_label
+            channel = self.channel_combo.currentText()
+            self._reference_session.set_mask_plane(
+                self.image_viewer.drawing_mask,
+                frame_index=self.frame_slider.value(),
+                channel=channel,
+                z_index=self.z_slider.value(),)
+            saved_channels = self._reference_session.saved_channels(label)
+            if saved_channels and channel not in saved_channels:
+                QMessageBox.information(
+                    self,
+                    "Add reference channel",
+                    f"{FITS_REFERENCE_TEMPLATE.format(label=label)} already "
+                    f"contains {', '.join(saved_channels)}. The {channel} "
+                    "reference channel will be added to the same file.")
+            path = self._reference_session.save(
+                label,
+                channel=channel,
+                interpolation_axis=self.reference_panel.selected_interpolation_axis,
+                extrapolate_start=self.reference_panel.extrapolate_start.isChecked(),
+                extrapolate_end=self.reference_panel.extrapolate_end.isChecked(),)
+        except FileExistsError as error:
+            answer = QMessageBox.question(
+                self,
+                "Replace reference mask?",
+                f"{error}\n\nReplace the existing file?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            try:
+                path = self._reference_session.save(
+                    label,
+                    channel=channel,
+                    interpolation_axis=self.reference_panel.selected_interpolation_axis,
+                    extrapolate_start=self.reference_panel.extrapolate_start.isChecked(),
+                    extrapolate_end=self.reference_panel.extrapolate_end.isChecked(),
+                    overwrite=True,)
+            except Exception as overwrite_error:
+                self.status_label.setText(
+                    f"Could not save reference mask: {overwrite_error}")
+                return
+        except Exception as error:
+            self.status_label.setText(f"Could not save reference mask: {error}")
+            return
+        self.status_label.setText(
+            f"Saved reference mask to {path.name}. Current channel: "
+            f"{self.channel_combo.currentText()}.")
+
+    def _set_reference_edit_locked(self, locked: bool) -> None:
+        """Prevent navigation from discarding unapplied Edit-mode changes."""
+        enabled = not locked
+        self.directory_edit.setEnabled(enabled)
+        self.browse_button.setEnabled(enabled)
+        self.directory_browser.setEnabled(enabled)
+        self.frame_slider.setEnabled(enabled)
+        self.channel_combo.setEnabled(enabled)
+        self.z_slider.setEnabled(enabled)
+        self._set_tool_enabled(self.settings_panel, enabled)
+
     @Slot(str)
     def _preview_failed(self, message: str) -> None:
         self.status_label.setText(f"Cellpose preview failed: {message}")
@@ -519,8 +873,8 @@ class FitsViewerWindow(QMainWindow):
             self.status_label.setText(f"Invalid Cellpose settings: {error}")
             return
         self._provided_settings = settings
-        if self._session is not None:
-            self._session.set_segment_settings(settings)
+        if self._segmentation_session is not None:
+            self._segmentation_session.set_segment_settings(settings)
         self.settings_applied.emit(settings)
         self.status_label.setText("Current Cellpose settings applied.")
 
@@ -528,20 +882,21 @@ class FitsViewerWindow(QMainWindow):
         """
         Return the complete validated settings represented by the viewer.
         """
-        if self._session is None:
+        if self._segmentation_session is None:
             raise RuntimeError("Load an experiment before applying settings.")
-        payload: dict[str, Any] = self._session.segment_settings.model_dump()
+        payload: dict[str, Any] = self._segmentation_session.segment_settings.model_dump()
         payload["channel_to_segment"] = [self.channel_combo.currentText()]
         payload["nuclear_channel"] = self.settings_panel.selected_nuclear_channel
         payload["do_denoise"] = self.settings_panel.denoise.isChecked()
         payload["user_settings"] = {
-            **self._session.segment_settings.user_settings,
+            **self._segmentation_session.segment_settings.user_settings,
             **self.settings_panel.user_settings(),}
         return SegmentSettings.model_validate(payload)
 
     def _set_running(self, running: bool) -> None:
         self.progress.setVisible(running)
         self.settings_panel.set_running(running)
+        self._set_tool_enabled(self.reference_panel, not running)
         self.directory_edit.setEnabled(not running)
         self.browse_button.setEnabled(not running)
         self.directory_browser.setEnabled(not running)
@@ -551,19 +906,26 @@ class FitsViewerWindow(QMainWindow):
 
     def _set_source_controls_enabled(self, enabled: bool) -> None:
         self.settings_panel.setEnabled(enabled)
+        self.reference_panel.setEnabled(enabled)
         self.frame_slider.setEnabled(enabled)
         self.channel_combo.setEnabled(enabled)
         self.z_slider.setEnabled(enabled)
 
     def _close_session(self) -> None:
-        if self._session is not None:
-            self._session.close()
-        self._session = None
+        if self._segmentation_session is not None:
+            self._segmentation_session.close()
+        self._segmentation_session = None
+        self._reference_session = None
         self._source_path = None
+        self._reference_path = None
         self._displayed_channel = None
         self._channel_levels.clear()
         self.image_viewer.image_item.clear()
         self.image_viewer.clear_mask()
+        self.image_viewer.set_drawing_enabled(False)
+        self.reference_panel.set_edit_dirty(False)
+        self.reference_panel.set_undo_available(False)
+        self.reference_panel.label_edit.clear()
         self.channel_combo.clear()
         self.frame_slider.setRange(0, 0)
         self.z_slider.setRange(0, 0)

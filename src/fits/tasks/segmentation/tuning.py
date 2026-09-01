@@ -9,14 +9,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from cellpose_kit.client import CellposeWrapper
-from fits_io import FitsIO
-
-from fits.environment.constant import FITS_ARRAY_NAME
+from fits.sessions.image import FitsImageSession
 from fits.settings.models import SegmentSettings
 from fits.tasks.segmentation.preview_cache import PreviewCache, SegmentationPreview
 
 
-class SegmentationTuningSession:
+class SegmentationTuningSession(FitsImageSession):
     """
     Load a stack and cache temporary frame-level segmentation previews.
 
@@ -31,43 +29,16 @@ class SegmentationTuningSession:
                  segment_settings: SegmentSettings | Mapping[str, Any] | None = None,
                  cache_parent: str | Path | None = None,
                  ) -> None:
-        self.source_path = Path(source_path).expanduser().resolve()
-        if not self.source_path.is_file():
-            raise FileNotFoundError(f"Segmentation tuning source does not exist: {self.source_path}")
-        if self.source_path.name != FITS_ARRAY_NAME:
-            raise ValueError(
-                "Segmentation tuning only accepts the normalized FITS image "
-                f"artifact named {FITS_ARRAY_NAME!r}; got {self.source_path.name!r}.")
-
+        super().__init__(source_path)
         self._cache = PreviewCache(self.source_path, cache_parent)
         self._lock = RLock()
         self._closed = False
-
-        self._reader = FitsIO.from_path(self.source_path)
-        loaded = self._reader.get_array()
-        self._array = np.asarray(loaded.array)
-        self._axes = loaded.axes
-        self._channel_labels = tuple(self._reader.channel_labels)
-        if not self._channel_labels:
-            raise ValueError("Segmentation tuning requires at least one image channel.")
 
         if segment_settings is None:
             segment_settings = {"channel_to_segment": [self._channel_labels[0]]}
         if not isinstance(segment_settings, SegmentSettings):
             segment_settings = SegmentSettings.model_validate(segment_settings)
         self._segment_settings = segment_settings
-
-    @property
-    def axes(self) -> str:
-        return self._axes
-
-    @property
-    def shape(self) -> tuple[int, ...]:
-        return self._array.shape
-
-    @property
-    def channel_labels(self) -> tuple[str, ...]:
-        return self._channel_labels
 
     @property
     def segment_settings(self) -> SegmentSettings:
@@ -86,18 +57,6 @@ class SegmentationTuningSession:
             self._segment_settings = settings
 
     @property
-    def frame_count(self) -> int:
-        if "T" not in self._axes:
-            return 1
-        return self._array.shape[self._axes.index("T")]
-
-    @property
-    def plane_count(self) -> int:
-        if "Z" not in self._axes:
-            return 1
-        return self._array.shape[self._axes.index("Z")]
-
-    @property
     def cache_dir(self) -> Path:
         return self._cache.directory
 
@@ -106,24 +65,13 @@ class SegmentationTuningSession:
         return self._closed
 
     def display_frame(self,
-                      frame_index: int,
+                      frame_index: int = 0,
                       channel: int | str = 0,
                       z_index: int = 0,
                       ) -> NDArray[Any]:
-        """
-        Return one 2D display frame for the requested source channel.
-        """
+        """Return one selected image plane while the tuning session is open."""
         self._ensure_open()
-        channel_index = self._resolve_channel(channel)
-        frame, display_axes = self._select_input(frame_index,
-                                                 [channel_index],
-                                                 z_index,
-                                                 volume=False,)
-        if display_axes != "YX":
-            raise ValueError(
-                "A display frame must resolve to YX after frame/channel selection; "
-                f"got axes={display_axes!r}, shape={frame.shape}.")
-        return frame
+        return super().display_frame(frame_index, channel, z_index)
 
     def run_preview(self,
                     frame_index: int,
@@ -250,23 +198,6 @@ class SegmentationTuningSession:
                     selected_axes.replace("C", "", 1),)
         return np.take(selected, channel_indices, axis=channel_axis), selected_axes
 
-    def _validate_axis_index(self,
-                             axis: str,
-                             index: int,
-                             label: str,
-                             ) -> None:
-        """
-        Validate an index against the original loaded array.
-        """
-        if axis not in self._axes:
-            if index != 0:
-                raise IndexError(f"An image without a {axis} axis only has index 0.")
-            return
-
-        axis_size = self._array.shape[self._axes.index(axis)]
-        if index < 0 or index >= axis_size:
-            raise IndexError(f"{label} index {index} is outside 0..{axis_size - 1}.")
-
     def _preview_settings(self,
                           channel_label: str,
                           user_settings: Mapping[str, Any] | None,
@@ -300,22 +231,6 @@ class SegmentationTuningSession:
             self.close()
         except Exception:
             pass
-
-    def _resolve_channel(self, channel: int | str) -> int:
-        if isinstance(channel, int):
-            index = channel
-        else:
-            try:
-                index = int(self._reader.labels_to_indices([channel])[0])
-            except (IndexError, KeyError, ValueError) as error:
-                raise ValueError(
-                    f"Unknown channel {channel!r}; available channels: "
-                    f"{self._channel_labels}.") from error
-
-        if index < 0 or index >= len(self._channel_labels):
-            raise IndexError(
-                f"Channel index {index} is outside 0..{len(self._channel_labels) - 1}.")
-        return index
 
     def _ensure_open(self) -> None:
         if self._closed:

@@ -13,15 +13,9 @@ class FakeFitsIO:
         self._array = array
         self._axes = axes
         self.channel_labels = labels
-        self.label_resolution_calls: list[list[str]] = []
 
     def get_array(self) -> SimpleNamespace:
         return SimpleNamespace(array=self._array, axes=self._axes)
-
-    def labels_to_indices(self, labels: list[str]) -> list[int]:
-        self.label_resolution_calls.append(labels)
-        return [self.channel_labels.index(label) for label in labels]
-
 
 class FakeWrapper:
     def __init__(self) -> None:
@@ -55,7 +49,7 @@ def test_session_navigates_noncanonical_time_and_channel_axes(
     array = np.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5)
     reader = FakeFitsIO(array, "CTYX", ["GFP", "RFP"])
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.FitsIO.from_path",
+        "fits.sessions.image.FitsIO.from_path",
         lambda _: reader,
     )
 
@@ -79,7 +73,7 @@ def test_preview_is_cached_by_frame_channels_and_settings_and_cleaned_on_close(
     wrapper = FakeWrapper()
     wrapper_settings: list[dict] = []
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.FitsIO.from_path",
+        "fits.sessions.image.FitsIO.from_path",
         lambda _: reader,
     )
     monkeypatch.setattr(
@@ -114,7 +108,6 @@ def test_preview_is_cached_by_frame_channels_and_settings_and_cleaned_on_close(
     assert wrapper_settings[0]["user_settings"] == {
         "model_type": "test",
         "cellprob_threshold": 0.0,}
-    assert reader.label_resolution_calls == [["RFP"], ["RFP"], ["RFP"], ["RFP"]]
 
     session.close()
 
@@ -133,7 +126,7 @@ def test_session_preserves_z_and_selects_planes_only_for_display(
     array = np.arange(2 * 1 * 3 * 4 * 5).reshape(2, 1, 3, 4, 5)
     reader = FakeFitsIO(array, "TCZYX", ["GFP"])
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.FitsIO.from_path",
+        "fits.sessions.image.FitsIO.from_path",
         lambda _: reader,
     )
 
@@ -157,7 +150,7 @@ def test_preview_passes_z_axis_unchanged_to_cellpose(
     reader = FakeFitsIO(array, "TCZYX", ["RFP"])
     wrapper = FakeWrapper()
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.FitsIO.from_path",
+        "fits.sessions.image.FitsIO.from_path",
         lambda _: reader,
     )
     monkeypatch.setattr(
@@ -188,7 +181,7 @@ def test_2d_preview_uses_the_displayed_z_plane(tmp_path: Path,
     reader = FakeFitsIO(array, "CZYX", ["GFP"])
     wrapper = FakeWrapper()
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.FitsIO.from_path",
+        "fits.sessions.image.FitsIO.from_path",
         lambda _: reader,)
     monkeypatch.setattr(
         "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",
@@ -201,7 +194,7 @@ def test_2d_preview_uses_the_displayed_z_plane(tmp_path: Path,
     assert wrapper.calls[0][1] == "YX"
 
 
-def test_preview_resolves_display_and_nuclear_channels_once(
+def test_preview_selects_display_and_nuclear_channels(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -214,7 +207,7 @@ def test_preview_resolves_display_and_nuclear_channels_once(
                                nuclear_channel="GFP",
                                do_denoise=False,)
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.FitsIO.from_path",
+        "fits.sessions.image.FitsIO.from_path",
         lambda _: reader,)
     monkeypatch.setattr(
         "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",
@@ -225,7 +218,6 @@ def test_preview_resolves_display_and_nuclear_channels_once(
                                    cache_parent=tmp_path,) as session:
         session.run_preview(0, "RFP")
 
-    assert reader.label_resolution_calls == [["RFP"], ["GFP"]]
     np.testing.assert_array_equal(wrapper.calls[0][0], array[0, [1, 0]])
     assert wrapper.calls[0][1] == "CYX"
 

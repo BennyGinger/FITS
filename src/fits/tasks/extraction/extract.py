@@ -9,6 +9,7 @@ from fits.settings.models import ExtractSettings
 from fits.tasks.extraction.manager import ExtractionManager
 from fits.workflows.engines.models import StepProfile
 from fits.workflows.engines.run_decision import decide_run
+from fits.workflows.errors import StepExecutionError
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ def extract(settings: ExtractSettings, exp_state: ExperimentState, step_profile:
             additional_properties=settings.additional_properties,
             workers=settings.frame_workers,
         )
+        dataframe = manager.add_physical_distances(dataframe)
         # Add FITS-specific provenance to the extracted measurements.
         dataframe.insert(0, "experiment_id", exp_state.experiment_id)
 
@@ -71,11 +73,9 @@ def extract(settings: ExtractSettings, exp_state: ExperimentState, step_profile:
             step_profile.step_name,
             exp_state.experiment_id,
         )
-        print(
-            f"[ERROR] Step {step_profile.step_name!r} failed for "
-            f"{exp_state.experiment_id}: {exc}"
-        )
-        return []
+        raise StepExecutionError(
+            f"Step {step_profile.step_name!r} failed for "
+            f"{exp_state.experiment_id}: {exc}") from exc
 
  
 def _save_quantification(dataframe: pd.DataFrame, output_path: Path,) -> Path:

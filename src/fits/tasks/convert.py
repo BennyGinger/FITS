@@ -8,6 +8,7 @@ from fits.environment.state import ExperimentState
 from fits.environment.constant import ARTI_IMG, StepName
 from fits.workflows.engines.models import StepProfile
 from fits.workflows.engines.run_decision import decide_run
+from fits.workflows.errors import StepExecutionError
 from fits.settings.models import ConvertSettings
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,6 @@ def convert(settings: ConvertSettings, exp_state: ExperimentState, step_profile:
         return out_states
     except Exception as e:
         logger.exception("%s failed for %s", step_profile.step_name, exp_state.original_image)
-        print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.original_image}: {e}")
-        return []
-
+        raise StepExecutionError(
+            f"Step {step_profile.step_name!r} failed for "
+            f"{exp_state.original_image}: {e}") from e

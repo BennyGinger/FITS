@@ -10,6 +10,7 @@ from fits.environment.state import ExperimentState
 from fits.settings.models import TrackSettings
 from fits.workflows.engines.models import StepProfile
 from fits.workflows.engines.run_decision import decide_run
+from fits.workflows.errors import StepExecutionError
 
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,9 @@ def track(settings: TrackSettings, exp_state: ExperimentState, step_profile: Ste
     """
     input_path = exp_state.artifact(step_profile.input_artifact) # i.e. seg_mask
     if input_path is None:
-        logger.error("%s failed for loading %s: missing input",
-                        step_profile.step_name,
-                        step_profile.input_artifact)
-        return []
+        raise StepExecutionError(
+            f"Step {step_profile.step_name!r} failed for {exp_state.experiment_id}: "
+            f"missing {step_profile.input_artifact!r} input.")
 
     try:
         mask_reader = FitsIO.from_path(input_path)
@@ -56,10 +56,9 @@ def track(settings: TrackSettings, exp_state: ExperimentState, step_profile: Ste
         # Get the image array
         image_path = exp_state.artifact(ARTI_IMG)
         if image_path is None:
-            logger.error("%s failed for loading %s: missing input",
-                         step_profile.step_name,
-                         ARTI_IMG)
-            return []
+            raise StepExecutionError(
+                f"Step {step_profile.step_name!r} failed for {exp_state.experiment_id}: "
+                f"missing {ARTI_IMG!r} input.")
         image_reader = FitsIO.from_path(image_path)
         input_image = image_reader.get_channel(input_labels)
         
@@ -114,5 +113,8 @@ def track(settings: TrackSettings, exp_state: ExperimentState, step_profile: Ste
 
     except Exception as e:
         logger.exception("%s failed for %s", step_profile.step_name, exp_state.experiment_id)
-        print(f"[ERROR] Step '{step_profile.step_name}' failed for {exp_state.experiment_id}: {e}")
-        return []
+        if isinstance(e, StepExecutionError):
+            raise
+        raise StepExecutionError(
+            f"Step {step_profile.step_name!r} failed for "
+            f"{exp_state.experiment_id}: {e}") from e

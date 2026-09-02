@@ -29,6 +29,19 @@ from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, STEP_LAYOUTS, Setting
 from fits.gui.settings_editor import RuntimeSettingsEditor, StepSettingsEditor
 from fits.gui.run_browser import RunDirectoryBrowser
 from fits.pipeline import start_pipeline
+from fits.workflows.errors import StepExecutionError
+
+
+def _user_error_message(error: BaseException) -> str:
+    """Return the contextual step error hidden inside executor wrappers."""
+    current: BaseException | None = error
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        if isinstance(current, StepExecutionError):
+            return str(current)
+        visited.add(id(current))
+        current = current.__cause__ or current.__context__
+    return str(error)
 
 
 class LogEmitter(QObject):
@@ -51,7 +64,7 @@ class QtLogHandler(logging.Handler):
 
 class PipelineWorker(QObject):
     finished = Signal()
-    failed = Signal(str)
+    failed = Signal(str, str)
 
     def __init__(self, settings_path: Path, log_handler: logging.Handler) -> None:
         super().__init__()
@@ -65,8 +78,8 @@ class PipelineWorker(QObject):
                 settings_path=self.settings_path,
                 console_handler=self.log_handler,
             )
-        except Exception:
-            self.failed.emit(traceback.format_exc())
+        except Exception as error:
+            self.failed.emit(_user_error_message(error), traceback.format_exc())
         else:
             self.finished.emit()
 
@@ -390,14 +403,16 @@ class FitsMainWindow(QMainWindow):
     def _pipeline_finished(self) -> None:
         self._append_log("FITS pipeline completed successfully.")
 
-    @Slot(str)
-    def _pipeline_failed(self, details: str) -> None:
+    @Slot(str, str)
+    def _pipeline_failed(self, message: str, details: str) -> None:
         self._append_log(details)
-        QMessageBox.critical(
-            self,
-            "Pipeline failed",
-            "The FITS pipeline failed. See the activity log for details.",
-        )
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Critical)
+        dialog.setWindowTitle("Pipeline stopped")
+        dialog.setText("The FITS pipeline stopped because a task failed.")
+        dialog.setInformativeText(message)
+        dialog.setDetailedText(details)
+        dialog.exec()
 
     @Slot()
     def _thread_finished(self) -> None:

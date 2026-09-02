@@ -8,7 +8,8 @@ from PySide6.QtWidgets import QApplication, QFileDialog
 
 from fits.environment.constant import StepName
 from fits.gui.settings_adapter import SettingsAdapter
-from fits.gui.window import FitsMainWindow
+from fits.gui.window import FitsMainWindow, _user_error_message
+from fits.workflows.errors import StepExecutionError
 
 
 def _application() -> QApplication:
@@ -117,3 +118,14 @@ def test_advanced_fields_start_disabled_at_defaults_and_open_when_customized() -
     custom_convert = custom_window._editors[StepName.CONVERT]
     assert custom_convert.widgets["compression"].isEnabled() is True
     custom_window.close()
+
+
+def test_user_error_message_finds_step_error_inside_executor_wrapper() -> None:
+    step_error = StepExecutionError(
+        "Step 'track' failed for experiment_3: Unknown channel 'GFP'.")
+    step_error.__cause__ = ValueError("Unknown channel 'GFP'.")
+    wrapper = RuntimeError("Task failed for item")
+    wrapper.__cause__ = step_error
+
+    assert _user_error_message(wrapper) == (
+        "Step 'track' failed for experiment_3: Unknown channel 'GFP'.")

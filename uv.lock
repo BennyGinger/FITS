@@ -415,7 +415,7 @@ wheels = [
 
 [[package]]
 name = "fits"
-version = "2.0.0"
+version = "2.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "bg-sub" },
@@ -848,6 +848,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas", extra = ["parquet"] },
     { name = "scikit-image" },
+    { name = "scipy" },
 ]
 
 [package.metadata]
@@ -856,6 +857,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "pandas", extras = ["parquet"], specifier = ">=3.0.1" },
     { name = "scikit-image", specifier = ">=0.26.0" },
+    { name = "scipy", specifier = ">=1.17.0" },
 ]
 
 [[package]]

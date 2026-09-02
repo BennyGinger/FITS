@@ -4,7 +4,6 @@ import os
 
 
 os.environ["TQDM_DISABLE"] = "1" # Silence tqdm progress bars of trackastra pkg
-
 from pathlib import Path
 import logging
 

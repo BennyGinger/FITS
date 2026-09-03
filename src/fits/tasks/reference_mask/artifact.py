@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from fits_io import FitsIO
@@ -99,6 +101,10 @@ def merge_reference_channels(output_path: Path,
                              source_axes: str,
                              channel_label: str,
                              overwrite: bool,
+                             artifact_label: str = "Reference",
+                             existing_array_transform: Callable[
+                                 [NDArray[np.generic], Any], NDArray[np.generic]
+                             ] | None = None,
                              ) -> tuple[NDArray[np.uint8], list[str]]:
     """
     Append or replace one channel in a compact reference artifact array.
@@ -108,12 +114,15 @@ def merge_reference_channels(output_path: Path,
 
     existing_reader = FitsIO.from_path(output_path)
     existing = existing_reader.get_array()
-    existing_array = np.asarray(existing.array, dtype=np.uint8)
+    existing_array = np.asarray(existing.array)
+    if existing_array_transform is not None:
+        existing_array = existing_array_transform(existing_array, existing_reader)
+    existing_array = np.asarray(existing_array, dtype=np.uint8)
     existing_axes = existing.axes
     existing_labels = list(existing_reader.channel_labels)
     if existing_axes.replace("C", "") != channel_axes:
         raise ValueError(
-            f"Existing reference axes {existing_axes!r} do not match "
+            f"Existing {artifact_label.lower()} axes {existing_axes!r} do not match "
             f"the current channel axes {channel_axes!r}.")
 
     channel_position = source_axes.index("C") if "C" in source_axes else 0
@@ -127,7 +136,7 @@ def merge_reference_channels(output_path: Path,
     existing_labels = [existing_labels[index] for index in populated]
     if channel_label in existing_labels and not overwrite:
         raise FileExistsError(
-            f"Reference channel {channel_label!r} already exists in {output_path}.")
+            f"{artifact_label} channel {channel_label!r} already exists in {output_path}.")
 
     current_stack = np.expand_dims(channel_mask, axis=channel_position)
     if channel_label in existing_labels:

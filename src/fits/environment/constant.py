@@ -38,6 +38,7 @@ DIST_EXTRACT = "labelquant"
 FitsName = Literal["fits_array.tif", "fits_mask.tif", "fits_track.tif", "fits_quantification.parquet"]
 FITS_ARRAY_NAME = "fits_array.tif"
 FITS_REFERENCE_TEMPLATE = "fits_ref_{label}.tif"
+FITS_ROI_TEMPLATE = "fits_roi_{label}.tif"
 FITS_MASK_SEG = "fits_mask.tif"
 FITS_MASK_TRACK = "fits_track.tif"
 FITS_QUANTI_NAME = "fits_quantification.parquet"
@@ -49,10 +50,11 @@ ExecMode = Literal["serial", "thread", "process"]
 
 RunTimeMode = Literal["batch", "conveyor"]
 
-ArtifactType = Literal["raw_image", "image", "reference_mask", "segmentation", "tracking", "quantification"]
+ArtifactType = Literal["raw_image", "image", "reference_mask", "roi_mask", "segmentation", "tracking", "quantification"]
 ARTI_RAW = "raw_image"
 ARTI_IMG = "image"
 ARTI_REF = "reference_mask"
+ARTI_ROI = "roi_mask"
 ARTI_SEG = "segmentation"
 ARTI_TRACK = "tracking"
 ARTI_QUANTI = "quantification"

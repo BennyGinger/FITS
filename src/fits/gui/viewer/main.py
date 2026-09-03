@@ -13,7 +13,7 @@ def _arguments() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="Open the FITS image viewer.")
     parser.add_argument(
         "--tool",
-        choices=("segmentation", "reference-mask", "all"),
+        choices=("segmentation", "binary", "all"),
         default="segmentation",
         help=("Tool shown at startup. 'all' exposes every tool and is intended "
               "for development."),)

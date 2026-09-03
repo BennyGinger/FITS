@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
 import numpy as np
-from mask_interpolation import fill_missing_masks
 from numpy.typing import NDArray
 
 from fits.environment.constant import ARTI_REF, DIST_FITS
-from fits.sessions.image import FitsImageSession
+from fits.sessions.binary import BinaryMaskSession
 from fits.tasks.reference_mask.artifact import (
     build_reference_path,
     load_reference_artifact,
@@ -18,7 +16,7 @@ from fits.tasks.reference_mask.artifact import (
 )
 
 
-class ReferenceMaskSession(FitsImageSession):
+class ReferenceMaskSession(BinaryMaskSession):
     """
     Manage user-drawn reference masks for one normalized FITS image.
 
@@ -34,9 +32,9 @@ class ReferenceMaskSession(FitsImageSession):
                  reference_path: str | Path | None = None,
                  ) -> None:
         super().__init__(source_path)
-        self._mask = np.zeros(self._array.shape, dtype=np.uint8)
         self._reference_label: str | None = None
         self._loaded_channels: tuple[str, ...] = ()
+        self._edit_history: dict[tuple[int, int, int], list[NDArray[np.uint8]]] = {}
         if reference_path is not None:
             self._mask, self._reference_label, self._loaded_channels = (
                 load_reference_artifact(
@@ -56,68 +54,6 @@ class ReferenceMaskSession(FitsImageSession):
         """Return source channels imported from the loaded reference artifact."""
         return self._loaded_channels
 
-    @property
-    def mask_array(self) -> NDArray[np.uint8]:
-        """Return a copy of the user-drawn mask anchors."""
-        return self._mask.copy()
-
-    def mask_plane(self,
-                   frame_index: int = 0,
-                   channel: int | str = 0,
-                   z_index: int = 0,
-                   ) -> NDArray[np.uint8]:
-        """Return a copy of the selected user-drawn ``YX`` mask plane."""
-        return self._select_plane(
-            self._mask, frame_index=frame_index,
-            channel=channel, z_index=z_index).copy()
-
-    def set_mask_plane(self,
-                       mask: NDArray[np.generic],
-                       *,
-                       frame_index: int = 0,
-                       channel: int | str = 0,
-                       z_index: int = 0,
-                       ) -> None:
-        """
-        Replace one selected plane with a binary mask supplied by the drawing UI.
-        """
-        expected_shape = (
-            self._array.shape[self._axes.index("Y")],
-            self._array.shape[self._axes.index("X")],)
-        if mask.shape != expected_shape:
-            raise ValueError(
-                f"Mask plane shape {mask.shape} does not match image plane "
-                f"shape {expected_shape}.")
-        if not np.all((mask == 0) | (mask == 1)):
-            raise ValueError("Mask planes must be binary with values 0 and 1.")
-
-        selection = self._plane_selection(frame_index, channel, z_index)
-        self._mask[selection] = mask.astype(np.uint8, copy=False)
-
-    def clear_mask_plane(self,
-                         *,
-                         frame_index: int = 0,
-                         channel: int | str = 0,
-                         z_index: int = 0,
-                         ) -> None:
-        """Clear one selected user-drawn mask plane."""
-        self._mask[self._plane_selection(frame_index, channel, z_index)] = 0
-
-    def completed_mask(self,
-                       interpolation_axis: str,
-                       *,
-                       extrapolate_start: bool = True,
-                       extrapolate_end: bool = True,
-                       ) -> NDArray[np.uint8]:
-        """Return a completed copy of the mask without changing drawn anchors."""
-        return cast(
-            NDArray[np.uint8],
-            fill_missing_masks(
-                self._mask,
-                axes=self._axes,
-                interpolation_axis=interpolation_axis,
-                extrapolate_start=extrapolate_start,
-                extrapolate_end=extrapolate_end,))
 
     def save(self,
              label: str,
@@ -148,14 +84,9 @@ class ReferenceMaskSession(FitsImageSession):
             raise ValueError(
                 f"Cannot save reference channel {channel_label!r} without any drawn planes.")
         if interpolation_axis is not None:
-            output_mask = cast(
-                NDArray[np.uint8],
-                fill_missing_masks(
-                    output_mask,
-                    axes=output_axes,
-                    interpolation_axis=interpolation_axis,
-                    extrapolate_start=extrapolate_start,
-                    extrapolate_end=extrapolate_end,))
+            output_mask = self._complete_channel_mask(
+                output_mask, output_axes, interpolation_axis,
+                extrapolate_start, extrapolate_end)
         output_mask, output_labels = merge_reference_channels(
             output_path,
             output_mask,
@@ -179,7 +110,78 @@ class ReferenceMaskSession(FitsImageSession):
             self.source_path, validate_reference_label(label))
         return saved_reference_channels(output_path)
 
-    def _channel_mask(self, channel_index: int) -> NDArray[np.uint8]:
-        if "C" not in self._axes:
-            return self.mask_array
-        return np.take(self._mask, channel_index, axis=self._axes.index("C")).copy()
+    def interpolated_mask_plane(self, interpolation_axis: str, *,
+                                frame_index: int = 0,
+                                channel: int | str = 0,
+                                z_index: int = 0,
+                                extrapolate_start: bool = True,
+                                extrapolate_end: bool = True,
+                                ) -> NDArray[np.uint8]:
+        """Return one plane from an interpolated copy of the drawing session."""
+        completed = self.completed_mask(
+            interpolation_axis, extrapolate_start=extrapolate_start,
+            extrapolate_end=extrapolate_end)
+        return self._select_plane(
+            completed, frame_index=frame_index,
+            channel=channel, z_index=z_index).copy()
+
+    def apply_display_edit(self, mask: NDArray[np.generic], *,
+                           comparison_mask: NDArray[np.generic],
+                           frame_index: int = 0, channel: int | str = 0,
+                           z_index: int = 0) -> None:
+        """Commit only pixels changed relative to a possibly interpolated view."""
+        current = self.mask_plane(frame_index, channel, z_index)
+        visible = (np.asarray(mask) != 0).astype(np.uint8)
+        comparison = (np.asarray(comparison_mask) != 0).astype(np.uint8)
+        if visible.shape != current.shape or comparison.shape != current.shape:
+            raise ValueError("Reference drawing and preview must match the image plane.")
+        key = frame_index, self._resolve_channel(channel), z_index
+        self._edit_history.setdefault(key, []).append(current.copy())
+        del self._edit_history[key][:-50]
+        changed = visible != comparison
+        current[changed] = visible[changed]
+        self.set_mask_plane(current, frame_index=frame_index,
+                            channel=channel, z_index=z_index)
+
+    def replace_display_mask(self, mask: NDArray[np.generic], *,
+                             frame_index: int = 0, channel: int | str = 0,
+                             z_index: int = 0) -> None:
+        """Replace a plane while retaining the previous plane for Undo."""
+        key = frame_index, self._resolve_channel(channel), z_index
+        self._edit_history.setdefault(key, []).append(
+            self.mask_plane(frame_index, channel, z_index))
+        del self._edit_history[key][:-50]
+        self.set_mask_plane(mask, frame_index=frame_index,
+                            channel=channel, z_index=z_index)
+
+    def undo_display_edit(self, *, frame_index: int = 0,
+                          channel: int | str = 0,
+                          z_index: int = 0) -> NDArray[np.uint8] | None:
+        key = frame_index, self._resolve_channel(channel), z_index
+        history = self._edit_history.get(key)
+        if not history:
+            return None
+        restored = history.pop()
+        self.set_mask_plane(restored, frame_index=frame_index,
+                            channel=channel, z_index=z_index)
+        return restored.copy()
+
+    def clear_mask_plane(self, *, frame_index: int = 0,
+                         channel: int | str = 0, z_index: int = 0) -> None:
+        key = frame_index, self._resolve_channel(channel), z_index
+        self._edit_history.setdefault(key, []).append(
+            self.mask_plane(frame_index, channel, z_index))
+        del self._edit_history[key][:-50]
+        super().clear_mask_plane(
+            frame_index=frame_index, channel=channel, z_index=z_index)
+
+    @staticmethod
+    def _complete_channel_mask(mask: NDArray[np.uint8], axes: str,
+                               interpolation_axis: str,
+                               extrapolate_start: bool,
+                               extrapolate_end: bool) -> NDArray[np.uint8]:
+        from mask_interpolation import fill_missing_masks
+        return np.asarray(fill_missing_masks(
+            mask, axes=axes, interpolation_axis=interpolation_axis,
+            extrapolate_start=extrapolate_start,
+            extrapolate_end=extrapolate_end), dtype=np.uint8)

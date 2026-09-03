@@ -15,7 +15,7 @@ from fits_io.metadata.imageJ_meta import COLOR_MAP, LABEL_TO_COLOR
 
 
 DrawingMode = Literal["replace", "edit"]
-DrawingTool = Literal["freehand", "circle", "square", "triangle"]
+DrawingTool = Literal["freehand", "line", "circle", "square", "triangle"]
 DrawingOperation = Literal["add", "erase"]
 
 
@@ -36,43 +36,48 @@ class ControlledViewBox(pg.ViewBox):
 
 
 class MaskDrawingItem(pg.ImageItem):
-    """Transparent image item that reports left-button drawing gestures."""
+    """Transparent item that reports left-add and right-erase gestures."""
 
     def __init__(self) -> None:
         super().__init__(axisOrder="row-major")
-        self.on_started: Callable[[float, float], None] | None = None
+        self.on_started: Callable[[float, float, DrawingOperation], None] | None = None
         self.on_moved: Callable[[float, float], None] | None = None
         self.on_finished: Callable[[float, float], None] | None = None
         self.setZValue(100)
         self.setAcceptedMouseButtons(cast(Qt.MouseButton, Qt.MouseButton.NoButton))
 
     def set_drawing_enabled(self, enabled: bool) -> None:
-        buttons = Qt.MouseButton.LeftButton if enabled else Qt.MouseButton.NoButton
+        buttons = ((Qt.MouseButton.LeftButton | Qt.MouseButton.RightButton)
+                   if enabled else Qt.MouseButton.NoButton)
         self.setAcceptedMouseButtons(cast(Qt.MouseButton, buttons))
 
     def mouseDragEvent(self, ev: Any) -> None:
-        if (ev.button() != Qt.MouseButton.LeftButton
+        if (ev.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton)
                 or ev.modifiers() & Qt.KeyboardModifier.ControlModifier):
             ev.ignore()
             return
         ev.accept()
         position = ev.pos()
         if ev.isStart() and self.on_started is not None:
-            self.on_started(position.x(), position.y())
+            operation: DrawingOperation = (
+                "erase" if ev.button() == Qt.MouseButton.RightButton else "add")
+            self.on_started(position.x(), position.y(), operation)
         elif ev.isFinish() and self.on_finished is not None:
             self.on_finished(position.x(), position.y())
         elif self.on_moved is not None:
             self.on_moved(position.x(), position.y())
 
     def mouseClickEvent(self, ev: Any) -> None:
-        if (ev.button() != Qt.MouseButton.LeftButton
+        if (ev.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton)
                 or ev.modifiers() & Qt.KeyboardModifier.ControlModifier):
             ev.ignore()
             return
         ev.accept()
         position = ev.pos()
         if self.on_started is not None:
-            self.on_started(position.x(), position.y())
+            operation: DrawingOperation = (
+                "erase" if ev.button() == Qt.MouseButton.RightButton else "add")
+            self.on_started(position.x(), position.y(), operation)
         if self.on_finished is not None:
             self.on_finished(position.x(), position.y())
 
@@ -84,6 +89,7 @@ class FitsImageViewer(QWidget):
 
     drawing_finished = Signal(object)
     drawing_changed = Signal()
+    drawing_started = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -123,6 +129,7 @@ class FitsImageViewer(QWidget):
         self._drawing_start: tuple[int, int] | None = None
         self._drawing_last: tuple[int, int] | None = None
         self._drawing_points: list[tuple[int, int]] = []
+        self._last_drawing_selection: NDArray[np.bool_] | None = None
         self._drawing_history: list[NDArray[np.uint8]] = []
         self._drawing_mode: DrawingMode = "replace"
         self._drawing_tool: DrawingTool = "freehand"
@@ -285,6 +292,16 @@ class FitsImageViewer(QWidget):
         """Return whether a previous drawing canvas is available."""
         return bool(self._drawing_history)
 
+    @property
+    def last_drawing_selection(self) -> NDArray[np.bool_] | None:
+        """Return the pixels touched by the most recently completed gesture."""
+        return (None if self._last_drawing_selection is None
+                else self._last_drawing_selection.copy())
+
+    @property
+    def last_drawing_operation(self) -> DrawingOperation:
+        return self._drawing_operation
+
     def undo_drawing(self) -> NDArray[np.uint8] | None:
         """Restore and return the canvas from before the latest gesture."""
         if not self._drawing_history:
@@ -308,9 +325,12 @@ class FitsImageViewer(QWidget):
         mask = self._drawing_mask
         self.set_mask(mask)
 
-    def _start_drawing(self, x_position: float, y_position: float) -> None:
+    def _start_drawing(self, x_position: float, y_position: float,
+                       operation: DrawingOperation = "add") -> None:
         if self._drawing_mask is None:
             return
+        self.drawing_started.emit()
+        self._drawing_operation = operation
         self._drawing_active = True
         self.mask_item.setOpacity(max(self._mask_opacity, 0.8))
         self._remember_drawing()
@@ -322,6 +342,7 @@ class FitsImageViewer(QWidget):
         self._drawing_start = point
         self._drawing_last = point
         self._drawing_points = [point]
+        self._last_drawing_selection = None
         self._apply_drawing(point)
 
     def _continue_drawing(self, x_position: float, y_position: float) -> None:
@@ -342,8 +363,7 @@ class FitsImageViewer(QWidget):
         self._drawing_active = False
         self.mask_item.setOpacity(self._mask_opacity)
         self.drawing_changed.emit()
-        if self._drawing_mode == "replace":
-            self.drawing_finished.emit(self.drawing_mask)
+        self.drawing_finished.emit(self.drawing_mask)
 
     def _apply_drawing(self, point: tuple[int, int]) -> None:
         if (self._drawing_mask is None
@@ -356,9 +376,13 @@ class FitsImageViewer(QWidget):
             self._drawing_mask = self._gesture_base.copy()
             selected = self._freehand_polygon_selection(self._drawing_points)
             self._drawing_last = point
+        elif self._drawing_tool == "line":
+            self._drawing_mask = self._gesture_base.copy()
+            selected = self._line_selection(self._drawing_start, point)
         else:
             self._drawing_mask = self._gesture_base.copy()
             selected = self._shape_selection(self._drawing_start, point)
+        self._last_drawing_selection = selected.copy()
         self._drawing_mask[selected] = 0 if self._drawing_operation == "erase" else 1
         self.set_mask(self._drawing_mask)
 

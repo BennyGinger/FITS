@@ -6,16 +6,15 @@ from typing import Any
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -23,6 +22,9 @@ from PySide6.QtWidgets import (
 from cellpose_kit.backend.versioning import get_cellpose_version
 from fits.gui.viewer.tools.segmentation.cellpose_options import installed_model_options
 from fits.settings.models import SegmentSettings
+from fits.gui.wheel_widgets import (
+    FocusWheelComboBox, FocusWheelDoubleSpinBox, FocusWheelSlider,
+)
 
 
 class CellposeSettingsPanel(QWidget):
@@ -34,6 +36,8 @@ class CellposeSettingsPanel(QWidget):
     apply_requested = Signal()
     mask_visibility_changed = Signal(bool)
     mask_opacity_changed = Signal(float)
+    CONTROL_WIDTH = 150
+    BUTTON_WIDTH = 160
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -43,6 +47,11 @@ class CellposeSettingsPanel(QWidget):
         title = QLabel("Cellpose settings")
         title.setStyleSheet("font-weight: bold;")
         layout.addWidget(title)
+        description = QLabel(
+            "Preview and tune the automatic detection of cell boundaries.")
+        description.setWordWrap(True)
+        description.setStyleSheet("color: #b8b8b8;")
+        layout.addWidget(description)
         self.version_label = QLabel(self._version_text())
         self.version_label.setStyleSheet("color: #b8b8b8;")
         layout.addWidget(self.version_label)
@@ -51,42 +60,55 @@ class CellposeSettingsPanel(QWidget):
         controls = QWidget()
         controls_layout = QVBoxLayout(controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
-        form = QFormLayout()
-        self.builtin_model = QComboBox()
+        controls_layout.setSpacing(8)
+
+        model_section, model_layout = self._section("Model")
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("Built-in model"))
+        self.builtin_model = FocusWheelComboBox()
+        self.builtin_model.setFixedWidth(self.CONTROL_WIDTH)
         self.builtin_model.addItems(self.model_options.built_in_models)
         self.builtin_model.setCurrentText(self.model_options.default_model)
-        self._add_form_row(
-            form,
-            "Built-in model",
-            self.builtin_model,
+        builtin_tip = (
             "Cellpose model bundled with or downloadable by the installed Cellpose version.")
-        custom_model_row = QWidget()
-        custom_model_layout = QHBoxLayout(custom_model_row)
-        custom_model_layout.setContentsMargins(0, 0, 0, 0)
+        self.builtin_model.setToolTip(builtin_tip)
+        model_row.addWidget(self.builtin_model)
+        model_row.addSpacing(20)
+        model_row.addWidget(QLabel("Custom model"))
         self.custom_model = QLineEdit()
         self.custom_model.setPlaceholderText("Optional path to a trained model")
-        custom_model_layout.addWidget(self.custom_model, 1)
+        custom_tip = (
+            "Optional trained-model file. When provided, it takes precedence "
+            "over the built-in model.")
+        self.custom_model.setToolTip(custom_tip)
+        model_row.addWidget(self.custom_model, 1)
         self.custom_model_button = QPushButton("Browse")
+        self.custom_model_button.setFixedWidth(90)
+        self.custom_model_button.setToolTip(custom_tip)
         self.custom_model_button.clicked.connect(self._browse_custom_model)
-        custom_model_layout.addWidget(self.custom_model_button)
-        self._add_form_row(
-            form,
-            "Custom model",
-            custom_model_row,
-            "Optional trained-model file. When provided, it takes precedence over the built-in model.")
+        model_row.addWidget(self.custom_model_button)
+        model_layout.addLayout(model_row)
+        controls_layout.addWidget(model_section)
+
+        settings_section, settings_layout = self._section("Segmentation")
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         self.diameter = self._double_spin(0.0, 10000.0, 15.0)
+        self.diameter.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
             "Diameter",
             self.diameter,
             "Expected object diameter in pixels. Use 0 for automatic estimation; incorrect values can split or merge objects.")
         self.flow_threshold = self._double_spin(0.0, 10.0, 0.4)
+        self.flow_threshold.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
             "Flow threshold",
             self.flow_threshold,
             "Maximum permitted flow error. Increase it to retain more ROIs; decrease it to reject more ill-shaped ROIs.")
         self.cellprob_threshold = self._double_spin(-6.0, 6.0, 0.0)
+        self.cellprob_threshold.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
             "Cell probability",
@@ -99,12 +121,14 @@ class CellposeSettingsPanel(QWidget):
             self.do_3d,
             "Run native 3D segmentation on the complete Z volume.")
         self.stitch_threshold = self._double_spin(0.0, 100.0, 0.0)
+        self.stitch_threshold.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
             "Stitch threshold",
             self.stitch_threshold,
             "When greater than 0 and native 3D is disabled, stitch 2D masks across adjacent Z planes.")
         self.anisotropy = self._double_spin(0.0, 100.0, 0.0)
+        self.anisotropy.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
             "Anisotropy (0 = auto)",
@@ -117,13 +141,21 @@ class CellposeSettingsPanel(QWidget):
             "Denoise",
             self.denoise,
             "Apply Cellpose restoration before segmentation when supported by the installed version.")
-        self.nuclear_channel = QComboBox()
+        self.nuclear_channel = FocusWheelComboBox()
+        self.nuclear_channel.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
             "Nuclear channel",
             self.nuclear_channel,
             "Optional second image channel supplied as nuclear information where the Cellpose backend supports it.")
-        controls_layout.addLayout(form)
+        settings_layout.addLayout(form)
+        self.run_button = QPushButton("Run preview")
+        self.run_button.setFixedWidth(self.BUTTON_WIDTH)
+        self.run_button.clicked.connect(self.run_requested)
+        self.run_button.setDefault(True)
+        settings_layout.addWidget(
+            self.run_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        controls_layout.addWidget(settings_section)
 
         controls_layout.addStretch(1)
 
@@ -133,29 +165,41 @@ class CellposeSettingsPanel(QWidget):
         self.controls_scroll.setWidget(controls)
         layout.addWidget(self.controls_scroll, 1)
 
-        overlay_layout = QHBoxLayout()
+        self.overlay_widget = QWidget()
+        overlay_layout = QHBoxLayout(self.overlay_widget)
+        overlay_layout.setContentsMargins(0, 0, 0, 0)
         overlay_layout.addWidget(QLabel("Mask overlay"))
         self.show_mask = QCheckBox()
         self.show_mask.setChecked(True)
         self.show_mask.toggled.connect(self.mask_visibility_changed)
         overlay_layout.addWidget(self.show_mask)
-        self.mask_opacity = QSlider(Qt.Orientation.Horizontal)
+        self.mask_opacity = FocusWheelSlider(Qt.Orientation.Horizontal)
         self.mask_opacity.setRange(0, 100)
         self.mask_opacity.setValue(45)
         self.mask_opacity.valueChanged.connect(
             lambda value: self.mask_opacity_changed.emit(value / 100.0))
         overlay_layout.addWidget(self.mask_opacity, 1)
-        layout.addLayout(overlay_layout)
+        layout.addWidget(self.overlay_widget)
 
-        buttons = QHBoxLayout()
         self.apply_button = QPushButton("Apply settings")
         self.apply_button.clicked.connect(self.apply_requested)
-        buttons.addWidget(self.apply_button)
-        self.run_button = QPushButton("Run preview")
-        self.run_button.clicked.connect(self.run_requested)
-        self.run_button.setDefault(True)
-        buttons.addWidget(self.run_button)
-        layout.addLayout(buttons)
+        layout.addWidget(self.apply_button)
+
+    @staticmethod
+    def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
+        frame = QFrame()
+        frame.setObjectName("settingsSection")
+        frame.setStyleSheet(
+            "QFrame#settingsSection { background-color: #303030; "
+            "border: 1px solid #555; border-radius: 4px; }")
+        section_layout = QVBoxLayout(frame)
+        section_layout.setContentsMargins(9, 7, 9, 9)
+        section_layout.setSpacing(6)
+        heading = QLabel(title)
+        heading.setStyleSheet(
+            "font-weight: bold; border: none; background: transparent;")
+        section_layout.addWidget(heading)
+        return frame, section_layout
 
     def set_channels(self, labels: tuple[str, ...], nuclear_channel: str | None) -> None:
         self.nuclear_channel.clear()
@@ -255,7 +299,7 @@ class CellposeSettingsPanel(QWidget):
                      maximum: float,
                      value: float,
                      ) -> QDoubleSpinBox:
-        widget = QDoubleSpinBox()
+        widget = FocusWheelDoubleSpinBox()
         widget.setRange(minimum, maximum)
         widget.setDecimals(3)
         widget.setValue(value)

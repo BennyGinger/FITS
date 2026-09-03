@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QColorDialog,
     QFileDialog,
-    QButtonGroup,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -29,20 +29,23 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 
-from fits.environment.constant import FITS_ARRAY_NAME, FITS_REFERENCE_TEMPLATE
+from fits.environment.constant import FITS_ARRAY_NAME, FITS_REFERENCE_TEMPLATE, FITS_ROI_TEMPLATE
 from fits.gui.run_browser import DirectoryBrowser
 from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, SettingsAdapter
 from fits.gui.viewer.image_viewer import FitsImageViewer
+from fits.gui.wheel_widgets import FocusWheelSlider
 from fits.gui.viewer.tools.reference_mask.settings_panel import ReferenceMaskPanel
+from fits.gui.viewer.tools.roi_mask.settings_panel import RoiMaskPanel
 from fits.gui.viewer.tools.segmentation.settings_panel import CellposeSettingsPanel
 from fits.gui.viewer.tools.segmentation.worker import PreviewOutcome, PreviewRequest, PreviewWorker
 from fits.settings.models import SegmentSettings
 from fits.tasks.reference_mask import ReferenceMaskSession
+from fits.tasks.roi_mask import RoiSession
 from fits.tasks.segmentation.preview_cache import SegmentationPreview
 from fits.tasks.segmentation.tuning import SegmentationTuningSession
 
 
-ViewerTool = Literal["segmentation", "reference-mask", "all"]
+ViewerTool = Literal["segmentation", "binary", "all"]
 
 
 class FitsViewerWindow(QMainWindow):
@@ -64,7 +67,7 @@ class FitsViewerWindow(QMainWindow):
                  parent: QWidget | None = None,
                  ) -> None:
         super().__init__(parent)
-        if tool not in ("segmentation", "reference-mask", "all"):
+        if tool not in ("segmentation", "binary", "all"):
             raise ValueError(f"Unknown FITS viewer tool: {tool!r}.")
         self._visible_tool = tool
         self.setWindowTitle("FITS Viewer")
@@ -75,8 +78,10 @@ class FitsViewerWindow(QMainWindow):
                                    else None)
         self._segmentation_session: SegmentationTuningSession | None = None
         self._reference_session: ReferenceMaskSession | None = None
+        self._roi_session: RoiSession | None = None
         self._source_path: Path | None = None
         self._reference_path: Path | None = None
+        self._roi_path: Path | None = None
         self._thread: QThread | None = None
         self._worker: PreviewWorker | None = None
         self._active_request: PreviewRequest | None = None
@@ -116,76 +121,82 @@ class FitsViewerWindow(QMainWindow):
         file_filters = ((FITS_ARRAY_NAME,)
                         if self._visible_tool == "segmentation"
                         else (FITS_ARRAY_NAME,
-                              FITS_REFERENCE_TEMPLATE.format(label="*")))
+                              FITS_REFERENCE_TEMPLATE.format(label="*"),
+                              FITS_ROI_TEMPLATE.format(label="*")))
         self.directory_browser = DirectoryBrowser(
             "Experiments directory contents",
             file_name_filters=file_filters,)
         left_splitter.addWidget(self.directory_browser)
 
-        lut_container = QWidget()
-        lut_layout = QVBoxLayout(lut_container)
-        lut_layout.setContentsMargins(0, 0, 0, 0)
-        lut_title = QLabel("Image LUT")
-        lut_title.setStyleSheet("font-weight: bold;")
-        lut_layout.addWidget(lut_title)
-        self.image_viewer = FitsImageViewer()
-        channel_row = QHBoxLayout()
-        channel_row.addWidget(QLabel("Channel"))
-        self.channel_combo = QComboBox()
-        channel_row.addWidget(self.channel_combo, 1)
-        lut_layout.addLayout(channel_row)
-        mode_row = QHBoxLayout()
-        self.colour_lut_button = QPushButton("Colour")
-        self.colour_lut_button.setCheckable(True)
-        self.colour_lut_button.setChecked(True)
-        mode_row.addWidget(self.colour_lut_button)
-        self.grayscale_lut_button = QPushButton("Grayscale")
-        self.grayscale_lut_button.setCheckable(True)
-        mode_row.addWidget(self.grayscale_lut_button)
-        self.lut_mode_group = QButtonGroup(self)
-        self.lut_mode_group.setExclusive(True)
-        self.lut_mode_group.addButton(self.colour_lut_button)
-        self.lut_mode_group.addButton(self.grayscale_lut_button)
-        lut_layout.addLayout(mode_row)
-        lut_layout.addWidget(self.image_viewer.histogram)
-        lut_actions = QHBoxLayout()
-        self.auto_scale_button = QPushButton("Auto-scale")
-        lut_actions.addWidget(self.auto_scale_button)
-        self.full_range_button = QPushButton("Full range")
-        lut_actions.addWidget(self.full_range_button)
-        lut_layout.addLayout(lut_actions)
-        mask_colour_row = QHBoxLayout()
-        mask_colour_row.addWidget(QLabel("Mask colours"))
-        self.segmentation_mask_colours = QLabel("Label palette")
-        mask_colour_row.addWidget(self.segmentation_mask_colours)
-        self.reference_mask_colour = QColor(255, 215, 0)
-        self.reference_mask_colour_button = QPushButton("Reference mask")
-        self._set_reference_mask_colour_button()
-        mask_colour_row.addWidget(self.reference_mask_colour_button)
-        mask_colour_row.addStretch(1)
-        lut_layout.addLayout(mask_colour_row)
-        left_splitter.addWidget(lut_container)
-
         self.settings_panel = CellposeSettingsPanel()
         self.reference_panel = ReferenceMaskPanel()
+        self.roi_panel = RoiMaskPanel()
+        self.settings_panel.overlay_widget.hide()
+        self.reference_panel.overlay_widget.hide()
+        self.roi_panel.overlay_widget.hide()
         self.tool_tabs = QTabWidget()
         if self._visible_tool in ("segmentation", "all"):
             self.tool_tabs.addTab(self.settings_panel, "Segmentation")
-        if self._visible_tool in ("reference-mask", "all"):
-            self.tool_tabs.addTab(self.reference_panel, "Reference mask")
+        if self._visible_tool in ("binary", "all"):
+            self.tool_tabs.addTab(self.reference_panel, "Distance reference")
+            self.tool_tabs.addTab(self.roi_panel, "ROI mask")
         left_splitter.addWidget(self.tool_tabs)
         left_splitter.setStretchFactor(0, 2)
-        left_splitter.setStretchFactor(1, 2)
-        left_splitter.setStretchFactor(2, 6)
-        left_splitter.setSizes([230, 180, 570])
+        left_splitter.setStretchFactor(1, 6)
+        left_splitter.setSizes([230, 750])
         left_layout.addWidget(left_splitter)
         main_splitter.addWidget(left)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
+        right_splitter = QSplitter(Qt.Orientation.Vertical)
+        right_layout.addWidget(right_splitter)
+
+        image_panel = QWidget()
+        image_layout = QVBoxLayout(image_panel)
+        image_layout.setContentsMargins(0, 0, 0, 0)
         info_row = QHBoxLayout()
-        info_row.addStretch(1)
+        left_controls = QHBoxLayout()
+        left_controls.addStretch(1)
+        left_controls.addWidget(QLabel("Channel"))
+        self.channel_combo = QComboBox()
+        left_controls.addWidget(self.channel_combo)
+        self.grayscale_lut_button = QPushButton("Grayscale")
+        self.grayscale_lut_button.setCheckable(True)
+        self.grayscale_lut_button.setToolTip(
+            "Toggle grayscale display. Turn it off to restore the channel colour.")
+        self.grayscale_lut_button.setStyleSheet(
+            "QPushButton:checked { background-color: #2a82da; color: white; "
+            "border: 1px solid #7fc0ff; }")
+        left_controls.addWidget(self.grayscale_lut_button)
+        left_controls.addStretch(1)
+        info_row.addLayout(left_controls, 1)
+
+        right_controls = QHBoxLayout()
+        right_controls.addStretch(1)
+        right_controls.addWidget(QLabel("Overlay"))
+        self.show_mask = QCheckBox()
+        self.show_mask.setChecked(True)
+        self.show_mask.setToolTip("Show or hide the mask overlay.")
+        right_controls.addWidget(self.show_mask)
+        self.mask_opacity = FocusWheelSlider(Qt.Orientation.Horizontal)
+        self.mask_opacity.setRange(0, 100)
+        self.mask_opacity.setValue(45)
+        self.mask_opacity.setMaximumWidth(140)
+        self.mask_opacity.setToolTip("Adjust the opacity of the displayed mask overlay.")
+        right_controls.addWidget(self.mask_opacity)
+        self.segmentation_mask_colours = QLabel("Label palette")
+        right_controls.addWidget(self.segmentation_mask_colours)
+        self.reference_mask_colour = QColor(255, 215, 0)
+        self.reference_mask_colour_button = QPushButton("Mask colour")
+        self.reference_mask_colour_button.setToolTip(
+            "Change the colour of the displayed binary mask.")
+        self._set_reference_mask_colour_button()
+        right_controls.addWidget(self.reference_mask_colour_button)
+        right_controls.addStretch(1)
+        info_row.addLayout(right_controls, 1)
+
         self.info_button = QToolButton()
         self.info_button.setText("i")
         self.info_button.setToolTip("Viewer information and keyboard shortcuts")
@@ -194,12 +205,35 @@ class FitsViewerWindow(QMainWindow):
             "QToolButton { border: 1px solid #888; border-radius: 13px; "
             "font-weight: bold; font-style: italic; }")
         info_row.addWidget(self.info_button)
-        right_layout.addLayout(info_row)
-        right_layout.addWidget(self.image_viewer, 1)
+        image_layout.addLayout(info_row)
+        self.image_viewer = FitsImageViewer()
+        image_layout.addWidget(self.image_viewer, 1)
         navigation = QHBoxLayout()
         self.frame_slider, self.frame_value = self._navigation_control("Frame", navigation)
         self.z_slider, self.z_value = self._navigation_control("Z", navigation)
-        right_layout.addLayout(navigation)
+        image_layout.addLayout(navigation)
+        right_splitter.addWidget(image_panel)
+
+        lut_panel = QWidget()
+        lut_layout = QHBoxLayout(lut_panel)
+        lut_layout.setContentsMargins(0, 0, 0, 0)
+        self.image_viewer.histogram.setMaximumHeight(125)
+        self.image_viewer.histogram.setToolTip(
+            "Adjust the displayed intensity range. Add a colour marker from the "
+            "gradient menu; click a marker to edit its colour, or remove it from "
+            "the colour dialog.")
+        lut_layout.addWidget(self.image_viewer.histogram, 1)
+        lut_actions = QVBoxLayout()
+        self.auto_scale_button = QPushButton("Auto-scale")
+        lut_actions.addWidget(self.auto_scale_button)
+        self.full_range_button = QPushButton("Full range")
+        lut_actions.addWidget(self.full_range_button)
+        lut_actions.addStretch(1)
+        lut_layout.addLayout(lut_actions)
+        right_splitter.addWidget(lut_panel)
+        right_splitter.setStretchFactor(0, 7)
+        right_splitter.setStretchFactor(1, 1)
+        right_splitter.setSizes([875, 125])
         main_splitter.addWidget(right)
         main_splitter.setStretchFactor(0, 1)
         main_splitter.setStretchFactor(1, 2)
@@ -234,10 +268,6 @@ class FitsViewerWindow(QMainWindow):
             self.image_viewer.set_mask_opacity)
         self.reference_panel.drawing_options_changed.connect(
             self._update_drawing_options)
-        self.reference_panel.apply_requested.connect(
-            self._apply_reference_drawing)
-        self.reference_panel.cancel_requested.connect(
-            self._cancel_reference_drawing)
         self.reference_panel.undo_requested.connect(
             self._undo_reference_drawing)
         self.reference_panel.clear_requested.connect(
@@ -248,17 +278,42 @@ class FitsViewerWindow(QMainWindow):
             self.image_viewer.set_mask_visible)
         self.reference_panel.mask_opacity_changed.connect(
             self.image_viewer.set_mask_opacity)
+        self.roi_panel.drawing_options_changed.connect(self._update_drawing_options)
+        self.roi_panel.undo_requested.connect(self._undo_reference_drawing)
+        self.roi_panel.clear_requested.connect(self._clear_reference_drawing)
+        self.roi_panel.save_requested.connect(self._save_roi_mask)
+        self.roi_panel.automatic_current_requested.connect(self._apply_otsu_threshold)
+        self.roi_panel.automatic_stack_requested.connect(self._apply_otsu_stack)
+        self.roi_panel.reset_current_requested.connect(self._reset_roi_current)
+        self.roi_panel.reset_stack_requested.connect(self._reset_roi_stack)
+        self.roi_panel.threshold_changed.connect(self._apply_roi_threshold)
+        self.roi_panel.manual_stack_requested.connect(self._apply_manual_roi_stack)
+        self.roi_panel.fill_holes_requested.connect(self._fill_roi_holes)
+        self.roi_panel.remove_small_objects_requested.connect(
+            self._remove_small_roi_objects)
+        self.roi_panel.mask_visibility_changed.connect(self.image_viewer.set_mask_visible)
+        self.roi_panel.mask_opacity_changed.connect(self.image_viewer.set_mask_opacity)
+        self.reference_panel.interpolation_preview_changed.connect(
+            self._display_selection)
+        self.roi_panel.interpolation_preview_changed.connect(
+            self._display_selection)
         self.image_viewer.drawing_changed.connect(
             self._reference_drawing_changed)
+        self.image_viewer.drawing_started.connect(
+            self._disable_active_interpolation_preview)
         self.image_viewer.drawing_finished.connect(
             self._replace_reference_drawing)
         self.tool_tabs.currentChanged.connect(self._tool_changed)
-        self.colour_lut_button.toggled.connect(self.image_viewer.set_coloured_lut)
+        self.grayscale_lut_button.toggled.connect(
+            lambda checked: self.image_viewer.set_coloured_lut(not checked))
         self.auto_scale_button.clicked.connect(self.image_viewer.auto_scale)
         self.full_range_button.clicked.connect(self.image_viewer.full_range)
         self.info_button.clicked.connect(self._show_information)
         self.reference_mask_colour_button.clicked.connect(
             self._choose_reference_mask_colour)
+        self.show_mask.toggled.connect(self.image_viewer.set_mask_visible)
+        self.mask_opacity.valueChanged.connect(
+            lambda value: self.image_viewer.set_mask_opacity(value / 100.0))
 
     @Slot()
     def _show_information(self) -> None:
@@ -267,8 +322,8 @@ class FitsViewerWindow(QMainWindow):
         text = (
             "Browse normalized FITS experiments, inspect frames, channels and "
             "Z planes, and adjust image contrast. Tool tabs add focused image "
-            "workflows. Segmentation previews Cellpose settings; Reference mask "
-            "draws and saves binary masks with optional interpolation.\n\n"
+            "workflows. Segmentation previews Cellpose settings; binary tools "
+            "create distance references and threshold-assisted ROI masks.\n\n"
             "Keyboard shortcuts\n"
             "X    Toggle mask overlay\n"
             "R    Run preview\n"
@@ -277,8 +332,10 @@ class FitsViewerWindow(QMainWindow):
             "A / D    Previous / next frame\n"
             "W / Z    Next / previous Z plane\n"
             "C    Next channel\n"
-            "S    Apply segmentation settings or save a reference mask\n"
-            "Ctrl + Z    Undo the latest reference drawing\n"
+            "S    Apply segmentation settings or save the active binary mask\n"
+            "Ctrl + Z    Undo the latest binary-mask drawing\n"
+            "Left mouse button    Add to a Reference or ROI mask\n"
+            "Right mouse button    Erase from a Reference or ROI mask\n"
             "Ctrl + mouse drag    Pan image\n"
             "Ctrl + mouse wheel   Zoom image\n\n"
             f"FITS {fits_version}\n"
@@ -315,7 +372,7 @@ class FitsViewerWindow(QMainWindow):
 
         if (event.modifiers() == Qt.KeyboardModifier.ControlModifier
                 and key == Qt.Key.Key_Z
-                and self._reference_tool_active()):
+                and self._binary_tool_active()):
             self._undo_reference_drawing()
             return True
         if event.modifiers() not in (Qt.KeyboardModifier.NoModifier,
@@ -329,13 +386,10 @@ class FitsViewerWindow(QMainWindow):
             return super().eventFilter(watched, event)
         if key == Qt.Key.Key_X:
             if self._segmentation_session is not None:
-                panel = (self.reference_panel
-                         if self._reference_tool_active()
-                         else self.settings_panel)
-                panel.show_mask.toggle()
+                self.show_mask.toggle()
             return True
         if key == Qt.Key.Key_R:
-            if not self._reference_tool_active():
+            if not self._binary_tool_active():
                 self._run_preview()
             return True
         if key in (Qt.Key.Key_Right, Qt.Key.Key_D):
@@ -356,6 +410,8 @@ class FitsViewerWindow(QMainWindow):
         if key == Qt.Key.Key_S:
             if self._reference_tool_active():
                 self._save_reference_mask()
+            elif self._roi_tool_active():
+                self._save_roi_mask()
             else:
                 self._apply_settings()
             return True
@@ -436,6 +492,17 @@ class FitsViewerWindow(QMainWindow):
                     self.tool_tabs.setCurrentIndex(reference_index)
                 self._open_source(source, reference_path=path)
                 return
+            roi_pattern = FITS_ROI_TEMPLATE.format(label="*")
+            if path.match(roi_pattern):
+                source = path.with_name(FITS_ARRAY_NAME)
+                if not source.is_file():
+                    self.status_label.setText(f"ROI mask has no sibling {FITS_ARRAY_NAME}.")
+                    return
+                roi_index = self.tool_tabs.indexOf(self.roi_panel)
+                if roi_index >= 0:
+                    self.tool_tabs.setCurrentIndex(roi_index)
+                self._open_source(source, roi_path=path)
+                return
             source = path
         if source.name != FITS_ARRAY_NAME or not source.is_file():
             self.status_label.setText(f"Select an experiment containing {FITS_ARRAY_NAME}.")
@@ -446,8 +513,10 @@ class FitsViewerWindow(QMainWindow):
                      source: Path,
                      *,
                      reference_path: Path | None = None,
+                     roi_path: Path | None = None,
                      ) -> None:
-        if source == self._source_path and reference_path == self._reference_path:
+        if (source == self._source_path and reference_path == self._reference_path
+                and roi_path == self._roi_path):
             return
         if self._thread is not None:
             self.status_label.setText("Wait for the current preview before changing experiment.")
@@ -459,15 +528,18 @@ class FitsViewerWindow(QMainWindow):
                 source, segment_settings=baseline)
             self._reference_session = ReferenceMaskSession(
                 source, reference_path=reference_path)
+            self._roi_session = RoiSession(source, roi_path=roi_path)
         except Exception as error:
             if self._segmentation_session is not None:
                 self._segmentation_session.close()
             self._segmentation_session = None
             self._reference_session = None
+            self._roi_session = None
             self.status_label.setText(str(error))
             return
         self._source_path = source
         self._reference_path = reference_path
+        self._roi_path = roi_path
         settings = self._segmentation_session.segment_settings
         self.settings_panel.set_settings(settings)
         self.settings_panel.set_channels(
@@ -476,12 +548,15 @@ class FitsViewerWindow(QMainWindow):
             self._segmentation_session.plane_count > 1)
         self.reference_panel.set_available_axes(
             self._reference_session.axes, self._reference_session.shape)
-        self.reference_panel.set_edit_dirty(False)
+        self.roi_panel.set_available_axes(
+            self._roi_session.axes, self._roi_session.shape)
         self.channel_combo.clear()
         self.channel_combo.addItems(self._segmentation_session.channel_labels)
         selected_channel = settings.channel_to_segment[0] if settings.channel_to_segment else None
         if self._reference_session.loaded_channels:
             selected_channel = self._reference_session.loaded_channels[0]
+        if self._roi_session.loaded_channels:
+            selected_channel = self._roi_session.loaded_channels[0]
         channel_index = self.channel_combo.findText(str(selected_channel))
         self.channel_combo.setCurrentIndex(max(channel_index, 0))
         self.frame_slider.setRange(0, self._segmentation_session.frame_count - 1)
@@ -491,12 +566,14 @@ class FitsViewerWindow(QMainWindow):
         self._set_source_controls_enabled(True)
         self.reference_panel.label_edit.setText(
             self._reference_session.reference_label or "")
+        self.roi_panel.label_edit.setText(self._roi_session.roi_label or "")
+        self.roi_panel.reset_for_source()
         self._update_drawing_options()
         self._display_selection()
         self.status_label.setText(
             f"Loaded {source.parent.name} — axes "
             f"{self._segmentation_session.axes}, shape {self._segmentation_session.shape}.")
-        if self._segmentation_tool_available():
+        if self._segmentation_tool_active():
             self._run_preview()
 
     def _settings_for_source(self, source: Path) -> SegmentSettings | None:
@@ -535,17 +612,24 @@ class FitsViewerWindow(QMainWindow):
                     self._channel_levels[channel] = self.image_viewer.display_levels
             self._displayed_channel = channel
             self.image_viewer.clear_mask()
-            if self._reference_tool_active():
-                if self._reference_session is None:
+            if self._binary_tool_active():
+                session = self._active_binary_session()
+                panel = self._active_binary_panel()
+                if session is None or panel is None:
                     return
-                self.image_viewer.set_drawing_mask(
-                    self._reference_session.mask_plane(frame, channel, z_index))
-                self.reference_panel.set_undo_available(False)
+                display_mask = self._binary_display_mask(
+                    session, panel, frame, channel, z_index)
+                self.image_viewer.set_drawing_mask(display_mask)
+                panel.set_undo_available(False)
                 self.image_viewer.set_drawing_enabled(True)
-                self.image_viewer.set_mask_visible(
-                    self.reference_panel.show_mask.isChecked())
-                self.image_viewer.set_mask_opacity(
-                    self.reference_panel.mask_opacity.value() / 100.0)
+                self.image_viewer.set_mask_visible(self.show_mask.isChecked())
+                self.image_viewer.set_mask_opacity(self.mask_opacity.value() / 100.0)
+                if self._roi_tool_active():
+                    self.roi_panel.set_threshold_image(image)
+                    threshold_range = self._roi_session.threshold_range(
+                        frame_index=frame, channel=channel, z_index=z_index)
+                    if threshold_range is not None:
+                        self.roi_panel.set_threshold_range(*threshold_range)
             else:
                 self.image_viewer.set_drawing_enabled(False)
                 settings = self.current_settings()
@@ -557,10 +641,8 @@ class FitsViewerWindow(QMainWindow):
                     self.settings_panel.user_settings(),)
                 if cached is not None:
                     self._display_preview_mask(cached, z_index)
-                self.image_viewer.set_mask_visible(
-                    self.settings_panel.show_mask.isChecked())
-                self.image_viewer.set_mask_opacity(
-                    self.settings_panel.mask_opacity.value() / 100.0)
+                self.image_viewer.set_mask_visible(self.show_mask.isChecked())
+                self.image_viewer.set_mask_opacity(self.mask_opacity.value() / 100.0)
         except Exception as error:
             self.status_label.setText(str(error))
             return
@@ -630,8 +712,49 @@ class FitsViewerWindow(QMainWindow):
     def _reference_tool_active(self) -> bool:
         return self.tool_tabs.currentWidget() is self.reference_panel
 
-    def _segmentation_tool_available(self) -> bool:
-        return self.tool_tabs.indexOf(self.settings_panel) >= 0
+    def _roi_tool_active(self) -> bool:
+        return self.tool_tabs.currentWidget() is self.roi_panel
+
+    def _binary_tool_active(self) -> bool:
+        return self._reference_tool_active() or self._roi_tool_active()
+
+    def _active_binary_panel(self) -> ReferenceMaskPanel | RoiMaskPanel | None:
+        if self._reference_tool_active():
+            return self.reference_panel
+        if self._roi_tool_active():
+            return self.roi_panel
+        return None
+
+    def _active_binary_session(self) -> ReferenceMaskSession | RoiSession | None:
+        return self._reference_session if self._reference_tool_active() else (
+            self._roi_session if self._roi_tool_active() else None)
+
+    def _segmentation_tool_active(self) -> bool:
+        return self.tool_tabs.currentWidget() is self.settings_panel
+
+    @Slot()
+    def _disable_active_interpolation_preview(self) -> None:
+        panel = self._active_binary_panel()
+        if panel is not None and panel.live_preview.isChecked():
+            panel.live_preview.setChecked(False)
+
+    @staticmethod
+    def _binary_display_mask(
+            session: ReferenceMaskSession | RoiSession,
+            panel: ReferenceMaskPanel | RoiMaskPanel,
+            frame_index: int, channel: str, z_index: int) -> NDArray[np.uint8]:
+        axis = panel.preview_interpolation_axis
+        if panel.interpolation_preview_enabled and axis is not None:
+            options = dict(
+                frame_index=frame_index, channel=channel, z_index=z_index,
+                extrapolate_start=panel.extrapolate_start.isChecked(),
+                extrapolate_end=panel.extrapolate_end.isChecked())
+            if isinstance(session, RoiSession):
+                return session.interpolated_display_mask_plane(axis, **options)
+            return session.interpolated_mask_plane(axis, **options)
+        if isinstance(session, RoiSession):
+            return session.display_mask_plane(frame_index, channel, z_index)
+        return session.mask_plane(frame_index, channel, z_index)
 
     def _set_tool_enabled(self, panel: QWidget, enabled: bool) -> None:
         index = self.tool_tabs.indexOf(panel)
@@ -640,18 +763,16 @@ class FitsViewerWindow(QMainWindow):
 
     @Slot(int)
     def _tool_changed(self, _: int) -> None:
-        if self.reference_panel.edit_dirty:
-            return
         self._refresh_mask_colour_controls()
         self._update_drawing_options()
         self._display_selection()
 
     def _refresh_mask_colour_controls(self) -> None:
-        reference = self._reference_tool_active()
-        self.segmentation_mask_colours.setVisible(not reference)
-        self.reference_mask_colour_button.setVisible(reference)
+        binary = self._binary_tool_active()
+        self.segmentation_mask_colours.setVisible(not binary)
+        self.reference_mask_colour_button.setVisible(binary)
         self.image_viewer.set_mask_color(
-            self.reference_mask_colour if reference else None)
+            self.reference_mask_colour if binary else None)
 
     def _set_reference_mask_colour_button(self) -> None:
         color = self.reference_mask_colour.name()
@@ -666,130 +787,97 @@ class FitsViewerWindow(QMainWindow):
             return
         self.reference_mask_colour = selected
         self._set_reference_mask_colour_button()
-        if self._reference_tool_active():
+        if self._binary_tool_active():
             self.image_viewer.set_mask_color(selected)
 
     @Slot()
     def _update_drawing_options(self) -> None:
-        self.image_viewer.set_drawing_options(
-            self.reference_panel.drawing_mode,
-            self.reference_panel.drawing_tool,
-            self.reference_panel.drawing_operation,
-            self.reference_panel.brush_size.value(),)
+        panel = self._active_binary_panel()
+        if panel is not None:
+            self.image_viewer.set_drawing_options(
+                panel.drawing_mode, panel.drawing_tool,
+                panel.drawing_operation, panel.brush_size.value())
         self.image_viewer.set_drawing_enabled(
-            self._reference_tool_active() and self._reference_session is not None)
+            self._binary_tool_active() and self._active_binary_session() is not None)
 
     @Slot()
     def _reference_drawing_changed(self) -> None:
-        if not self._reference_tool_active():
+        panel = self._active_binary_panel()
+        if panel is None:
             return
-        self.reference_panel.set_undo_available(
-            self.image_viewer.can_undo_drawing)
-        if self.reference_panel.drawing_mode == "edit":
-            self.reference_panel.set_edit_dirty(True)
-            self._set_reference_edit_locked(True)
-            self.status_label.setText(
-                "Reference drawing modified — Apply or Cancel before navigating.")
+        panel.set_undo_available(self.image_viewer.can_undo_drawing)
 
     @Slot(object)
     def _replace_reference_drawing(self, mask: object) -> None:
-        if (self._reference_session is None
-                or not self._reference_tool_active()
-                or self.reference_panel.drawing_mode != "replace"):
+        session = self._active_binary_session()
+        if session is None or not self._binary_tool_active():
             return
         try:
-            self._reference_session.set_mask_plane(
-                np.asarray(mask),
+            coordinates = dict(
                 frame_index=self.frame_slider.value(),
                 channel=self.channel_combo.currentText(),
-                z_index=self.z_slider.value(),)
+                z_index=self.z_slider.value())
+            if isinstance(session, RoiSession):
+                comparison = self._binary_display_mask(
+                    session, self.roi_panel, coordinates["frame_index"],
+                    coordinates["channel"], coordinates["z_index"])
+                session.apply_display_edit(
+                    np.asarray(mask), comparison_mask=comparison,
+                    edited_pixels=self.image_viewer.last_drawing_selection,
+                    operation=self.image_viewer.last_drawing_operation,
+                    **coordinates)
+            elif self.reference_panel.drawing_mode == "replace":
+                session.replace_display_mask(np.asarray(mask), **coordinates)
+            else:
+                comparison = self._binary_display_mask(
+                    session, self.reference_panel, coordinates["frame_index"],
+                    coordinates["channel"], coordinates["z_index"])
+                session.apply_display_edit(
+                    np.asarray(mask), comparison_mask=comparison, **coordinates)
         except Exception as error:
-            self.status_label.setText(f"Could not store reference drawing: {error}")
+            self.status_label.setText(f"Could not store binary-mask drawing: {error}")
             return
-        self.status_label.setText("Reference drawing saved in the current session.")
-
-    @Slot()
-    def _apply_reference_drawing(self) -> None:
-        if (self._reference_session is None
-                or self.reference_panel.drawing_mode != "edit"
-                or not self.reference_panel.edit_dirty):
-            return
-        try:
-            self._reference_session.set_mask_plane(
-                self.image_viewer.drawing_mask,
-                frame_index=self.frame_slider.value(),
-                channel=self.channel_combo.currentText(),
-                z_index=self.z_slider.value(),)
-        except Exception as error:
-            self.status_label.setText(f"Could not apply reference drawing: {error}")
-            return
-        self.reference_panel.set_edit_dirty(False)
-        self._set_reference_edit_locked(False)
-        self.status_label.setText("Reference drawing applied to the current plane.")
-
-    @Slot()
-    def _cancel_reference_drawing(self) -> None:
-        if self._reference_session is None or not self.reference_panel.edit_dirty:
-            return
-        mask = self._reference_session.mask_plane(
-            self.frame_slider.value(),
-            self.channel_combo.currentText(),
-            self.z_slider.value(),)
-        self.image_viewer.set_drawing_mask(mask)
-        self.reference_panel.set_edit_dirty(False)
-        self.reference_panel.set_undo_available(False)
-        self._set_reference_edit_locked(False)
-        self.status_label.setText("Unapplied reference drawing changes discarded.")
+        self.status_label.setText("Binary-mask drawing updated in the current session.")
 
     @Slot()
     def _undo_reference_drawing(self) -> None:
-        if self._reference_session is None or not self._reference_tool_active():
+        session = self._active_binary_session()
+        panel = self._active_binary_panel()
+        if session is None or panel is None:
             return
-        mask = self.image_viewer.undo_drawing()
-        if mask is None:
+        coordinates = dict(frame_index=self.frame_slider.value(),
+                           channel=self.channel_combo.currentText(),
+                           z_index=self.z_slider.value())
+        restored = session.undo_display_edit(**coordinates)
+        if restored is None:
             return
-        self.reference_panel.set_undo_available(
-            self.image_viewer.can_undo_drawing)
-        if self.reference_panel.drawing_mode == "replace":
-            self._reference_session.set_mask_plane(
-                mask,
-                frame_index=self.frame_slider.value(),
-                channel=self.channel_combo.currentText(),
-                z_index=self.z_slider.value(),)
-        else:
-            saved = self._reference_session.mask_plane(
-                self.frame_slider.value(),
-                self.channel_combo.currentText(),
-                self.z_slider.value(),)
-            dirty = not np.array_equal(mask, saved)
-            self.reference_panel.set_edit_dirty(dirty)
-            self._set_reference_edit_locked(dirty)
-        self.status_label.setText("Restored the previous reference drawing.")
+        self.image_viewer.undo_drawing()
+        self.image_viewer.set_drawing_mask(self._binary_display_mask(
+            session, panel, coordinates["frame_index"],
+            coordinates["channel"], coordinates["z_index"]))
+        panel.set_undo_available(self.image_viewer.can_undo_drawing)
+        self.status_label.setText("Restored the previous binary-mask drawing.")
 
     @Slot()
     def _clear_reference_drawing(self) -> None:
-        if self._reference_session is None:
+        session = self._active_binary_session()
+        panel = self._active_binary_panel()
+        if session is None or panel is None:
             return
-        if self.reference_panel.drawing_mode == "edit":
-            self.image_viewer.clear_drawing_mask()
-            self.reference_panel.set_undo_available(True)
-            self.reference_panel.set_edit_dirty(True)
-            self._set_reference_edit_locked(True)
-            return
-        self._reference_session.clear_mask_plane(
+        self._disable_active_interpolation_preview()
+        self.image_viewer.clear_drawing_mask()
+        session.clear_mask_plane(
             frame_index=self.frame_slider.value(),
             channel=self.channel_combo.currentText(),
             z_index=self.z_slider.value(),)
-        self.image_viewer.clear_drawing_mask()
-        self.reference_panel.set_undo_available(True)
-        self.status_label.setText("Reference drawing cleared from the current plane.")
+        panel.set_undo_available(
+            self.image_viewer.can_undo_drawing
+            if not isinstance(session, RoiSession) else False)
+        self.status_label.setText("Binary mask cleared from the current plane.")
 
     @Slot()
     def _save_reference_mask(self) -> None:
         if self._reference_session is None:
-            return
-        if self.reference_panel.edit_dirty:
-            self.status_label.setText("Apply or Cancel the current drawing before saving.")
             return
         try:
             label = self.reference_panel.reference_label
@@ -840,16 +928,200 @@ class FitsViewerWindow(QMainWindow):
             f"Saved reference mask to {path.name}. Current channel: "
             f"{self.channel_combo.currentText()}.")
 
-    def _set_reference_edit_locked(self, locked: bool) -> None:
-        """Prevent navigation from discarding unapplied Edit-mode changes."""
-        enabled = not locked
-        self.directory_edit.setEnabled(enabled)
-        self.browse_button.setEnabled(enabled)
-        self.directory_browser.setEnabled(enabled)
-        self.frame_slider.setEnabled(enabled)
-        self.channel_combo.setEnabled(enabled)
-        self.z_slider.setEnabled(enabled)
-        self._set_tool_enabled(self.settings_panel, enabled)
+    @Slot()
+    def _apply_otsu_threshold(self) -> None:
+        if self._roi_session is None or not self._roi_tool_active():
+            return
+        self._disable_active_interpolation_preview()
+        try:
+            image = self._segmentation_session.display_frame(
+                self.frame_slider.value(), self.channel_combo.currentText(),
+                self.z_slider.value()) if self._segmentation_session is not None else None
+            if image is None:
+                return
+            threshold = self._roi_session.apply_otsu(
+                frame_index=self.frame_slider.value(),
+                channel=self.channel_combo.currentText(),
+                z_index=self.z_slider.value())
+            if threshold is None:
+                self.image_viewer.set_drawing_mask(
+                    self._roi_session.display_mask_plane(
+                        self.frame_slider.value(), self.channel_combo.currentText(),
+                        self.z_slider.value()))
+                self.status_label.setText(
+                    "Current plane has no intensity contrast; its ROI mask was cleared.")
+                return
+            maximum = float(np.nanmax(image))
+            self.roi_panel.set_threshold_range(threshold, maximum)
+            self.image_viewer.set_drawing_mask(
+                self._roi_session.display_mask_plane(
+                    self.frame_slider.value(), self.channel_combo.currentText(),
+                    self.z_slider.value()))
+            self.status_label.setText(f"Applied Otsu threshold {threshold:g}.")
+        except Exception as error:
+            self.status_label.setText(f"Could not create automatic ROI: {error}")
+
+    @Slot()
+    def _apply_otsu_stack(self) -> None:
+        if self._roi_session is None or not self._roi_tool_active():
+            return
+        self._disable_active_interpolation_preview()
+        try:
+            empty_planes = self._roi_session.threshold_stack(
+                channel=self.channel_combo.currentText())
+            self._display_selection()
+            message = (f"Created independent automatic ROI masks for the complete "
+                       f"{self.channel_combo.currentText()} stack.")
+            if empty_planes:
+                message += f" Cleared {empty_planes} plane(s) without intensity contrast."
+            self.status_label.setText(message)
+        except Exception as error:
+            self.status_label.setText(f"Could not threshold ROI stack: {error}")
+
+    @Slot()
+    def _reset_roi_current(self) -> None:
+        if self._roi_session is None:
+            return
+        self._disable_active_interpolation_preview()
+        self._roi_session.clear_mask_plane(
+            frame_index=self.frame_slider.value(), channel=self.channel_combo.currentText(),
+            z_index=self.z_slider.value())
+        self.image_viewer.set_drawing_mask(
+            self._roi_session.display_mask_plane(
+                self.frame_slider.value(), self.channel_combo.currentText(),
+                self.z_slider.value()))
+        self.status_label.setText("Removed the ROI mask from the current plane.")
+
+    @Slot(float, float)
+    def _apply_manual_roi_stack(self, minimum: float, maximum: float) -> None:
+        if self._roi_session is None or not self._roi_tool_active():
+            return
+        self._disable_active_interpolation_preview()
+        try:
+            self._roi_session.threshold_stack_range(
+                minimum, maximum, channel=self.channel_combo.currentText())
+            self._display_selection()
+            self.roi_panel.set_threshold_range(minimum, maximum)
+            self.status_label.setText(
+                f"Applied ROI intensity range {minimum:g} to {maximum:g} "
+                f"to the complete {self.channel_combo.currentText()} stack.")
+        except Exception as error:
+            self.status_label.setText(f"Could not apply ROI range to stack: {error}")
+
+    @Slot()
+    def _reset_roi_stack(self) -> None:
+        if self._roi_session is None:
+            return
+        self._disable_active_interpolation_preview()
+        self._roi_session.clear_stack(channel=self.channel_combo.currentText())
+        self._display_selection()
+        self.status_label.setText(
+            f"Removed ROI masks from the complete {self.channel_combo.currentText()} stack.")
+
+    @Slot()
+    def _fill_roi_holes(self) -> None:
+        if self._roi_session is None or not self._roi_tool_active():
+            return
+        self._disable_active_interpolation_preview()
+        coordinates = dict(
+            frame_index=self.frame_slider.value(),
+            channel=self.channel_combo.currentText(),
+            z_index=self.z_slider.value())
+        try:
+            changed = self._roi_session.fill_holes(**coordinates)
+            self.image_viewer.set_drawing_mask(
+                self._roi_session.display_mask_plane(**coordinates))
+            self.roi_panel.set_undo_available(changed)
+            self.status_label.setText(
+                "Filled enclosed holes on the current ROI plane."
+                if changed else "The current ROI plane contains no enclosed holes.")
+        except Exception as error:
+            self.status_label.setText(f"Could not fill ROI holes: {error}")
+
+    @Slot(int)
+    def _remove_small_roi_objects(self, minimum_size: int) -> None:
+        if self._roi_session is None or not self._roi_tool_active():
+            return
+        self._disable_active_interpolation_preview()
+        coordinates = dict(
+            frame_index=self.frame_slider.value(),
+            channel=self.channel_combo.currentText(),
+            z_index=self.z_slider.value())
+        try:
+            changed = self._roi_session.remove_small_objects(
+                minimum_size, **coordinates)
+            self.image_viewer.set_drawing_mask(
+                self._roi_session.display_mask_plane(**coordinates))
+            self.roi_panel.set_undo_available(changed)
+            self.status_label.setText(
+                f"Removed ROI objects smaller than {minimum_size} px² "
+                "from the current plane."
+                if changed else
+                f"No ROI objects smaller than {minimum_size} px² were found.")
+        except Exception as error:
+            self.status_label.setText(
+                f"Could not remove small ROI objects: {error}")
+
+    @Slot(float, float)
+    def _apply_roi_threshold(self, minimum: float, maximum: float) -> None:
+        if self._roi_session is None or not self._roi_tool_active():
+            return
+        self._disable_active_interpolation_preview()
+        try:
+            self._roi_session.threshold_plane(
+                minimum, maximum, frame_index=self.frame_slider.value(),
+                channel=self.channel_combo.currentText(),
+                z_index=self.z_slider.value())
+            self.image_viewer.set_drawing_mask(
+                self._roi_session.display_mask_plane(
+                    self.frame_slider.value(), self.channel_combo.currentText(),
+                    self.z_slider.value()))
+            self.roi_panel.set_undo_available(False)
+            self.status_label.setText(
+                f"ROI includes intensities from {minimum:g} to {maximum:g}.")
+        except Exception as error:
+            self.status_label.setText(f"Could not apply ROI threshold: {error}")
+
+    @Slot()
+    def _save_roi_mask(self) -> None:
+        if self._roi_session is None:
+            return
+        label = self.roi_panel.roi_label
+        channel = self.channel_combo.currentText()
+        try:
+            saved_channels = self._roi_session.saved_channels(label)
+            if saved_channels and channel not in saved_channels:
+                QMessageBox.information(
+                    self, "Add ROI channel",
+                    f"{FITS_ROI_TEMPLATE.format(label=label)} already contains "
+                    f"{', '.join(saved_channels)}. The {channel} ROI channel "
+                    "will be added to the same file.")
+            path = self._roi_session.save(
+                label, channel=channel,
+                interpolation_axis=self.roi_panel.selected_interpolation_axis,
+                extrapolate_start=self.roi_panel.extrapolate_start.isChecked(),
+                extrapolate_end=self.roi_panel.extrapolate_end.isChecked())
+        except FileExistsError as error:
+            answer = QMessageBox.question(
+                self, "Replace ROI mask?", f"{error}\n\nReplace the existing file?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            try:
+                path = self._roi_session.save(
+                    label, channel=channel,
+                    interpolation_axis=self.roi_panel.selected_interpolation_axis,
+                    extrapolate_start=self.roi_panel.extrapolate_start.isChecked(),
+                    extrapolate_end=self.roi_panel.extrapolate_end.isChecked(),
+                    overwrite=True)
+            except Exception as overwrite_error:
+                self.status_label.setText(f"Could not save ROI mask: {overwrite_error}")
+                return
+        except Exception as error:
+            self.status_label.setText(f"Could not save ROI mask: {error}")
+            return
+        self.status_label.setText(
+            f"Saved ROI mask to {path.name}. Current channel: {channel}.")
 
     @Slot(str)
     def _preview_failed(self, message: str) -> None:
@@ -897,6 +1169,7 @@ class FitsViewerWindow(QMainWindow):
         self.progress.setVisible(running)
         self.settings_panel.set_running(running)
         self._set_tool_enabled(self.reference_panel, not running)
+        self._set_tool_enabled(self.roi_panel, not running)
         self.directory_edit.setEnabled(not running)
         self.browse_button.setEnabled(not running)
         self.directory_browser.setEnabled(not running)
@@ -907,6 +1180,7 @@ class FitsViewerWindow(QMainWindow):
     def _set_source_controls_enabled(self, enabled: bool) -> None:
         self.settings_panel.setEnabled(enabled)
         self.reference_panel.setEnabled(enabled)
+        self.roi_panel.setEnabled(enabled)
         self.frame_slider.setEnabled(enabled)
         self.channel_combo.setEnabled(enabled)
         self.z_slider.setEnabled(enabled)
@@ -916,16 +1190,19 @@ class FitsViewerWindow(QMainWindow):
             self._segmentation_session.close()
         self._segmentation_session = None
         self._reference_session = None
+        self._roi_session = None
         self._source_path = None
         self._reference_path = None
+        self._roi_path = None
         self._displayed_channel = None
         self._channel_levels.clear()
         self.image_viewer.image_item.clear()
         self.image_viewer.clear_mask()
         self.image_viewer.set_drawing_enabled(False)
-        self.reference_panel.set_edit_dirty(False)
         self.reference_panel.set_undo_available(False)
+        self.roi_panel.set_undo_available(False)
         self.reference_panel.label_edit.clear()
+        self.roi_panel.label_edit.clear()
         self.channel_combo.clear()
         self.frame_slider.setRange(0, 0)
         self.z_slider.setRange(0, 0)

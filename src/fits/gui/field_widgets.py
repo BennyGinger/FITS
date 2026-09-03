@@ -5,11 +5,11 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
     QLineEdit,
-    QSpinBox,
     QWidget,
+)
+from fits.gui.wheel_widgets import (
+    FocusWheelComboBox, FocusWheelDoubleSpinBox, FocusWheelSpinBox,
 )
 
 
@@ -34,7 +34,7 @@ class BoolWidget(QCheckBox):
         return self.isChecked()
 
 
-class IntWidget(QSpinBox):
+class IntWidget(FocusWheelSpinBox):
     value_changed = Signal(object)
 
     def __init__(self, value: int) -> None:
@@ -47,7 +47,7 @@ class IntWidget(QSpinBox):
         return super().value()
 
 
-class FloatWidget(QDoubleSpinBox):
+class FloatWidget(FocusWheelDoubleSpinBox):
     value_changed = Signal(object)
 
     def __init__(self, value: float) -> None:
@@ -84,7 +84,7 @@ class ListWidget(QLineEdit):
         return [part.strip() for part in self.text().split(",") if part.strip()]
 
 
-class ChoiceWidget(QComboBox):
+class ChoiceWidget(FocusWheelComboBox):
     value_changed = Signal(object)
 
     def __init__(self, value: str, choices: tuple[str, ...]) -> None:

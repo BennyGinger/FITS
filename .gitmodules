@@ -25,3 +25,6 @@
 [submodule "mask_interpolation"]
 	path = mask_interpolation
 	url = https://github.com/BennyGinger/mask_interpolation.git
+[submodule "spatialprofile"]
+	path = spatialprofile
+	url = https://github.com/BennyGinger/spatialprofile.git

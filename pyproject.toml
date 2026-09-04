@@ -20,11 +20,9 @@ dependencies = [
     "tracklink",
     "bg-sub",
     "stackalign",
-    "labelquant",
     "tomlkit>=0.15.1",
     "mask-interpolation",
-    "spatialprofile",
-    "bioimagequant"
+    "bioimagequant",
 ]
 
 [project.scripts]
@@ -44,9 +42,7 @@ members = [
     "tracklink",
     "bg_sub",
     "stackalign",
-    "labelquant",
     "mask_interpolation",
-    "spatialprofile",
     "bioimagequant",
 ]
 
@@ -57,9 +53,7 @@ cellpose-kit = { workspace = true }
 tracklink = { workspace = true }
 bg-sub = { workspace = true }
 stackalign = { workspace = true }
-labelquant = { workspace = true }
 mask-interpolation = { workspace = true }
-spatialprofile = { workspace = true }
 bioimagequant = { workspace = true }
 
 [tool.pytest.ini_options]

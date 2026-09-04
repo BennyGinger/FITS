@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 
 from fits_io import FitsIO
-from labelquant import ExtractData
+from bioimagequant import ExtractData
 
 from fits.environment.constant import (
     ARTI_SEG,

@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 import pandas as pd
-from spatialprofile import DistanceProfiler
+from bioimagequant import DistanceProfiler
 
 from fits.settings.models import DistanceProfileSettings
 from fits.tasks.analysis.manager import AnalysisManager
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DistanceProfileManager(AnalysisManager):
-    """Load FITS artifacts and delegate profiling to ``spatialprofile``."""
+    """Load FITS artifacts and delegate profiling to ``bioimagequant``."""
 
     settings: DistanceProfileSettings
 

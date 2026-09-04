@@ -17,10 +17,8 @@ members = [
     "cellpose-kit",
     "fits",
     "fits-io",
-    "labelquant",
     "mask-interpolation",
     "progress-bar",
-    "spatialprofile",
     "stackalign",
     "tracklink",
 ]
@@ -107,6 +105,30 @@ dev = [
 name = "bioimagequant"
 version = "0.1.0"
 source = { editable = "bioimagequant" }
+dependencies = [
+    { name = "joblib" },
+    { name = "numpy" },
+    { name = "pandas", extra = ["parquet"] },
+    { name = "scikit-image" },
+    { name = "scipy" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "joblib", specifier = ">=1.5.3" },
+    { name = "numpy", specifier = ">=1.26.4" },
+    { name = "pandas", extras = ["parquet"], specifier = ">=3.0.1" },
+    { name = "scikit-image", specifier = ">=0.26.0" },
+    { name = "scipy", specifier = ">=1.17.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "cellpose"
@@ -431,13 +453,11 @@ dependencies = [
     { name = "cellpose-kit" },
     { name = "fits-io" },
     { name = "ipython" },
-    { name = "labelquant" },
     { name = "mask-interpolation" },
     { name = "progress-bar" },
     { name = "pydantic" },
     { name = "pyqtgraph" },
     { name = "pyside6" },
-    { name = "spatialprofile" },
     { name = "stackalign" },
     { name = "tomlkit" },
     { name = "tracklink" },
@@ -459,13 +479,11 @@ requires-dist = [
     { name = "cellpose-kit", editable = "cellpose_kit" },
     { name = "fits-io", editable = "fits_io" },
     { name = "ipython", specifier = ">=9.10.0" },
-    { name = "labelquant", editable = "labelquant" },
     { name = "mask-interpolation", editable = "mask_interpolation" },
     { name = "progress-bar", editable = "progress_bar" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyqtgraph", specifier = ">=0.14.0" },
     { name = "pyside6", specifier = ">=6.10.2" },
-    { name = "spatialprofile", editable = "spatialprofile" },
     { name = "stackalign", editable = "stackalign" },
     { name = "tomlkit", specifier = ">=0.15.1" },
     { name = "tracklink", editable = "tracklink" },
@@ -848,27 +866,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/26/2d/ef58fed122b268c69c0aa099da20bc67657cdfb2e222688d5731bd5b971d/jupyterlab_widgets-3.0.16.tar.gz", hash = "sha256:423da05071d55cf27a9e602216d35a3a65a3e41cdf9c5d3b643b814ce38c19e0", size = 897423, upload-time = "2025-11-01T21:11:29.724Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl", hash = "sha256:45fa36d9c6422cf2559198e4db481aa243c7a32d9926b500781c830c80f7ecf8", size = 914926, upload-time = "2025-11-01T21:11:28.008Z" },
-]
-
-[[package]]
-name = "labelquant"
-version = "0.1.0"
-source = { editable = "labelquant" }
-dependencies = [
-    { name = "joblib" },
-    { name = "numpy" },
-    { name = "pandas", extra = ["parquet"] },
-    { name = "scikit-image" },
-    { name = "scipy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "joblib", specifier = ">=1.5.3" },
-    { name = "numpy", specifier = ">=1.26.4" },
-    { name = "pandas", extras = ["parquet"], specifier = ">=3.0.1" },
-    { name = "scikit-image", specifier = ">=0.26.0" },
-    { name = "scipy", specifier = ">=1.17.0" },
 ]
 
 [[package]]
@@ -1977,31 +1974,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/4d/94/20a9a64bd4d696705
 wheels = [
     { url = "https://files.pythonhosted.org/packages/87/43/6bdd23ddbe118c977c5ebe4ad32deccdfc08729ca5213ee62630ae8821c8/smo-2.0.2-py2.py3-none-any.whl", hash = "sha256:06e47647f3fc2caaa9278ac47c6dbe22fe152c7f32f8563ec5539b2487eae17c", size = 702321, upload-time = "2023-02-06T15:07:40.158Z" },
 ]
-
-[[package]]
-name = "spatialprofile"
-version = "0.1.0"
-source = { editable = "spatialprofile" }
-dependencies = [
-    { name = "numpy" },
-    { name = "pandas", extra = ["parquet"] },
-    { name = "scipy" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=1.26.4" },
-    { name = "pandas", extras = ["parquet"], specifier = ">=3.0.1" },
-    { name = "scipy", specifier = ">=1.17.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "stack-data"

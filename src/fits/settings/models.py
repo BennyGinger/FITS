@@ -449,8 +449,8 @@ class ExtractSettings(SettingsModel):
 
     Attributes:
         additional_properties: Extra scikit-image region properties appended to
-            labelquant's defaults.
-        frame_workers: Labelquant worker processes used to quantify frames
+            bioimagequant's defaults.
+        frame_workers: Bioimagequant worker processes used to quantify frames
             within one experiment.
 
     Inherited attributes:

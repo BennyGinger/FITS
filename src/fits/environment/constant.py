@@ -35,8 +35,8 @@ DIST_REGISTER = "stackalign"
 DIST_BG_SUB = "bg-sub"
 DIST_SEG = "cellpose-kit"
 DIST_TRACK = "tracklink"
-DIST_EXTRACT = "labelquant"
-DIST_DISTANCE_PROFILE = "spatialprofile"
+DIST_EXTRACT = "bioimagequant"
+DIST_DISTANCE_PROFILE = "bioimagequant"
 
 FitsName = Literal["fits_array.tif", "fits_mask.tif", "fits_track.tif", "fits_distance_profile.parquet", "fits_quantification.parquet"]
 FITS_ARRAY_NAME = "fits_array.tif"

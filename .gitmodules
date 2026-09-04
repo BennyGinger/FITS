@@ -28,3 +28,6 @@
 [submodule "spatialprofile"]
 	path = spatialprofile
 	url = https://github.com/BennyGinger/spatialprofile.git
+[submodule "bioimagequant"]
+	path = bioimagequant
+	url = https://github.com/BennyGinger/bioimagequant.git

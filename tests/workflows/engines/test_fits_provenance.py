@@ -1,15 +1,17 @@
-from fits.workflows.engines.models import StepProfile
-from fits.workflows.engines.models import build_provenance_stamp
+from fits.environment.constant import StepName
+from fits.workflows.metadata.models import FitsMeta
 
 
-def test_step_profile_holds_distribution_and_step_name() -> None:
-    step_profile = StepProfile(distribution="io", step_name="convert")
-    assert step_profile.distribution == "io"
-    assert step_profile.step_name == "convert"
+def test_fits_metadata_records_run_and_step_provenance() -> None:
+    metadata = FitsMeta.init(user_name="ben").with_step(
+        step_name=StepName.CONVERT,
+        created_by="fits-io",
+        exported_channel="all",
+        params={"z_projection": "max"},)
 
-
-def test_build_provenance_stamp_contains_core_fields() -> None:
-    stamp = build_provenance_stamp("fits")
-    assert stamp["distribution"] == "fits"
-    assert "version" in stamp
-    assert "timestamp" in stamp
+    payload = metadata.to_dict()
+    assert payload["pipeline_meta"]["user_name"] == "ben"
+    assert payload["steps"][StepName.CONVERT]["created_by"] == "fits-io"
+    assert payload["steps"][StepName.CONVERT]["params"]["z_projection"] == "max"
+    assert payload["steps"][StepName.CONVERT]["version"]
+    assert payload["steps"][StepName.CONVERT]["timestamp"]

@@ -1,58 +1,26 @@
-from fits.workflows.engines.models import StepProfile
-from fits.workflows.metadata.builder import build_step_project_metadata
+from fits.environment.constant import StepName
+from fits.workflows.metadata.models import FitsMeta
 
 
-def test_build_step_project_metadata_creates_pipeline_and_step_blocks() -> None:
-    profile = StepProfile(distribution="fits", step_name="convert")
+def test_fits_metadata_adds_shared_step_parameters() -> None:
+    metadata = FitsMeta.init(user_name="ben").with_step(
+        step_name=StepName.BG_SUB,
+        created_by="bg-sub",
+        exported_channel="all",
+        params={"sigma": 2.0},)
 
-    out = build_step_project_metadata(
-        existing_project_metadata=None,
-        step_profile=profile,
-        user_name="ben",
-        step_metadata={"z_projection": "max"},
-    )
-
-    assert out["pipeline"]["distribution"] == "fits"
-    assert out["pipeline"]["user_name"] == "ben"
-    assert "version" in out["pipeline"]
-    assert "convert" in out["steps"]
-    assert out["steps"]["convert"]["distribution"] == "fits"
-    assert out["steps"]["convert"]["z_projection"] == "max"
-    assert "timestamp" in out["steps"]["convert"]
+    step = metadata.to_dict()["steps"][StepName.BG_SUB]
+    assert step["params"] == {"sigma": 2.0}
+    assert step["channels"] == {}
 
 
-def test_build_step_project_metadata_merges_channel_metadata() -> None:
-    profile = StepProfile(distribution="fits", step_name="bg_sub")
-    existing = {
-        "steps": {
-            "bg_sub": {
-                "channels": {
-                    "GFP": {"radius": 5}
-                }
-            }
-        }
-    }
+def test_fits_metadata_adds_selected_channel_parameters() -> None:
+    metadata = FitsMeta.init().with_step(
+        step_name=StepName.SEGMENT,
+        created_by="cellpose-kit",
+        exported_channel=[1, 2],
+        params={"diameter": 30},)
 
-    out = build_step_project_metadata(
-        existing_project_metadata=existing,
-        step_profile=profile,
-        user_name="ben",
-        channel_metadata={"GFP": {"sigma": 2.0}, "RFP": {"radius": 3}},
-    )
-
-    channels = out["steps"]["bg_sub"]["channels"]
-    assert channels["GFP"] == {"radius": 5, "sigma": 2.0}
-    assert channels["RFP"] == {"radius": 3}
-
-
-def test_build_step_project_metadata_uses_fixed_pipeline_distribution() -> None:
-    profile = StepProfile(distribution="fits-io", step_name="convert")
-
-    out = build_step_project_metadata(
-        existing_project_metadata=None,
-        step_profile=profile,
-        user_name="ben",
-    )
-
-    assert out["pipeline"]["distribution"] == "fits"
-    assert out["steps"]["convert"]["distribution"] == "fits-io"
+    channels = metadata.to_dict()["steps"][StepName.SEGMENT]["channels"]
+    assert channels["1"]["diameter"] == 30
+    assert channels["2"]["diameter"] == 30

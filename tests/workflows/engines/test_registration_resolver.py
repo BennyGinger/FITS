@@ -9,7 +9,7 @@ def test_resolve_registration_plan_uses_context_preset() -> None:
     plan = resolve_registration_plan("linear_drift")
 
     assert plan.mode == "time"
-    assert plan.backend == "scikit"
+    assert plan.backend == "pystackreg"
     assert plan.method == "translation"
 
 

@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFileDialog
 
-from fits.environment.constant import StepName
+from fits.environment.constant import StepName, WORKFLOW_ORDER
 from fits.gui.settings_adapter import SettingsAdapter
 from fits.gui.window import FitsMainWindow, _user_error_message
 from fits.workflows.errors import StepExecutionError
@@ -21,7 +21,7 @@ def test_main_window_builds_all_steps_and_dynamic_editors() -> None:
     adapter = SettingsAdapter()
     window = FitsMainWindow(adapter)
 
-    assert window.step_tree.topLevelItemCount() == 7
+    assert window.step_tree.topLevelItemCount() == len(WORKFLOW_ORDER)
     assert set(window._editors) == set(StepName)
     assert window.runtime_editor is not None
     assert window.runtime_editor.widgets["execution"].isEnabled() is False

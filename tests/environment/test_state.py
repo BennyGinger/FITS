@@ -1,189 +1,139 @@
 from datetime import datetime
 from pathlib import Path
-import tempfile
 
 import pytest
 
+from fits.environment.constant import StepName
 from fits.environment.state import ExperimentState
 
 
-def test_init_stores_original_path_relative_to_workdir() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        original = workdir / "a.nd2"
-        s = ExperimentState.init(workdir, original)
+def test_init_stores_raw_artifact_relative_to_workdir(tmp_path: Path) -> None:
+    original = tmp_path / "a.nd2"
+    state = ExperimentState.init(tmp_path, original)
 
-        assert s.original_image_rel == Path("a.nd2")
-        assert s.original_image == original
-        assert s.updated_at is not None
+    assert state.artifacts["raw_image"] == Path("a.nd2")
+    assert state.original_image == original
+    assert state.updated_at is not None
 
 
-def test_init_allows_original_outside_workdir() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        outside = workdir.parent / "outside.nd2"
-        s = ExperimentState.init(workdir, outside)
+def test_init_allows_original_outside_workdir(tmp_path: Path) -> None:
+    workdir = tmp_path / "branch"
+    outside = tmp_path / "outside.nd2"
+    state = ExperimentState.init(workdir, outside)
 
-        assert s.original_image == outside.resolve()
-        assert s.original_image_rel.parts[0] == ".."
-
-
-def test_with_image_sets_relative_path_only() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        s1 = ExperimentState.init(workdir, workdir / "a.nd2")
-        out = workdir / "exp1" / "fits_array.tif"
-
-        s2 = s1.with_image(out)
-
-        assert s1 is not s2
-        assert s2.image_rel == Path("exp1/fits_array.tif")
-        assert s2.image == out.resolve()
-        assert s2.workdir == workdir
+    assert state.original_image == outside.resolve()
+    assert state.artifacts["raw_image"].parts[0] == ".."
 
 
-def test_with_masks_sets_relative_path() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        s1 = ExperimentState.init(workdir, workdir / "a.nd2")
-        masks = workdir / "exp1" / "fits_mask.tif"
+def test_with_complete_step_sets_artifact_and_is_immutable(tmp_path: Path) -> None:
+    state = ExperimentState.init(tmp_path, tmp_path / "a.nd2")
+    output = tmp_path / "nested" / "fits_array.tif"
 
-        s2 = s1.with_masks(masks)
+    updated = state.with_complete_step(
+        step_name=StepName.CONVERT,
+        artifact_kind="image",
+        artifact_path=output,
+    )
 
-        assert s2.masks_rel == Path("exp1/fits_mask.tif")
-        assert s2.masks == masks.resolve()
-
-
-def test_with_completed_step_is_idempotent_and_sets_last_step() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        s = ExperimentState.init(workdir, workdir / "a.nd2")
-        s = s.with_error("convert", "boom")
-
-        s1 = s.with_completed_step("convert")
-        s2 = s1.with_completed_step("convert")
-
-        assert s1.completed_steps == ("convert",)
-        assert s1.last_step == "convert"
-        assert s1.last_error is None
-        assert s2 == s1
+    assert updated is not state
+    assert "image" not in state.artifacts
+    assert updated.artifacts["image"] == Path("nested/fits_array.tif")
+    assert updated.artifact("image") == output.resolve()
+    assert updated.completed_steps == (StepName.CONVERT,)
+    assert updated.last_step == StepName.CONVERT
 
 
-def test_with_error_sets_tuple() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        s = ExperimentState.init(workdir, workdir / "a.nd2")
+def test_with_complete_step_is_idempotent_for_completion_name(tmp_path: Path) -> None:
+    state = ExperimentState.init(tmp_path, tmp_path / "a.nd2")
+    first = state.with_complete_step(
+        step_name=StepName.CONVERT,
+        artifact_kind="image",
+        artifact_path=tmp_path / "first.tif",
+    )
+    second = first.with_complete_step(
+        step_name=StepName.CONVERT,
+        artifact_kind="image",
+        artifact_path=tmp_path / "second.tif",
+    )
 
-        s2 = s.with_error("segment", "boom")
-
-        assert s2.last_error == ("segment", "boom")
-
-
-def test_series_index_is_derived_from_workdir_suffix() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        root = Path(tmpdir)
-        s_ok = ExperimentState.init(root / "a_s12", root / "a.nd2")
-        s_none = ExperimentState.init(root / "a_branch", root / "a.nd2")
-
-        assert s_ok.series_index == 12
-        assert s_none.series_index is None
+    assert second.completed_steps == (StepName.CONVERT,)
+    assert second.artifact("image") == (tmp_path / "second.tif").resolve()
 
 
-def test_workdir_relative_returns_relative_when_possible() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir)
-        workdir = run_dir / "a_s1"
-        s = ExperimentState.init(workdir, run_dir / "a.nd2")
+def test_with_complete_step_can_move_branch_workdir(tmp_path: Path) -> None:
+    state = ExperimentState.init(tmp_path, tmp_path / "a.nd2")
+    branch = tmp_path / "a_s1"
+    output = branch / "fits_array.tif"
 
-        assert s.workdir_relative(run_dir) == Path("a_s1")
-        assert s.workdir_relative(None) == workdir
+    updated = state.with_complete_step(
+        step_name=StepName.CONVERT,
+        artifact_kind="image",
+        artifact_path=output,
+        workdir=branch,
+    )
 
-
-def test_to_relative_and_absolute_helpers_roundtrip() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        target = workdir / "nested" / "result.tif"
-        rel = ExperimentState._to_relative(workdir, target)
-
-        s = ExperimentState.init(workdir, workdir / "a.nd2")
-        back = s._to_absolute(rel)
-
-        assert rel == Path("nested/result.tif")
-        assert back == target.resolve()
+    assert updated.workdir == branch
+    assert updated.original_image == (tmp_path / "a.nd2").resolve()
+    assert updated.artifacts["image"] == Path("fits_array.tif")
 
 
-def test_to_relative_accepts_outside_paths() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        outside = workdir.parent / "external.tif"
+def test_workdir_relative_returns_relative_when_possible(tmp_path: Path) -> None:
+    workdir = tmp_path / "a_s1"
+    state = ExperimentState.init(workdir, tmp_path / "a.nd2")
 
-        rel = ExperimentState._to_relative(workdir, outside)
-
-        assert rel.parts[0] == ".."
+    assert state.workdir_relative(tmp_path) == Path("a_s1")
+    assert state.workdir_relative(None) == workdir
 
 
-def test_to_json_roundtrip_and_alias_methods() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        image = workdir / "exp1" / "fits_array.tif"
-        image.parent.mkdir(parents=True, exist_ok=True)
-        image.touch()
+def test_path_helpers_roundtrip_and_accept_outside_paths(tmp_path: Path) -> None:
+    workdir = tmp_path / "branch"
+    target = workdir / "nested" / "result.tif"
+    outside = tmp_path / "external.tif"
+    state = ExperimentState.init(workdir, tmp_path / "a.nd2")
 
-        s = ExperimentState.init(workdir, workdir / "a.nd2")
-        s = s.with_image(image).with_completed_step("convert")
-
-        out_state = s.save()
-        saved_path = workdir / "experiment_state.json"
-
-        assert out_state == s
-        assert saved_path.exists()
-
-        loaded = ExperimentState.load(workdir)
-        assert loaded == s
-        assert isinstance(loaded.original_image_rel, Path)
-        assert isinstance(loaded.updated_at, datetime)
+    relative = ExperimentState._to_relative(workdir, target)
+    assert relative == Path("nested/result.tif")
+    assert state._to_absolute(relative) == target.resolve()
+    assert ExperimentState._to_relative(workdir, outside).parts[0] == ".."
 
 
-def test_from_json_raises_on_invalid_field_type() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        json_path = workdir / "experiment_state.json"
-        json_path.write_text(
-            """
-{
-  "original_image_rel": 10,
-  "image_rel": null,
-  "masks_rel": null,
-  "completed_steps": [],
-  "last_error": null,
-  "updated_at": null
-}
-""".strip(),
-            encoding="utf-8",
-        )
+def test_save_and_load_state_roundtrip(tmp_path: Path) -> None:
+    image = tmp_path / "fits_array.tif"
+    image.touch()
+    state = ExperimentState.init(tmp_path, tmp_path / "a.nd2").with_complete_step(
+        step_name=StepName.CONVERT,
+        artifact_kind="image",
+        artifact_path=image,
+    )
 
-        with pytest.raises(TypeError, match="original_image_rel must be a string path"):
-            ExperimentState._from_json(workdir)
+    assert state.save_state() is state
+    loaded = ExperimentState.load_state(tmp_path)
+
+    assert loaded == state
+    assert isinstance(loaded.artifacts["raw_image"], Path)
+    assert isinstance(loaded.updated_at, datetime)
 
 
-def test_to_json_atomic_cleanup_when_replace_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workdir = Path(tmpdir)
-        image = workdir / "exp1" / "fits_array.tif"
-        image.parent.mkdir(parents=True, exist_ok=True)
-        image.touch()
+def test_load_state_raises_on_invalid_artifact_path_type(tmp_path: Path) -> None:
+    (tmp_path / "experiment_state.json").write_text(
+        '{"artifacts": {"raw_image": 10}, "completed_steps": [], "updated_at": null, "meta": {}}',
+        encoding="utf-8",
+    )
 
-        state = ExperimentState.init(workdir, workdir / "a.nd2").with_image(image)
-        target = workdir / "experiment_state.json"
+    with pytest.raises(TypeError, match=r"artifacts\['raw_image'\] must be a string path"):
+        ExperimentState.load_state(tmp_path)
 
-        def fail_replace(_src: Path, _dst: Path) -> None:
-            raise OSError("replace failed")
 
-        monkeypatch.setattr("fits.environment.state.os.replace", fail_replace)
+def test_save_state_cleans_temporary_file_when_replace_fails(monkeypatch, tmp_path: Path) -> None:
+    state = ExperimentState.init(tmp_path, tmp_path / "a.nd2")
 
-        with pytest.raises(OSError, match="replace failed"):
-            state._to_json()
+    def fail_replace(_src: Path, _dst: Path) -> None:
+        raise OSError("replace failed")
 
-        leftovers = list(workdir.glob(".experiment_state.json.*.tmp"))
-        assert leftovers == []
-        assert not target.exists()
+    monkeypatch.setattr("fits.environment.state.os.replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        state.save_state()
+
+    assert list(tmp_path.glob(".experiment_state.json.*.tmp")) == []
+    assert not (tmp_path / "experiment_state.json").exists()

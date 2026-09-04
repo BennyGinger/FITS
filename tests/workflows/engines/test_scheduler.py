@@ -8,17 +8,16 @@ import pytest
 
 from fits.environment.state import ExperimentState
 from fits.workflows.engines.scheduler import (
-    _enabled_workflow_steps,
-    _next_enabled_step,
+    _resolve_runtime_steps,
     run_workflow_scheduler,
 )
 
 
-class DummyPbar:
-    def __enter__(self) -> DummyPbar:
+class DummyProgress:
+    def __enter__(self) -> "DummyProgress":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, *args: Any) -> None:
         return None
 
     def advance(self) -> None:
@@ -29,66 +28,74 @@ class DummyPbar:
 
 
 @dataclass
+class DummyProfile:
+    step_name: str
+
+
 class DummyStepSpec:
-    name: str
-    output_name: str
-    step_profile: Any
-    item_runner: Any
-    pool: str = 'cpu'
+    def __init__(self, name: str, runner: Any, pool: str = "cpu"):
+        self.profile = DummyProfile(name)
+        self.item_runner = runner
+        self.pool = pool
+        self.max_concurrency = None
 
     def model_validate(self, params: dict[str, Any]) -> dict[str, Any]:
         return dict(params)
 
 
-def test_enabled_workflow_steps_and_next_step_helpers() -> None:
-    enabled = _enabled_workflow_steps(
-        {
-            'convert': {'enabled': True},
-            'segment': {'enabled': False},
-        }
-    )
-
-    assert enabled == ['convert']
-    assert _next_enabled_step('convert', ['convert', 'segment']) == 'segment'
-    assert _next_enabled_step('segment', ['convert', 'segment']) is None
+def make_state() -> ExperimentState:
+    return ExperimentState.init(Path("/tmp"), Path("/tmp/a.nd2"))
 
 
-def test_run_workflow_scheduler_returns_input_when_no_steps_enabled(monkeypatch) -> None:
-    states = [ExperimentState.init(Path('/tmp'), Path('/tmp/a.nd2'))]
-    monkeypatch.setattr('fits.workflows.engines.scheduler.get_ctx', lambda: object())
+def test_resolve_runtime_steps_uses_enabled_workflow_order(monkeypatch) -> None:
+    spec = DummyStepSpec("convert", lambda *args: [])
+    monkeypatch.setattr(
+        "fits.workflows.engines.scheduler.WORKFLOW_ORDER",
+        ["convert", "segment"],)
+    monkeypatch.setattr(
+        "fits.workflows.engines.scheduler.REGISTRY", {"convert": spec})
 
+    resolved = _resolve_runtime_steps({
+        "convert": {"enabled": True, "params": {"overwrite": True}},
+        "segment": {"enabled": False},
+    })
+
+    assert len(resolved) == 1
+    assert resolved[0].spec is spec
+    assert resolved[0].settings == {"overwrite": True}
+
+
+def test_run_workflow_scheduler_returns_input_when_no_steps_enabled() -> None:
+    states = [make_state()]
     assert run_workflow_scheduler({}, states) == states
 
 
 def test_run_workflow_scheduler_runs_single_enabled_step(monkeypatch) -> None:
-    states = [ExperimentState.init(Path('/tmp'), Path('/tmp/a.nd2'))]
-    def runner(settings, exp_state, step_profile, output_name):
-        return [exp_state.with_completed_step(step_profile.step_name)]
+    def runner(settings, state, profile):
+        return [state.with_complete_step(
+            step_name=profile.step_name,
+            artifact_kind="image",
+            artifact_path=state.workdir / "fits_array.tif",)]
 
-    convert_spec = DummyStepSpec(
-        name='convert',
-        output_name='fits_array.tif',
-        step_profile=type('StepProfile', (), {'step_name': 'convert'})(),
-        item_runner=runner,
-        pool='cpu',
-    )
+    spec = DummyStepSpec("convert", runner)
+    monkeypatch.setattr(
+        "fits.workflows.engines.scheduler.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr(
+        "fits.workflows.engines.scheduler.REGISTRY", {"convert": spec})
+    monkeypatch.setattr(
+        "fits.workflows.engines.scheduler.pbar",
+        lambda **kwargs: DummyProgress(),)
 
-    monkeypatch.setattr('fits.workflows.engines.scheduler.cst.WORKFLOW_ORDER', ['convert'])
-    monkeypatch.setattr('fits.workflows.engines.scheduler.REGISTRY', {'convert': convert_spec})
-    monkeypatch.setattr('fits.workflows.engines.scheduler.get_ctx', lambda: object())
-    monkeypatch.setattr('fits.workflows.engines.scheduler.pbar', lambda **kwargs: DummyPbar())
+    result = run_workflow_scheduler(
+        {"convert": {"enabled": True, "params": {}}}, [make_state()])
 
-    out = run_workflow_scheduler({'convert': {'enabled': True, 'params': {}}}, states)
-
-    assert [state.last_step for state in out] == ['convert']
+    assert result[0].last_step == "convert"
 
 
-def test_run_workflow_scheduler_rejects_missing_enabled_registry_step(monkeypatch) -> None:
-    states = [ExperimentState.init(Path('/tmp'), Path('/tmp/a.nd2'))]
+def test_resolve_runtime_steps_rejects_missing_registry_step(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "fits.workflows.engines.scheduler.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fits.workflows.engines.scheduler.REGISTRY", {})
 
-    monkeypatch.setattr('fits.workflows.engines.scheduler.cst.WORKFLOW_ORDER', ['convert'])
-    monkeypatch.setattr('fits.workflows.engines.scheduler.REGISTRY', {})
-    monkeypatch.setattr('fits.workflows.engines.scheduler.get_ctx', lambda: object())
-
-    with pytest.raises(ValueError, match='missing from workflow registry'):
-        run_workflow_scheduler({'convert': {'enabled': True, 'params': {}}}, states)
+    with pytest.raises(ValueError, match="missing from the registry"):
+        _resolve_runtime_steps({"convert": {"enabled": True}})

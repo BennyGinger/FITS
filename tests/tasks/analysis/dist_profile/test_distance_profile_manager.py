@@ -56,7 +56,7 @@ def test_manager_projects_z_and_builds_heatmap_ready_table(
     state = ExperimentState(
         workdir=tmp_path,
         artifacts={ARTI_IMG: image_path},)
-    settings = DistanceProfileSettings(bin_width=2)
+    settings = DistanceProfileSettings(bin_width=2, frame_workers=1)
 
     result = DistanceProfileManager(state, settings).calculate()
 

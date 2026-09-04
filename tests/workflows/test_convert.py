@@ -1,195 +1,110 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tempfile
+from types import SimpleNamespace
+from typing import Any
+import importlib
 
+import numpy as np
 import pytest
 
+from fits.environment.constant import StepName
 from fits.environment.state import ExperimentState
-from fits.environment.runtime import get_ctx
-from fits.workflows.engines.models import StepProfile
-from fits.workflows.engines.run_decision import RunDecision
 from fits.settings.models import ConvertSettings
-from fits.tasks.convert import run_convert, run_convert
+from fits.tasks.convert import convert
+from fits.workflows.engines.registry import REGISTRY
+from fits.workflows.errors import StepExecutionError
 
 
-class DummyReader:
-    def __init__(self, save_paths: list[Path]):
-        self._save_paths = save_paths
-        self.convert_calls: list[dict] = []
-
-    def convert_to_fits(self, **payload: dict) -> list[Path]:
-        self.convert_calls.append(payload)
-        return self._save_paths
+convert_module = importlib.import_module("fits.tasks.convert")
 
 
-class DummyPbar:
-    def __enter__(self) -> DummyPbar:
-        return self
+class DummySeriesReader:
+    def __init__(self, output_path: Path) -> None:
+        self.output_path = output_path
+        self.prepare_calls: list[dict[str, Any]] = []
+        self.save_calls: list[dict[str, Any]] = []
 
-    def __exit__(self, exc_type, exc, tb) -> None:
-        return None
-
-    def advance(self) -> None:
-        return None
-
-
-def test_convert_one_builds_payload_and_branches(monkeypatch, DummyCtx_class) -> None:
-    step_profile = StepProfile(distribution="io", step_name="convert")
-    settings = ConvertSettings(overwrite=False, execution="serial", channel_labels=["GFP"])
-    output_name = "fits_array.tif"
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir)
-        in_path = run_dir / "in.nd2"
-        state = ExperimentState.init(run_dir, in_path)
-
-        monkeypatch.setattr(
-            "fits.workflows.convert.decide_run",
-            lambda *args, **kwargs: RunDecision(["convert"], [], ["convert"]),
-        )
-        monkeypatch.setattr(
-            "fits.workflows.convert.get_ctx",
-            lambda: DummyCtx_class(user_name="ben"),
+    def prepare_conversion(self, **kwargs: Any) -> SimpleNamespace:
+        self.prepare_calls.append(kwargs)
+        return SimpleNamespace(
+            array=np.ones((4, 4), dtype=np.uint16),
+            metadata=SimpleNamespace(),
+            output_path=self.output_path,
         )
 
-        seen = {}
-
-        def fake_build_step_project_metadata(*, existing_project_metadata, step_profile, user_name, step_metadata, channel_metadata):
-            seen["existing_project_metadata"] = existing_project_metadata
-            seen["user_name"] = user_name
-            seen["step_metadata"] = step_metadata
-            seen["step_name"] = step_profile.step_name
-            seen["channel_metadata"] = channel_metadata
-            return {"pipeline": {"distribution": "io"}, "steps": {"convert": {"k": 1}}}
-
-        monkeypatch.setattr(
-            "fits.workflows.convert.build_step_project_metadata",
-            fake_build_step_project_metadata,
-        )
-
-        dummy_reader = DummyReader(save_paths=[run_dir / "out_s1.tif", run_dir / "out_s2.tif"])
-
-        def fake_from_path(p: Path, channel_labels=None):
-            seen["from_path_arg"] = p
-            seen["channel_labels"] = channel_labels
-            return dummy_reader
-
-        monkeypatch.setattr(
-            "fits.workflows.convert.FitsIO.from_path",
-            fake_from_path,
-        )
-
-        out = run_convert(settings, state, step_profile, output_name)
-
-        assert seen["existing_project_metadata"] is None
-        assert seen["user_name"] == "ben"
-        assert seen["step_name"] == "convert"
-        assert seen["step_metadata"] is None
-        assert seen["channel_metadata"] is None
-        assert seen["from_path_arg"] == in_path
-        assert seen["channel_labels"] == ["GFP"]
-        assert len(dummy_reader.convert_calls) == 1
-        assert dummy_reader.convert_calls[0]["channel_labels"] == ["GFP"]
-        assert dummy_reader.convert_calls[0]["project_metadata"] == {"pipeline": {"distribution": "io"}, "steps": {"convert": {"k": 1}}}
-        assert [s.image for s in out] == [run_dir / "out_s1.tif", run_dir / "out_s2.tif"]
-        assert all(s.last_step == "convert" for s in out)
-        assert all(s.original_image == in_path for s in out)
+    def save_array(self, **kwargs: Any) -> Path:
+        self.save_calls.append(kwargs)
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.output_path.write_bytes(b"")
+        return self.output_path
 
 
-def test_convert_one_passes_step_metadata_only_when_custom_metadata_present(monkeypatch, DummyCtx_class) -> None:
-    step_profile = StepProfile(distribution="io", step_name="convert")
-    settings = ConvertSettings(
-        overwrite=False,
-        execution="serial",
-        channel_labels=["GFP"],
-        custom_metadata={"run_id": 42},
+class DummySource:
+    def __init__(self, series: list[DummySeriesReader]) -> None:
+        self.series = series
+        self.selection_calls: list[dict[str, Any]] = []
+        self.selection = object()
+
+    def resolve_channel_selection(self, **kwargs: Any) -> object:
+        self.selection_calls.append(kwargs)
+        return self.selection
+
+    def split_series(self) -> list[DummySeriesReader]:
+        return self.series
+
+
+def test_convert_builds_each_series_branch(monkeypatch, tmp_path: Path) -> None:
+    raw = tmp_path / "input.nd2"
+    raw.write_bytes(b"")
+    state = ExperimentState.init(tmp_path, raw)
+    series = [
+        DummySeriesReader(tmp_path / "series_1" / "fits_array.tif"),
+        DummySeriesReader(tmp_path / "series_2" / "fits_array.tif"),
+    ]
+    source = DummySource(series)
+    monkeypatch.setattr(convert_module, "decide_run", lambda *args: SimpleNamespace(is_complete=False))
+    monkeypatch.setattr(convert_module.FitsIO, "from_path", lambda path: source)
+
+    results = convert(
+        ConvertSettings(channel_labels=["GFP", "RFP"], export_channels=["RFP"], z_projection="max"),
+        state,
+        REGISTRY[StepName.CONVERT].profile,
     )
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir)
-        in_path = run_dir / "in.nd2"
-        state = ExperimentState.init(run_dir, in_path)
-
-        monkeypatch.setattr(
-            "fits.workflows.convert.decide_run",
-            lambda *args, **kwargs: RunDecision(["convert"], [], ["convert"]),
-        )
-        monkeypatch.setattr(
-            "fits.workflows.convert.get_ctx",
-            lambda: DummyCtx_class(user_name="ben"),
-        )
-
-        seen: dict[str, object] = {}
-
-        def fake_build_step_project_metadata(*, existing_project_metadata, step_profile, user_name, step_metadata, channel_metadata):
-            seen["step_metadata"] = step_metadata
-            return {"pipeline": {"distribution": "io"}, "steps": {"convert": {"k": 1}}}
-
-        monkeypatch.setattr(
-            "fits.workflows.convert.build_step_project_metadata",
-            fake_build_step_project_metadata,
-        )
-
-        dummy_reader = DummyReader(save_paths=[run_dir / "out_s1.tif"])
-        monkeypatch.setattr("fits.workflows.convert.FitsIO.from_path", lambda p, channel_labels=None: dummy_reader)
-
-        _ = run_convert(settings, state, step_profile, "fits_array.tif")
-
-        assert seen["step_metadata"] == {"custom_metadata": {"run_id": 42}}
+    assert source.selection_calls == [{"channel_labels": ["GFP", "RFP"], "export_channels": ["RFP"]}]
+    assert [result.artifact("image") for result in results] == [reader.output_path for reader in series]
+    assert all(result.last_step == StepName.CONVERT for result in results)
+    assert all(result.original_image == raw for result in results)
+    assert all(reader.prepare_calls[0]["selection"] is source.selection for reader in series)
+    assert all(reader.prepare_calls[0]["z_projection"] == "max" for reader in series)
+    assert all(reader.save_calls[0]["compression"] == "zlib" for reader in series)
 
 
-def test_run_convert_uses_executor_and_worker_context(monkeypatch, DummyCtx_class) -> None:
-    step_profile = StepProfile(distribution="io", step_name="convert")
-    settings = ConvertSettings(execution="serial", workers=3, ordered_execution=True)
-    states = [ExperimentState.init(Path("/tmp"), Path("/tmp/a.nd2"))]
-    seen: dict[str, object] = {}
-
+def test_convert_skips_completed_step(monkeypatch, tmp_path: Path) -> None:
+    raw = tmp_path / "input.nd2"
+    raw.write_bytes(b"")
+    state = ExperimentState.init(tmp_path, raw)
+    monkeypatch.setattr(convert_module, "decide_run", lambda *args: SimpleNamespace(is_complete=True))
     monkeypatch.setattr(
-        "fits.workflows.convert.get_ctx",
-        lambda: DummyCtx_class(user_name="ben"),
+        convert_module.FitsIO,
+        "from_path",
+        lambda path: (_ for _ in ()).throw(AssertionError("reader should not be opened")),
     )
 
+    assert convert(ConvertSettings(), state, REGISTRY[StepName.CONVERT].profile) == [state]
+
+
+def test_convert_wraps_conversion_errors(monkeypatch, tmp_path: Path) -> None:
+    raw = tmp_path / "input.nd2"
+    raw.write_bytes(b"")
+    state = ExperimentState.init(tmp_path, raw)
+    monkeypatch.setattr(convert_module, "decide_run", lambda *args: SimpleNamespace(is_complete=False))
     monkeypatch.setattr(
-        "fits.workflows.convert.pbar",
-        lambda **kwargs: DummyPbar(),
+        convert_module.FitsIO,
+        "from_path",
+        lambda path: (_ for _ in ()).throw(ValueError("unsupported image")),
     )
 
-    def fake_convert_one(settings, exp_state, step_profile, output_name):
-        seen["worker_user"] = get_ctx().user_name
-        seen["output_name"] = output_name
-        return [exp_state.with_completed_step(step_profile.step_name)]
-
-    monkeypatch.setattr("fits.workflows.convert.convert_one", fake_convert_one)
-
-    def fake_execute(items, worker, *, mode, workers, ordered):
-        seen["mode"] = mode
-        seen["workers"] = workers
-        seen["ordered"] = ordered
-        for item in items:
-            yield worker(item)
-
-    monkeypatch.setattr("fits.workflows.convert.execute", fake_execute)
-
-    out = run_convert(settings, states, step_profile, "fits_array.tif")
-
-    assert seen == {
-        "mode": "serial",
-        "workers": 3,
-        "ordered": True,
-        "worker_user": "ben",
-        "output_name": "fits_array.tif",
-    }
-    assert [state.last_step for state in out] == ["convert"]
-
-
-def test_run_convert_raises_when_ctx_missing(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "fits.workflows.convert.get_ctx",
-        lambda: (_ for _ in ()).throw(RuntimeError("ExecutionContext is not set. Call with use_ctx(ctx): ...")),
-    )
-
-    with pytest.raises(RuntimeError):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            run_dir = Path(tmpdir)
-            run_convert(ConvertSettings(), [ExperimentState.init(run_dir, run_dir / "in.nd2")], StepProfile("io", "convert"), "fits_array.tif")
+    with pytest.raises(StepExecutionError, match="unsupported image"):
+        convert(ConvertSettings(), state, REGISTRY[StepName.CONVERT].profile)

@@ -430,10 +430,14 @@ class DistanceProfileSettings(SettingsModel):
     Attributes:
         bin_width: Width of each distance bin in pixels.
         maximum_bins: Optional maximum number of distance bins to retain.
+        frame_workers: Bioimagequant processes used to profile independent
+            reference frames within one experiment.
     """
 
     bin_width: float = Field(default=5.0, gt=0)
     maximum_bins: int | None = Field(default=None, ge=1)
+    execution: ExecMode = Field(default="serial", exclude=True)
+    frame_workers: int = Field(default=8, ge=1, exclude=True)
 
     @field_validator("maximum_bins", mode="before")
     @classmethod

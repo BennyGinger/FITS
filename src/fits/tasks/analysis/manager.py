@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
+from typing import Any
+
 from fits_io import FitsIO
 import numpy as np
+from numpy.typing import NDArray
 
 from fits.environment.constant import (
     ARTI_IMG,
@@ -15,6 +18,20 @@ from fits.environment.state import ExperimentState
 
 
 logger = logging.getLogger(__name__)
+
+
+def project_z(array: NDArray[Any],
+              axes: str,
+              *,
+              mask: bool,
+              ) -> tuple[NDArray[Any], str]:
+    """Project Z with maximum intensity or logical mask inclusion."""
+    if "Z" not in axes:
+        return array, axes
+    z_axis = axes.index("Z")
+    projected = (np.any(array, axis=z_axis)
+                 if mask else np.max(array, axis=z_axis))
+    return projected, axes.replace("Z", "")
 
 
 @dataclass

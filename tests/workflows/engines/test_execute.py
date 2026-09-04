@@ -4,141 +4,106 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+import pytest
+
 from fits.environment.state import ExperimentState
-from fits.workflows.execute import (
-    first_effective_overwrite_step,
-    apply_overwrite_cascade,
-    run_workflow,
-)
+from fits.settings.resolution import apply_overwrite_cascade
+from fits.workflows.execute import run_workflow
 
 
 @dataclass
 class DummySettings:
     value: int = 0
+    execution: str = "serial"
+    workers: int | None = None
+    ordered_execution: bool = False
 
 
 class DummyStepSpec:
     def __init__(self, name: str):
-        self.name = name
-        self.output_name = f"{name}_out"
-        self.distribution = "test"
-        self.step_profile = type("SP", (), {"step_name": name})()  # minimal shape
+        self.profile = type("Profile", (), {"step_name": name})()
         self.validate_calls: list[Mapping[str, Any]] = []
-        self.runner_calls: list[tuple[Any, list[ExperimentState], Any, str]] = []
+        self.runner_calls: list[tuple[DummySettings, ExperimentState, Any]] = []
 
     def model_validate(self, params: Mapping[str, Any]) -> DummySettings:
         self.validate_calls.append(params)
         return DummySettings(value=params.get("value", 0))
 
-    def batch_runner(self, settings: DummySettings, exp_states: list[ExperimentState], step_profile: Any, output_name: str):
-        self.runner_calls.append((settings, exp_states, step_profile, output_name))
-        return [st.with_completed_step(step_profile.step_name) for st in exp_states]
+    def item_runner(
+            self,
+            settings: DummySettings,
+            state: ExperimentState,
+            profile: Any,
+            ) -> list[ExperimentState]:
+        self.runner_calls.append((settings, state, profile))
+        return [state.with_complete_step(
+            step_name=profile.step_name,
+            artifact_kind="image",
+            artifact_path=state.workdir / f"{profile.step_name}.tif",)]
 
 
-def _state() -> ExperimentState:
+class DummyProgress:
+    def __enter__(self) -> "DummyProgress":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def advance(self) -> None:
+        return None
+
+
+def make_state() -> ExperimentState:
     run_dir = Path("/tmp")
     return ExperimentState.init(run_dir, run_dir / "a.nd2")
 
 
 def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
-    monkeypatch.setattr("fits.workflows.engines.execute.WORKFLOW_ORDER", ["convert", "other"])
-
     convert = DummyStepSpec("convert")
     other = DummyStepSpec("other")
-
+    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert", "other"])
     monkeypatch.setattr(
-        "fits.workflows.engines.execute.REGISTRY",
-        {"convert": convert, "other": other},
-    )
+        "fits.workflows.execute.REGISTRY", {"convert": convert, "other": other})
+    monkeypatch.setattr(
+        "fits.workflows.execute.pbar", lambda **kwargs: DummyProgress())
 
-    states = [_state()]
-
-    user_cfg = {
+    states = [make_state()]
+    result = run_workflow({
         "convert": {"enabled": True, "params": {"value": 1}},
         "other": {"enabled": True, "params": {"value": 2}},
-    }
+    }, states)
 
-    out = run_workflow(user_cfg, states)
-
-    # validate called with params
     assert convert.validate_calls == [{"value": 1}]
     assert other.validate_calls == [{"value": 2}]
-
-    # runners called in order
-    assert len(convert.runner_calls) == 1
-    assert len(other.runner_calls) == 1
-
-    # exp_states threaded through: second step receives output of first
-    (_, states_passed_to_convert, _, _) = convert.runner_calls[0]
-    (_, states_passed_to_other, _, _) = other.runner_calls[0]
-    assert states_passed_to_convert == states
-    assert all(st.last_step == "convert" for st in states_passed_to_other)
-
-    # final output has last step of final runner
-    assert [s.last_step for s in out] == ["other"]
+    assert convert.runner_calls[0][1] is states[0]
+    assert other.runner_calls[0][1].last_step == "convert"
+    assert result[0].last_step == "other"
 
 
-def test_run_workflow_skips_disabled_step(monkeypatch) -> None:
-    monkeypatch.setattr("fits.workflows.engines.execute.WORKFLOW_ORDER", ["convert"])
-    convert = DummyStepSpec("convert")
-    monkeypatch.setattr("fits.workflows.engines.execute.REGISTRY", {"convert": convert})
+def test_run_workflow_skips_disabled_or_missing_config(monkeypatch) -> None:
+    spec = DummyStepSpec("convert")
+    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fits.workflows.execute.REGISTRY", {"convert": spec})
+    states = [make_state()]
 
-    states = [_state()]
-    user_cfg = {"convert": {"enabled": False, "params": {"value": 1}}}
-
-    out = run_workflow(user_cfg, states)
-
-    assert out == states
-    assert convert.validate_calls == []
-    assert convert.runner_calls == []
+    assert run_workflow({}, states) == states
+    assert run_workflow({"convert": {"enabled": False}}, states) == states
+    assert spec.validate_calls == []
 
 
-def test_run_workflow_skips_missing_step_in_registry(monkeypatch) -> None:
-    monkeypatch.setattr("fits.workflows.engines.execute.WORKFLOW_ORDER", ["convert"])
-    monkeypatch.setattr("fits.workflows.engines.execute.REGISTRY", {})
+def test_run_workflow_rejects_enabled_step_missing_from_registry(monkeypatch) -> None:
+    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fits.workflows.execute.REGISTRY", {})
 
-    states = [_state()]
-    user_cfg = {"convert": {"enabled": True, "params": {"value": 1}}}
-
-    out = run_workflow(user_cfg, states)
-    assert out == states
+    with pytest.raises(ValueError, match="missing from the registry"):
+        run_workflow({"convert": {"enabled": True}}, [make_state()])
 
 
-def test_run_workflow_default_user_cfg_when_step_missing(monkeypatch) -> None:
-    monkeypatch.setattr("fits.workflows.engines.execute.WORKFLOW_ORDER", ["convert"])
-    convert = DummyStepSpec("convert")
-    monkeypatch.setattr("fits.workflows.engines.execute.REGISTRY", {"convert": convert})
-
-    states = [_state()]
-    user_cfg = {}
-
-    out = run_workflow(user_cfg, states)
-
-    assert out == states
-    assert convert.validate_calls == []
-    assert convert.runner_calls == []
-
-
-def test_resolve_effective_workflow_cfg_cascades_overwrite() -> None:
-    resolved = apply_overwrite_cascade(
-        {
-            "convert": {"enabled": True, "params": {"overwrite": True}},
-            "segment": {"enabled": True, "params": {}},
-        },
-        ["convert", "segment"],
-    )
+def test_apply_overwrite_cascade_propagates_downstream() -> None:
+    resolved = apply_overwrite_cascade({
+        "convert": {"enabled": True, "params": {"overwrite": True}},
+        "segment": {"enabled": True, "params": {}},
+    }, ["convert", "segment"])
 
     assert resolved["convert"]["params"]["overwrite"] is True
     assert resolved["segment"]["params"]["overwrite"] is True
-
-
-def test_first_effective_overwrite_step_returns_first_enabled_overwrite() -> None:
-    step = first_effective_overwrite_step(
-        {
-            "convert": {"enabled": False, "params": {"overwrite": True}},
-            "segment": {"enabled": True, "params": {"overwrite": True}},
-        },
-        ["convert", "segment"],
-    )
-
-    assert step == "segment"

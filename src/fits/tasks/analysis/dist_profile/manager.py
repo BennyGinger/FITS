@@ -10,7 +10,7 @@ import pandas as pd
 from bioimagequant import DistanceProfiler
 
 from fits.settings.models import DistanceProfileSettings
-from fits.tasks.analysis.manager import AnalysisManager
+from fits.tasks.analysis.manager import AnalysisManager, project_z
 from fits.tasks.reference_mask.artifact import load_reference_artifact
 from fits.tasks.roi_mask.artifact import load_roi_artifact
 
@@ -30,7 +30,7 @@ class DistanceProfileManager(AnalysisManager):
         source = np.asarray(loaded.array)
         source_axes = loaded.axes
         source_channels = tuple(reader.channel_labels)
-        image, image_axes = _project_z(source, source_axes, mask=False)
+        image, image_axes = project_z(source, source_axes, mask=False)
         z_projection = "max" if "Z" in source_axes else None
         if z_projection is not None:
             logger.info(
@@ -54,7 +54,7 @@ class DistanceProfileManager(AnalysisManager):
                 source_channels=source_channels,)
             compact, axes = _compact_mask_channels(
                 reference, source_axes, source_channels, channels)
-            projected, axes = _project_z(compact != 0, axes, mask=True)
+            projected, axes = project_z(compact != 0, axes, mask=True)
             profiler.add_ref(
                 projected, axes, name=name, channel_labels=channels)
 
@@ -67,13 +67,14 @@ class DistanceProfileManager(AnalysisManager):
                 source_channels=source_channels,)
             compact, axes = _compact_mask_channels(
                 roi, source_axes, source_channels, channels)
-            projected, axes = _project_z(compact >= 3, axes, mask=True)
+            projected, axes = project_z(compact >= 3, axes, mask=True)
             profiler.add_roi(
                 projected, axes, name=name, channel_labels=channels)
 
         dataframe = profiler.calculate(
             bin_width=self.settings.bin_width,
-            maximum_bins=self.settings.maximum_bins,)
+            maximum_bins=self.settings.maximum_bins,
+            workers=self.settings.frame_workers,)
         dataframe.insert(0, "experiment_id", self.state.experiment_id)
         roi_channel_position = dataframe.columns.get_loc("roi_channel")
         if not isinstance(roi_channel_position, (int, np.integer)):
@@ -96,17 +97,3 @@ def _compact_mask_channels(mask: NDArray[Any],
     if len(indices) == 1:
         return np.take(mask, indices[0], axis=channel_axis), axes.replace("C", "")
     return np.take(mask, indices, axis=channel_axis), axes
-
-
-def _project_z(array: NDArray[Any],
-               axes: str,
-               *,
-               mask: bool,
-               ) -> tuple[NDArray[Any], str]:
-    """Apply FITS' automatic 2D policy while preserving all other axes."""
-    if "Z" not in axes:
-        return array, axes
-    z_axis = axes.index("Z")
-    projected = (np.any(array, axis=z_axis)
-                 if mask else np.max(array, axis=z_axis))
-    return projected, axes.replace("Z", "")

@@ -1,25 +1,15 @@
-from fits.workflows.metadata.merge import merge_step_metadata
+from fits.environment.constant import StepName
+from fits.workflows.metadata.models import StepsMetadata
 
 
-def test_merge_step_metadata_merges_channel_subkeys() -> None:
-    existing = {
-        "channels": {
-            "GFP": {"method": "a", "radius": 5},
-            "RFP": {"method": "b"},
-        },
-        "settings_hash": "old",
-    }
-    update = {
-        "channels": {
-            "GFP": {"radius": 7, "sigma": 2.0},
-            "DAPI": {"method": "c"},
-        },
-        "settings_hash": "new",
-    }
+def test_step_metadata_preserves_existing_channels_when_updated() -> None:
+    metadata = StepsMetadata.create(
+        step_name=StepName.SEGMENT,
+        created_by="cellpose-kit",
+        exported_channel=[0],
+        params={"diameter": 20},)
+    updated = metadata.with_params(
+        exported_channel=[1], params={"diameter": 30})
 
-    out = merge_step_metadata(existing, update)
-
-    assert out["settings_hash"] == "new"
-    assert out["channels"]["GFP"] == {"method": "a", "radius": 7, "sigma": 2.0}
-    assert out["channels"]["RFP"] == {"method": "b"}
-    assert out["channels"]["DAPI"] == {"method": "c"}
+    assert updated.channels["0"].params == {"diameter": 20}
+    assert updated.channels["1"].params == {"diameter": 30}

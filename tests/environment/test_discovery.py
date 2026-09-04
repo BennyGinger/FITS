@@ -4,9 +4,22 @@ import tempfile
 
 import pytest
 
-from fits.environment.discovery import collect_supported_files, _find_fits_outputs, discover_saved_states
+from fits.environment.discovery import collect_supported_files, discover_saved_states
 from fits.environment.state import ExperimentState
-from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_SEG
+from fits.environment.constant import StepName
+
+
+def _saved_state(workdir: Path, raw: Path) -> ExperimentState:
+    image = workdir / "fits_array.tif"
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.touch()
+    state = ExperimentState.init(workdir, raw).with_complete_step(
+        step_name=StepName.CONVERT,
+        artifact_kind="image",
+        artifact_path=image,
+    )
+    state.save_state()
+    return state
 
 
 def test_collect_supported_files_recursive_and_filters(tmp_path: Path, touch) -> None:
@@ -36,47 +49,19 @@ def test_collect_supported_files_extension_is_case_insensitive(tmp_path: Path, t
     assert set(out) == {a, b}
 
 
-def test_find_fits_outputs_finds_expected_names_recursively(tmp_path: Path, touch) -> None:
-    a = touch(tmp_path / FITS_ARRAY_NAME)
-    b = touch(tmp_path / "sub" / FITS_MASK_SEG)
-    touch(tmp_path / "sub" / "other.tif")
-
-    out = _find_fits_outputs(tmp_path)
-
-    assert set(out) == {a, b}
-    assert out == sorted(out)
-
-
-def test_find_fits_outputs_does_not_match_similar_names(tmp_path: Path, touch) -> None:
-    touch(tmp_path / (FITS_ARRAY_NAME.replace(".tif", "_copy.tif")))
-    touch(tmp_path / f"copy_{FITS_MASK_SEG}")
-    out = _find_fits_outputs(tmp_path)
-    assert out == []
-
-
 def test_discover_saved_states_loads_all_valid_states() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         run_dir = Path(tmpdir)
         raw = run_dir / "a.nd2"
         raw.touch()
 
-        s1 = (
-            ExperimentState.init(run_dir / "a_s1", raw)
-            .with_image(run_dir / "a_s1" / "fits_array.tif")
-            .with_completed_step("convert")
-        )
-        s2 = (
-            ExperimentState.init(run_dir / "a_s2", raw)
-            .with_image(run_dir / "a_s2" / "fits_array.tif")
-            .with_completed_step("convert")
-        )
-        s1._to_json()
-        s2._to_json()
+        s1 = _saved_state(run_dir / "a_s1", raw)
+        s2 = _saved_state(run_dir / "a_s2", raw)
 
         loaded = discover_saved_states(run_dir)
 
         assert len(loaded) == 2
-        assert {state.series_index for state in loaded} == {1, 2}
+        assert {state.workdir.name for state in loaded} == {"a_s1", "a_s2"}
         assert {state.original_image for state in loaded} == {raw.resolve()}
 
 
@@ -86,8 +71,7 @@ def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCa
         valid_raw = run_dir / "a.nd2"
         valid_raw.touch()
 
-        valid_state = ExperimentState.init(run_dir / "a_s1", valid_raw).with_image(run_dir / "a_s1" / "fits_array.tif")
-        valid_state._to_json()
+        _saved_state(run_dir / "a_s1", valid_raw)
 
         bad_workdir = run_dir / "broken"
         bad_workdir.mkdir(parents=True, exist_ok=True)

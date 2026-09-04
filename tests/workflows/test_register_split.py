@@ -1,32 +1,41 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
-import tempfile
 
 import numpy as np
+import pytest
 
-import fits.environment.constant as cst
+from fits.environment.constant import StepName
 from fits.environment.state import ExperimentState
 from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
+from fits.tasks.registration.register_channel import register_channel
+from fits.tasks.registration.register_time import register_time
 from fits.workflows.engines.registry import REGISTRY
-from fits.workflows.engines.run_decision import RunDecision
-from fits.workflows.engines.models import StepProfile
-from fits.tasks.registration.register_channel import register_channel_one
-from fits.tasks.registration.register_time import register_time_one
 
 
 class DummyReader:
-    def __init__(self, *, channel_labels: list[str] | None = None, fits_metadata: dict[str, Any] | None = None) -> None:
-        self.channel_labels = channel_labels
-        self.fits_metadata = fits_metadata or {}
+    def __init__(self, array: np.ndarray, axes: str, output_path: Path) -> None:
+        self.array = array
+        self.axes = axes
+        self.output_path = output_path
+        self.channel_labels = ["GFP", "RFP"] if "C" in axes else None
         self.save_calls: list[dict[str, Any]] = []
 
+    def get_array(self) -> SimpleNamespace:
+        return SimpleNamespace(array=self.array, axes=self.axes)
+
+    def resolve_channel_positions(self, channel: int | str) -> list[int]:
+        if isinstance(channel, int):
+            return [channel]
+        assert self.channel_labels is not None
+        return [self.channel_labels.index(channel)]
+
     def save_array(self, array: np.ndarray, **kwargs: Any) -> Path:
-        payload = {"array": array}
-        payload.update(kwargs)
-        self.save_calls.append(payload)
-        return Path("/tmp/fits_array.tif")
+        self.save_calls.append({"array": array, **kwargs})
+        self.output_path.write_bytes(b"")
+        return self.output_path
 
 
 class DummyRegisterModel:
@@ -36,170 +45,96 @@ class DummyRegisterModel:
         self.fit_channel_calls: list[dict[str, Any]] = []
         self.apply_calls: list[dict[str, Any]] = []
 
-    def fit_time(self, **kwargs: Any) -> DummyRegisterModel:
-        self.fit_time_calls.append(dict(kwargs))
-        return self
+    def fit_time(self, **kwargs: Any) -> None:
+        self.fit_time_calls.append(kwargs)
 
-    def fit_channel(self, **kwargs: Any) -> DummyRegisterModel:
-        self.fit_channel_calls.append(dict(kwargs))
-        return self
+    def fit_channel(self, **kwargs: Any) -> None:
+        self.fit_channel_calls.append(kwargs)
 
     def apply(self, **kwargs: Any) -> np.ndarray:
-        self.apply_calls.append(dict(kwargs))
-        return kwargs["array"]
+        self.apply_calls.append(kwargs)
+        return kwargs["array"] + 1
+
+
+def _image_state(tmp_path: Path) -> ExperimentState:
+    raw = tmp_path / "raw.nd2"
+    image = tmp_path / "fits_array.tif"
+    raw.write_bytes(b"")
+    image.write_bytes(b"")
+    return ExperimentState.init(tmp_path, raw).with_complete_step(
+        step_name=StepName.CONVERT,
+        artifact_kind="image",
+        artifact_path=image,
+    )
 
 
 def test_register_time_settings_rejects_channel_context() -> None:
-    try:
+    with pytest.raises(Exception, match="linear_drift"):
         RegisterTimeSettings(context="channel_shift")
-        assert False, "Expected context validation error"
-    except Exception as e:
-        assert "not a time-wise" in str(e)
 
 
 def test_register_channel_settings_rejects_time_context() -> None:
-    try:
+    with pytest.raises(Exception, match="channel_shift"):
         RegisterChannelSettings(context="linear_drift")
-        assert False, "Expected context validation error"
-    except Exception as e:
-        assert "not a channel-wise" in str(e)
 
 
-def test_register_time_requires_fit_channel_on_multichannel(monkeypatch) -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir)
-        image_path = run_dir / "fits_array.tif"
-        image_path.write_bytes(b"")
-        state = ExperimentState.init(run_dir, run_dir / "raw.nd2").with_image(image_path)
-        reader = DummyReader(channel_labels=["GFP", "RFP"])
-        model = DummyRegisterModel("scikit")
+def test_register_time_resolves_fit_channel_and_saves(monkeypatch, tmp_path: Path) -> None:
+    reader = DummyReader(np.ones((3, 2, 4, 4), dtype=np.uint16), "TCYX", tmp_path / "fits_array.tif")
+    model = DummyRegisterModel("pystackreg")
+    monkeypatch.setattr("fits.tasks.registration.register_time.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.registration.register_time.decide_run", lambda *args: SimpleNamespace(is_complete=False))
+    monkeypatch.setattr("fits.tasks.registration.register_time.RegisterModel", lambda backend: model)
 
-        monkeypatch.setattr("fits.workflows.register_time.get_ctx", lambda: type("Ctx", (), {"user_name": "ben", "run_dir": run_dir})())
-        monkeypatch.setattr("fits.workflows.register_time.FitsIO.from_path", lambda path: reader)
-        monkeypatch.setattr("fits.workflows.register_time.decide_run", lambda *args, **kwargs: RunDecision(["register_time"], [], ["register_time"]))
-        monkeypatch.setattr("fits.workflows.register_time.get_array", lambda *_: (np.ones((2, 2, 4, 4), dtype=np.uint16), "TCYX"))
-        monkeypatch.setattr("fits.workflows.register_time.RegisterModel", lambda backend: model)
-        monkeypatch.setattr("fits.workflows.register_time.load_project_metadata_from_reader", lambda _reader: None)
+    results = register_time(
+        RegisterTimeSettings(context="linear_drift", fit_channel="RFP"),
+        _image_state(tmp_path),
+        REGISTRY[StepName.REGISTER_TIME].profile,
+    )
 
-        out = register_time_one(
-            RegisterTimeSettings(context="linear_drift", fit_channel=None, execution="serial"),
-            state,
-            StepProfile(distribution="stackalign", step_name="register_time"),
-            "fits_array.tif",
-        )
-
-        assert out.last_error is not None
-        assert out.last_error[0] == "register_time"
-        assert "fit_channel" in out.last_error[1]
+    assert results[0].last_step == StepName.REGISTER_TIME
+    assert model.backend == "pystackreg"
+    assert model.fit_time_calls[0]["fit_channel"] == 1
+    assert model.fit_time_calls[0]["axes"] == "TCYX"
+    assert np.all(reader.save_calls[0]["array"] == 2)
 
 
-def test_register_channel_excludes_before_fit_and_resolves_reference_locally(monkeypatch) -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir)
-        image_path = run_dir / "fits_array.tif"
-        image_path.write_bytes(b"")
-        state = ExperimentState.init(run_dir, run_dir / "raw.nd2").with_image(image_path)
-        reader = DummyReader(channel_labels=["GFP", "RFP", "BF"])
-        input_array = np.stack(
-            [
-                np.full((4, 4), 1, dtype=np.uint16),
-                np.full((4, 4), 5, dtype=np.uint16),
-                np.full((4, 4), 9, dtype=np.uint16),
-            ],
-            axis=0,
-        )
+def test_register_channel_resolves_reference_and_saves(monkeypatch, tmp_path: Path) -> None:
+    reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), "CYX", tmp_path / "fits_array.tif")
+    model = DummyRegisterModel("cv2")
+    monkeypatch.setattr("fits.tasks.registration.register_channel.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.registration.register_channel.decide_run", lambda *args: SimpleNamespace(is_complete=False))
+    monkeypatch.setattr("fits.tasks.registration.register_channel.RegisterModel", lambda backend: model)
 
-        class AddTenModel(DummyRegisterModel):
-            def apply(self, **kwargs: Any) -> np.ndarray:
-                self.apply_calls.append(dict(kwargs))
-                return kwargs["array"] + 10
+    results = register_channel(
+        RegisterChannelSettings(context="channel_shift", reference_channel="RFP"),
+        _image_state(tmp_path),
+        REGISTRY[StepName.REGISTER_CHANNEL].profile,
+    )
 
-        model = AddTenModel("cv2")
-
-        monkeypatch.setattr("fits.workflows.register_channel.get_ctx", lambda: type("Ctx", (), {"user_name": "ben", "run_dir": run_dir})())
-        monkeypatch.setattr("fits.workflows.register_channel.FitsIO.from_path", lambda path: reader)
-        monkeypatch.setattr("fits.workflows.register_channel.decide_run", lambda *args, **kwargs: RunDecision(["register_channel"], [], ["register_channel"]))
-        monkeypatch.setattr("fits.workflows.register_channel.get_array", lambda *_: (input_array, "CYX"))
-        monkeypatch.setattr("fits.workflows.register_channel.RegisterModel", lambda backend: model)
-        monkeypatch.setattr("fits.workflows.register_channel.load_project_metadata_from_reader", lambda _reader: None)
-
-        out = register_channel_one(
-            RegisterChannelSettings(context="channel_shift", reference_channel="RFP", exclude_channel=["BF"], execution="serial"),
-            state,
-            StepProfile(distribution="stackalign", step_name="register_channel"),
-            "fits_array.tif",
-        )
-
-        assert out.last_step == "register_channel"
-        assert len(model.fit_channel_calls) == 1
-        # Fit happens on included subset only: GFP + RFP
-        assert model.fit_channel_calls[0]["array"].shape[0] == 2
-        # Local index in included labels ["GFP", "RFP"]
-        assert model.fit_channel_calls[0]["reference_channel"] == 1
-
-        saved = reader.save_calls[0]["array"]
-        # Included channels transformed
-        assert np.all(saved[0] == 11)
-        assert np.all(saved[1] == 15)
-        # Excluded BF unchanged
-        assert np.all(saved[2] == 9)
-
-        meta = reader.save_calls[0]["project_metadata"]["steps"]["register_channel"]
-        assert meta["resolved_reference_channel"] == 1
-        assert meta["included_channel_indices"] == [0, 1]
-        assert meta["included_channel_labels"] == ["GFP", "RFP"]
+    assert results[0].last_step == StepName.REGISTER_CHANNEL
+    assert model.backend == "cv2"
+    assert model.fit_channel_calls[0]["reference_channel"] == 1
+    assert model.fit_channel_calls[0]["axes"] == "CYX"
+    assert np.all(reader.save_calls[0]["array"] == 2)
 
 
-def test_register_time_and_channel_use_distinct_step_names_and_metadata_blocks(monkeypatch) -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        run_dir = Path(tmpdir)
-        image_path = run_dir / "fits_array.tif"
-        image_path.write_bytes(b"")
-        state = ExperimentState.init(run_dir, run_dir / "raw.nd2").with_image(image_path)
+def test_registration_steps_skip_when_complete(monkeypatch, tmp_path: Path) -> None:
+    state = _image_state(tmp_path)
+    reader = DummyReader(np.ones((4, 4), dtype=np.uint16), "YX", tmp_path / "fits_array.tif")
+    monkeypatch.setattr("fits.tasks.registration.register_channel.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.registration.register_channel.decide_run", lambda *args: SimpleNamespace(is_complete=True))
 
-        # register_time
-        time_reader = DummyReader(channel_labels=["GFP", "RFP"])
-        time_model = DummyRegisterModel("scikit")
-        monkeypatch.setattr("fits.workflows.register_time.get_ctx", lambda: type("Ctx", (), {"user_name": "ben", "run_dir": run_dir})())
-        monkeypatch.setattr("fits.workflows.register_time.FitsIO.from_path", lambda path: time_reader)
-        monkeypatch.setattr("fits.workflows.register_time.decide_run", lambda *args, **kwargs: RunDecision(["register_time"], [], ["register_time"]))
-        monkeypatch.setattr("fits.workflows.register_time.get_array", lambda *_: (np.ones((2, 2, 4, 4), dtype=np.uint16), "TCYX"))
-        monkeypatch.setattr("fits.workflows.register_time.RegisterModel", lambda backend: time_model)
-        monkeypatch.setattr("fits.workflows.register_time.load_project_metadata_from_reader", lambda _reader: None)
-
-        out_time = register_time_one(
-            RegisterTimeSettings(context="linear_drift", fit_channel="GFP", execution="serial"),
-            state,
-            StepProfile(distribution="stackalign", step_name="register_time"),
-            "fits_array.tif",
-        )
-
-        assert out_time.last_step == "register_time"
-        assert "register_time" in time_reader.save_calls[0]["project_metadata"]["steps"]
-
-        # register_channel
-        ch_reader = DummyReader(channel_labels=["GFP", "RFP"])
-        ch_model = DummyRegisterModel("cv2")
-        monkeypatch.setattr("fits.workflows.register_channel.get_ctx", lambda: type("Ctx", (), {"user_name": "ben", "run_dir": run_dir})())
-        monkeypatch.setattr("fits.workflows.register_channel.FitsIO.from_path", lambda path: ch_reader)
-        monkeypatch.setattr("fits.workflows.register_channel.decide_run", lambda *args, **kwargs: RunDecision(["register_channel"], [], ["register_channel"]))
-        monkeypatch.setattr("fits.workflows.register_channel.get_array", lambda *_: (np.ones((2, 4, 4), dtype=np.uint16), "CYX"))
-        monkeypatch.setattr("fits.workflows.register_channel.RegisterModel", lambda backend: ch_model)
-        monkeypatch.setattr("fits.workflows.register_channel.load_project_metadata_from_reader", lambda _reader: None)
-
-        out_channel = register_channel_one(
-            RegisterChannelSettings(context="channel_shift", reference_channel="GFP", execution="serial"),
-            state,
-            StepProfile(distribution="stackalign", step_name="register_channel"),
-            "fits_array.tif",
-        )
-
-        assert out_channel.last_step == "register_channel"
-        assert "register_channel" in ch_reader.save_calls[0]["project_metadata"]["steps"]
+    assert register_channel(
+        RegisterChannelSettings(), state, REGISTRY[StepName.REGISTER_CHANNEL].profile
+    ) == [state]
+    assert reader.save_calls == []
 
 
-def test_registry_exposes_register_time_and_register_channel_steps() -> None:
-    assert cst.STEP_REGISTER_TIME in REGISTRY
-    assert cst.STEP_REGISTER_CHANNEL in REGISTRY
-    assert REGISTRY[cst.STEP_REGISTER_TIME].name == cst.STEP_REGISTER_TIME
-    assert REGISTRY[cst.STEP_REGISTER_CHANNEL].name == cst.STEP_REGISTER_CHANNEL
+def test_registry_exposes_distinct_registration_steps() -> None:
+    time_spec = REGISTRY[StepName.REGISTER_TIME]
+    channel_spec = REGISTRY[StepName.REGISTER_CHANNEL]
+
+    assert time_spec.profile.step_name == StepName.REGISTER_TIME
+    assert channel_spec.profile.step_name == StepName.REGISTER_CHANNEL
+    assert time_spec.item_runner is register_time
+    assert channel_spec.item_runner is register_channel

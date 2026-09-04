@@ -137,6 +137,20 @@ pretrained_model = "general_2d"
 max_distance = 150.0
 
 # ============================
+# Distance profile
+# ============================
+[distance_profile]
+enabled = false
+
+[distance_profile.params]
+bin_width = 5.0 # Distance-bin width in pixels.
+maximum_bins = "None" # Maximum number of bins, or "None" to cover the complete region.
+overwrite = false
+execution = "thread" # serial | thread | process
+workers = "None" # "None" lets the executor select the worker count.
+# ordered_execution = false # Internal ordering control; not exposed in the GUI.
+
+# ============================
 # Quantification
 # ============================
 [extract]

@@ -10,7 +10,8 @@ from fits.settings.models import (BGSubSettings,
                                   RegisterTimeSettings, 
                                   SegmentSettings, 
                                   TrackSettings,
-                                  ExtractSettings)
+                                  ExtractSettings,
+                                  DistanceProfileSettings)
 from fits.workflows.engines.models import StepProfile, StepSpec
 from fits.tasks import (convert, 
                         segment, 
@@ -18,7 +19,8 @@ from fits.tasks import (convert,
                         register_channel, 
                         register_time,
                         track,
-                        extract)
+                        extract,
+                        run_distance_profile)
 
 
 REGISTRY: dict[str, StepSpec[Any]] = {
@@ -102,5 +104,17 @@ REGISTRY: dict[str, StepSpec[Any]] = {
         item_runner=extract,
         pool="cpu",
         max_concurrency=1
+    ),
+    StepName.DISTANCE_PROFILE: StepSpec(
+        profile=StepProfile(
+            step_name=StepName.DISTANCE_PROFILE,
+            distribution=cst.DIST_DISTANCE_PROFILE,
+            input_artifact=cst.ARTI_IMG,
+            output_artifact=cst.ARTI_DIST_PROF,
+            output_name=cst.FITS_DISTANCE_PROFILE_NAME,
+        ),
+        settings_model=DistanceProfileSettings,
+        item_runner=run_distance_profile,
+        pool="cpu",
     ),
     }

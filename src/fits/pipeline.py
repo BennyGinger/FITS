@@ -13,7 +13,7 @@ from fits.workflows.execute import run_workflow_scheduler_entry, run_workflow
 from fits.environment.discovery import collect_supported_files, assemble_experiment_states
 from fits.environment.log import configure_logging
 from fits.settings.loader import load_settings
-from fits.tasks import aggregate_quantification
+from fits.tasks import aggregate_distance_profiles, aggregate_quantification
 
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,7 @@ def start_pipeline(
 
     # --- aggregate quantification artifacts into a master Parquet file, only if needed ---
     aggregate_quantification(effective_cfg, final_states, run_dir)
+    aggregate_distance_profiles(effective_cfg, final_states, run_dir)
     
     logger.info("Pipeline finished with %d final experiment states", len(final_states))
 

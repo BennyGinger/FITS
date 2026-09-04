@@ -23,7 +23,8 @@ dependencies = [
     "labelquant",
     "tomlkit>=0.15.1",
     "mask-interpolation",
-    "spatialprofile"
+    "spatialprofile",
+    "bioimagequant"
 ]
 
 [project.scripts]
@@ -46,6 +47,7 @@ members = [
     "labelquant",
     "mask_interpolation",
     "spatialprofile",
+    "bioimagequant",
 ]
 
 [tool.uv.sources]
@@ -58,6 +60,7 @@ stackalign = { workspace = true }
 labelquant = { workspace = true }
 mask-interpolation = { workspace = true }
 spatialprofile = { workspace = true }
+bioimagequant = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [

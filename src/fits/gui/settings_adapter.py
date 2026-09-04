@@ -92,6 +92,11 @@ STEP_LAYOUTS: dict[StepName, StepLayout] = {
         basic=("additional_properties", "overwrite"),
         advanced=("execution", "workers", "frame_workers"),
     ),
+    StepName.DISTANCE_PROFILE: StepLayout(
+        title="Distance profile",
+        basic=("bin_width", "maximum_bins", "overwrite"),
+        advanced=("execution", "workers"),
+    ),
 }
 
 
@@ -108,6 +113,8 @@ FIELD_LABELS: dict[str, str] = {
     "nuclear_channel": "Nuclear channel",
     "reference_frame": "Reference frame",
     "reference_strategy": "Reference strategy",
+    "bin_width": "Bin width (pixels)",
+    "maximum_bins": "Maximum number of bins",
     "z_projection": "Z projection",
 }
 

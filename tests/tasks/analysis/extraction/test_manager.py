@@ -4,11 +4,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-import pandas as pd
 
 from fits.environment.constant import ARTI_IMG, ARTI_TRACK
 from fits.environment.state import ExperimentState
-from fits.tasks.extraction.manager import ExtractionManager
+from fits.tasks.analysis.extraction.manager import ExtractionManager
 
 
 class FakeFitsIO:
@@ -54,7 +53,8 @@ def test_manager_automatically_loads_all_reference_artifacts(
         labels_path.name: FakeFitsIO(labels, "TYX", ("GFP",)),
         first_reference.name: FakeFitsIO(single_reference, "TYX", ("GFP",)),
         second_reference.name: FakeFitsIO(multi_reference, "TCYX", ("GFP", "RFP")),}
-    monkeypatch.setattr("fits.tasks.extraction.manager.FitsIO", FakeFitsIO)
+    monkeypatch.setattr("fits.tasks.analysis.extraction.manager.FitsIO", FakeFitsIO)
+    monkeypatch.setattr("fits.tasks.analysis.manager.FitsIO", FakeFitsIO)
 
     state = ExperimentState(
         workdir=tmp_path,
@@ -67,9 +67,4 @@ def test_manager_automatically_loads_all_reference_artifacts(
     assert extractor.array_data.references["needle"].channel_labels == ("GFP",)
     assert extractor.array_data.references["edge"].channel_labels == ("GFP", "RFP")
 
-    dataframe = manager.add_physical_distances(
-        pd.DataFrame({"dist_pixel": [0.0, 4.0, np.nan]}))
-    np.testing.assert_allclose(
-        dataframe["dist_um"].to_numpy(dtype=float),
-        [0.0, 2.0, np.nan],
-        equal_nan=True,)
+    assert extractor.pixel_size == 0.5

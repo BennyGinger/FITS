@@ -15,6 +15,7 @@ class StepName(StrEnum):
     SEGMENT = "segment"
     TRACK = "track"
     EXTRACT = "extract"
+    DISTANCE_PROFILE = "distance_profile"
 
 WORKFLOW_ORDER: tuple[StepName, ...] = (
         StepName.CONVERT,
@@ -23,6 +24,7 @@ WORKFLOW_ORDER: tuple[StepName, ...] = (
         StepName.BG_SUB,
         StepName.SEGMENT,
         StepName.TRACK,
+        StepName.DISTANCE_PROFILE,
         StepName.EXTRACT,
         )
 
@@ -34,15 +36,17 @@ DIST_BG_SUB = "bg-sub"
 DIST_SEG = "cellpose-kit"
 DIST_TRACK = "tracklink"
 DIST_EXTRACT = "labelquant"
+DIST_DISTANCE_PROFILE = "spatialprofile"
 
-FitsName = Literal["fits_array.tif", "fits_mask.tif", "fits_track.tif", "fits_quantification.parquet"]
+FitsName = Literal["fits_array.tif", "fits_mask.tif", "fits_track.tif", "fits_distance_profile.parquet", "fits_quantification.parquet"]
 FITS_ARRAY_NAME = "fits_array.tif"
 FITS_REFERENCE_TEMPLATE = "fits_ref_{label}.tif"
 FITS_ROI_TEMPLATE = "fits_roi_{label}.tif"
 FITS_MASK_SEG = "fits_mask.tif"
 FITS_MASK_TRACK = "fits_track.tif"
+FITS_DISTANCE_PROFILE_NAME = "fits_distance_profile.parquet"
 FITS_QUANTI_NAME = "fits_quantification.parquet"
-FITS_FILES: set[FitsName] = {FITS_ARRAY_NAME, FITS_MASK_SEG, FITS_MASK_TRACK, FITS_QUANTI_NAME}
+FITS_FILES: set[FitsName] = {FITS_ARRAY_NAME, FITS_MASK_SEG, FITS_MASK_TRACK, FITS_DISTANCE_PROFILE_NAME, FITS_QUANTI_NAME, }
 
 EXCLUDED_PREFIXES = {'fits_'}
 
@@ -50,13 +54,14 @@ ExecMode = Literal["serial", "thread", "process"]
 
 RunTimeMode = Literal["batch", "conveyor"]
 
-ArtifactType = Literal["raw_image", "image", "reference_mask", "roi_mask", "segmentation", "tracking", "quantification"]
+ArtifactType = Literal["raw_image", "image", "reference_mask", "roi_mask", "segmentation", "tracking", "quantification", "distance_profile"]
 ARTI_RAW = "raw_image"
 ARTI_IMG = "image"
 ARTI_REF = "reference_mask"
 ARTI_ROI = "roi_mask"
 ARTI_SEG = "segmentation"
 ARTI_TRACK = "tracking"
+ARTI_DIST_PROF = "distance_profile"
 ARTI_QUANTI = "quantification"
 
 

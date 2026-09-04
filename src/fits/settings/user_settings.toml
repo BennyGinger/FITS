@@ -119,6 +119,17 @@ pretrained_model = "general_2d" # Pretrained model to use for feature extraction
 max_distance = 150.0 # Maximum distance (in pixels) between objects in consecutive frames to be considered the same object for tracking purposes.
 
 # ============================
+# Distance profile
+# ============================
+[distance_profile]
+enabled = false
+
+[distance_profile.params]
+bin_width = 5.0 # Distance-bin width in pixels.
+maximum_bins = "None" # Maximum number of bins, or "None" to cover the complete region.
+overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
+
+# ============================
 # Extraction step
 # ============================
 [extract]

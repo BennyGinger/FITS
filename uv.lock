@@ -13,6 +13,7 @@ resolution-markers = [
 [manifest]
 members = [
     "bg-sub",
+    "bioimagequant",
     "cellpose-kit",
     "fits",
     "fits-io",
@@ -101,6 +102,11 @@ dev = [
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "tifffile", specifier = ">=2026.3.3" },
 ]
+
+[[package]]
+name = "bioimagequant"
+version = "0.1.0"
+source = { editable = "bioimagequant" }
 
 [[package]]
 name = "cellpose"
@@ -420,6 +426,7 @@ version = "2.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "bg-sub" },
+    { name = "bioimagequant" },
     { name = "cellpose", extra = ["gui"] },
     { name = "cellpose-kit" },
     { name = "fits-io" },
@@ -447,6 +454,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bg-sub", editable = "bg_sub" },
+    { name = "bioimagequant", editable = "bioimagequant" },
     { name = "cellpose", extras = ["gui"], specifier = "<=4" },
     { name = "cellpose-kit", editable = "cellpose_kit" },
     { name = "fits-io", editable = "fits_io" },
@@ -1976,6 +1984,7 @@ version = "0.1.0"
 source = { editable = "spatialprofile" }
 dependencies = [
     { name = "numpy" },
+    { name = "pandas", extra = ["parquet"] },
     { name = "scipy" },
 ]
 
@@ -1987,6 +1996,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.26.4" },
+    { name = "pandas", extras = ["parquet"], specifier = ">=3.0.1" },
     { name = "scipy", specifier = ">=1.17.0" },
 ]
 

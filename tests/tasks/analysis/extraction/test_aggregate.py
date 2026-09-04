@@ -4,7 +4,7 @@ import pandas as pd
 
 from fits.environment.constant import ARTI_QUANTI, StepName
 from fits.environment.state import ExperimentState
-from fits.tasks.extraction.aggregate import _save_master_quantification
+from fits.tasks.analysis.extraction.aggregate import _save_master_quantification
 
 
 def _state_with_quantification(

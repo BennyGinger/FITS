@@ -414,6 +414,34 @@ class TrackSettings(SettingsModel):
         }
         return payload
 
+############# Distance-profile settings ############
+
+class DistanceProfileSettings(SettingsModel):
+    """Settings for binned intensity measurements from a reference mask.
+
+    The analysis is strictly two-dimensional. FITS automatically max-projects
+    any Z axis before profiling. Reference and ROI masks are collapsed across
+    Z by including a pixel when it is included on any plane.
+
+    FITS automatically profiles every intensity channel against every saved
+    reference-mask label/channel. For each reference, it calculates both the
+    whole-image profile and profiles for every saved ROI label/channel.
+
+    Attributes:
+        bin_width: Width of each distance bin in pixels.
+        maximum_bins: Optional maximum number of distance bins to retain.
+    """
+
+    bin_width: float = Field(default=5.0, gt=0)
+    maximum_bins: int | None = Field(default=None, ge=1)
+
+    @field_validator("maximum_bins", mode="before")
+    @classmethod
+    def parse_optional_bin_count(cls, value):
+        if isinstance(value, str) and value.strip().lower() in {"", "none"}:
+            return None
+        return value
+
 ####### Quantification settings ############
 
 class ExtractSettings(SettingsModel):

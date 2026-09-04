@@ -23,6 +23,7 @@ dependencies = [
     "labelquant",
     "tomlkit>=0.15.1",
     "mask-interpolation",
+    "spatialprofile"
 ]
 
 [project.scripts]
@@ -44,6 +45,7 @@ members = [
     "stackalign",
     "labelquant",
     "mask_interpolation",
+    "spatialprofile",
 ]
 
 [tool.uv.sources]
@@ -55,6 +57,7 @@ bg-sub = { workspace = true }
 stackalign = { workspace = true }
 labelquant = { workspace = true }
 mask-interpolation = { workspace = true }
+spatialprofile = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [

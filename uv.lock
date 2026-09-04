@@ -19,6 +19,7 @@ members = [
     "labelquant",
     "mask-interpolation",
     "progress-bar",
+    "spatialprofile",
     "stackalign",
     "tracklink",
 ]
@@ -429,6 +430,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyqtgraph" },
     { name = "pyside6" },
+    { name = "spatialprofile" },
     { name = "stackalign" },
     { name = "tomlkit" },
     { name = "tracklink" },
@@ -455,6 +457,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyqtgraph", specifier = ">=0.14.0" },
     { name = "pyside6", specifier = ">=6.10.2" },
+    { name = "spatialprofile", editable = "spatialprofile" },
     { name = "stackalign", editable = "stackalign" },
     { name = "tomlkit", specifier = ">=0.15.1" },
     { name = "tracklink", editable = "tracklink" },
@@ -1966,6 +1969,29 @@ sdist = { url = "https://files.pythonhosted.org/packages/4d/94/20a9a64bd4d696705
 wheels = [
     { url = "https://files.pythonhosted.org/packages/87/43/6bdd23ddbe118c977c5ebe4ad32deccdfc08729ca5213ee62630ae8821c8/smo-2.0.2-py2.py3-none-any.whl", hash = "sha256:06e47647f3fc2caaa9278ac47c6dbe22fe152c7f32f8563ec5539b2487eae17c", size = 702321, upload-time = "2023-02-06T15:07:40.158Z" },
 ]
+
+[[package]]
+name = "spatialprofile"
+version = "0.1.0"
+source = { editable = "spatialprofile" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.26.4" },
+    { name = "scipy", specifier = ">=1.17.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "stack-data"

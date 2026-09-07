@@ -40,8 +40,10 @@ def start_pipeline(
     rt_settings = user_cfg.get("runtime", {})
     rt_mode: RunTimeMode = rt_settings.get("execution", "batch")
     
-    log_raw = rt_settings.get("log_dir", None)
-    log_dir = Path(log_raw).expanduser().resolve() if isinstance(log_raw, str) else log_raw
+    log_raw = rt_settings.get("log_dir")
+    if isinstance(log_raw, str):
+        log_raw = log_raw.strip()
+    log_dir = Path(log_raw).expanduser().resolve() if log_raw else run_dir / "logs"
     console_level = rt_settings.get("console_level", "info")
     file_level = rt_settings.get("file_level", "debug")
     

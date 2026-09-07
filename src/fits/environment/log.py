@@ -33,7 +33,7 @@ def configure_logging(
     Parameters
     ----------
     log_dir:
-        Optional directory in which to write log files.
+        Exact directory in which to write log files, or None to disable file logging.
     console_level:
         Verbosity shown in the console.
     file_level:
@@ -64,9 +64,6 @@ def configure_logging(
     root.addHandler(console_handler)
 
     if log_dir is not None:
-        if "log" not in log_dir.name.lower():
-            log_dir = log_dir / "logs"
-
         log_dir.mkdir(parents=True, exist_ok=True)
 
         log_path = log_dir / f"fits_{datetime.now():%Y%m%d_%H%M%S}.log"

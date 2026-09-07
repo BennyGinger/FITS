@@ -153,11 +153,14 @@ class RuntimeSettingsEditor(QWidget):
         group = QGroupBox("Advanced runtime settings")
         group.setCheckable(True)
         form = QFormLayout(group)
-        for name in ("execution", "console_level", "file_level"):
+        for name in ("execution", "console_level", "file_level", "log_dir"):
             widget = create_field_widget(
                 adapter.runtime_value(name),
-                RUNTIME_CHOICES[name],
+                RUNTIME_CHOICES.get(name),
             )
+            if name == "log_dir":
+                widget.setPlaceholderText("Use run_dir/logs (default)")
+                widget.setToolTip("Leave blank to save log files in the run directory's logs folder (created automatically).")
             form.addRow(field_label(name), widget)
             self.widgets[name] = widget
         runtime_is_custom = any(

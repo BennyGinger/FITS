@@ -25,6 +25,7 @@ def test_main_window_builds_all_steps_and_dynamic_editors() -> None:
     assert set(window._editors) == set(StepName)
     assert window.runtime_editor is not None
     assert window.runtime_editor.widgets["execution"].isEnabled() is False
+    assert window.runtime_editor.widgets["log_dir"].value() == ""
 
     segment_item = window._step_items[StepName.SEGMENT]
     segment_editor = window._editors[StepName.SEGMENT]
@@ -54,6 +55,20 @@ def test_custom_runtime_settings_open_advanced_section() -> None:
 
     assert window.runtime_editor is not None
     assert window.runtime_editor.widgets["execution"].isEnabled() is True
+    window.close()
+
+
+def test_custom_log_directory_in_advanced_runtime_settings(tmp_path: Path) -> None:
+    _application()
+    adapter = SettingsAdapter()
+    adapter.set_runtime_value("log_dir", str(tmp_path))
+    window = FitsMainWindow(adapter)
+    editor = window.runtime_editor
+    assert editor is not None
+    assert editor.widgets["log_dir"].isEnabled()
+    editor.widgets["log_dir"].setText("")
+    editor.sync_to_adapter()
+    assert adapter.runtime_value("log_dir") == ""
     window.close()
 
 

@@ -38,6 +38,52 @@ cd fits
 uv sync
 ```
 
+### Default GPU setup
+
+Plain `uv sync` and `uv run` select the development defaults automatically:
+
+- Windows x64 uses PyTorch 2.10.0 and torchvision 0.25.0 with CUDA 12.6,
+  verified on the GTX 1080 with NVIDIA driver 576.52.
+- Linux keeps its existing PyTorch package source and locked versions. GPU
+  support there depends on the Linux machine's GPU and driver; it has not been
+  tested from this Windows machine.
+
+No extra flags are needed for everyday development:
+
+```bash
+uv run fits-gui
+uv run fits-viewer --tool segmentation
+uv run cellpose
+```
+
+The shared default is `[tool.uv].default-groups = ["dev", "cuda126"]` in
+`pyproject.toml`. The accelerator groups only affect Windows x64. The `cpu`
+and `cuda128` groups remain available for future machines; to temporarily
+select one, disable the default accelerator group:
+
+```bash
+uv sync --no-group cuda126 --group cpu
+uv run --no-group cuda126 --group cpu fits-gui
+```
+
+Replace `cpu` with `cuda128` for CUDA 12.8 on compatible hardware. A later
+plain `uv sync` or `uv run` restores the shared default. These groups are
+mutually exclusive, so do not use `--all-groups`. The former `--extra` GPU
+profiles have been replaced by dependency groups.
+
+CUDA 12.6 retains support for the GTX 1080 (Pascal); the CUDA 12.8 build does
+not. See [PyTorch's architecture compatibility notice](https://github.com/pytorch/pytorch/issues/157517).
+A separate CUDA toolkit installation is not needed.
+
+Check GPU availability from the FITS directory:
+
+```bash
+uv run python -c "import torch; from cellpose import core; print(torch.__version__, torch.version.cuda); print('Cellpose GPU:', core.use_gpu())"
+```
+
+Restart running Python sessions after changing PyTorch, and enable `use GPU`
+in the Cellpose GUI (or pass `--use_gpu` to the Cellpose CLI).
+
 Launch the main settings interface with `uv run fits-gui`, or open the image
 tools directly:
 

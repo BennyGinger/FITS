@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from fits.environment.state import ExperimentState
 from fits.pipeline import start_pipeline
 
@@ -16,6 +18,19 @@ def _base_cfg(run_dir: Path) -> dict:
             "file_level": "debug",
         },
     }
+
+
+@pytest.mark.parametrize("log_value", [None, "", "   ", "custom"])
+def test_pipeline_log_directory_defaults_to_run_dir_logs(monkeypatch, tmp_path, log_value):
+    captured = {}
+    _patch_pipeline_services(monkeypatch, tmp_path, [], captured)
+    cfg = _base_cfg(tmp_path)
+    if log_value is not None:
+        cfg["runtime"]["log_dir"] = str(tmp_path / "custom") if log_value == "custom" else log_value
+    monkeypatch.setattr("fits.pipeline.load_settings", lambda _: cfg)
+    monkeypatch.setattr("fits.pipeline.configure_logging", lambda **kwargs: captured.update(kwargs))
+    start_pipeline(settings_path=tmp_path / "settings.toml")
+    assert captured["log_dir"] == tmp_path / ("custom" if log_value == "custom" else "logs")
 
 
 def _saved_state(run_dir: Path, raw_path: Path, workdir_name: str) -> ExperimentState:

@@ -87,6 +87,14 @@ applicable experiment after its image is safe to view. Existing valid masks are
 reused. Missing masks become interactive requests shown in a persistent **Mask
 Collection** window.
 
+The manager resolves one experiment at a time. Once an experiment becomes
+safe to view, its reference- and ROI-mask work is presented as one collection
+session. Other ready experiments wait in the experiment queue; the user does
+not move between partially resolved experiments. The current experiment is
+released only after every required mask type has been explicitly finalized.
+Finalization may mean that the requested masks were saved, or that the user
+confirmed that some or all remaining slots should be skipped.
+
 The initial number of requests comes from settings, but it is a target rather
 than a rigid declaration of every final artifact. During execution, the user
 can:
@@ -102,6 +110,17 @@ can:
 Analysis starts only after the user explicitly finalizes the relevant mask
 collection. Merely reaching the initial target count does not release analysis,
 because the user may still add another mask.
+
+Mask requirements are analysis-specific. Extraction may use reference masks
+but does not use ROI masks. Distance profiling requires at least one finalized
+reference mask; without one, it is omitted for that experiment. ROI masks only
+restrict which pixels contribute to a distance profile and are optional. When
+none are supplied, distance profiling proceeds over the whole image.
+
+After finalization, that experiment can continue towards analysis while the
+manager opens the next queued experiment. This experiment-at-a-time UI does
+not introduce a global pipeline barrier: preparation and computational work
+for other experiments may continue in the background.
 
 ## Pipeline phases
 
@@ -229,6 +248,15 @@ analysis starts, it takes a finalized snapshot of the applicable manifest.
 Adding masks after analysis has started should initially be disabled; supporting
 that later would require invalidating or rerunning affected analysis work.
 
+Reference and ROI finalization have different downstream consequences:
+
+- finalizing with no usable reference blocks only analyses that require a
+  reference for that experiment;
+- finalizing with no ROI does not block distance profiling and explicitly means
+  that the whole image is included; and
+- enabling extraction alone must not create an ROI request because extraction
+  does not consume ROI masks.
+
 Whether this runtime manifest needs its own durable file, or can initially be
 reconstructed from saved mask artifacts plus run-local decisions, remains an
 open design question.
@@ -294,26 +322,27 @@ accent color, output filename, and instructions should all distinguish
 REFERENCE from ROI. Viewer switching should be initiated by the user rather
 than happen unexpectedly while a drawing is in progress.
 
+The control panel also shows the experiment queue, for example **Experiment 2
+of 7** and **5 experiments waiting**. It does not allow arbitrary navigation to
+the next experiment while the current one is unresolved. **Next experiment**
+becomes available only after all required mask types for the current experiment
+have been finalized. If requested slots remain, moving on uses the same
+explicit skip confirmation as finishing a mask type early.
+
 ### Queue ordering
 
-The manager maintains growing reference and ROI queues. By default, it can load
-an experiment once and process:
+The manager maintains a growing queue of experiments, with reference and ROI
+requests grouped inside each experiment. It loads one experiment and processes:
 
 ```text
 all references for that experiment → all ROIs for that experiment
 ```
 
-This minimizes image reloads. The mode transition must be explicit.
-
-The user can instead remain in one viewer mode and drain its available queue.
-Each tab shows a waiting count. When the current queue is temporarily empty but
-more experiments are still being prepared, offer a choice to wait or switch
-modes. The application must not automatically switch modes during an active
-drawing.
-
-This combines early queue growth with user control; strict “all references in
-the entire run before any ROI” is possible but would delay ROI collection until
-all preprocessing has completed.
+This minimizes image reloads and keeps completion/finalization scoped to one
+experiment. The reference-to-ROI mode transition must be explicit, and the
+application must not switch modes while a drawing is active. When the
+experiment queue is temporarily empty but more experiments are still being
+prepared, the manager waits and reports that preparation is still in progress.
 
 ### Actions and their exact scopes
 
@@ -339,6 +368,20 @@ Skip the remaining 2 and continue?
 
 [Return to drawing] [Skip remaining and continue] [Quit pipeline]
 ```
+
+When the user finalizes or skips ROI collection without saving an ROI, the
+manager gives a separate confirmation:
+
+```text
+No ROI mask is selected for sample_04.
+Distance profiling will include every pixel in the image.
+
+[Draw an ROI mask] [Use the whole image] [Quit pipeline]
+```
+
+This confirmation is also shown when distance profiling is enabled but the
+initial ROI target is zero, so whole-image analysis is an explicit decision.
+It is not shown when no enabled analysis consumes ROI masks.
 
 Potential bulk-skip actions should also state their scope explicitly, for
 example:
@@ -495,6 +538,32 @@ requiring concurrent scheduling.
   because no usable masks were supplied, processing failures, and cancellation.
 - Consider persisting the runtime manifest for robust resume behavior.
 
+## Implementation checklist
+
+This table is intentionally ordered so the first working draft can remain
+sequential. Conveyor concurrency is added only after the same phase and mask
+contracts work end to end.
+
+| Status | Milestone | Completion check |
+|---|---|---|
+| [ ] | Define phases and outcomes | Each experiment reports preparation, computation, user-input, and analysis status without duplicating `ExperimentState` artifact data. |
+| [ ] | Classify the current steps | Existing steps run through the four logical parts using one central phase assignment. |
+| [ ] | Implement a sequential coordinator | CLI and GUI can execute preparation, computation, mask resolution, and analysis sequentially. |
+| [ ] | Add mask requirement and manifest models | Initial targets, saved labels, skipped slots, and per-type finalization are represented without Qt dependencies. |
+| [ ] | Refactor the viewer for embedding | Existing drawing/viewing functionality remains reusable inside a manager while the standalone viewer stays thin. |
+| [ ] | Build the experiment-scoped Mask Collection manager | Exactly one experiment is active; queued experiment count, reference/ROI controls, save, update, add, skip, finalize, and quit are available. |
+| [ ] | Connect coordinator requests to the GUI | The coordinator emits mask requests and receives outcomes; it never opens or manipulates Qt widgets directly. |
+| [ ] | Integrate reference masks | Existing valid `fits_ref_*.tif` files are reused and missing requested masks can be collected before dependent analysis. |
+| [ ] | Integrate ROI masks | Existing valid `fits_roi_*.tif` files are reused and missing requested masks can be collected before dependent analysis. |
+| [ ] | Define analysis expansion | Distance profiling expands every finalized reference/ROI label and channel into long-form rows; extraction uses references but never requests ROIs. |
+| [ ] | Add per-experiment release | Finalizing the active experiment allows it to continue while the manager advances to the next queued experiment. |
+| [ ] | Add conveyor scheduling | Preparation, segmentation/tracking, mask collection, and analysis overlap safely across experiments. |
+| [ ] | Make conveyor the interactive default | Batch/sequential execution remains supported while GUI interactive runs default to conveyor. |
+| [ ] | Add the GUI preparation lock | Processing settings remain unavailable until usable prepared images exist; the user's saved settings are not overwritten. |
+| [ ] | Add CLI mask policies | Interactive, noninteractive-skip, and strict-missing-input behavior are explicit. |
+| [ ] | Complete cancellation and reporting | The final report distinguishes completed, skipped, failed, omitted, and cancelled work. |
+| [ ] | Verify the complete workflow | Focused unit, coordinator, headless Qt, CLI, and restart tests pass and `git diff --check` is clean. |
+
 ## Invariants to protect
 
 The implementation should preserve these rules:
@@ -505,27 +574,29 @@ The implementation should preserve these rules:
 3. Counts create initial work slots; labels identify saved artifacts.
 4. Reaching a target count does not finalize collection; the user finalizes it
    explicitly.
-5. Analysis reads a stable snapshot of a finalized mask manifest.
-6. Updating an existing mask does not create another completed request.
-7. Skipping a mask does not mark an analysis as completed.
-8. Missing user input blocks only work that actually depends on it.
-9. Closing the viewer cannot silently convert unresolved work into skips.
-10. Qt UI activity remains on the main thread.
-11. Saved masks are validated and written atomically before dependent work is
+5. Only one experiment is active in the Mask Collection manager; the next
+   experiment opens only after the current experiment's required mask types are
+   finalized.
+6. Analysis reads a stable snapshot of a finalized mask manifest.
+7. Updating an existing mask does not create another completed request.
+8. Skipping a mask does not mark an analysis as completed.
+9. A missing reference blocks only analyses that require it for that
+   experiment; a missing ROI means whole-image distance profiling after clear
+   user confirmation.
+10. Missing user input blocks only work that actually depends on it.
+11. Closing the viewer cannot silently convert unresolved work into skips.
+12. Qt UI activity remains on the main thread.
+13. Saved masks are validated and written atomically before dependent work is
     released.
-12. The workflow engine deals in requests and outcomes, not Qt widgets.
+14. The workflow engine deals in requests and outcomes, not Qt widgets.
 
 ## Open questions
 
 These points should be resolved before or during implementation:
 
-- Does every saved reference mask produce an independent distance-profile
-  analysis branch, or can analyses select subsets/combinations of masks?
-- How are multiple ROIs combined with multiple references: Cartesian product,
-  matching labels, explicit pairing, or another rule?
 - Are channel selections part of the mask identity, mask metadata, or both?
-- What is the precise minimum mask set for each analysis to remain runnable
-  after the user finishes early?
+- Apart from distance profiling, what is the precise minimum reference-mask set
+  for each future analysis to remain runnable after the user finishes early?
 - Should skipped target slots be persisted across resumed runs, or requested
   again next time?
 - Where should the runtime manifest live, and how is it reconciled with files
@@ -538,7 +609,9 @@ These points should be resolved before or during implementation:
 - How should interactive CLI invocation behave when no graphical display is
   available?
 
-The pairing/expansion rule for multiple reference and ROI masks is the most
-important unresolved analysis question. The flexible runtime UI can collect
-arbitrary masks, but the analysis layer still needs an unambiguous rule for
-turning that manifest into concrete work.
+Distance-profile output uses long-form rows for every reference label/channel,
+ROI label/channel, intensity channel, frame, and distance bin combination.
+Each ROI is evaluated independently, and a second whole-image variant is
+represented by missing ROI label/channel values. FITS normalizes mask identity
+columns across analysis outputs as `ref_label_name`, `ref_channel`,
+`roi_label_name`, and `roi_channel` where applicable.

@@ -63,26 +63,56 @@ def test_manager_projects_z_and_builds_heatmap_ready_table(
     assert len(result) == 24
     assert set(result["channel"]) == {"GFP", "RFP"}
     assert set(result["frame"]) == {1, 2}
-    assert set(result["reference"]) == {"edge"}
-    assert set(result["reference_channel"]) == {"RFP"}
-    assert set(result["roi"].dropna()) == {"tailfin"}
-    assert result["roi"].isna().any()
+    assert set(result["ref_label_name"]) == {"edge"}
+    assert set(result["ref_channel"]) == {"RFP"}
+    assert set(result["roi_label_name"].dropna()) == {"tailfin"}
+    assert result["roi_label_name"].isna().any()
     assert set(result["roi_channel"].dropna()) == {"RFP"}
+    assert not {
+        "reference", "reference_channel", "roi",
+    }.intersection(result.columns)
     assert set(result["z_projection"]) == {"max"}
     np.testing.assert_allclose(result["dist_um"].unique(), [0.5, 1.5, 2.5])
 
     first_gfp = result[(result["frame"] == 1)
                        & (result["channel"] == "GFP")
-                       & (result["roi"] == "tailfin")]
+                       & (result["roi_label_name"] == "tailfin")]
     np.testing.assert_array_equal(first_gfp["pixel_count"], [1, 2, 0])
     np.testing.assert_allclose(first_gfp["mean_intensity"][:2], [25, 40])
     assert np.isnan(first_gfp.iloc[2]["mean_intensity"])
 
     second_gfp = result[(result["frame"] == 2)
                         & (result["channel"] == "GFP")
-                        & (result["roi"] == "tailfin")]
+                        & (result["roi_label_name"] == "tailfin")]
     np.testing.assert_array_equal(second_gfp["pixel_count"], [3, 0, 0])
     assert np.isnan(second_gfp.iloc[1]["mean_intensity"])
+
+
+def test_manager_profiles_whole_image_when_no_roi_exists(
+        tmp_path: Path, monkeypatch,) -> None:
+    image_path = tmp_path / "fits_array.tif"
+    reference_path = tmp_path / "fits_ref_edge.tif"
+    image_path.touch()
+    reference_path.touch()
+    reference = np.zeros_like(IMAGE, dtype=np.uint8)
+    reference[:, 0, 1, 0, 0] = 1
+
+    monkeypatch.setattr(
+        "fits.tasks.analysis.manager.FitsIO", FakeFitsIO)
+    monkeypatch.setattr(
+        "fits.tasks.analysis.dist_profile.manager.load_reference_artifact",
+        lambda *args, **kwargs: (reference, "edge", ("RFP",)))
+
+    state = ExperimentState(
+        workdir=tmp_path,
+        artifacts={ARTI_IMG: image_path},)
+    result = DistanceProfileManager(
+        state, DistanceProfileSettings(bin_width=2, frame_workers=1),
+    ).calculate()
+
+    assert result["roi_label_name"].isna().all()
+    assert result["roi_channel"].isna().all()
+    assert (result["pixel_count"] > 0).any()
 
 
 def test_settings_parse_optional_values() -> None:

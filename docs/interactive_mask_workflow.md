@@ -127,12 +127,17 @@ for other experiments may continue in the background.
 
 ## Pipeline phases
 
-The interactive coordinator should reason about phases rather than acquire a
-new boolean for every workflow step:
+The interactive coordinator uses `RunProgress` with one `ExperimentProgress`
+per experiment. Each experiment holds a `StageProgress` for the five stages
+below. This state is thread-safe and run-local; it is not written beside the
+durable `ExperimentState` or mask artifacts.
 
 ```text
-Phase 1: image preparation
-    convert → register_time → register_channel → bg_sub
+Phase 1a: conversion
+    convert
+
+Phase 1b: preprocessing
+    register_time → register_channel → bg_sub
 
 Phase 2a: computational processing
     segment → track
@@ -152,15 +157,17 @@ prepared experiment ───────────┤                        
                                └─ interactive mask collection ───┘
 ```
 
-These assignments are the initial proposal, not a reason to hard-code step
-names throughout the GUI. A later step should be assignable to a phase without
-adding another field to an experiment progress object.
+The statuses are deliberately limited to `pending`, `active`, `completed`,
+`skipped`, and `failed`. A disabled stage is absent rather than marked “not
+required”. A failed stage retains a short error. Conversion can replace one
+source record with multiple series records while retaining the completed
+conversion state.
 
 The durable `ExperimentState` continues to record individual artifacts and
 completed steps for provenance and restart behavior. The interactive
 coordinator derives phase readiness from the enabled steps and their outcomes.
 
-Phase 2 has two visible branches, so progress should retain the distinction:
+Phase 2 has two independent branches, so progress retains the distinction:
 
 ```text
 Processing:  queued / running / completed
@@ -205,7 +212,7 @@ The initial conservative rule can be to wait until all enabled Phase 1 steps
 for that experiment are complete. The prepared `fits_array.tif` must then be
 treated as immutable while the viewer, segmentation, and analysis read it.
 
-## Mask requirements and runtime manifest
+## Mask requirements and run-local outcomes
 
 The settings and integrated collection panel are implemented. Each analysis
 specifies its drawing requests:
@@ -233,7 +240,7 @@ Names should make the intent explicit in the GUI, for example **Initial
 reference masks to request**. Counts initiate work; they do not identify
 artifacts and do not necessarily determine the final number saved.
 
-As the user works, FITS builds a runtime manifest:
+As the user works, FITS builds run-local request outcomes:
 
 ```text
 Experiment A
@@ -263,8 +270,8 @@ cannot be reduced below one, and a count cannot be reduced below the number
 already saved. Finishing with unmet targets records the remaining requests as
 skipped internally; the skipped count is not shown in the interface.
 
-The manifest is authoritative for the masks used by that execution. Before an
-analysis starts, it takes a finalized snapshot of the applicable manifest.
+The finalized outcome is authoritative for the masks used by that execution.
+Before an analysis starts, it takes a stable snapshot of the applicable files.
 Adding masks after analysis has started should initially be disabled; supporting
 that later would require invalidating or rerunning affected analysis work.
 
@@ -277,9 +284,9 @@ Reference and ROI finalization have different downstream consequences:
 - enabling extraction alone must not create an ROI request because extraction
   does not consume ROI masks.
 
-Whether this runtime manifest needs its own durable file, or can initially be
-reconstructed from saved mask artifacts plus run-local decisions, remains an
-open design question.
+No separate durable manifest is needed. Saved reference and ROI files are the
+restart state and are rediscovered on the next run. Unsaved/skipped requests
+are intentionally run-local and may be requested again after restarting.
 
 ## Mask request lifecycle
 
@@ -368,8 +375,8 @@ Finishing drawing early resolves remaining and future requests using existing
 artifacts and skips missing inputs without reopening the window. Quitting sets a
 cancellation event, stops new work, and waits for already-running tasks to finish.
 Cancellation is reported separately from errors. Preparation/task errors surface
-through the GUI's existing failure dialog. Outcomes are not yet persisted as a
-resume manifest; saved mask files remain the durable artifacts.
+through the GUI's existing failure dialog. Outcomes are run-local; saved mask
+files are the durable restart state.
 
 The collection panel shows a folder-style experiment tree containing every
 received experiment, including the highlighted current one and completed ones.
@@ -511,7 +518,7 @@ without increasing the saved count.
 Labels must be unique within an experiment and mask kind. Attempting to reuse a
 label should offer to update the existing mask, choose a different label, or
 cancel. Rename and deletion semantics can be deferred, but must not silently
-leave stale manifest entries.
+leave stale mask files.
 
 Mask files should be saved atomically. The pipeline may attempt to read a mask
 immediately after receiving the saved event, and it must never observe a
@@ -555,16 +562,10 @@ coordinator <-- mask_resolved(id, outcome) -- Mask Collection window
 
 In `fits-gui`, this extends the current worker-thread arrangement. In an
 interactive CLI run, the CLI creates the Qt application/event loop on the main
-thread and runs pipeline coordination in a worker thread. A future resolver
-interface should allow different policies:
-
-- Qt interactive resolver;
-- noninteractive resolver that skips missing masks;
-- strict resolver that reports missing masks as an error.
-
-This separation prevents Qt concepts from leaking into the workflow engine.
-Interactive CLI behavior should ultimately be explicit through configuration
-or a command-line option, especially for headless environments.
+thread and runs pipeline coordination in a worker thread. Both entry points use
+the same Qt resolver and therefore the same missing-reference and no-ROI
+confirmations. This separation prevents Qt concepts from leaking into the
+workflow engine.
 
 ## Cancellation
 
@@ -596,8 +597,8 @@ handling.
 
 ### Stage 2: Interactive mask collection — implemented
 
-- Introduce Qt-free mask request and outcome models. A durable runtime manifest
-  remains future work.
+- Introduce Qt-free mask request and outcome models. Saved mask artifacts are
+  the only durable restart state.
 - Build the persistent Mask Collection window and experiment/mask display.
 - Generate initial request slots from settings.
 - Support save, update, editable target counts, finalization, and quit semantics.
@@ -620,10 +621,8 @@ This stage established the interaction model used by the connected coordinator.
 
 - The normal CLI entry points launch the Qt resolver when configured analyses
   request interactive masks.
-- Explicit skip-missing and strict headless policies remain future work.
 - Add a final report covering saved masks, skipped requests, analyses omitted
   because no usable masks were supplied, processing failures, and cancellation.
-- Consider persisting the runtime manifest for robust resume behavior.
 
 ## Implementation checklist
 
@@ -647,9 +646,9 @@ implemented, and `[ ]` means future work.
 | [~] | Add conveyor scheduling | The first version overlaps preparation, drawing and per-experiment downstream work with conservative serial scheduling. Full scheduler/pool integration remains. |
 | [x] | Make conveyor the GUI default | Saved templates and the main GUI default to conveyor; batch remains available. |
 | [ ] | Add the GUI preparation lock | Processing settings remain unavailable until usable prepared images exist; the user's saved settings are not overwritten. |
-| [~] | Add CLI mask policies | Interactive CLI execution is connected; explicit noninteractive-skip and strict-missing-input modes remain. |
+| [x] | Use one GUI/CLI mask policy | Both user-facing entry points use the same collection window, confirmations and outcomes. |
 | [~] | Complete cancellation and reporting | GUI cancellation stops new scheduling and differs from failures; a complete final run report remains. |
-| [~] | Verify the complete workflow | Focused unit, coordinator, headless Qt and GUI connection tests pass; CLI policies and durable restart outcomes remain. |
+| [~] | Verify the complete workflow | Focused unit, coordinator, headless Qt and GUI/CLI connection tests pass; broader user testing remains. |
 
 ## Invariants to protect
 
@@ -664,7 +663,7 @@ The implementation should preserve these rules:
 5. Only one experiment is active in the Mask Collection manager; the next
    experiment opens only after the current experiment's required mask types are
    finalized.
-6. Analysis reads a stable snapshot of a finalized mask manifest.
+6. Analysis reads a stable snapshot of finalized mask artifacts.
 7. Updating an existing mask does not create another completed request.
 8. Skipping a mask does not mark an analysis as completed.
 9. A missing reference blocks only analyses that require it for that
@@ -684,15 +683,9 @@ These points should be resolved before or during implementation:
 - Are channel selections part of the mask identity, mask metadata, or both?
 - Apart from distance profiling, what is the precise minimum reference-mask set
   for each future analysis to remain runnable after the user finishes early?
-- Should skipped target slots be persisted across resumed runs, or requested
-  again next time?
-- Where should the runtime manifest live, and how is it reconciled with files
-  added, removed, or renamed outside FITS?
 - Can finalized masks be edited before analysis begins? What should happen when
   editing is requested after analysis has begun or completed?
 - What cancellation guarantees can each task/executor realistically provide?
-- How should users select skip-missing or strict behavior when the CLI runs
-  without a graphical display?
 
 Distance-profile output uses long-form rows for every reference label/channel,
 ROI label/channel, intensity channel, frame, and distance bin combination.

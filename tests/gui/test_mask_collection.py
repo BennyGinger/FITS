@@ -117,6 +117,42 @@ def test_next_experiment_collapses_previous_tree_item(window, tmp_path, monkeypa
     assert second_item.isExpanded()
 
 
+def test_next_waits_for_later_request_before_finishing_current(window, tmp_path, monkeypatch):
+    window._preview = False
+    first = request(tmp_path)
+    window.enqueue_experiment(first)
+    outcomes = []
+    window.experiment_finalized.connect(outcomes.append)
+    monkeypatch.setattr(window, '_confirm', lambda *args: True)
+
+    window._refresh_collection()
+    assert not window.next_button.isEnabled()
+
+    window._finish_experiment()
+
+    assert outcomes == []
+    assert window._active == first
+
+    second = request(tmp_path, 'b')
+    window.enqueue_experiment(second)
+
+    assert window.next_button.isEnabled()
+    window._finish_experiment()
+
+    first_item = window.experiment_tree.topLevelItem(0)
+    second_item = window.experiment_tree.topLevelItem(1)
+    assert window._active == second
+    assert len(outcomes) == 1
+    assert not first_item.isExpanded()
+    assert second_item.isExpanded()
+
+
+def test_pipeline_experiment_total_is_displayed(window, tmp_path):
+    window.set_expected_experiments(12)
+    window.enqueue_experiment(request(tmp_path))
+    assert 'Experiment 1 of 12' in window.experiment_label.text()
+
+
 def test_finish_drawing_is_not_cancellation(window, tmp_path, monkeypatch):
     window.enqueue_experiment(request(tmp_path))
     window.enqueue_experiment(request(tmp_path, 'b'))
@@ -421,6 +457,8 @@ def test_empty_queue_waits_until_pipeline_has_sent_all_requests(window, tmp_path
     assert not window._ended
     assert window.isVisible()
     window.no_more_requests()
+    assert window.next_button.isEnabled()
+    window._finish_experiment()
     assert window._ended
     assert not window.isVisible()
 

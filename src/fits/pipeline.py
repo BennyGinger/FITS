@@ -6,6 +6,10 @@ import os
 os.environ["TQDM_DISABLE"] = "1" # Silence tqdm progress bars of trackastra pkg
 from pathlib import Path
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fits.environment.progress import RunProgress
 
 from fits.environment.constant import RunTimeMode, WORKFLOW_ORDER
 from fits.settings.resolution import apply_overwrite_cascade
@@ -26,6 +30,7 @@ def start_pipeline(
     console_handler: logging.Handler | None = None,
     mask_interaction=None,
     demo_step_delay: float = 0.0,
+    run_progress: RunProgress | None = None,
 ) -> None:
     # --- load settings ---
     cfg_path = (settings_path or SETTINGS_PATH).expanduser().resolve()
@@ -87,7 +92,8 @@ def start_pipeline(
     if mask_interaction is not None and interactive_masks_requested(effective_cfg):
         logger.info("Starting interactive conveyor: preparation continues while masks are drawn.")
         final_states = run_interactive_workflow(
-            effective_cfg, states, mask_interaction, step_delay_seconds=demo_step_delay)
+            effective_cfg, states, mask_interaction,
+            step_delay_seconds=demo_step_delay, progress=run_progress)
     else:
         match rt_mode:
             case "batch":

@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from queue import Queue
 from threading import Event
+from time import monotonic, sleep
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,6 +10,7 @@ import pytest
 import tifffile
 
 from fits.environment.constant import ARTI_IMG, StepName
+from fits.environment.progress import RunProgress, StageStatus, WorkflowStage
 from fits.environment.state import ExperimentState
 from fits.settings.models import DistanceProfileSettings, ExtractSettings
 from fits.sessions.collection import MaskCollectionOutcome
@@ -65,6 +67,35 @@ def test_queue_grows_and_each_experiment_waits_for_its_own_masks(tmp_path, monke
             assert analysed == ['b', 'a']
         finally:
             interaction.cancel()
+
+
+def test_raw_files_in_same_folder_have_separate_progress_entries(tmp_path, monkeypatch):
+    folder = tmp_path / 'condition'
+    folder.mkdir()
+    originals = []
+    for name in ('first.nd2', 'second.nd2'):
+        raw = folder / name
+        raw.touch()
+        originals.append(ExperimentState.init(folder, raw))
+
+    def convert(settings, current, profile):
+        output = current.workdir / f'{current.original_image.stem}_s1'
+        output.mkdir()
+        image = output / 'fits_array.tif'
+        tifffile.imwrite(image, np.ones((8, 8), dtype=np.uint16), imagej=True,
+                         metadata={'axes': 'YX'})
+        converted = ExperimentState.init(output, current.original_image)
+        return [converted.with_complete_step(
+            step_name=StepName.CONVERT, artifact_kind=ARTI_IMG,
+            artifact_path=image)]
+
+    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+        step(StepName.CONVERT, convert)])
+    interaction = MaskInteraction(lambda request: interaction.resolve(_existing_outcome(request)))
+    progress = RunProgress()
+
+    run_interactive_workflow({}, originals, interaction, progress=progress)
+    assert len(progress.snapshot()) == 2
 
 
 def test_reference_skip_omits_profile_but_allows_extraction(tmp_path, monkeypatch):
@@ -132,3 +163,46 @@ def test_changed_mask_manifest_stops_analysis(tmp_path, monkeypatch):
     interaction = MaskInteraction(request_masks)
     with pytest.raises(ValueError, match='changed after finalization'):
         run_interactive_workflow({}, [current], interaction)
+
+
+def test_progress_records_parallel_process_and_drawing_join(tmp_path, monkeypatch):
+    current = state(tmp_path, 'a')
+    requests = Queue()
+    analysed = Event()
+    progress = RunProgress()
+
+    def runner(settings, state, profile):
+        if profile.step_name == StepName.DISTANCE_PROFILE:
+            analysed.set()
+        return [state]
+
+    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+        step(StepName.BG_SUB, runner),
+        step(StepName.SEGMENT, runner),
+        step(StepName.DISTANCE_PROFILE, runner, DistanceProfileSettings()),
+    ])
+    interaction = MaskInteraction(requests.put)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            run_interactive_workflow, {}, [current], interaction,
+            progress=progress)
+        request = requests.get(timeout=5)
+        deadline = monotonic() + 5
+        while (progress.experiment(current.experiment_id).stage(
+                WorkflowStage.PROCESS).status != StageStatus.COMPLETED
+                and monotonic() < deadline):
+            sleep(.01)
+
+        before_drawing = progress.experiment(current.experiment_id)
+        assert before_drawing.stage(WorkflowStage.PREPROCESS).status == StageStatus.COMPLETED
+        assert before_drawing.stage(WorkflowStage.PROCESS).status == StageStatus.COMPLETED
+        assert before_drawing.stage(WorkflowStage.DRAWING).status == StageStatus.ACTIVE
+        assert before_drawing.stage(WorkflowStage.ANALYSIS).status == StageStatus.PENDING
+        assert not analysed.is_set()
+
+        interaction.resolve(_existing_outcome(request))
+        assert future.result(timeout=5) == [current]
+
+    finished = progress.experiment(current.experiment_id)
+    assert finished.stage(WorkflowStage.DRAWING).status == StageStatus.COMPLETED
+    assert finished.stage(WorkflowStage.ANALYSIS).status == StageStatus.COMPLETED

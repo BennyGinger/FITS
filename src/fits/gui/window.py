@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from fits.environment.constant import WORKFLOW_ORDER, StepName
+from fits.environment.progress import RunProgress
 from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, STEP_LAYOUTS, SettingsAdapter
 from fits.gui.settings_editor import RuntimeSettingsEditor, StepSettingsEditor
 from fits.gui.run_browser import RunDirectoryBrowser
@@ -69,6 +70,7 @@ class PipelineWorker(QObject):
     cancelled = Signal()
     mask_requested = Signal(object)
     mask_input_complete = Signal()
+    mask_expected_count = Signal(int)
     failed = Signal(str, str)
 
     def __init__(self, settings_path: Path, log_handler: logging.Handler, demo_step_delay: float = 0.0) -> None:
@@ -76,7 +78,12 @@ class PipelineWorker(QObject):
         self.settings_path = settings_path
         self.log_handler = log_handler
         self.demo_step_delay = demo_step_delay
-        self.interaction = MaskInteraction(self.mask_requested.emit, self.mask_input_complete.emit)
+        self.interaction = MaskInteraction(
+            self.mask_requested.emit,
+            self.mask_input_complete.emit,
+            self.mask_expected_count.emit,
+        )
+        self.progress = RunProgress()
 
     @Slot()
     def run(self) -> None:
@@ -86,6 +93,7 @@ class PipelineWorker(QObject):
                 console_handler=self.log_handler,
                 mask_interaction=self.interaction,
                 demo_step_delay=self.demo_step_delay,
+                run_progress=self.progress,
             )
         except PipelineCancelled:
             self.cancelled.emit()
@@ -107,6 +115,8 @@ class FitsMainWindow(QMainWindow):
         super().__init__(parent)
         self.demo_step_delay = demo_step_delay
         self._mask_collection = None
+        self._mask_expected_count: int | None = None
+        self._run_progress: RunProgress | None = None
         self.adapter = adapter or SettingsAdapter()
         self._thread: QThread | None = None
         self._worker: PipelineWorker | None = None
@@ -448,6 +458,7 @@ class FitsMainWindow(QMainWindow):
         settings_path = self._save_settings()
         if settings_path is None:
             return
+        self._mask_expected_count = None
 
         emitter = LogEmitter(self)
         emitter.message.connect(self._append_log)
@@ -461,6 +472,7 @@ class FitsMainWindow(QMainWindow):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.mask_requested.connect(self._enqueue_mask_request)
+        worker.mask_expected_count.connect(self._set_mask_expected_count)
         worker.mask_input_complete.connect(self._mask_input_complete)
         worker.cancelled.connect(self._pipeline_cancelled)
         worker.cancelled.connect(thread.quit)
@@ -473,6 +485,7 @@ class FitsMainWindow(QMainWindow):
 
         self._thread = thread
         self._worker = worker
+        self._run_progress = worker.progress
         self._set_running(True)
         self._append_log("Starting FITS pipeline…")
         thread.start()
@@ -489,8 +502,16 @@ class FitsMainWindow(QMainWindow):
             window.collection_finished.connect(interaction.finish)
             window.cancellation_requested.connect(self._cancel_pipeline)
             self._mask_collection = window
+            if self._mask_expected_count is not None:
+                window.set_expected_experiments(self._mask_expected_count)
             window.show()
         self._mask_collection.enqueue_experiment(request)
+
+    @Slot(int)
+    def _set_mask_expected_count(self, count: int) -> None:
+        self._mask_expected_count = count
+        if self._mask_collection is not None:
+            self._mask_collection.set_expected_experiments(count)
 
     @Slot()
     def _cancel_pipeline(self) -> None:

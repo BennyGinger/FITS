@@ -17,9 +17,10 @@ def test_cli_supplies_interactive_mask_bridge(tmp_path: Path, monkeypatch) -> No
         lambda _: {"run_dir": str(tmp_path)},
     )
 
-    def fake_start_pipeline(*, settings_path, mask_interaction):
+    def fake_start_pipeline(*, settings_path, mask_interaction, run_progress):
         captured["settings_path"] = settings_path
         captured["interaction"] = mask_interaction
+        captured["progress"] = run_progress
         mask_interaction.input_complete()
 
     monkeypatch.setattr(
@@ -29,3 +30,4 @@ def test_cli_supplies_interactive_mask_bridge(tmp_path: Path, monkeypatch) -> No
 
     assert captured["settings_path"] == settings.resolve()
     assert captured["interaction"] is not None
+    assert captured["progress"] is not None

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 from fits.gui.theme import apply_dark_theme
 from fits.gui.viewer.collection_window import MaskCollectionWindow
+from fits.environment.progress import RunProgress
 from fits.pipeline import SETTINGS_PATH, start_pipeline
 from fits.settings.loader import load_settings
 from fits.workflows.interactive import MaskInteraction, PipelineCancelled
@@ -18,6 +19,7 @@ from fits.workflows.interactive import MaskInteraction, PipelineCancelled
 class _PipelineSignals(QObject):
     mask_requested = Signal(object)
     mask_input_complete = Signal()
+    mask_expected_count = Signal(int)
     stopped = Signal(object)
 
 
@@ -35,15 +37,22 @@ def run_pipeline_cli(settings_path: Path | None = None) -> None:
     apply_dark_theme(app)
 
     signals = _PipelineSignals()
-    interaction = MaskInteraction(signals.mask_requested.emit,
-                                  signals.mask_input_complete.emit)
+    interaction = MaskInteraction(
+        signals.mask_requested.emit,
+        signals.mask_input_complete.emit,
+        signals.mask_expected_count.emit,
+    )
+    progress = RunProgress()
     collection: MaskCollectionWindow | None = None
+    mask_expected_count: int | None = None
     result: list[BaseException | None] = []
 
     def request_mask(request) -> None:
         nonlocal collection
         if collection is None:
             collection = MaskCollectionWindow(preview=False, run_dir=run_dir)
+            if mask_expected_count is not None:
+                collection.set_expected_experiments(mask_expected_count)
             collection.experiment_finalized.connect(interaction.resolve)
             collection.collection_finished.connect(interaction.finish)
             collection.cancellation_requested.connect(interaction.cancel)
@@ -54,6 +63,12 @@ def run_pipeline_cli(settings_path: Path | None = None) -> None:
         if collection is not None and not collection._ended:
             collection.no_more_requests()
 
+    def expected_count(count: int) -> None:
+        nonlocal mask_expected_count
+        mask_expected_count = count
+        if collection is not None:
+            collection.set_expected_experiments(count)
+
     def stop(error) -> None:
         result.append(error)
         if collection is not None:
@@ -63,11 +78,13 @@ def run_pipeline_cli(settings_path: Path | None = None) -> None:
 
     signals.mask_requested.connect(request_mask)
     signals.mask_input_complete.connect(input_complete)
+    signals.mask_expected_count.connect(expected_count)
     signals.stopped.connect(stop)
 
     def work() -> None:
         try:
-            start_pipeline(settings_path=config_path, mask_interaction=interaction)
+            start_pipeline(settings_path=config_path, mask_interaction=interaction,
+                           run_progress=progress)
         except PipelineCancelled:
             signals.stopped.emit(None)
         except BaseException as error:

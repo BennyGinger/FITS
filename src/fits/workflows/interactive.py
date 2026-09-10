@@ -12,12 +12,14 @@ from threading import Event
 from typing import Any, Callable, Mapping
 
 from fits.environment.constant import ARTI_IMG, StepName
+from fits.environment.progress import RunProgress, StageStatus, WorkflowStage
 from fits.environment.state import ExperimentState
 from fits.sessions.collection import MaskCollectionRequest, MaskCollectionOutcome
 from fits.workflows.engines.scheduler import _resolve_runtime_steps
 
 logger = logging.getLogger(__name__)
-PREPARATION = {StepName.CONVERT, StepName.REGISTER_TIME, StepName.REGISTER_CHANNEL, StepName.BG_SUB}
+CONVERSION = {StepName.CONVERT}
+PREPROCESSING = {StepName.REGISTER_TIME, StepName.REGISTER_CHANNEL, StepName.BG_SUB}
 COMPUTATION = {StepName.SEGMENT, StepName.TRACK}
 ANALYSIS = {StepName.DISTANCE_PROFILE, StepName.EXTRACT}
 
@@ -28,14 +30,17 @@ class PipelineCancelled(Exception):
 
 class MaskInteraction:
     def __init__(self, request: Callable[[MaskCollectionRequest], None],
-                 input_complete: Callable[[], None] = lambda: None) -> None:
+                 input_complete: Callable[[], None] = lambda: None,
+                 expected_count: Callable[[int], None] = lambda count: None) -> None:
         self.request = request
         self.input_complete = input_complete
+        self.expected_count = expected_count
         self.cancelled = Event()
         self.finished = Event()
         self.outcomes = Queue()
 
     def resolve(self, outcome: MaskCollectionOutcome) -> None:
+        logger.info('Mask drawing submitted for %s.', outcome.request.experiment_id)
         self.outcomes.put(outcome)
 
     def finish(self) -> None:
@@ -85,19 +90,41 @@ def _validate_outcome(request: MaskCollectionRequest, outcome: MaskCollectionOut
                    source_shape=loaded.array.shape, source_channels=tuple(reader.channel_labels))
 
 
+def _input_progress_id(state: ExperimentState) -> str:
+    """Identify raw inputs separately when several files share one folder."""
+    try:
+        return state.original_image.as_posix()
+    except KeyError:
+        return state.experiment_id
+
+
 def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentState],
                              interaction: MaskInteraction, *,
-                             step_delay_seconds: float = 0.0) -> list[ExperimentState]:
+                             step_delay_seconds: float = 0.0,
+                             progress: RunProgress | None = None) -> list[ExperimentState]:
     """Prepare experiments one by one while drawing and downstream work overlap."""
     if step_delay_seconds < 0:
         raise ValueError('Demo step delay cannot be negative.')
     steps = _resolve_runtime_steps(config)
-    if any(step.spec.profile.step_name not in PREPARATION | COMPUTATION | ANALYSIS for step in steps):
+    if any(step.spec.profile.step_name not in CONVERSION | PREPROCESSING | COMPUTATION | ANALYSIS for step in steps):
         raise ValueError('An enabled step has no interactive pipeline phase.')
-    preparation = [s for s in steps if s.spec.profile.step_name in PREPARATION]
+    conversion = [s for s in steps if s.spec.profile.step_name in CONVERSION]
+    preprocessing = [s for s in steps if s.spec.profile.step_name in PREPROCESSING]
     computation = [s for s in steps if s.spec.profile.step_name in COMPUTATION]
     analysis = [s for s in steps if s.spec.profile.step_name in ANALYSIS]
     settings = {s.spec.profile.step_name: s.settings for s in steps}
+    progress = progress or RunProgress()
+    required_stages = {WorkflowStage.DRAWING}
+    for stage, selected in (
+            (WorkflowStage.CONVERT, conversion),
+            (WorkflowStage.PREPROCESS, preprocessing),
+            (WorkflowStage.PROCESS, computation),
+            (WorkflowStage.ANALYSIS, analysis)):
+        if selected:
+            required_stages.add(stage)
+    for state in states:
+        progress.add(_input_progress_id(state), required_stages)
+    interaction.expected_count(len(states))
     prepared = Queue()
     producer_done = Event()
     stop_preparation = Event()
@@ -116,37 +143,64 @@ def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentS
                     raise PipelineCancelled('Preparation stopped.')
                 interaction.check_cancelled()
 
-    def run_steps(current, selected_steps):
-        for step in selected_steps:
-            produced = []
-            for state in current:
-                interaction.check_cancelled()
-                if stop_preparation.is_set():
-                    raise PipelineCancelled('Preparation stopped.')
-                logger.info('Starting %s for %s', step.spec.profile.step_name, state.experiment_id)
-                produced.extend(step.spec.item_runner(step.settings, state, step.spec.profile))
-                logger.info('Finished %s for %s', step.spec.profile.step_name, state.experiment_id)
-                pause()
-            current = produced
+    def run_steps(current, selected_steps, stage, experiment_id):
+        if not selected_steps:
+            return current
+        progress.update(experiment_id, stage, StageStatus.ACTIVE)
+        try:
+            for step in selected_steps:
+                produced = []
+                for state in current:
+                    interaction.check_cancelled()
+                    if stop_preparation.is_set():
+                        raise PipelineCancelled('Preparation stopped.')
+                    logger.info('Starting %s for %s', step.spec.profile.step_name, state.experiment_id)
+                    produced.extend(step.spec.item_runner(step.settings, state, step.spec.profile))
+                    logger.info('Finished %s for %s', step.spec.profile.step_name, state.experiment_id)
+                    pause()
+                current = produced
+        except PipelineCancelled:
+            progress.update(experiment_id, stage, StageStatus.SKIPPED)
+            raise
+        except Exception as error:
+            progress.update(experiment_id, stage, StageStatus.FAILED,
+                            error=str(error))
+            raise
+        progress.update(experiment_id, stage, StageStatus.COMPLETED)
         return current
 
     def prepare():
         try:
             for original in states:
                 interaction.check_cancelled()
-                for state in run_steps([original], preparation):
-                    if not preparation:
-                        pause()
-                    image = state.artifact(ARTI_IMG)
-                    if image is None or not image.is_file():
-                        raise ValueError(f'No prepared image for {state.experiment_id}. Enable conversion first.')
-                    request = MaskCollectionRequest.from_settings(image,
-                        extraction=settings.get(StepName.EXTRACT), profile=settings.get(StepName.DISTANCE_PROFILE))
-                    request = replace(request, experiment_id=state.experiment_id)
-                    logger.info('Ready for mask drawing: %s', state.experiment_id)
-                    if not interaction.finished.is_set():
-                        interaction.request(request)
-                    prepared.put((state, request))
+                original_id = _input_progress_id(original)
+                converted = run_steps([original], conversion, WorkflowStage.CONVERT,
+                                      original_id)
+                progress.replace_experiment(
+                    original_id, (state.experiment_id for state in converted))
+                for converted_state in converted:
+                    experiment_id = converted_state.experiment_id
+                    prepared_states = run_steps(
+                        [converted_state], preprocessing, WorkflowStage.PREPROCESS,
+                        experiment_id)
+                    for state in prepared_states:
+                        if not conversion and not preprocessing:
+                            pause()
+                        image = state.artifact(ARTI_IMG)
+                        if image is None or not image.is_file():
+                            error = f'No prepared image for {state.experiment_id}. Enable conversion first.'
+                            progress.update(state.experiment_id, WorkflowStage.PREPROCESS,
+                                            StageStatus.FAILED, error=error)
+                            raise ValueError(error)
+                        request = MaskCollectionRequest.from_settings(image,
+                            extraction=settings.get(StepName.EXTRACT), profile=settings.get(StepName.DISTANCE_PROFILE))
+                        request = replace(request, experiment_id=state.experiment_id)
+                        progress.update(state.experiment_id, WorkflowStage.DRAWING,
+                                        StageStatus.ACTIVE)
+                        logger.info('Ready for mask drawing: %s', state.experiment_id)
+                        if not interaction.finished.is_set():
+                            interaction.request(request)
+                        prepared.put((state, request))
         finally:
             producer_done.set()
             interaction.input_complete()
@@ -174,7 +228,17 @@ def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentS
                         logger.info('Drawing ended early; using existing masks for %s.', request.experiment_id)
                     if outcome is None:
                         continue
-                    _validate_outcome(request, outcome)
+                    try:
+                        _validate_outcome(request, outcome)
+                    except Exception as error:
+                        progress.update(request.experiment_id, WorkflowStage.DRAWING,
+                                        StageStatus.FAILED, error=str(error))
+                        raise
+                    skipped = outcome.skipped_references + outcome.skipped_rois
+                    drawing_status = (StageStatus.SKIPPED if skipped and not (
+                        outcome.reference_paths or outcome.roi_paths) else StageStatus.COMPLETED)
+                    progress.update(request.experiment_id, WorkflowStage.DRAWING,
+                                    drawing_status)
                     selected = analysis
                     if not outcome.reference_paths:
                         selected = [s for s in analysis if s.spec.profile.step_name != StepName.DISTANCE_PROFILE]
@@ -183,16 +247,26 @@ def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentS
                     logger.info('Masks finalized for %s: %d references, %d ROIs, %d skipped requests.',
                         request.experiment_id, len(outcome.reference_paths), len(outcome.roi_paths),
                         outcome.skipped_references + outcome.skipped_rois)
-                    final_states.extend(run_steps(computed, selected))
+                    if selected:
+                        final_states.extend(run_steps(
+                            computed, selected, WorkflowStage.ANALYSIS,
+                            request.experiment_id))
+                    else:
+                        progress.update(request.experiment_id, WorkflowStage.ANALYSIS,
+                                        StageStatus.SKIPPED)
                     del pending[key]
                 try:
                     state, request = prepared.get(timeout=.1)
                 except Empty:
                     continue
-                computed = run_steps([state], computation)
+                computed = run_steps([state], computation, WorkflowStage.PROCESS,
+                                     request.experiment_id)
                 pending[request.image_path] = (request, computed)
             producer.result()
             interaction.check_cancelled()
+        except PipelineCancelled:
+            progress.skip_unfinished()
+            raise
         finally:
             stop_preparation.set()
     return final_states

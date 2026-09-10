@@ -6,13 +6,9 @@ Interactive mask workflow — remaining work
 The first `fits-gui` conveyor and Ref/ROI collection workflow is implemented.
 The following items remain after the connected GUI draft:
 
-[ ] Decide whether mask outcomes/skipped requests need a durable run manifest
-    for restart, or whether saved mask artifacts remain sufficient.
-[ ] Add explicit noninteractive CLI policies for missing masks: skip missing
-    and strict error. The normal interactive CLI resolver is now connected;
-    define its headless fallback clearly.
 [ ] Expand the final run report so completed, skipped, omitted, cancelled and
-    failed work are distinguishable.
+    failed work are distinguishable. Derive it from the in-memory `RunProgress`
+    records; do not create a separate persistent manifest.
 [ ] Integrate the interactive coordinator with the full CPU/GPU conveyor pools
     if the conservative single-preparation/serial-downstream scheduler becomes
     a performance limitation.

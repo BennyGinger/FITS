@@ -45,6 +45,7 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self._input_complete = False
         self._ended = False
         self._completed = 0
+        self._expected_experiments: int | None = None
         self._baseline: dict[str, NDArray[np.uint8]] = {}
         self._baseline_labels: dict[str, str] = {}
         self._label_suggestions = {"reference": "", "roi": ""}
@@ -169,6 +170,11 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self._refresh_collection()
         self._complete_if_idle()
 
+    @Slot(int)
+    def set_expected_experiments(self, count: int) -> None:
+        self._expected_experiments = max(0, count)
+        self._refresh_collection()
+
     def _activate_next(self) -> None:
         # Suggest names only; never carry drawing pixels to another experiment.
         if self._source_path is not None:
@@ -180,14 +186,17 @@ class MaskCollectionWindow(MaskDrawingWindow):
                     current_label = self._session_panel(kind)[1].label_edit.text()
                     self._label_suggestions[kind] = (
                         current_label if kind == "roi" and current_label in labels else labels[0])
+        # Remember the experiment we are leaving even when the live conveyor has
+        # not supplied its successor yet.  The demo normally has a populated
+        # queue, while a real pipeline can briefly leave the queue empty.
+        if self._active is not None:
+            self._collapse_source = self._active.image_path
         if not self._waiting:
             self._active = None
             self._close_session()
             return
         if self._inspection is not None:
             self._return_to_current()
-        if self._active is not None:
-            self._collapse_source = self._active.image_path
         self._active = self._waiting.popleft()
         self._finished_modes.clear()
         self._skipped = {"reference": 0, "roi": 0}
@@ -367,6 +376,11 @@ class MaskCollectionWindow(MaskDrawingWindow):
     def _finish_experiment(self) -> bool:
         if self._active is None:
             return True
+        # During a live conveyor, keep the current experiment open until its
+        # successor is ready.  Only the final experiment may finish with an
+        # empty queue, after preparation has explicitly completed.
+        if not self._waiting and not (self._input_complete or self._preview):
+            return False
         kinds = tuple(kind for kind in ("reference", "roi") if kind not in self._finished_modes)
         completed = not self._waiting and self._all_expected_done()
         if (not completed and not self._confirm_missing(kinds)) or not self._allow_discard(("reference", "roi")):
@@ -633,7 +647,10 @@ class MaskCollectionWindow(MaskDrawingWindow):
         if self._ended:
             title = "Drawing session finished."
         elif self._active:
-            title = f"Experiment {self._completed + 1}: {self._experiment_name(self._active)}"
+            position = str(self._completed + 1)
+            if self._expected_experiments is not None:
+                position += f" of {self._expected_experiments}"
+            title = f"Experiment {position}: {self._experiment_name(self._active)}"
         else:
             title = "All experiments finished." if self._input_complete else "Waiting for an experiment…"
         self.experiment_label.setText(title)
@@ -666,8 +683,10 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self.return_button.setText("Return to current experiment" if self._active else "Return to collection")
         self.return_button.setVisible(self._inspection is not None)
         active = active and self._inspection is None
-        for button in (self.switch_button, self.finish_mode_button, self.next_button):
+        for button in (self.switch_button, self.finish_mode_button):
             button.setEnabled(active)
+        self.next_button.setEnabled(
+            active and (bool(self._waiting) or self._input_complete or self._preview))
         self.finish_button.setEnabled(not self._ended and self._inspection is None)
         self.load_button.setEnabled(not self._ended and not self._input_complete)
 

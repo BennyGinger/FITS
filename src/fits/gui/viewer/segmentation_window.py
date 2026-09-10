@@ -71,7 +71,7 @@ class SegmentationTunerWindow(ImageToolWindow):
 
     @Slot(object)
     def _path_selected(self, selected: object) -> None:
-        if selected is None:
+        if not isinstance(selected, (str, Path)):
             return
         source = Path(selected)
         if source.is_dir():
@@ -141,6 +141,8 @@ class SegmentationTunerWindow(ImageToolWindow):
 
     def _display_overlay(self, image, frame, channel, z_index) -> None:
         self.image_viewer.set_drawing_enabled(False)
+        if self._segmentation_session is None:
+            return
         settings = self.current_settings()
         self._segmentation_session.set_segment_settings(settings)
         cached = self._segmentation_session.load_cached_preview(

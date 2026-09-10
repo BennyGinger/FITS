@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent
@@ -37,6 +38,7 @@ class ImageToolWindow(QMainWindow):
     source_panel_sizes = (230, 750)
     file_filters: tuple[str, ...]
     tool_help: str
+    tool_panel: QWidget
 
     def __init__(self, experiments_dir: str | Path | None = None,
                  parent: QWidget | None = None) -> None:
@@ -151,7 +153,7 @@ class ImageToolWindow(QMainWindow):
             "Adjust the displayed intensity range. Add a colour marker from the "
             "gradient menu; click a marker to edit its colour, or remove it from "
             "the colour dialog.")
-        lut_layout.addWidget(self.image_viewer.histogram, 1)
+        lut_layout.addWidget(cast(QWidget, self.image_viewer.histogram), 1)
         lut_actions = QVBoxLayout()
         lut_actions.addStretch(1)
         self.auto_scale_button = QPushButton("Auto-scale")

@@ -30,7 +30,8 @@ def test_pipeline_log_directory_defaults_to_run_dir_logs(monkeypatch, tmp_path, 
     monkeypatch.setattr("fits.pipeline.load_settings", lambda _: cfg)
     monkeypatch.setattr("fits.pipeline.configure_logging", lambda **kwargs: captured.update(kwargs))
     start_pipeline(settings_path=tmp_path / "settings.toml")
-    assert captured["log_dir"] == tmp_path / ("custom" if log_value == "custom" else "logs")
+    expected_root = tmp_path / "custom" if log_value == "custom" else tmp_path
+    assert captured["log_dir"] == expected_root / "logs"
 
 
 def _saved_state(run_dir: Path, raw_path: Path, workdir_name: str) -> ExperimentState:

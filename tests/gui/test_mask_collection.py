@@ -102,6 +102,21 @@ def test_next_experiment_reports_outcome_and_starts_reference(window, tmp_path, 
     assert 'whole image' in warnings[0]
 
 
+def test_next_experiment_collapses_previous_tree_item(window, tmp_path, monkeypatch):
+    first = request(tmp_path)
+    second = request(tmp_path, 'b')
+    window.enqueue_experiment(first)
+    window.enqueue_experiment(second)
+    first_item = window.experiment_tree.topLevelItem(0)
+    assert first_item.isExpanded()
+    monkeypatch.setattr(window, '_confirm', lambda *args: True)
+    window._finish_experiment()
+    first_item = window.experiment_tree.topLevelItem(0)
+    second_item = window.experiment_tree.topLevelItem(1)
+    assert not first_item.isExpanded()
+    assert second_item.isExpanded()
+
+
 def test_finish_drawing_is_not_cancellation(window, tmp_path, monkeypatch):
     window.enqueue_experiment(request(tmp_path))
     window.enqueue_experiment(request(tmp_path, 'b'))

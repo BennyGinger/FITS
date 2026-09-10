@@ -5,8 +5,9 @@ from collections import deque
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QColor, QPalette
+from PySide6.QtGui import QCloseEvent, QColor, QKeyEvent, QPalette
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem, QStyle, QMessageBox, QPushButton, QStackedWidget, QToolButton, QVBoxLayout, QWidget
 
 from fits.gui.viewer.mask_window import MaskDrawingWindow
@@ -33,23 +34,24 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self._preview = preview
         self._preview_extraction = extraction
         self._preview_profile = profile
-        self._waiting = deque()
-        self._seen = set()
-        self._requests = {}
-        self._resolved = set()
-        self._inspection = None
-        self._return_view = None
+        self._waiting: deque[MaskCollectionRequest] = deque()
+        self._seen: set[Path] = set()
+        self._requests: dict[Path, MaskCollectionRequest] = {}
+        self._resolved: set[Path] = set()
+        self._inspection: ReferenceMaskSession | RoiSession | None = None
+        self._return_view: tuple[str, int, int, tuple[float, float], NDArray[np.uint8] | None] | None = None
         self._active: MaskCollectionRequest | None = None
+        self._collapse_source: Path | None = None
         self._input_complete = False
         self._ended = False
         self._completed = 0
-        self._baseline = {}
-        self._baseline_labels = {}
+        self._baseline: dict[str, NDArray[np.uint8]] = {}
+        self._baseline_labels: dict[str, str] = {}
         self._label_suggestions = {"reference": "", "roi": ""}
-        self._canvas_dirty = set()
-        self._saved = {"reference": set(), "roi": set()}
+        self._canvas_dirty: set[str] = set()
+        self._saved: dict[str, set[Path]] = {"reference": set(), "roi": set()}
         self._skipped = {"reference": 0, "roi": 0}
-        self._finished_modes = set()
+        self._finished_modes: set[str] = set()
         super().__init__(parent=parent)
         self.setWindowTitle("FITS Mask Collection" + (" — Preview" if preview else ""))
         self.tool_tabs.tabBar().hide()
@@ -140,7 +142,7 @@ class MaskCollectionWindow(MaskDrawingWindow):
 
     def eventFilter(self, watched, event) -> bool:
         # QTabWidget normally switches pages with Ctrl+Tab, even with a hidden bar.
-        if (event.type() == QEvent.Type.KeyPress
+        if (isinstance(event, QKeyEvent) and event.type() == QEvent.Type.KeyPress
                 and event.modifiers() & Qt.KeyboardModifier.ControlModifier
                 and event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)):
             return True
@@ -184,6 +186,8 @@ class MaskCollectionWindow(MaskDrawingWindow):
             return
         if self._inspection is not None:
             self._return_to_current()
+        if self._active is not None:
+            self._collapse_source = self._active.image_path
         self._active = self._waiting.popleft()
         self._finished_modes.clear()
         self._skipped = {"reference": 0, "roi": 0}
@@ -223,9 +227,11 @@ class MaskCollectionWindow(MaskDrawingWindow):
 
     def _dirty(self, kind) -> bool:
         session, panel = self._session_panel(kind)
+        baseline = self._baseline.get(kind)
         return session is not None and (
             kind in self._canvas_dirty
-            or not np.array_equal(session.mask_array, self._baseline.get(kind))
+            or baseline is None
+            or not np.array_equal(session.mask_array, baseline)
             or panel.label_edit.text() != self._baseline_labels.get(kind, ""))
 
     def _confirm(self, title: str, message: str) -> bool:
@@ -234,6 +240,7 @@ class MaskCollectionWindow(MaskDrawingWindow):
             QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Ok
 
     def _discard(self, kind) -> None:
+        assert self._source_path is not None
         if kind == "reference":
             self._reference_session = ReferenceMaskSession(self._source_path, reference_path=self._reference_path)
             self._image_session = self._reference_session
@@ -273,10 +280,12 @@ class MaskCollectionWindow(MaskDrawingWindow):
             self._roi_path = path
         # A save writes only the selected channel. Other channels may still be unsaved.
         session, panel = self._session_panel(kind)
+        if session is None:
+            return
         current = session.mask_array
         baseline = self._baseline[kind]
         if "C" in session.axes:
-            selection = [slice(None)] * current.ndim
+            selection: list[slice | int] = [slice(None)] * current.ndim
             selection[session.axes.index("C")] = session.channel_labels.index(self.channel_combo.currentText())
             baseline[tuple(selection)] = current[tuple(selection)]
         else:
@@ -305,14 +314,12 @@ class MaskCollectionWindow(MaskDrawingWindow):
         layout.addSpacing(24)
         self.saving_stack = QStackedWidget()
         for panel in (self.reference_panel, self.roi_panel):
-            panel.layout().removeWidget(panel.saving_section)
+            panel.outer_layout.removeWidget(panel.saving_section)
             panel.label_edit.setMinimumWidth(240)
             panel.label_edit.setMaximumWidth(16777215)
             panel.save_button.setFixedWidth(100)
-            saving_layout = panel.saving_section.layout()
-            save_row = saving_layout.itemAt(saving_layout.count() - 1).layout()
-            save_row.setStretch(1, 1)
-            save_row.setStretch(2, 0)
+            panel.save_row.setStretch(1, 1)
+            panel.save_row.setStretch(2, 0)
             panel.saving_section.setMinimumHeight(94)
             self.saving_stack.addWidget(panel.saving_section)
         layout.addWidget(self.saving_stack, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -332,6 +339,8 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self._refresh_collection()
 
     def _confirm_missing(self, kinds) -> bool:
+        if self._active is None:
+            return True
         notes = []
         for kind in kinds:
             remaining = max(0, self._targets[kind] - len(self._saved[kind]) - self._skipped[kind])
@@ -442,9 +451,13 @@ class MaskCollectionWindow(MaskDrawingWindow):
         selected = tree.currentItem().data(0, Qt.ItemDataRole.UserRole) if tree.currentItem() else None
         for index in range(tree.topLevelItemCount()):
             item = tree.topLevelItem(index)
+            if item is None:
+                continue
             key = item.data(0, Qt.ItemDataRole.UserRole)[0]
             if item.isExpanded():
                 expanded.add(key)
+        expanded.discard(self._collapse_source)
+        self._collapse_source = None
         tree.clear()
         folder_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         mask_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
@@ -494,12 +507,12 @@ class MaskCollectionWindow(MaskDrawingWindow):
             self._return_to_current()
         if not self._allow_discard(tuple(dict.fromkeys((self._kind(), kind)))):
             return
-        if kind == "reference":
+        if kind == "reference" and isinstance(candidate, ReferenceMaskSession):
             self._reference_session = candidate
             self._reference_path = path
             self._image_session = candidate
             self.reference_panel.label_edit.setText(candidate.reference_label)
-        else:
+        elif isinstance(candidate, RoiSession):
             self._roi_session = candidate
             self._roi_path = path
             self.roi_panel.label_edit.setText(candidate.roi_label)
@@ -538,7 +551,7 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self._refresh_collection()
 
     def _return_to_current(self) -> None:
-        if self._inspection is None:
+        if self._inspection is None or self._return_view is None:
             return
         self._inspection = None
         channel, frame, z, levels, canvas = self._return_view
@@ -587,7 +600,7 @@ class MaskCollectionWindow(MaskDrawingWindow):
 
     def _tool_keypress(self, event) -> bool:
         if self._inspection is not None:
-            return event.key() == Qt.Key.Key_S or (
+            return event.key() == Qt.Key.Key_S or bool(
                 event.key() == Qt.Key.Key_Z and event.modifiers() & Qt.KeyboardModifier.ControlModifier)
         return super()._tool_keypress(event)
 

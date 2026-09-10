@@ -185,7 +185,7 @@ class RoiMaskPanel(ReferenceMaskPanel):
         self._stack_values_initialized = False
 
     def _sync_manual_range(self) -> None:
-        minimum, maximum = self.threshold_region.getRegion()
+        minimum, maximum = cast(tuple[float, float], self.threshold_region.getRegion())
         self._set_current_values(minimum, maximum)
         self.stack_minimum.setValue(minimum)
         self.stack_maximum.setValue(maximum)

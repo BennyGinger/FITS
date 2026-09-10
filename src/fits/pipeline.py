@@ -45,7 +45,8 @@ def start_pipeline(
     log_raw = rt_settings.get("log_dir")
     if isinstance(log_raw, str):
         log_raw = log_raw.strip()
-    log_dir = Path(log_raw).expanduser().resolve() if log_raw else run_dir / "logs"
+    log_root = Path(log_raw).expanduser().resolve() if log_raw else run_dir
+    log_dir = log_root / "logs"
     console_level = rt_settings.get("console_level", "info")
     file_level = rt_settings.get("file_level", "debug")
     
@@ -108,9 +109,10 @@ def start_pipeline(
 
 if __name__ == "__main__":
     from time import time
+    from fits.cli.interactive import run_pipeline_cli
     start_time = time()
 
-    start_pipeline()
+    run_pipeline_cli()
     end_time = time()
     elapsed = end_time - start_time
     print(f"Total pipeline execution time: {elapsed:.2f} seconds")

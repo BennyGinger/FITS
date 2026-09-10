@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from fits.environment.constant import StepName
-from fits.gui.field_widgets import ValueWidget, create_field_widget
+from fits.gui.field_widgets import IntWidget, TextWidget, ValueWidget, create_field_widget
 from fits.gui.settings_adapter import (
     RUNTIME_CHOICES,
     STEP_LAYOUTS,
@@ -59,6 +59,7 @@ class StepSettingsEditor(QWidget):
         layout_spec = STEP_LAYOUTS[step]
         self._advanced_paths = set(layout_spec.advanced)
         outer = QVBoxLayout(self)
+        self.outer_layout = outer
 
         title = QLabel(f"<h2>{layout_spec.title}</h2>")
         outer.addWidget(title)
@@ -95,7 +96,7 @@ class StepSettingsEditor(QWidget):
             value = self.adapter.field_value(self.step, path)
             widget = create_field_widget(value, field_choices(self.step, path))
             widget.setToolTip(path)
-            if path in ("expected_ref_masks", "expected_roi_masks"):
+            if path in ("expected_ref_masks", "expected_roi_masks") and isinstance(widget, IntWidget):
                 widget.setMinimum(1 if path == "expected_ref_masks" else 0)
                 widget.setToolTip("Initial number of masks to request per experiment.")
             elif path in ("draw_ref_mask", "draw_roi_mask"):
@@ -184,9 +185,9 @@ class RuntimeSettingsEditor(QWidget):
                 adapter.runtime_value(name),
                 RUNTIME_CHOICES.get(name),
             )
-            if name == "log_dir":
+            if name == "log_dir" and isinstance(widget, TextWidget):
                 widget.setPlaceholderText("Use run_dir/logs (default)")
-                widget.setToolTip("Leave blank to save log files in the run directory's logs folder (created automatically).")
+                widget.setToolTip("Optional log root. FITS creates a logs folder inside it; blank uses the run directory.")
             form.addRow(field_label(name), widget)
             self.widgets[name] = widget
         group.toggled.connect(self._set_fields_enabled)

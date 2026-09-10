@@ -8,8 +8,9 @@ The following items remain after the connected GUI draft:
 
 [ ] Decide whether mask outcomes/skipped requests need a durable run manifest
     for restart, or whether saved mask artifacts remain sufficient.
-[ ] Add explicit CLI policies for missing masks: interactive GUI, skip missing,
-    and strict error. Define the headless behavior clearly.
+[ ] Add explicit noninteractive CLI policies for missing masks: skip missing
+    and strict error. The normal interactive CLI resolver is now connected;
+    define its headless fallback clearly.
 [ ] Expand the final run report so completed, skipped, omitted, cancelled and
     failed work are distinguishable.
 [ ] Integrate the interactive coordinator with the full CPU/GPU conveyor pools

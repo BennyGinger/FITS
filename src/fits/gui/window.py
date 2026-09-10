@@ -260,7 +260,7 @@ class FitsMainWindow(QMainWindow):
                 tune_layout.addWidget(tune_description, 1)
                 tune_layout.addWidget(
                     self.segtune_button, 0, Qt.AlignmentFlag.AlignVCenter)
-                editor.layout().insertWidget(1, tune_row)
+                editor.outer_layout.insertWidget(1, tune_row)
             editor.set_editable(self.adapter.step_enabled(step))
             self.settings_stack.addWidget(editor)
             self._editors[step] = editor

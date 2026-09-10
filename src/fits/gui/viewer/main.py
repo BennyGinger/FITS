@@ -55,7 +55,9 @@ def drawmask() -> None:
 
 def _launch(window_factory: Callable[[], QMainWindow], name: str,
             qt_arguments: list[str]) -> None:
-    app = QApplication.instance() or QApplication([sys.argv[0], *qt_arguments])
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        app = QApplication([sys.argv[0], *qt_arguments])
     app.setApplicationName(name)
     apply_dark_theme(app)
     window = window_factory()

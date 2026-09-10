@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 from numpy.typing import NDArray
@@ -14,6 +15,20 @@ from fits.gui.viewer.tools.reference_mask.settings_panel import ReferenceMaskPan
 from fits.gui.viewer.tools.roi_mask.settings_panel import RoiMaskPanel
 from fits.tasks.reference_mask import ReferenceMaskSession
 from fits.tasks.roi_mask import RoiSession
+
+
+class _PlaneCoordinates(TypedDict):
+    frame_index: int
+    channel: str
+    z_index: int
+
+
+class _InterpolationOptions(TypedDict):
+    frame_index: int
+    channel: str
+    z_index: int
+    extrapolate_start: bool
+    extrapolate_end: bool
 
 
 class MaskDrawingWindow(ImageToolWindow):
@@ -113,7 +128,7 @@ class MaskDrawingWindow(ImageToolWindow):
 
     @Slot(object)
     def _path_selected(self, selected: object) -> None:
-        if selected is None:
+        if not isinstance(selected, (str, Path)):
             return
         path = Path(selected)
         if path.is_dir():
@@ -187,7 +202,8 @@ class MaskDrawingWindow(ImageToolWindow):
         self.channel_combo.addItems(self._image_session.channel_labels)
         active_session = self._active_binary_session()
         selected_channel = (active_session.loaded_channels[0]
-                            if active_session.loaded_channels else None)
+                            if active_session is not None and active_session.loaded_channels
+                            else None)
         channel_index = self.channel_combo.findText(str(selected_channel))
         self.channel_combo.setCurrentIndex(max(channel_index, 0))
         self.frame_slider.setRange(0, self._image_session.frame_count - 1)
@@ -217,9 +233,9 @@ class MaskDrawingWindow(ImageToolWindow):
         self.image_viewer.set_drawing_enabled(True)
         self.image_viewer.set_mask_visible(self.show_mask.isChecked())
         self.image_viewer.set_mask_opacity(self.mask_opacity.value() / 100.0)
-        if self._roi_tool_active():
+        if self._roi_tool_active() and isinstance(session, RoiSession):
             self.roi_panel.set_threshold_image(image)
-            threshold_range = self._roi_session.threshold_range(
+            threshold_range = session.threshold_range(
                 frame_index=frame, channel=channel, z_index=z_index)
             if threshold_range is not None:
                 self.roi_panel.set_threshold_range(*threshold_range)
@@ -270,10 +286,10 @@ class MaskDrawingWindow(ImageToolWindow):
             frame_index: int, channel: str, z_index: int) -> NDArray[np.uint8]:
         axis = panel.preview_interpolation_axis
         if panel.interpolation_preview_enabled and axis is not None:
-            options = dict(
-                frame_index=frame_index, channel=channel, z_index=z_index,
-                extrapolate_start=panel.extrapolate_start.isChecked(),
-                extrapolate_end=panel.extrapolate_end.isChecked())
+            options: _InterpolationOptions = {
+                "frame_index": frame_index, "channel": channel, "z_index": z_index,
+                "extrapolate_start": panel.extrapolate_start.isChecked(),
+                "extrapolate_end": panel.extrapolate_end.isChecked()}
             if isinstance(session, RoiSession):
                 return session.interpolated_display_mask_plane(axis, **options)
             return session.interpolated_mask_plane(axis, **options)
@@ -330,10 +346,10 @@ class MaskDrawingWindow(ImageToolWindow):
         if session is None or not self._binary_tool_active():
             return
         try:
-            coordinates = dict(
-                frame_index=self.frame_slider.value(),
-                channel=self.channel_combo.currentText(),
-                z_index=self.z_slider.value())
+            coordinates: _PlaneCoordinates = {
+                "frame_index": self.frame_slider.value(),
+                "channel": self.channel_combo.currentText(),
+                "z_index": self.z_slider.value()}
             if isinstance(session, RoiSession):
                 comparison = self._binary_display_mask(
                     session, self.roi_panel, coordinates["frame_index"],
@@ -362,9 +378,10 @@ class MaskDrawingWindow(ImageToolWindow):
         panel = self._active_binary_panel()
         if session is None or panel is None:
             return
-        coordinates = dict(frame_index=self.frame_slider.value(),
-                           channel=self.channel_combo.currentText(),
-                           z_index=self.z_slider.value())
+        coordinates: _PlaneCoordinates = {
+            "frame_index": self.frame_slider.value(),
+            "channel": self.channel_combo.currentText(),
+            "z_index": self.z_slider.value()}
         restored = session.undo_display_edit(**coordinates)
         if restored is None:
             return
@@ -396,9 +413,9 @@ class MaskDrawingWindow(ImageToolWindow):
     def _save_reference_mask(self) -> None:
         if self._reference_session is None:
             return
+        label = self.reference_panel.reference_label
+        channel = self.channel_combo.currentText()
         try:
-            label = self.reference_panel.reference_label
-            channel = self.channel_combo.currentText()
             self._reference_session.set_mask_plane(
                 self.image_viewer.drawing_mask,
                 frame_index=self.frame_slider.value(),
@@ -541,10 +558,10 @@ class MaskDrawingWindow(ImageToolWindow):
         if self._roi_session is None or not self._roi_tool_active():
             return
         self._disable_active_interpolation_preview()
-        coordinates = dict(
-            frame_index=self.frame_slider.value(),
-            channel=self.channel_combo.currentText(),
-            z_index=self.z_slider.value())
+        coordinates: _PlaneCoordinates = {
+            "frame_index": self.frame_slider.value(),
+            "channel": self.channel_combo.currentText(),
+            "z_index": self.z_slider.value()}
         try:
             changed = self._roi_session.fill_holes(**coordinates)
             self.image_viewer.set_drawing_mask(
@@ -561,10 +578,10 @@ class MaskDrawingWindow(ImageToolWindow):
         if self._roi_session is None or not self._roi_tool_active():
             return
         self._disable_active_interpolation_preview()
-        coordinates = dict(
-            frame_index=self.frame_slider.value(),
-            channel=self.channel_combo.currentText(),
-            z_index=self.z_slider.value())
+        coordinates: _PlaneCoordinates = {
+            "frame_index": self.frame_slider.value(),
+            "channel": self.channel_combo.currentText(),
+            "z_index": self.z_slider.value()}
         try:
             changed = self._roi_session.remove_small_objects(
                 minimum_size, **coordinates)

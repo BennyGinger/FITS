@@ -108,7 +108,7 @@ filename order. Selecting a mask file opens its sibling image and that specific
 mask in the matching tab.
 The former `fits-viewer` command has been removed.
 
-To try the new collection panel before pipeline integration:
+To open the collection panel in preview mode without running the pipeline:
 
 ```bash
 uv run fits-drawmask --tool pipeline
@@ -163,7 +163,14 @@ pipeline** stops new work and waits for any already-running step to finish.
 The drawing requests and early-finish choices are currently run-local; reopening
 a run reuses saved masks and asks for finalization again.
 
-The command-line interface is available through `uv run fits --help`.
+The command-line interface is available through `uv run fits --help`. Running
+`uv run fits pipeline start` (or `python -m fits.pipeline`) launches the same
+Ref/ROI collection window when the configured analyses request interactive
+masks. Calling `start_pipeline()` directly stays noninteractive unless a mask
+interaction bridge is supplied.
+
+Runtime `log_dir` is the root for logs. FITS creates a `logs/` folder inside
+that directory; when `log_dir` is empty, it creates `logs/` inside `run_dir`.
 
 ## Repository maintenance
 

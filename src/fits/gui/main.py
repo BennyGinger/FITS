@@ -16,7 +16,9 @@ def main() -> None:
     arguments, qt_arguments = parser.parse_known_args()
     if arguments.demo_step_delay < 0:
         parser.error("--demo-step-delay must be nonnegative")
-    app = QApplication.instance() or QApplication([sys.argv[0], *qt_arguments])
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        app = QApplication([sys.argv[0], *qt_arguments])
     app.setApplicationName("FITS")
     apply_dark_theme(app)
     window = FitsMainWindow(demo_step_delay=arguments.demo_step_delay)

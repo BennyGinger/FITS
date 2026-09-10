@@ -17,7 +17,7 @@ run_dir = ""
 execution = "conveyor" # batch | conveyor
 console_level = "info" # debug | info | warning | error | critical
 file_level = "debug" # debug | info | warning | error | critical
-log_dir = "" # Empty or omitted uses run_dir/logs (created automatically); otherwise use this directory.
+log_dir = "" # Log root. Empty uses run_dir; FITS creates a logs folder inside it.
 
 # optimize = "path/to/one/input/file" # Optional; process only this input file.
 

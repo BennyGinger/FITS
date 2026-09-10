@@ -9,9 +9,10 @@ work from follow-up work.
 
 The goal is to connect FITS's viewers to the main workflow so that users can
 create reference and ROI/inclusion masks while independent pipeline work
-continues. This workflow is connected to `fits-gui`; interactive CLI support
-remains future work. Ordinary noninteractive execution retains the existing
-fail-fast behavior for processing errors.
+continues. This workflow is connected to `fits-gui` and to the CLI pipeline
+entry points. The reusable `start_pipeline()` API remains noninteractive unless
+it is given a mask-interaction bridge. Processing errors retain the existing
+fail-fast behavior.
 
 The design distinguishes three user experiences:
 
@@ -355,8 +356,9 @@ extraction can continue. No ROI is a permitted whole-image outcome.
 This is a small initial conveyor with a single preparation worker and serial
 downstream scheduling. It does not yet use the ordinary conveyor's full CPU/GPU
 pool scheduling or every experiment-level worker setting. Noninteractive runs
-retain their existing batch/conveyor paths. The interactive CLI resolver remains
-future work; use the main GUI for the connected drawing workflow.
+retain their existing batch/conveyor paths. The CLI entry points create the Qt
+event loop on the main thread and run the same interactive coordinator in a
+worker thread.
 
 `uv run fits-gui --demo-step-delay 5` adds cancellable five-second pauses after
 steps. With pre-prepared inputs it also spaces drawing requests five seconds
@@ -614,10 +616,11 @@ This stage established the interaction model used by the connected coordinator.
   mask save, mask skip, or mask-type finalization.
 - Submit Phase 3 per experiment without a global barrier.
 
-### Stage 4: CLI policies and reporting — future work
+### Stage 4: CLI integration and reporting — partial
 
-- Add explicit interactive/noninteractive CLI behavior.
-- Support the Qt resolver from interactive CLI execution.
+- The normal CLI entry points launch the Qt resolver when configured analyses
+  request interactive masks.
+- Explicit skip-missing and strict headless policies remain future work.
 - Add a final report covering saved masks, skipped requests, analyses omitted
   because no usable masks were supplied, processing failures, and cancellation.
 - Consider persisting the runtime manifest for robust resume behavior.
@@ -644,7 +647,7 @@ implemented, and `[ ]` means future work.
 | [~] | Add conveyor scheduling | The first version overlaps preparation, drawing and per-experiment downstream work with conservative serial scheduling. Full scheduler/pool integration remains. |
 | [x] | Make conveyor the GUI default | Saved templates and the main GUI default to conveyor; batch remains available. |
 | [ ] | Add the GUI preparation lock | Processing settings remain unavailable until usable prepared images exist; the user's saved settings are not overwritten. |
-| [ ] | Add CLI mask policies | Interactive, noninteractive-skip, and strict-missing-input behavior are explicit. |
+| [~] | Add CLI mask policies | Interactive CLI execution is connected; explicit noninteractive-skip and strict-missing-input modes remain. |
 | [~] | Complete cancellation and reporting | GUI cancellation stops new scheduling and differs from failures; a complete final run report remains. |
 | [~] | Verify the complete workflow | Focused unit, coordinator, headless Qt and GUI connection tests pass; CLI policies and durable restart outcomes remain. |
 
@@ -688,8 +691,8 @@ These points should be resolved before or during implementation:
 - Can finalized masks be edited before analysis begins? What should happen when
   editing is requested after analysis has begun or completed?
 - What cancellation guarantees can each task/executor realistically provide?
-- How should interactive CLI invocation behave when no graphical display is
-  available?
+- How should users select skip-missing or strict behavior when the CLI runs
+  without a graphical display?
 
 Distance-profile output uses long-form rows for every reference label/channel,
 ROI label/channel, intensity channel, frame, and distance bin combination.

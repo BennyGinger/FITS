@@ -34,6 +34,7 @@ class ReferenceMaskPanel(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        self.outer_layout = layout
         self.title_label = QLabel("Distance reference")
         self.title_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(self.title_label)
@@ -162,7 +163,9 @@ class ReferenceMaskPanel(QWidget):
         layout.addWidget(self.overlay_widget)
 
         self.saving_section, saving_layout = self._section("Saving")
+        self.saving_layout = saving_layout
         save_row = QHBoxLayout()
+        self.save_row = save_row
         save_row.addWidget(QLabel("File label"))
         self.label_edit = QLineEdit()
         self.label_edit.setFixedWidth(self.CONTROL_WIDTH)

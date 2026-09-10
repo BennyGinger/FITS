@@ -19,7 +19,7 @@ DrawingTool = Literal["freehand", "line", "circle", "square", "triangle"]
 DrawingOperation = Literal["add", "erase"]
 
 
-class ControlledViewBox(pg.ViewBox):
+class ControlledViewBox(pg.ViewBox):  # type: ignore[misc]
     """Allow image navigation only while the Control key is held."""
 
     def mouseDragEvent(self, ev: Any, axis: int | None = None) -> None:
@@ -44,12 +44,12 @@ class MaskDrawingItem(pg.ImageItem):
         self.on_moved: Callable[[float, float], None] | None = None
         self.on_finished: Callable[[float, float], None] | None = None
         self.setZValue(100)
-        self.setAcceptedMouseButtons(cast(Qt.MouseButton, Qt.MouseButton.NoButton))
+        self.setAcceptedMouseButtons(cast(Any, Qt.MouseButton.NoButton))
 
     def set_drawing_enabled(self, enabled: bool) -> None:
         buttons = ((Qt.MouseButton.LeftButton | Qt.MouseButton.RightButton)
                    if enabled else Qt.MouseButton.NoButton)
-        self.setAcceptedMouseButtons(cast(Qt.MouseButton, buttons))
+        self.setAcceptedMouseButtons(cast(Any, buttons))
 
     def mouseDragEvent(self, ev: Any) -> None:
         if (ev.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton)
@@ -108,7 +108,7 @@ class FitsImageViewer(QWidget):
         self.view_box.addItem(self.image_item)
         self.view_box.addItem(self.mask_item)
         self.view_box.addItem(self.drawing_item)
-        layout.addWidget(self.canvas)
+        layout.addWidget(cast(QWidget, self.canvas))
 
         self.histogram = pg.HistogramLUTWidget(
             orientation="horizontal",
@@ -283,9 +283,10 @@ class FitsImageViewer(QWidget):
         array = np.asarray(mask)
         if array.ndim != 2:
             raise ValueError(f"The drawing mask must be 2D; got shape {array.shape}.")
-        self._drawing_mask = (array != 0).astype(np.uint8)
+        drawing_mask = (array != 0).astype(np.uint8)
+        self._drawing_mask = drawing_mask
         self._drawing_history.clear()
-        self.set_mask(self._drawing_mask)
+        self.set_mask(drawing_mask)
 
     @property
     def can_undo_drawing(self) -> bool:

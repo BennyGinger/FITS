@@ -428,12 +428,22 @@ class DistanceProfileSettings(SettingsModel):
     whole-image profile and profiles for every saved ROI label/channel.
 
     Attributes:
+        draw_ref_mask: Always true: distance profiling requires references.
+        expected_ref_masks: Initial reference-mask drawing target per experiment.
+        draw_roi_mask: Request optional interactive ROI drawing, without disabling
+            discovery of existing ROI artifacts.
+        expected_roi_masks: Initial ROI drawing target when requested.
         bin_width: Width of each distance bin in pixels.
         maximum_bins: Optional maximum number of distance bins to retain.
         frame_workers: Bioimagequant processes used to profile independent
             reference frames within one experiment.
     """
 
+    # Drawing requests belong to FITS; analysis still discovers saved artifacts.
+    draw_ref_mask: Literal[True] = True
+    expected_ref_masks: int = Field(default=1, ge=1)
+    draw_roi_mask: bool = False
+    expected_roi_masks: int = Field(default=1, ge=0)
     bin_width: float = Field(default=5.0, gt=0)
     maximum_bins: int | None = Field(default=None, ge=1)
     execution: ExecMode = Field(default="serial", exclude=True)
@@ -452,6 +462,9 @@ class ExtractSettings(SettingsModel):
     """Settings for region-based intensity quantification.
 
     Attributes:
+        draw_ref_mask: Request optional interactive reference drawing. Existing
+            reference artifacts are still discovered when false.
+        expected_ref_masks: Initial drawing target per experiment.
         additional_properties: Extra scikit-image region properties appended to
             bioimagequant's defaults.
         frame_workers: Bioimagequant worker processes used to quantify frames
@@ -466,6 +479,9 @@ class ExtractSettings(SettingsModel):
         ordered_execution: Preserve input experiment order when collecting
             parallel results. Defaults to ``False``.
     """
+    # Optional interactive requests do not disable existing reference artifacts.
+    draw_ref_mask: bool = False
+    expected_ref_masks: int = Field(default=1, ge=1)
     additional_properties: str | Sequence[str] | None = None
     execution: ExecMode = Field(default="serial", exclude=True)
     frame_workers: int = Field(default=8, ge=1, exclude=True)

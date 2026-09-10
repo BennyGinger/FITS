@@ -275,7 +275,7 @@ def test_saving_replaces_an_artifact_without_current_encoding(
 ) -> None:
     output = tmp_path / "fits_roi_tail.tif"
     output.touch()
-    old_reader = SimpleNamespace(fits_metadata={})
+    old_reader = SimpleNamespace(metadata=SimpleNamespace(custom_metadata={}))
     monkeypatch.setattr(
         "fits.tasks.roi_mask.artifact.FitsIO.from_path", lambda _: old_reader)
     current = np.full((2, 3, 3), 4, dtype=np.uint8)
@@ -286,3 +286,24 @@ def test_saving_replaces_an_artifact_without_current_encoding(
 
     np.testing.assert_array_equal(merged, current)
     assert labels == ["GFP"]
+
+
+def test_roi_tiff_round_trip_reads_encoding_from_fitsio_metadata(tmp_path: Path) -> None:
+    import tifffile
+    from fits_io import FitsIO
+
+    source = tmp_path / 'fits_array.tif'
+    image = np.arange(2 * 8 * 8, dtype=np.uint16).reshape(2, 8, 8)
+    tifffile.imwrite(source, image, imagej=True, metadata={'axes': 'TYX'})
+    session = RoiSession(source)
+    session.threshold_plane(20, 45, frame_index=0)
+    path = session.save('region', channel=0)
+    reader = FitsIO.from_path(path)
+    assert reader.metadata.custom_metadata['roi_mask_encoding'] == ROI_MASK_ENCODING
+    reloaded = RoiSession(source, roi_path=path)
+    np.testing.assert_array_equal(reloaded.mask_array, session.mask_array)
+    # Existing current-format masks must require overwrite, not be mistaken for legacy files.
+    with pytest.raises(FileExistsError):
+        reloaded.save('region', channel=0)
+    reloaded.save('region', channel=0, overwrite=True)
+    np.testing.assert_array_equal(RoiSession(source, roi_path=path).mask_array, session.mask_array)

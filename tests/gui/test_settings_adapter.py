@@ -58,3 +58,23 @@ def test_overwrite_is_basic_for_every_step() -> None:
     for layout in STEP_LAYOUTS.values():
         assert "overwrite" in layout.basic
         assert "overwrite" not in layout.advanced
+
+
+def test_mask_request_settings_round_trip(tmp_path: Path) -> None:
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_field_value(StepName.EXTRACT, "draw_ref_mask", True)
+    adapter.set_field_value(StepName.EXTRACT, "expected_ref_masks", 3)
+    adapter.set_field_value(StepName.DISTANCE_PROFILE, "draw_roi_mask", True)
+    adapter.set_field_value(StepName.DISTANCE_PROFILE, "expected_roi_masks", 2)
+    path = adapter.save_to_run_dir()
+    reloaded = SettingsAdapter()
+    reloaded.load(path)
+    assert reloaded.field_value(StepName.EXTRACT, "draw_ref_mask") is True
+    assert reloaded.field_value(StepName.EXTRACT, "expected_ref_masks") == 3
+    from fits.settings.models import DistanceProfileSettings
+    params = reloaded.document[StepName.DISTANCE_PROFILE]["params"].unwrap()
+    assert "draw_ref_mask" not in params
+    assert DistanceProfileSettings.model_validate(params).draw_ref_mask is True
+    assert reloaded.field_value(StepName.DISTANCE_PROFILE, "expected_roi_masks") == 2
+    assert "draw_ref_mask" not in STEP_LAYOUTS[StepName.DISTANCE_PROFILE].basic

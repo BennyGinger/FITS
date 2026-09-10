@@ -25,6 +25,11 @@ class DistanceProfileManager(AnalysisManager):
     settings: DistanceProfileSettings
 
     def calculate(self) -> pd.DataFrame:
+        reference_paths = self.reference_paths()
+        if not reference_paths:
+            raise ValueError(
+                "Distance profiling requires at least one reference mask "
+                f"(fits_ref_*.tif) for {self.state.experiment_id}.")
         reader = self.image_reader
         loaded = reader.get_array()
         source = np.asarray(loaded.array)
@@ -45,7 +50,7 @@ class DistanceProfileManager(AnalysisManager):
             image_axes,
             channel_labels=source_channels,)
 
-        for path in self.reference_paths():
+        for path in reference_paths:
             reference, name, channels = load_reference_artifact(
                 path,
                 source_path=self.image_path,

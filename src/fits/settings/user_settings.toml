@@ -10,7 +10,7 @@ run_dir = "/media/ben/Analysis/Python/Images/zymosan" # Directory where the inpu
 # Runtime configuration
 # ============================
 [runtime]
-execution = "batch" # Type of execution: batch | conveyor.
+execution = "conveyor" # Type of execution: batch | conveyor.
 log_dir = "/media/ben/Analysis/Python/Images/zymosan" # where to save log files, if not specified, log file will not be created
 console_level = "info" # Console log level: debug | info | warning | error | critical
 file_level = "debug" # File log level: debug | info | warning | error | critical
@@ -125,6 +125,9 @@ max_distance = 150.0 # Maximum distance (in pixels) between objects in consecuti
 enabled = false
 
 [distance_profile.params]
+expected_ref_masks = 1 # Initial reference-mask request count per experiment (at least one).
+draw_roi_mask = false # Request interactive ROI drawing; existing masks are still discovered.
+expected_roi_masks = 1 # Initial ROI-mask request count when drawing is enabled.
 bin_width = 5.0 # Distance-bin width in pixels.
 maximum_bins = "None" # Maximum number of bins, or "None" to cover the complete region.
 overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
@@ -136,5 +139,7 @@ overwrite = false # Whether to overwrite existing output files. If false, it wil
 enabled = true
 
 [extract.params]
+draw_ref_mask = false # Request interactive reference drawing; existing masks are still discovered.
+expected_ref_masks = 1 # Initial reference-mask request count when drawing is enabled.
 overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 additional_properties = "None" # Additional properties from skimage.measure.regionprops_table to extract. This should be a list of property names as strings. If 'None', it will not extract any additional properties beyond the default ones (label, area, centroid, etc.). You can specify any valid property names supported by skimage.measure.regionprops_table, such as "eccentricity", "bbox", "slice", etc. For example: ["eccentricity", "bbox", "slice"].

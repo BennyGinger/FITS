@@ -29,7 +29,9 @@ from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, STEP_LAYOUTS, Setting
 from fits.gui.settings_editor import RuntimeSettingsEditor, StepSettingsEditor
 from fits.gui.run_browser import RunDirectoryBrowser
 from fits.pipeline import start_pipeline
+from fits.workflows.interactive import MaskInteraction, PipelineCancelled
 from fits.workflows.errors import StepExecutionError
+from fits.settings.models import SegmentSettings
 
 
 def _user_error_message(error: BaseException) -> str:
@@ -64,12 +66,17 @@ class QtLogHandler(logging.Handler):
 
 class PipelineWorker(QObject):
     finished = Signal()
+    cancelled = Signal()
+    mask_requested = Signal(object)
+    mask_input_complete = Signal()
     failed = Signal(str, str)
 
-    def __init__(self, settings_path: Path, log_handler: logging.Handler) -> None:
+    def __init__(self, settings_path: Path, log_handler: logging.Handler, demo_step_delay: float = 0.0) -> None:
         super().__init__()
         self.settings_path = settings_path
         self.log_handler = log_handler
+        self.demo_step_delay = demo_step_delay
+        self.interaction = MaskInteraction(self.mask_requested.emit, self.mask_input_complete.emit)
 
     @Slot()
     def run(self) -> None:
@@ -77,7 +84,11 @@ class PipelineWorker(QObject):
             start_pipeline(
                 settings_path=self.settings_path,
                 console_handler=self.log_handler,
+                mask_interaction=self.interaction,
+                demo_step_delay=self.demo_step_delay,
             )
+        except PipelineCancelled:
+            self.cancelled.emit()
         except Exception as error:
             self.failed.emit(_user_error_message(error), traceback.format_exc())
         else:
@@ -91,14 +102,18 @@ class FitsMainWindow(QMainWindow):
         self,
         adapter: SettingsAdapter | None = None,
         parent: QWidget | None = None,
+        demo_step_delay: float = 0.0,
     ) -> None:
         super().__init__(parent)
+        self.demo_step_delay = demo_step_delay
+        self._mask_collection = None
         self.adapter = adapter or SettingsAdapter()
         self._thread: QThread | None = None
         self._worker: PipelineWorker | None = None
         self._step_items: dict[StepName, QTreeWidgetItem] = {}
         self._editors: dict[StepName, StepSettingsEditor] = {}
         self.runtime_editor: RuntimeSettingsEditor | None = None
+        self._segmentation_tuner = None
 
         self.setWindowTitle("FITS")
         self.resize(1200, 850)
@@ -230,6 +245,22 @@ class FitsMainWindow(QMainWindow):
             self._step_items[step] = item
 
             editor = StepSettingsEditor(self.adapter, step)
+            if step == StepName.SEGMENT:
+                tune_row = QWidget()
+                tune_layout = QHBoxLayout(tune_row)
+                tune_layout.setContentsMargins(0, 0, 0, 0)
+                tune_layout.setSpacing(16)
+                self.segtune_button = QPushButton("Tune segmentation…")
+                self.segtune_button.clicked.connect(self._open_segmentation_tuner)
+                tune_description = QLabel(
+                    "Preview segmentation on an image and adjust Cellpose settings. "
+                    "Apply and close copies your changes back here.")
+                tune_description.setWordWrap(True)
+                tune_description.setStyleSheet("color: #b8b8b8;")
+                tune_layout.addWidget(tune_description, 1)
+                tune_layout.addWidget(
+                    self.segtune_button, 0, Qt.AlignmentFlag.AlignVCenter)
+                editor.layout().insertWidget(1, tune_row)
             editor.set_editable(self.adapter.step_enabled(step))
             self.settings_stack.addWidget(editor)
             self._editors[step] = editor
@@ -239,6 +270,46 @@ class FitsMainWindow(QMainWindow):
             first_item = self.step_tree.topLevelItem(0)
             if first_item is not None:
                 self.step_tree.setCurrentItem(first_item)
+
+    @Slot()
+    def _open_segmentation_tuner(self) -> None:
+        from fits.gui.viewer.segmentation_window import SegmentationTunerWindow
+
+        self._sync_identity()
+        try:
+            settings = SegmentSettings.model_validate(
+                self.adapter.as_mapping()["segment"]["params"])
+        except ValueError as error:
+            QMessageBox.critical(self, "Cannot open segmentation tuner", str(error))
+            return
+        tuner = SegmentationTunerWindow(
+            experiments_dir=self.adapter.run_dir or None,
+            segment_settings=settings,
+            parent=self,
+            close_on_apply=True,
+        )
+        tuner.setWindowModality(Qt.WindowModality.WindowModal)
+        tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        tuner.settings_applied.connect(self._apply_segmentation_settings)
+        tuner.destroyed.connect(lambda: setattr(self, "_segmentation_tuner", None))
+        self._segmentation_tuner = tuner
+        tuner.show()
+
+    @Slot(object)
+    def _apply_segmentation_settings(self, settings: SegmentSettings) -> None:
+        def store(path: str, value: object) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    store(f"{path}.{key}", child)
+            else:
+                self.adapter.set_field_value(
+                    StepName.SEGMENT, path, "None" if value is None else value)
+
+        for name, value in settings.to_payload_dict().items():
+            store(name, value)
+        self._populate_from_adapter()
+        self.step_tree.setCurrentItem(self._step_items[StepName.SEGMENT])
+        self._append_log("Applied settings from the segmentation tuner.")
 
     def _step_from_item(self, item: QTreeWidgetItem) -> StepName:
         return StepName(item.data(0, Qt.ItemDataRole.UserRole))
@@ -301,7 +372,7 @@ class FitsMainWindow(QMainWindow):
 
         saved_settings = resolved / SAVED_SETTINGS_NAME
         if saved_settings.is_file():
-            self._load_settings_path(saved_settings)
+            self._load_settings_path(saved_settings, run_dir=resolved)
 
     def _sync_identity(self) -> None:
         self.adapter.run_dir = self.run_dir_edit.text().strip()
@@ -324,11 +395,14 @@ class FitsMainWindow(QMainWindow):
             return
         self._load_settings_path(Path(path))
 
-    def _load_settings_path(self, path: Path) -> None:
+    def _load_settings_path(self, path: Path, *, run_dir: Path | None = None) -> None:
         previous_document = self.adapter.document
         previous_source = self.adapter.source_path
         try:
             self.adapter.load(path)
+            # A selected folder takes precedence over a copied settings file.
+            if run_dir is not None:
+                self.adapter.run_dir = str(run_dir)
             errors = self.adapter.validate_steps()
             if errors:
                 first_step, error = next(iter(errors.items()))
@@ -383,9 +457,13 @@ class FitsMainWindow(QMainWindow):
         )
 
         thread = QThread(self)
-        worker = PipelineWorker(settings_path, handler)
+        worker = PipelineWorker(settings_path, handler, self.demo_step_delay)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
+        worker.mask_requested.connect(self._enqueue_mask_request)
+        worker.mask_input_complete.connect(self._mask_input_complete)
+        worker.cancelled.connect(self._pipeline_cancelled)
+        worker.cancelled.connect(thread.quit)
         worker.finished.connect(self._pipeline_finished)
         worker.failed.connect(self._pipeline_failed)
         worker.finished.connect(thread.quit)
@@ -399,12 +477,53 @@ class FitsMainWindow(QMainWindow):
         self._append_log("Starting FITS pipeline…")
         thread.start()
 
+    @Slot(object)
+    def _enqueue_mask_request(self, request) -> None:
+        from fits.gui.viewer.collection_window import MaskCollectionWindow
+        if self._worker is None or self._worker.interaction.finished.is_set() or self._worker.interaction.cancelled.is_set():
+            return
+        if self._mask_collection is None:
+            window = MaskCollectionWindow(parent=self, preview=False, run_dir=Path(self.adapter.run_dir))
+            interaction = self._worker.interaction
+            window.experiment_finalized.connect(interaction.resolve)
+            window.collection_finished.connect(interaction.finish)
+            window.cancellation_requested.connect(self._cancel_pipeline)
+            self._mask_collection = window
+            window.show()
+        self._mask_collection.enqueue_experiment(request)
+
+    @Slot()
+    def _cancel_pipeline(self) -> None:
+        if self._worker is not None:
+            self._worker.interaction.cancel()
+            self.run_button.setText("Stopping…")
+            self._append_log("Stopping pipeline. Any step already running must finish; no further work will start.")
+
+    @Slot()
+    def _mask_input_complete(self) -> None:
+        if self._mask_collection is not None and not self._mask_collection._ended:
+            self._mask_collection.no_more_requests()
+
+    def _close_mask_collection(self) -> None:
+        if self._mask_collection is not None:
+            self._mask_collection._ended = True
+            self._mask_collection.close()
+            self._mask_collection.deleteLater()
+            self._mask_collection = None
+
+    @Slot()
+    def _pipeline_cancelled(self) -> None:
+        self._close_mask_collection()
+        self._append_log("Pipeline cancelled. Completed work has been kept.")
+
     @Slot()
     def _pipeline_finished(self) -> None:
+        self._close_mask_collection()
         self._append_log("FITS pipeline completed successfully.")
 
     @Slot(str, str)
     def _pipeline_failed(self, message: str, details: str) -> None:
+        self._close_mask_collection()
         self._append_log(details)
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Critical)

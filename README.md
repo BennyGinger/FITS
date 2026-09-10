@@ -52,7 +52,7 @@ No extra flags are needed for everyday development:
 
 ```bash
 uv run fits-gui
-uv run fits-viewer --tool segmentation
+uv run fits-segtune
 uv run cellpose
 ```
 
@@ -88,10 +88,80 @@ Launch the main settings interface with `uv run fits-gui`, or open the image
 tools directly:
 
 ```bash
-uv run fits-viewer --tool segmentation
-uv run fits-viewer --tool binary
-uv run fits-viewer --tool all
+uv run fits-segtune
+uv run fits-drawmask
 ```
+
+In `fits-gui`, select Segmentation and click **Tune segmentation…** to preview
+Cellpose with the current settings. **Apply and close** copies the selected
+channel and tuning settings back to the main GUI. Closing the tuner without
+applying leaves the main settings unchanged. Use Save settings or Run pipeline
+in the main GUI to save the changes. Converted `fits_array.tif` images are
+required for previewing.
+
+`fits-drawmask` opens a dedicated mask editor with **Reference** and **ROI**
+tabs sharing the same experiment and image controls. `fits-segtune` opens its
+own segmentation window; its standalone Apply settings action updates only
+the current tuning session and does not write pipeline settings.
+Opening an image also loads the first reference and ROI masks beside it, in
+filename order. Selecting a mask file opens its sibling image and that specific
+mask in the matching tab.
+The former `fits-viewer` command has been removed.
+
+To try the new collection panel before pipeline integration:
+
+```bash
+uv run fits-drawmask --tool pipeline
+```
+
+Click **Load test experiments…** and choose a folder containing prepared
+`fits_array.tif` images. The panel starts in Reference mode. **Go to ROI** /
+**Go to ref** switches between Reference and ROI; unsaved changes require confirmation before
+being discarded. New experiments join the waiting list without replacing the
+current drawing. **Next experiment** finishes the current experiment after
+any needed warnings. **Finish drawing** ends collection; **Quit pipeline** is
+a separate cancellation action. Buttons explain their actions when hovered.
+
+The experiment tree shows all received experiments, highlights the current one,
+and lists saved masks underneath each folder. Click a current experiment's mask
+to reload it for editing. Masks from other experiments open for viewing only;
+**Return to current experiment** restores your ongoing drawing. Newly saved
+masks appear in the tree immediately.
+
+**Load test experiments…** is only present in this preview. In the integrated
+window, the pipeline supplies prepared experiments automatically; there is no
+manual folder loader.
+
+This is a preview with no running pipeline, but **Save writes real mask files**
+to the selected experiment folders. The regular `fits-drawmask` command keeps
+the standalone browser and visible tabs.
+
+You can also supply `--experiments-dir /path/to/run` and
+`--settings /path/to/fits_settings.toml`. Without a settings file, the preview
+requests one reference per experiment and no ROI. With settings, it uses the
+enabled extraction/distance-profile steps and their drawing options.
+
+To run the connected drawing workflow with slow demonstration steps:
+
+```bash
+uv run fits-gui --demo-step-delay 5
+```
+
+Choose your run folder and settings in the main GUI, enable **Distance profile**
+(or **Quantification → Draw reference masks**), then click **Run pipeline**.
+The drawing window opens automatically once the first image is prepared.
+Preparation continues for the other experiments, so the queue grows while you
+draw. Finish an experiment's masks with **Next experiment** to release its
+analysis. Missing references omit distance profiling for that experiment;
+no ROI means whole-image profiling after confirmation.
+
+The delay is five seconds between steps, including between arrivals when images
+are already prepared. Ordinary `uv run fits-gui` has no artificial delay.
+Interactive runs currently use one preparation worker and one downstream worker;
+existing noninteractive batch/conveyor execution remains available. **Quit
+pipeline** stops new work and waits for any already-running step to finish.
+The drawing requests and early-finish choices are currently run-local; reopening
+a run reuses saved masks and asks for finalization again.
 
 The command-line interface is available through `uv run fits --help`.
 

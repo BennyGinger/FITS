@@ -21,6 +21,24 @@ from fits.gui.settings_adapter import (
 )
 
 
+class StableAdvancedGroup(QGroupBox):
+    """Hide advanced fields while reserving their space in the layout."""
+
+    def __init__(self, title: str) -> None:
+        super().__init__(title)
+        self.setCheckable(True)
+        self.content = QWidget()
+        policy = self.content.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.content.setSizePolicy(policy)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.content)
+        self.form = QFormLayout(self.content)
+        self.toggled.connect(self.content.setVisible)
+        self.setChecked(False)
+        self.content.hide()
+
+
 class StepSettingsEditor(QWidget):
     """Dynamically render the basic and advanced fields for one workflow step."""
 
@@ -61,16 +79,8 @@ class StepSettingsEditor(QWidget):
         self._add_fields(basic_form, layout_spec.basic)
         contents_layout.addWidget(basic)
 
-        advanced = QGroupBox("Advanced settings")
-        advanced.setCheckable(True)
-        advanced_form = QFormLayout(advanced)
-        self._add_fields(advanced_form, layout_spec.advanced)
-        advanced_is_custom = any(
-            adapter.field_value(step, path)
-            != adapter.default_field_value(step, path)
-            for path in layout_spec.advanced
-        )
-        advanced.setChecked(advanced_is_custom)
+        advanced = StableAdvancedGroup("Advanced settings")
+        self._add_fields(advanced.form, layout_spec.advanced)
         advanced.toggled.connect(self._refresh_enabled_states)
         self._advanced_group = advanced
         contents_layout.addWidget(advanced)
@@ -85,6 +95,12 @@ class StepSettingsEditor(QWidget):
             value = self.adapter.field_value(self.step, path)
             widget = create_field_widget(value, field_choices(self.step, path))
             widget.setToolTip(path)
+            if path in ("expected_ref_masks", "expected_roi_masks"):
+                widget.setMinimum(1 if path == "expected_ref_masks" else 0)
+                widget.setToolTip("Initial number of masks to request per experiment.")
+            elif path in ("draw_ref_mask", "draw_roi_mask"):
+                widget.setToolTip(
+                    "Request interactive drawing. Existing saved masks are used automatically.")
             widget.value_changed.connect(
                 lambda changed_value, field_path=path: self._store_value(
                     field_path, changed_value
@@ -96,6 +112,7 @@ class StepSettingsEditor(QWidget):
     def _store_value(self, path: str, value: object) -> None:
         self.adapter.set_field_value(self.step, path, value)
         self._update_worker_state()
+        self._update_mask_request_state()
         self.value_changed.emit()
 
     def sync_to_adapter(self) -> None:
@@ -120,6 +137,15 @@ class StepSettingsEditor(QWidget):
         self._editable = editable
         self._refresh_enabled_states()
 
+    def _update_mask_request_state(self) -> None:
+        for toggle_path, count_path in (
+                ("draw_ref_mask", "expected_ref_masks"),
+                ("draw_roi_mask", "expected_roi_masks")):
+            toggle = self.widgets.get(toggle_path)
+            count = self.widgets.get(count_path)
+            if count is not None:
+                count.setEnabled(self._editable and (toggle is None or toggle.value()))
+
     def _refresh_enabled_states(self) -> None:
         for path, widget in self.widgets.items():
             if path != "workers":
@@ -129,6 +155,7 @@ class StepSettingsEditor(QWidget):
                 )
                 widget.setEnabled(self._editable and section_enabled)
         self._update_worker_state()
+        self._update_mask_request_state()
 
     def showEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         self._update_worker_state()
@@ -150,9 +177,8 @@ class RuntimeSettingsEditor(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        group = QGroupBox("Advanced runtime settings")
-        group.setCheckable(True)
-        form = QFormLayout(group)
+        group = StableAdvancedGroup("Advanced runtime settings")
+        form = group.form
         for name in ("execution", "console_level", "file_level", "log_dir"):
             widget = create_field_widget(
                 adapter.runtime_value(name),
@@ -163,11 +189,6 @@ class RuntimeSettingsEditor(QWidget):
                 widget.setToolTip("Leave blank to save log files in the run directory's logs folder (created automatically).")
             form.addRow(field_label(name), widget)
             self.widgets[name] = widget
-        runtime_is_custom = any(
-            adapter.runtime_value(name) != adapter.default_runtime_value(name)
-            for name in self.widgets
-        )
-        group.setChecked(runtime_is_custom)
         group.toggled.connect(self._set_fields_enabled)
         self._advanced_group = group
         outer.addWidget(group)

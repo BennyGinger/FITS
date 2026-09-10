@@ -24,6 +24,8 @@ SETTINGS_PATH = Path(__file__).parent / "settings" / "user_settings.toml"
 def start_pipeline(
     settings_path: Path | None = None,
     console_handler: logging.Handler | None = None,
+    mask_interaction=None,
+    demo_step_delay: float = 0.0,
 ) -> None:
     # --- load settings ---
     cfg_path = (settings_path or SETTINGS_PATH).expanduser().resolve()
@@ -38,7 +40,7 @@ def start_pipeline(
     
     # --- runtime config ---
     rt_settings = user_cfg.get("runtime", {})
-    rt_mode: RunTimeMode = rt_settings.get("execution", "batch")
+    rt_mode: RunTimeMode = rt_settings.get("execution", "conveyor")
     
     log_raw = rt_settings.get("log_dir")
     if isinstance(log_raw, str):
@@ -80,13 +82,19 @@ def start_pipeline(
     states = assemble_experiment_states(run_dir, supported_files, effective_cfg, user_name)
     
     # --- start the workflow ---
-    match rt_mode:
-        case "batch":
-            logger.info("Starting batch execution of workflow")
-            final_states = run_workflow(effective_cfg, states)
-        case "conveyor":
-            logger.info("Starting conveyor execution of workflow")
-            final_states = run_workflow_scheduler_entry(effective_cfg, states)
+    from fits.workflows.interactive import interactive_masks_requested, run_interactive_workflow
+    if mask_interaction is not None and interactive_masks_requested(effective_cfg):
+        logger.info("Starting interactive conveyor: preparation continues while masks are drawn.")
+        final_states = run_interactive_workflow(
+            effective_cfg, states, mask_interaction, step_delay_seconds=demo_step_delay)
+    else:
+        match rt_mode:
+            case "batch":
+                logger.info("Starting batch execution of workflow")
+                final_states = run_workflow(effective_cfg, states)
+            case "conveyor":
+                logger.info("Starting conveyor execution of workflow")
+                final_states = run_workflow_scheduler_entry(effective_cfg, states)
     
     # --- log final states ---
     for st in final_states:

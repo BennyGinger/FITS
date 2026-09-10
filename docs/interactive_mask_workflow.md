@@ -2,35 +2,38 @@
 
 ## Status and purpose
 
-This document records a proposed design discussed in September 2026. It is a
-planning document, not a description of functionality that is already
-implemented.
+This document records the design discussed in September 2026 and the first
+working implementation. Sections labelled as future work remain proposals;
+the implementation status and checklist near the end distinguish completed
+work from follow-up work.
 
 The goal is to connect FITS's viewers to the main workflow so that users can
 create reference and ROI/inclusion masks while independent pipeline work
-continues. The same interactive workflow should be usable from `fits-gui` and
-from an interactive CLI invocation. The design should require as little change
-as practical to ordinary step execution and should initially preserve the
-current fail-fast behavior for processing errors.
+continues. This workflow is connected to `fits-gui`; interactive CLI support
+remains future work. Ordinary noninteractive execution retains the existing
+fail-fast behavior for processing errors.
 
-This proposal distinguishes three user experiences:
+The design distinguishes three user experiences:
 
-- Conversion is a GUI prerequisite that unlocks processing controls.
+- A conversion/preparation lock is a possible later GUI safeguard; it is not
+  part of the current implementation.
 - Segmentation viewing is an optional tuning tool launched from segmentation
   settings.
 - Reference and ROI viewers are interactive pipeline activities launched only
   when enabled analyses need user-created inputs.
 
-## Current architecture relevant to this proposal
+## Current architecture
 
 At the time of writing:
 
 - `FitsMainWindow` presents every workflow step in one settings tree and runs
   the complete pipeline through a single `PipelineWorker`.
 - While that worker runs, most main-window controls are disabled.
-- `FitsViewerWindow` is a reusable `QMainWindow` that independently discovers
-  materialized `fits_array.tif` files. It supports segmentation tuning,
-  reference masks, and ROI masks.
+- `fits-segtune` opens `SegmentationTunerWindow` for segmentation tuning.
+- `fits-drawmask` opens `MaskDrawingWindow` with Reference and ROI tabs.
+  Both windows share image display/navigation components and independently
+  discover materialized `fits_array.tif` files. The combined `fits-viewer`
+  command has been retired; mask drawing creates no segmentation session.
 - `ExperimentState` persists produced artifacts and completed steps.
 - Every registered step has one declared `input_artifact` and one
   `output_artifact`.
@@ -50,11 +53,11 @@ when the image has reached the final coordinate system used by analysis.
 
 ## Intended user flow
 
-### GUI conversion lock
+### Proposed GUI conversion lock
 
-If the selected run contains no usable `fits_array.tif`, processing controls
-are visible but unavailable. The GUI explains that conversion is required and
-offers a **Convert images** action.
+In a future version, if the selected run contains no usable `fits_array.tif`,
+processing controls could remain visible but unavailable. The GUI would explain
+that conversion is required and offer a **Convert images** action.
 
 That action is only a GUI convenience. It invokes the existing pipeline with a
 runtime-effective configuration in which conversion is enabled and all other
@@ -100,8 +103,7 @@ than a rigid declaration of every final artifact. During execution, the user
 can:
 
 - save masks and assign their labels;
-- add more masks than initially requested;
-- skip individual requested slots;
+- change the expected reference and ROI counts with minus/plus controls;
 - finish a mask type early and skip its remaining slots;
 - switch explicitly between reference and ROI tools;
 - reload and edit masks already saved on disk;
@@ -204,12 +206,27 @@ treated as immutable while the viewer, segmentation, and analysis read it.
 
 ## Mask requirements and runtime manifest
 
-Settings specify an initial target such as:
+The settings and integrated collection panel are implemented. Each analysis
+specifies its drawing requests:
 
 ```toml
-reference_mask_count = 3
-roi_mask_count = 2
+[extract.params]
+draw_ref_mask = false
+expected_ref_masks = 1
+
+[distance_profile.params]
+draw_ref_mask = true # Fixed true; no reference toggle in the GUI.
+expected_ref_masks = 1
+draw_roi_mask = false
+expected_roi_masks = 1
 ```
+
+The optional drawing toggles request user input; they do not disable automatic
+use of existing mask artifacts. Extraction does not request ROIs. Reference
+counts are at least one; ROI counts may be zero. The distance-profile manager
+rejects experiments without any reference artifacts, independently of these
+request counts. It does not require an ROI or an exact match to a target.
+The numerical packages receive their existing numerical arguments only.
 
 Names should make the intent explicit in the GUI, for example **Initial
 reference masks to request**. Counts initiate work; they do not identify
@@ -239,9 +256,11 @@ Applicable channels may also need to be part of the identity or metadata. Two
 enabled analyses requesting the same artifact must produce only one drawing
 request.
 
-Requested slots without labels are queue placeholders. **Add another mask**
-adds a placeholder beyond the initial target. Skipping a placeholder records
-that the user intentionally did not fill that portion of the target.
+Requested slots without labels are queue placeholders. Compact minus/plus
+buttons change the expected count for each mask kind. A required reference
+cannot be reduced below one, and a count cannot be reduced below the number
+already saved. Finishing with unmet targets records the remaining requests as
+skipped internally; the skipped count is not shown in the interface.
 
 The manifest is authoritative for the masks used by that execution. Before an
 analysis starts, it takes a finalized snapshot of the applicable manifest.
@@ -294,70 +313,151 @@ processing exceptions.
 
 ## Mask Collection window
 
-Reference and ROI tools should remain scientifically distinct, but live in one
+### Implemented panel preview
+
+`fits-drawmask --tool pipeline` opens `MaskCollectionWindow`. The standalone
+command still opens the ordinary browser editor. Both reuse `MaskDrawingWindow`
+and the image controls; the collection subclass supplies a control panel in
+place of the source browser. This avoids copying the drawing implementation.
+A separate embeddable editor widget can be extracted when embedding is needed.
+
+The preview accepts experiment folders through **Load test experiments…** or
+`--experiments-dir`, and optionally reads request counts from `--settings`.
+It does not start a pipeline. Saving still writes actual mask artifacts.
+
+The GUI entry point is `enqueue_experiment(MaskCollectionRequest(...))`.
+Requests append to the waiting queue; duplicate image paths are ignored.
+Each new active experiment starts in Reference mode. Hidden tab shortcuts cannot
+bypass the switching buttons and their unsaved-change warning.
+`no_more_requests()` distinguishes a temporarily empty queue from completed input.
+These slots run on the GUI thread; PipelineWorker signals deliver requests
+from the preparation worker without touching widgets there.
+
+The window emits `experiment_finalized(MaskCollectionOutcome)`,
+`collection_finished()`, and `cancellation_requested()`. Outcomes contain saved
+artifact paths and skipped counts.
+
+### First connected pipeline version
+
+`fits-gui` now connects this window through `PipelineWorker` signals and the
+Qt-free `MaskInteraction` queue/events. When distance profiling is enabled, or
+extraction requests reference drawing, `start_pipeline` selects the interactive
+coordinator in `fits/workflows/interactive.py`.
+
+One preparation worker runs conversion, registration and background subtraction
+for each experiment. Only then does it emit a drawing request. It continues
+preparing the next experiment while the main coordinator runs segmentation and
+tracking and waits for per-experiment mask outcomes. Each finalized experiment
+can enter analysis independently; the coordinator validates its final mask files
+before analysis reads them. Missing references omit distance profiling, while
+extraction can continue. No ROI is a permitted whole-image outcome.
+
+This is a small initial conveyor with a single preparation worker and serial
+downstream scheduling. It does not yet use the ordinary conveyor's full CPU/GPU
+pool scheduling or every experiment-level worker setting. Noninteractive runs
+retain their existing batch/conveyor paths. The interactive CLI resolver remains
+future work; use the main GUI for the connected drawing workflow.
+
+`uv run fits-gui --demo-step-delay 5` adds cancellable five-second pauses after
+steps. With pre-prepared inputs it also spaces drawing requests five seconds
+apart. The default delay is zero and this flag does not alter saved settings.
+
+Finishing drawing early resolves remaining and future requests using existing
+artifacts and skips missing inputs without reopening the window. Quitting sets a
+cancellation event, stops new work, and waits for already-running tasks to finish.
+Cancellation is reported separately from errors. Preparation/task errors surface
+through the GUI's existing failure dialog. Outcomes are not yet persisted as a
+resume manifest; saved mask files remain the durable artifacts.
+
+The collection panel shows a folder-style experiment tree containing every
+received experiment, including the highlighted current one and completed ones.
+Saved reference/ROI files appear as children and refresh after saving. Clicking
+an active experiment's mask reloads it for editing, with the existing discard
+warning if needed. Other experiments' masks can be inspected in the same image
+area without advancing the queue or changing finalized artifacts. Their drawing
+controls are disabled; **Return to current experiment** restores the active
+image, navigation and unsaved canvas. Folder clicks do not change queue order.
+All collection buttons have descriptive tooltips. The mode-finish and Next
+buttons share a row. Finish drawing and the red Quit pipeline are stacked at
+the right of the footer.
+The manual folder loader is hidden whenever `preview=False`; the integrated
+window receives its experiments only through coordinator requests.
+
+### Current integrated layout
+
+Reference and ROI tools remain scientifically distinct and live in one
 persistent manager window with a shared experiment/image context.
 
-A possible layout is:
+The standalone `fits-drawmask` retains its directory browser and visible
+Reference/ROI tabs. The integrated window replaces the directory browser with
+the collection control panel and hides the tab bar. Drawing widgets are shared.
+
+The implemented layout is:
 
 ```text
-┌───────────────────────────────────────────────────────────────────┐
-│ Mask Collection — Experiment 2 of 7: sample_04                    │
-│                                                                   │
-│ [Reference masks: 4 waiting]  [ROI masks: 3 waiting]             │
-│                                                                   │
-│ Reference — target 3, saved 1, skipped 0, remaining 2             │
-│ Current task: Reference 2 of 3                                    │
-│ Label: [ membrane ]                                               │
-│                                                                   │
-│                         IMAGE VIEWER                              │
-│                                                                   │
-│ [Skip this mask] [Add another mask]           [Save and next]     │
-│ [Finish reference masks for sample_04]                            │
-│                                                   [Quit pipeline] │
-└───────────────────────────────────────────────────────────────────┘
+CONTROL PANEL                         IMAGE AREA
+Experiment 2: condition/sample_04      Channel   mode   Overlay
+5 experiments waiting                 Image viewer
+Ref expected: 3 · 1 saved  [-] [+]    Frame / Z navigation
+ROI expected: 1 · 0 saved  [-] [+]    LUT | Saving | session actions
+Experiment folders and saved masks          Label [........] [Save mask]
+[Finish reference masks] [Next experiment]  [Finish drawing]
+[Go to ROI]                                [Quit pipeline — red]
+Current mode's drawing controls...
 ```
 
-The current mode must always be conspicuous: window title, section heading,
-accent color, output filename, and instructions should all distinguish
-REFERENCE from ROI. Viewer switching should be initiated by the user rather
-than happen unexpectedly while a drawing is in progress.
+One switch button always offers the other drawing mode. Switching is
+user-controlled and is independent of expected counts. When the current mask
+has unsaved changes, switching first warns:
 
-The control panel also shows the experiment queue, for example **Experiment 2
-of 7** and **5 experiments waiting**. It does not allow arbitrary navigation to
-the next experiment while the current one is unresolved. **Next experiment**
-becomes available only after all required mask types for the current experiment
-have been finalized. If requested slots remain, moving on uses the same
-explicit skip confirmation as finishing a mask type early.
+```text
+Save your work before switching, otherwise your unsaved changes will be lost.
+
+[Cancel] [OK — discard changes and switch]
+```
+
+Cancel keeps the current drawing and mode. OK discards only the unsaved changes
+for the mode being left and switches to the requested mode. The warning does
+not implicitly save or delete a saved artifact. Saved masks remain available
+for loading and editing. Clean switching does not show a warning.
+
+Only the current mode's finish action is shown: **Finish reference masks** or
+**Finish ROI masks**. **Finish drawing** ends the complete drawing session,
+with confirmation of unsaved work and unresolved requests, and returns control
+to the pipeline. It does not cancel the pipeline. Independent runnable analysis
+continues; distance profiling still cannot run without a reference.
+Only the explicit **Quit pipeline** action (or a confirmed stop after closing
+the window) cancels the run. Its red styling distinguishes it from completion.
 
 ### Queue ordering
 
-The manager maintains a growing queue of experiments, with reference and ROI
-requests grouped inside each experiment. It loads one experiment and processes:
-
-```text
-all references for that experiment → all ROIs for that experiment
-```
-
-This minimizes image reloads and keeps completion/finalization scoped to one
-experiment. The reference-to-ROI mode transition must be explicit, and the
-application must not switch modes while a drawing is active. When the
-experiment queue is temporarily empty but more experiments are still being
-prepared, the manager waits and reports that preparation is still in progress.
+The manager keeps one experiment active at a time and shows the waiting queue.
+Within that experiment, users may switch freely between reference and ROI
+controls using the buttons. There is no forced reference-then-ROI sequence.
+Experiment advancement remains separate from tool switching. Expected counts
+are editable targets rather than an automatic finalization trigger. Finishing
+early uses a warning; neither drawing mode is locked by counts. A temporarily
+empty queue shows that preparation is still in progress when more experiments
+are expected. When the final experiment is complete, **Next experiment** closes
+the collection window normally. **Finish drawing** also closes without a warning
+when all expected masks are saved; it warns about unfinished or unsaved work.
 
 ### Actions and their exact scopes
 
-Button labels must state their scope. A generic **Finish** or **Skip drawing**
-is too ambiguous.
+Button labels must state their scope. **Finish drawing** is reserved for ending
+the complete collection session; mode-specific finish actions finalize only
+references or ROIs for the active experiment.
 
-- **Save mask** persists the current artifact under its entered label and marks
-  the current slot complete.
-- **Save and next** saves and activates the next suitable request.
-- **Skip this mask** skips only the current placeholder.
-- **Add another mask** adds a placeholder for the current experiment and mask
-  type.
+- **Save mask** persists the current artifact under its entered label.
+- **Minus/plus** changes the expected count for the corresponding mask kind
+  without clearing drawings or deleting saved masks.
+- **Next experiment** finalizes the experiment and closes the drawing window
+  when the queue is complete.
 - **Finish reference masks for _experiment_** finalizes that type for the
   experiment.
 - **Finish ROI masks for _experiment_** does the equivalent for ROIs.
+- **Finish drawing** ends collection after confirming unsaved work and remaining
+  requests; it does not cancel the pipeline.
 - **Quit pipeline** requests cancellation of the entire run.
 
 If unfinished target slots remain, finalization asks for confirmation:
@@ -383,43 +483,28 @@ This confirmation is also shown when distance profiling is enabled but the
 initial ROI target is zero, so whole-image analysis is an explicit decision.
 It is not shown when no enabled analysis consumes ROI masks.
 
-Potential bulk-skip actions should also state their scope explicitly, for
-example:
-
-- Skip remaining reference masks for this experiment.
-- Skip all remaining masks for this experiment.
-- Skip all remaining reference-mask collection.
-
-The first two are sufficient initially. Global skipping is powerful and should
-not be easy to trigger accidentally.
-
 Closing the window is not equivalent to skipping. It warns that closing will
 stop the pipeline and offers **Return to mask collection** or **Stop pipeline**.
 
 ### Existing artifacts and editing
 
-The directory browser should be reorganized around experiments and categorized
-outputs:
+The integrated control panel uses a flat experiment list rather than the
+standalone directory browser. Experiment labels are paths relative to the run
+directory, so condition folders remain visible without showing long absolute
+paths. Each experiment expands only to its saved reference and ROI masks:
 
 ```text
-Experiment A
-├── Source image
-│   └── fits_array.tif
-├── Reference masks
-│   ├── fits_ref_nucleus.tif
-│   └── fits_ref_membrane.tif
-├── ROI masks
-│   └── fits_roi_whole_cell.tif
-├── Segmentation
-│   └── fits_mask.tif
-└── Tracking
-    └── fits_track.tif
+condition/Experiment A
+├── fits_ref_nucleus.tif
+├── fits_ref_membrane.tif
+└── fits_roi_whole_cell.tif
 ```
 
 Selecting a saved mask loads its sibling image, switches to the correct viewer
-mode, loads the mask and its label, and changes the action from **Save new
-mask** to **Update mask**. Updating an existing mask must not increase the
-saved count.
+mode, and loads the mask and its label. Masks from the active experiment open
+for editing; masks from other experiments open read-only and can be left using
+**Return to current experiment**. Saving an existing label updates that artifact
+without increasing the saved count.
 
 Labels must be unique within an experiment and mask kind. Attempting to reuse a
 label should offer to update the existing mask, choose a different label, or
@@ -494,33 +579,32 @@ Exact cancellation guarantees depend on the underlying processing libraries
 and executor type. The UI must not claim that a running task was cancelled if
 it was only prevented from scheduling downstream work.
 
-## Proposed implementation stages
+## Implementation stages
 
 The feature can be introduced without immediately redesigning all dependency
 handling.
 
-### Stage 1: GUI integration boundaries
+### Stage 1: GUI integration boundaries — partial
 
-- Add the GUI-only conversion lock and **Convert images** action.
-- Unlock processing based on discovered usable image artifacts.
-- Refactor viewer content into an embeddable widget if necessary, retaining a
-  thin standalone `FitsViewerWindow` wrapper.
-- Launch segmentation tuning from segmentation settings and apply results back
+- Viewer content was split into shared base, segmentation and mask-drawing
+  windows. `fits-segtune` and `fits-drawmask` remain standalone tools.
+- Segmentation tuning launches from segmentation settings and applies results
   through `SettingsAdapter`.
+- The GUI-only conversion lock remains future work.
 
-### Stage 2: Synchronous interactive mask collection
+### Stage 2: Interactive mask collection — implemented
 
-- Introduce mask requirement, request, outcome, and runtime-manifest models.
-- Build the persistent Mask Collection window and categorized artifact browser.
+- Introduce Qt-free mask request and outcome models. A durable runtime manifest
+  remains future work.
+- Build the persistent Mask Collection window and experiment/mask display.
 - Generate initial request slots from settings.
-- Support save, update, add, skip, finalization, and quit semantics.
+- Support save, update, editable target counts, finalization, and quit semantics.
 - Pause before analysis while mask collection is resolved.
 - Keep current fail-fast handling for processing errors.
 
-This stage may use a phase barrier. It proves the interaction model without
-requiring concurrent scheduling.
+This stage established the interaction model used by the connected coordinator.
 
-### Stage 3: Conveyor coordination
+### Stage 3: Initial conveyor coordination — implemented
 
 - Assign steps to phases in one central place.
 - Detect the per-experiment Phase 1 boundary.
@@ -530,7 +614,7 @@ requiring concurrent scheduling.
   mask save, mask skip, or mask-type finalization.
 - Submit Phase 3 per experiment without a global barrier.
 
-### Stage 4: CLI policies and reporting
+### Stage 4: CLI policies and reporting — future work
 
 - Add explicit interactive/noninteractive CLI behavior.
 - Support the Qt resolver from interactive CLI execution.
@@ -542,27 +626,27 @@ requiring concurrent scheduling.
 
 This table is intentionally ordered so the first working draft can remain
 sequential. Conveyor concurrency is added only after the same phase and mask
-contracts work end to end.
+contracts work end to end. `[x]` means implemented, `[~]` means partially
+implemented, and `[ ]` means future work.
 
 | Status | Milestone | Completion check |
 |---|---|---|
-| [ ] | Define phases and outcomes | Each experiment reports preparation, computation, user-input, and analysis status without duplicating `ExperimentState` artifact data. |
-| [ ] | Classify the current steps | Existing steps run through the four logical parts using one central phase assignment. |
-| [ ] | Implement a sequential coordinator | CLI and GUI can execute preparation, computation, mask resolution, and analysis sequentially. |
-| [ ] | Add mask requirement and manifest models | Initial targets, saved labels, skipped slots, and per-type finalization are represented without Qt dependencies. |
-| [ ] | Refactor the viewer for embedding | Existing drawing/viewing functionality remains reusable inside a manager while the standalone viewer stays thin. |
-| [ ] | Build the experiment-scoped Mask Collection manager | Exactly one experiment is active; queued experiment count, reference/ROI controls, save, update, add, skip, finalize, and quit are available. |
-| [ ] | Connect coordinator requests to the GUI | The coordinator emits mask requests and receives outcomes; it never opens or manipulates Qt widgets directly. |
-| [ ] | Integrate reference masks | Existing valid `fits_ref_*.tif` files are reused and missing requested masks can be collected before dependent analysis. |
-| [ ] | Integrate ROI masks | Existing valid `fits_roi_*.tif` files are reused and missing requested masks can be collected before dependent analysis. |
-| [ ] | Define analysis expansion | Distance profiling expands every finalized reference/ROI label and channel into long-form rows; extraction uses references but never requests ROIs. |
-| [ ] | Add per-experiment release | Finalizing the active experiment allows it to continue while the manager advances to the next queued experiment. |
-| [ ] | Add conveyor scheduling | Preparation, segmentation/tracking, mask collection, and analysis overlap safely across experiments. |
-| [ ] | Make conveyor the interactive default | Batch/sequential execution remains supported while GUI interactive runs default to conveyor. |
+| [x] | Define phases and outcomes | The interactive coordinator separates preparation, computation, user input and analysis without duplicating artifact state. |
+| [x] | Classify the current steps | Current steps have one central phase assignment. |
+| [x] | Add mask request and outcome models | Requests, expected counts, saved paths and skipped counts are represented without Qt dependencies. |
+| [x] | Refactor the viewers | Shared image/navigation code supports separate segmentation and mask-drawing windows. |
+| [x] | Build the experiment-scoped Mask Collection manager | One experiment is active while the growing queue, saved masks, editable targets, finalization and cancellation remain visible. |
+| [x] | Connect coordinator requests to the GUI | The coordinator exchanges requests/outcomes through signals and never manipulates Qt widgets. |
+| [x] | Integrate reference masks | Existing references are reused and new references can be collected before dependent analysis. |
+| [x] | Integrate ROI masks | Existing ROIs are reused, new ROIs can be collected, and no ROI means whole-image profiling. |
+| [x] | Define analysis expansion | Distance profiling expands reference/ROI inputs; extraction uses references and never requests ROIs. |
+| [x] | Add per-experiment release | Finalized experiments continue while the manager advances through the queue. |
+| [~] | Add conveyor scheduling | The first version overlaps preparation, drawing and per-experiment downstream work with conservative serial scheduling. Full scheduler/pool integration remains. |
+| [x] | Make conveyor the GUI default | Saved templates and the main GUI default to conveyor; batch remains available. |
 | [ ] | Add the GUI preparation lock | Processing settings remain unavailable until usable prepared images exist; the user's saved settings are not overwritten. |
 | [ ] | Add CLI mask policies | Interactive, noninteractive-skip, and strict-missing-input behavior are explicit. |
-| [ ] | Complete cancellation and reporting | The final report distinguishes completed, skipped, failed, omitted, and cancelled work. |
-| [ ] | Verify the complete workflow | Focused unit, coordinator, headless Qt, CLI, and restart tests pass and `git diff --check` is clean. |
+| [~] | Complete cancellation and reporting | GUI cancellation stops new scheduling and differs from failures; a complete final run report remains. |
+| [~] | Verify the complete workflow | Focused unit, coordinator, headless Qt and GUI connection tests pass; CLI policies and durable restart outcomes remain. |
 
 ## Invariants to protect
 
@@ -603,8 +687,6 @@ These points should be resolved before or during implementation:
   added, removed, or renamed outside FITS?
 - Can finalized masks be edited before analysis begins? What should happen when
   editing is requested after analysis has begun or completed?
-- Should interactive mode automatically select conveyor execution, reject batch
-  mode, or allow a deliberately synchronous batch interaction?
 - What cancellation guarantees can each task/executor realistically provide?
 - How should interactive CLI invocation behave when no graphical display is
   available?
@@ -615,3 +697,30 @@ Each ROI is evaluated independently, and a second whole-image variant is
 represented by missing ROI label/channel values. FITS normalizes mask identity
 columns across analysis outputs as `ref_label_name`, `ref_channel`,
 `roi_label_name`, and `roi_channel` where applicable.
+
+
+## Current GUI details
+
+Conveyor is the default execution mode. Advanced settings start collapsed while
+retaining their layout space. The drawing panel gives more height to the experiment
+list; experiment folders show paths relative to the run directory, with saved masks
+as their children. Finish drawing closes without a warning when all expected masks
+are saved and all requests have arrived. Finishing early still asks for confirmation.
+
+The shared viewer footer reserves roughly half its width for the smaller LUT and
+its vertically centred intensity buttons. In collection mode, the grey Saving
+section sits between the LUT and the right-aligned Finish drawing/Quit pipeline
+buttons. File label, its expanding text field and the conventional-width Save
+mask button share one row. The current mode appears between Channel and Overlay
+above the image, with spacing at the outer edges.
+
+Compact minus/plus controls beside each expected count replace Skip/Add. They
+change the count without clearing drawings or deleting files. Required reference
+counts cannot drop below one, and counts cannot drop below the number already
+saved. The skipped counter is hidden. A visible draggable divider resizes the
+experiment display; the scrolling drawing-settings area grows or shrinks below
+it. **Go to ROI/ref** sits below the Finish-mask/Next-experiment row.
+
+In the ROI Threshold section, dragging the plotted range updates both the current
+plane values and the Manual range values. Min, Max and **Apply to stack** share a
+single row to keep the panel compact.

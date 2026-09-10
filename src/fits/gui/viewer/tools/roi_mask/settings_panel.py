@@ -94,11 +94,11 @@ class RoiMaskPanel(ReferenceMaskPanel):
         stack_title.setStyleSheet("font-weight: bold;")
         threshold_layout.addWidget(stack_title)
         stack_values = QHBoxLayout()
-        stack_values.addWidget(QLabel("Minimum"))
+        stack_values.addWidget(QLabel("Min"))
         self.stack_minimum = self._threshold_spin()
         self.stack_minimum.setFixedWidth(110)
         stack_values.addWidget(self.stack_minimum)
-        stack_values.addWidget(QLabel("Maximum"))
+        stack_values.addWidget(QLabel("Max"))
         self.stack_maximum = self._threshold_spin()
         self.stack_maximum.setFixedWidth(110)
         stack_values.addWidget(self.stack_maximum)
@@ -109,9 +109,9 @@ class RoiMaskPanel(ReferenceMaskPanel):
         self.apply_stack_button.clicked.connect(
             lambda: self.manual_stack_requested.emit(
                 self.stack_minimum.value(), self.stack_maximum.value()))
-        threshold_layout.addWidget(
-            self.apply_stack_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        stack_values.addWidget(self.apply_stack_button)
         self.controls_layout.insertWidget(0, threshold_box)
+        self.threshold_region.sigRegionChanged.connect(self._sync_manual_range)
         self.threshold_region.sigRegionChangeFinished.connect(self._emit_threshold)
         self._image_range = (0.0, 1.0)
         self._stack_values_initialized = False
@@ -184,6 +184,12 @@ class RoiMaskPanel(ReferenceMaskPanel):
         """Allow whole-stack defaults to initialize from the next source image."""
         self._stack_values_initialized = False
 
+    def _sync_manual_range(self) -> None:
+        minimum, maximum = self.threshold_region.getRegion()
+        self._set_current_values(minimum, maximum)
+        self.stack_minimum.setValue(minimum)
+        self.stack_maximum.setValue(maximum)
+
     def _emit_threshold(self) -> None:
         minimum, maximum = cast(tuple[float, float], self.threshold_region.getRegion())
         self._set_current_values(minimum, maximum)
@@ -193,6 +199,7 @@ class RoiMaskPanel(ReferenceMaskPanel):
         minimum, maximum = sorted(
             (self.current_minimum.value(), self.current_maximum.value()))
         self.set_threshold_range(minimum, maximum)
+        self._sync_manual_range()
         self.threshold_changed.emit(minimum, maximum)
 
     def _set_current_values(self, minimum: float, maximum: float) -> None:

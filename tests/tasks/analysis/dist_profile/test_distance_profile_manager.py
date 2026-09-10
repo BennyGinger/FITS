@@ -119,3 +119,11 @@ def test_settings_parse_optional_values() -> None:
     settings = DistanceProfileSettings(maximum_bins="None")
 
     assert settings.maximum_bins is None
+
+
+def test_manager_rejects_missing_references_before_loading_image(tmp_path: Path) -> None:
+    import pytest
+
+    state = ExperimentState(workdir=tmp_path)
+    with pytest.raises(ValueError, match="at least one reference mask"):
+        DistanceProfileManager(state, DistanceProfileSettings()).calculate()

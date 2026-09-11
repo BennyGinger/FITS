@@ -20,6 +20,7 @@ from fits.workflows.interactive import (
     MaskInteraction,
     PipelineCancelled,
     _existing_outcome,
+    _input_progress_id,
     run_conversion_only,
     run_interactive_workflow,
 )
@@ -39,6 +40,30 @@ def state(tmp_path, name):
 def step(name, runner, settings=None):
     return SimpleNamespace(settings=settings, spec=SimpleNamespace(
         profile=SimpleNamespace(step_name=name), item_runner=runner))
+
+
+def test_saved_series_from_same_raw_have_distinct_progress_ids(tmp_path):
+    raw = tmp_path / 'input.nd2'
+    raw.touch()
+    branches = [state(tmp_path, name) for name in ('input_s1', 'input_s2', 'input_s3')]
+    branches = [ExperimentState.init(branch.workdir, raw).with_complete_step(
+        step_name=StepName.CONVERT,
+        artifact_kind=ARTI_IMG,
+        artifact_path=branch.artifact(ARTI_IMG),
+    ) for branch in branches]
+
+    assert [_input_progress_id(branch) for branch in branches] == [
+        branch.experiment_id for branch in branches]
+
+
+def test_raw_inputs_in_same_folder_use_their_source_paths_as_progress_ids(tmp_path):
+    raw_states = []
+    for name in ('first.nd2', 'second.nd2'):
+        raw = tmp_path / name
+        raw.touch()
+        raw_states.append(ExperimentState.init(tmp_path, raw))
+
+    assert len({_input_progress_id(raw) for raw in raw_states}) == 2
 
 
 def test_conversion_only_continues_after_one_input_fails(tmp_path, monkeypatch):

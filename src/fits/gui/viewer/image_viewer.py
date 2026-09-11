@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import colorsys
 from collections.abc import Callable
+from time import monotonic
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -10,6 +11,8 @@ from numpy.typing import NDArray
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QColorDialog, QDialog, QPushButton, QVBoxLayout, QWidget
+from skimage.draw import line as raster_line, polygon as raster_polygon
+from skimage.morphology import dilation, disk
 
 from fits_io.metadata.imageJ_meta import COLOR_MAP, LABEL_TO_COLOR
 
@@ -17,6 +20,7 @@ from fits_io.metadata.imageJ_meta import COLOR_MAP, LABEL_TO_COLOR
 DrawingMode = Literal["replace", "edit"]
 DrawingTool = Literal["freehand", "line", "circle", "square", "triangle"]
 DrawingOperation = Literal["add", "erase"]
+DRAWING_REFRESH_SECONDS = 1 / 60
 
 
 class ControlledViewBox(pg.ViewBox):  # type: ignore[misc]
@@ -129,6 +133,7 @@ class FitsImageViewer(QWidget):
         self._drawing_start: tuple[int, int] | None = None
         self._drawing_last: tuple[int, int] | None = None
         self._drawing_points: list[tuple[int, int]] = []
+        self._last_drawing_render = 0.0
         self._last_drawing_selection: NDArray[np.bool_] | None = None
         self._drawing_history: list[NDArray[np.uint8]] = []
         self._drawing_mode: DrawingMode = "replace"
@@ -343,6 +348,7 @@ class FitsImageViewer(QWidget):
         self._drawing_start = point
         self._drawing_last = point
         self._drawing_points = [point]
+        self._last_drawing_render = monotonic()
         self._last_drawing_selection = None
         self._apply_drawing(point)
 
@@ -350,6 +356,14 @@ class FitsImageViewer(QWidget):
         if self._drawing_start is None or self._gesture_base is None:
             return
         point = self._drawing_point(x_position, y_position)
+        if self._drawing_tool == "freehand":
+            if point != self._drawing_points[-1]:
+                self._drawing_points.append(point)
+            self._drawing_last = point
+            now = monotonic()
+            if now - self._last_drawing_render < DRAWING_REFRESH_SECONDS:
+                return
+            self._last_drawing_render = now
         self._apply_drawing(point)
 
     def _finish_drawing(self, x_position: float, y_position: float) -> None:
@@ -401,27 +415,20 @@ class FitsImageViewer(QWidget):
         if self._drawing_mask is None:
             raise RuntimeError("No drawing mask is loaded.")
         selected = np.zeros(self._drawing_mask.shape, dtype=bool)
-        for start, end in zip(points[:-1], points[1:], strict=True):
-            selected |= self._line_selection(start, end)
-        if len(points) < 3:
-            return selected | self._line_selection(points[0], points[-1])
-
-        grid_rows, grid_columns = np.indices(selected.shape, dtype=float)
-        vertices = np.asarray(points, dtype=float)
-        previous = vertices[-1]
-        inside = np.zeros(selected.shape, dtype=bool)
-        for current in vertices:
-            row_crossing = (current[0] > grid_rows) != (previous[0] > grid_rows)
-            denominator = previous[0] - current[0]
-            if denominator != 0:
-                boundary = ((previous[1] - current[1])
-                            * (grid_rows - current[0]) / denominator
-                            + current[1])
-                inside ^= row_crossing & (grid_columns < boundary)
-            previous = current
-        selected |= inside
-        selected |= self._line_selection(points[-1], points[0])
-        return selected
+        vertices = np.asarray(points, dtype=np.int32)
+        if len(vertices) >= 3:
+            rows, columns = raster_polygon(
+                vertices[:, 0], vertices[:, 1], shape=selected.shape)
+            selected[rows, columns] = True
+        for start, end in zip(vertices[:-1], vertices[1:], strict=True):
+            rows, columns = raster_line(*start, *end)
+            selected[rows, columns] = True
+        if len(vertices) >= 3:
+            rows, columns = raster_line(*vertices[-1], *vertices[0])
+            selected[rows, columns] = True
+        elif len(vertices) == 1:
+            selected[tuple(vertices[0])] = True
+        return self._widen_selection(selected)
 
     def _line_selection(self,
                         start: tuple[int, int],
@@ -430,15 +437,16 @@ class FitsImageViewer(QWidget):
         if self._drawing_mask is None:
             raise RuntimeError("No drawing mask is loaded.")
         selected = np.zeros(self._drawing_mask.shape, dtype=bool)
-        steps = max(abs(end[0] - start[0]), abs(end[1] - start[1])) + 1
-        rows = np.rint(np.linspace(start[0], end[0], steps)).astype(int)
-        columns = np.rint(np.linspace(start[1], end[1], steps)).astype(int)
-        radius = max((self._brush_size - 1) / 2, 0.5)
-        grid_rows, grid_columns = np.ogrid[:selected.shape[0], :selected.shape[1]]
-        for row, column in zip(rows, columns, strict=True):
-            selected |= ((grid_rows - row) ** 2 + (grid_columns - column) ** 2
-                         <= radius ** 2)
-        return selected
+        rows, columns = raster_line(*start, *end)
+        selected[rows, columns] = True
+        return self._widen_selection(selected)
+
+    def _widen_selection(self, selected: NDArray[np.bool_]) -> NDArray[np.bool_]:
+        """Apply brush width to an already-rasterized path in native code."""
+        radius = max((self._brush_size - 1) // 2, 0)
+        if radius == 0:
+            return selected
+        return dilation(selected, footprint=disk(radius))
 
     def _shape_selection(self,
                          start: tuple[int, int],

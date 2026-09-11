@@ -138,7 +138,9 @@ def _validate_outcome(request: MaskCollectionRequest, outcome: MaskCollectionOut
 
 
 def _input_progress_id(state: ExperimentState) -> str:
-    """Identify raw inputs separately when several files share one folder."""
+    """Identify raw inputs without collapsing materialized series branches."""
+    if ARTI_IMG in state.artifacts:
+        return state.experiment_id
     try:
         return state.original_image.as_posix()
     except KeyError:

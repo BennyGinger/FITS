@@ -303,11 +303,31 @@ def test_freehand_drawing_live_fills_its_enclosed_polygon() -> None:
 
     viewer._start_drawing(2, 2)
     viewer._continue_drawing(8, 2)
+    viewer._last_drawing_render = 0
     viewer._continue_drawing(8, 8)
 
     assert viewer.drawing_mask[5, 5] == 1
     viewer._finish_drawing(2, 8)
     assert np.all(viewer.drawing_mask[3:8, 3:8])
+
+
+def test_freehand_rasterization_does_not_rebuild_each_segment(monkeypatch) -> None:
+    _app()
+    viewer = FitsImageViewer()
+    viewer.set_image(np.zeros((128, 128)))
+    viewer.set_drawing_mask(np.zeros((128, 128), dtype=np.uint8))
+    viewer.set_drawing_options("replace", "freehand", "add", 3)
+    line_calls = []
+    monkeypatch.setattr(viewer, "_line_selection",
+                        lambda *args: line_calls.append(args))
+
+    viewer._start_drawing(5, 5)
+    for coordinate in range(6, 100):
+        viewer._continue_drawing(coordinate, coordinate % 40 + 5)
+    viewer._finish_drawing(5, 100)
+
+    assert not line_calls
+    assert np.any(viewer.drawing_mask)
 
 
 def test_line_drawing_stays_open() -> None:

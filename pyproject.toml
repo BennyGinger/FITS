@@ -25,24 +25,16 @@ dependencies = [
     "bioimagequant",
 ]
 
-# Windows accelerator profiles; cuda126 is enabled by default below.
+# Windows accelerator profile; enabled by default below.
 [dependency-groups]
 dev = [
     "ipykernel>=7.2.0",
     "ipywidgets>=8.1.8",
     "pytest>=9.0.2",
 ]
-cpu = [
-    "torch==2.10.0; sys_platform == 'win32' and platform_machine == 'AMD64'",
-    "torchvision==0.25.0; sys_platform == 'win32' and platform_machine == 'AMD64'",
-]
-cuda126 = [
-    "torch==2.10.0; sys_platform == 'win32' and platform_machine == 'AMD64'",
-    "torchvision==0.25.0; sys_platform == 'win32' and platform_machine == 'AMD64'",
-]
-cuda128 = [
-    "torch==2.10.0; sys_platform == 'win32' and platform_machine == 'AMD64'",
-    "torchvision==0.25.0; sys_platform == 'win32' and platform_machine == 'AMD64'",
+cuda129 = [
+    "torch==2.8.0+cu129; sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "torchvision==0.23.0+cu129; sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
 
 [project.scripts]
@@ -55,9 +47,10 @@ requires = ["uv_build>=0.8.4,<0.9.0"]
 build-backend = "uv_build"
 
 [tool.uv]
-default-groups = ["dev", "cuda126"]
-conflicts = [
-    [{ group = "cpu" }, { group = "cuda126" }, { group = "cuda128" }],
+default-groups = ["dev", "cuda129"]
+constraint-dependencies = [
+    "torch==2.10.0; sys_platform == 'linux'",
+    "torchvision==0.25.0; sys_platform == 'linux'",
 ]
 
 [tool.uv.workspace]
@@ -73,16 +66,11 @@ members = [
 ]
 
 [tool.uv.sources]
-# CUDA 12.6 retains support for Pascal GPUs such as the GTX 1080.
 torch = [
-    { index = "pytorch-cpu", group = "cpu", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" },
-    { index = "pytorch-cu126", group = "cuda126", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" },
-    { index = "pytorch-cu128", group = "cuda128", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" },
+    { index = "pytorch-cu129", group = "cuda129", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" },
 ]
 torchvision = [
-    { index = "pytorch-cpu", group = "cpu", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" },
-    { index = "pytorch-cu126", group = "cuda126", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" },
-    { index = "pytorch-cu128", group = "cuda128", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" },
+    { index = "pytorch-cu129", group = "cuda129", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" },
 ]
 fits-io = { workspace = true }
 progress-bar = { workspace = true }
@@ -94,18 +82,8 @@ mask-interpolation = { workspace = true }
 bioimagequant = { workspace = true }
 
 [[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129/"
 explicit = true
 
 [tool.pytest.ini_options]

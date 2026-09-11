@@ -5,7 +5,7 @@ from time import monotonic
 import numpy as np
 import pytest
 import tifffile
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
 from fits.environment.constant import ARTI_IMG, StepName, WORKFLOW_ORDER
 from fits.environment.state import ExperimentState
@@ -20,6 +20,7 @@ _APP = None
 def test_main_gui_runs_profile_after_drawing_finalization(tmp_path, monkeypatch, action):
     global _APP
     _APP = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(QDialog, 'exec', lambda self: QDialog.DialogCode.Accepted)
     folder = tmp_path / 'experiment'
     folder.mkdir()
     source = folder / 'fits_array.tif'

@@ -50,3 +50,18 @@ def test_skip_unfinished_preserves_terminal_stages() -> None:
     assert result.stage(WorkflowStage.CONVERT).status == StageStatus.COMPLETED
     assert result.stage(WorkflowStage.DRAWING).status == StageStatus.SKIPPED
     assert result.stage(WorkflowStage.ANALYSIS).status == StageStatus.SKIPPED
+
+
+def test_skip_pending_preserves_active_and_terminal_stages() -> None:
+    progress = RunProgress()
+    progress.add("experiment", WorkflowStage)
+    progress.update("experiment", WorkflowStage.CONVERT, StageStatus.FAILED,
+                    error="broken input")
+    progress.update("experiment", WorkflowStage.DRAWING, StageStatus.ACTIVE)
+
+    progress.skip_pending("experiment")
+
+    result = progress.experiment("experiment")
+    assert result.stage(WorkflowStage.CONVERT).status == StageStatus.FAILED
+    assert result.stage(WorkflowStage.DRAWING).status == StageStatus.ACTIVE
+    assert result.stage(WorkflowStage.ANALYSIS).status == StageStatus.SKIPPED

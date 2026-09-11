@@ -12,6 +12,7 @@ run_dir = "/media/ben/Analysis/Python/Images/nd2/Run2_test" # Directory where th
 [runtime]
 execution = "conveyor" # Type of execution: batch | conveyor.
 log_dir = "/media/ben/Analysis/Python/Images/nd2/Run2_test" # Log root; FITS creates a logs folder inside it. Empty uses run_dir.
+unlock_all_tabs = false # Show all phase settings before converted arrays exist (GUI only).
 console_level = "info" # Console log level: debug | info | warning | error | critical
 file_level = "debug" # File log level: debug | info | warning | error | critical
 

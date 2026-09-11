@@ -15,7 +15,14 @@ from fits.environment.state import ExperimentState
 from fits.settings.models import DistanceProfileSettings, ExtractSettings
 from fits.sessions.collection import MaskCollectionOutcome
 from fits.tasks.reference_mask import ReferenceMaskSession
-from fits.workflows.interactive import MaskInteraction, PipelineCancelled, run_interactive_workflow, _existing_outcome
+from fits.workflows.interactive import (
+    AllExperimentsFailed,
+    MaskInteraction,
+    PipelineCancelled,
+    _existing_outcome,
+    run_conversion_only,
+    run_interactive_workflow,
+)
 
 
 def state(tmp_path, name):
@@ -32,6 +39,34 @@ def state(tmp_path, name):
 def step(name, runner, settings=None):
     return SimpleNamespace(settings=settings, spec=SimpleNamespace(
         profile=SimpleNamespace(step_name=name), item_runner=runner))
+
+
+def test_conversion_only_continues_after_one_input_fails(tmp_path, monkeypatch):
+    originals = []
+    for name in ('good.nd2', 'broken.nd2'):
+        raw = tmp_path / name
+        raw.touch()
+        originals.append(ExperimentState.init(tmp_path, raw))
+
+    def convert(settings, current, profile):
+        if current.original_image.name == 'broken.nd2':
+            raise ValueError('broken input')
+        output = tmp_path / 'good_s1'
+        output.mkdir()
+        return [ExperimentState.init(output, current.original_image)]
+
+    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+        step(StepName.CONVERT, convert)])
+    progress = RunProgress()
+
+    converted = run_conversion_only({}, originals, progress=progress)
+    assert len(converted) == 1
+    entries = {entry.experiment_id: entry for entry in progress.snapshot()}
+    assert entries[converted[0].experiment_id].stage(
+        WorkflowStage.CONVERT).status == StageStatus.COMPLETED
+    failed = entries[originals[1].original_image.as_posix()].stage(WorkflowStage.CONVERT)
+    assert failed.status == StageStatus.FAILED
+    assert failed.error == 'broken input'
 
 
 def test_queue_grows_and_each_experiment_waits_for_its_own_masks(tmp_path, monkeypatch):
@@ -109,8 +144,13 @@ def test_reference_skip_omits_profile_but_allows_extraction(tmp_path, monkeypatc
         step(StepName.DISTANCE_PROFILE, runner, DistanceProfileSettings()),
         step(StepName.EXTRACT, runner, ExtractSettings())])
     interaction = MaskInteraction(lambda request: interaction.resolve(_existing_outcome(request)))
-    assert run_interactive_workflow({}, [current], interaction) == [current]
+    progress = RunProgress()
+    assert run_interactive_workflow({}, [current], interaction, progress=progress) == [current]
     assert ran == [StepName.EXTRACT]
+    analysis = progress.experiment(current.experiment_id).stage(WorkflowStage.ANALYSIS)
+    assert analysis.status == StageStatus.PARTIAL
+    assert 'reference mask input missing' in analysis.detail
+    assert 'extraction completed' in analysis.detail
 
 
 def test_finish_drawing_handles_later_arrivals_without_reopening_gui(tmp_path, monkeypatch):
@@ -142,13 +182,13 @@ def test_cancel_interrupts_long_demo_pause(tmp_path, monkeypatch):
             future.result(timeout=3)
 
 
-def test_preparation_error_propagates_without_waiting_for_user(tmp_path, monkeypatch):
+def test_all_experiments_failed_reports_preparation_error(tmp_path, monkeypatch):
     current = state(tmp_path, 'a')
     def fail(*args):
         raise ValueError('broken preparation')
     monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, fail)])
     interaction = MaskInteraction(lambda request: None)
-    with pytest.raises(ValueError, match='broken preparation'):
+    with pytest.raises(AllExperimentsFailed, match='broken preparation'):
         run_interactive_workflow({}, [current], interaction)
 
 
@@ -161,8 +201,36 @@ def test_changed_mask_manifest_stops_analysis(tmp_path, monkeypatch):
         outcome.reference_paths[0].unlink()
         interaction.resolve(outcome)
     interaction = MaskInteraction(request_masks)
-    with pytest.raises(ValueError, match='changed after finalization'):
+    with pytest.raises(AllExperimentsFailed, match='changed after finalization'):
         run_interactive_workflow({}, [current], interaction)
+
+
+def test_middle_experiment_failure_does_not_stop_later_work(tmp_path, monkeypatch):
+    states = [state(tmp_path, name) for name in ('a', 'broken', 'c')]
+    processed = []
+    expected_counts = []
+    progress = RunProgress()
+
+    def prepare(settings, current, profile):
+        if current.workdir.name == 'broken':
+            raise ValueError('deliberately broken experiment')
+        processed.append(current.workdir.name)
+        return [current]
+
+    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+        step(StepName.BG_SUB, prepare)])
+    interaction = MaskInteraction(
+        lambda request: interaction.resolve(_existing_outcome(request)),
+        expected_count=expected_counts.append)
+
+    final = run_interactive_workflow({}, states, interaction, progress=progress)
+
+    assert [item.workdir.name for item in final] == ['a', 'c']
+    assert processed == ['a', 'c']
+    assert expected_counts == [3, 2]
+    failed = progress.experiment(states[1].experiment_id)
+    assert failed.stage(WorkflowStage.PREPROCESS).status == StageStatus.FAILED
+    assert failed.stage(WorkflowStage.DRAWING).status == StageStatus.SKIPPED
 
 
 def test_progress_records_parallel_process_and_drawing_join(tmp_path, monkeypatch):

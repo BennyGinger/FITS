@@ -110,16 +110,19 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self.switch_button.clicked.connect(
             lambda: self.switch_mode("roi" if self._kind() == "reference" else "reference"))
         self.mode_label = QLabel("Current mode: REFERENCE")
-        self.finish_mode_button = QPushButton("Finish reference masks")
+        self.finish_mode_button = QPushButton("Complete ref masks")
+        self.finish_mode_button.setMinimumWidth(155)
         self.finish_mode_button.clicked.connect(self._finish_mode)
         finish_mode_row = QHBoxLayout()
-        finish_mode_row.addWidget(self.finish_mode_button)
+        finish_mode_row.setSpacing(10)
+        finish_mode_row.addWidget(self.finish_mode_button, 1)
         self.next_button = QPushButton("Next experiment")
         self.next_button.clicked.connect(self._finish_experiment)
-        finish_mode_row.addWidget(self.next_button)
+        self.next_button.setMinimumWidth(130)
+        finish_mode_row.addWidget(self.next_button, 1)
         layout.addLayout(finish_mode_row)
         layout.addWidget(self.switch_button)
-        self.finish_button = QPushButton("Finish drawing")
+        self.finish_button = QPushButton("Complete session")
         self.finish_button.clicked.connect(self._finish_drawing)
 
         self.quit_button = QPushButton("Quit pipeline")
@@ -129,7 +132,7 @@ class MaskCollectionWindow(MaskDrawingWindow):
         descriptions = {
             self.load_button: "Preview only: add prepared experiments from a folder. In the pipeline, experiments arrive automatically.",
             self.next_button: "Finish the current experiment and open the next one. You will be warned about unsaved work or missing masks.",
-            self.finish_button: "End the drawing session. Confirmation is needed if drawings remain or work is unsaved. The pipeline continues.",
+            self.finish_button: "Mark the drawing session as complete. Confirmation is needed if drawings remain or work is unsaved. The pipeline continues.",
             self.quit_button: ("Close this preview after confirmation. No pipeline is running."
                                if self._preview else "Stop the entire pipeline after confirmation. Unsaved drawing changes will be lost."),
         }
@@ -334,6 +337,10 @@ class MaskCollectionWindow(MaskDrawingWindow):
         layout.addWidget(self.saving_stack, 1, Qt.AlignmentFlag.AlignVCenter)
         layout.addSpacing(24)
         buttons = QVBoxLayout()
+        buttons.setSpacing(12)
+        for button in (self.finish_button, self.quit_button):
+            button.setMinimumWidth(165)
+            button.setMinimumHeight(34)
         buttons.addWidget(self.finish_button)
         buttons.addWidget(self.quit_button)
         layout.addLayout(buttons)
@@ -368,6 +375,10 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self._skipped[kind] = max(self._skipped[kind], self._targets[kind] - len(self._saved[kind]))
         self._finished_modes.add(kind)
         self._refresh_collection()
+        if self._finished_modes == {"reference", "roi"}:
+            self._finish_drawing()
+            return
+        self.switch_mode("roi" if kind == "reference" else "reference")
 
     def _outcome(self, request, saved, skipped) -> MaskCollectionOutcome:
         return MaskCollectionOutcome(request, tuple(sorted(saved["reference"])),
@@ -430,7 +441,7 @@ class MaskCollectionWindow(MaskDrawingWindow):
         return request.experiment_id
 
     def _finish_drawing(self) -> None:
-        if not self._all_expected_done() and not self._confirm("Finish drawing?",
+        if not self._all_expected_done() and not self._confirm("Complete drawing session?",
                 "End this drawing session? Remaining requests will be skipped.\n"
                 "The pipeline will continue where its required masks are available.\n"
                 "Experiments without an ROI use the whole image; without a reference, distance profiling cannot run."):
@@ -676,10 +687,10 @@ class MaskCollectionWindow(MaskDrawingWindow):
             "Switch to ROI drawing. You will be warned before unsaved changes are discarded."
             if kind == "reference" else
             "Switch to reference drawing. You will be warned before unsaved changes are discarded.")
-        mode_name = "reference" if kind == "reference" else "ROI"
-        self.finish_mode_button.setText(f"Finish {mode_name} masks")
+        mode_name = "ref" if kind == "reference" else "ROI"
+        self.finish_mode_button.setText(f"Complete {mode_name} masks")
         self.finish_mode_button.setToolTip(
-            f"Finish {kind} masks for this experiment. Remaining requests need confirmation; you can still switch modes.")
+            f"Mark the {kind} masks as complete and move to the other drawing mode. Remaining requests need confirmation.")
         self.return_button.setText("Return to current experiment" if self._active else "Return to collection")
         self.return_button.setVisible(self._inspection is not None)
         active = active and self._inspection is None

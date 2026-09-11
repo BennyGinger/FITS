@@ -102,6 +102,7 @@ STEP_LAYOUTS: dict[StepName, StepLayout] = {
 
 
 FIELD_LABELS: dict[str, str] = {
+    "unlock_all_tabs": "Unlock all phase tabs",
     "draw_ref_mask": "Draw reference masks",
     "expected_ref_masks": "Expected reference masks",
     "draw_roi_mask": "Draw ROI masks",

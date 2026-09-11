@@ -10,6 +10,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from fits.environment.constant import StepName, WORKFLOW_ORDER
+from fits.environment.progress import RunProgress, StageStatus, WorkflowStage
+from fits.environment.report import format_run_report
 from fits.gui.settings_adapter import SettingsAdapter
 from fits.gui.window import FitsMainWindow, _user_error_message
 from fits.workflows.errors import StepExecutionError
@@ -19,9 +21,11 @@ def _application() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
-def test_main_window_builds_all_steps_and_dynamic_editors() -> None:
+def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
     _application()
     adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    (tmp_path / "fits_array.tif").touch()
     window = FitsMainWindow(adapter)
 
     assert window.step_tree.topLevelItemCount() == len(WORKFLOW_ORDER)
@@ -46,6 +50,94 @@ def test_main_window_builds_all_steps_and_dynamic_editors() -> None:
     segment_editor.sync_to_adapter()
     assert adapter.field_value(StepName.SEGMENT, "channel_to_segment") == ["GFP", "RFP"]
 
+    window.close()
+
+
+def test_phase_tabs_unlock_when_prepared_image_appears(tmp_path) -> None:
+    _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+
+    assert [window.phase_tabs.tabText(i) for i in range(window.phase_tabs.count())] == [
+        "Convert ✓", "Preprocess", "Process", "Analysis"]
+    assert window.phase_tabs.isTabEnabled(0)
+    assert window.run_button.text() == "Convert experiment(s)"
+    for phase in range(1, 4):
+        assert not window.phase_tabs.isTabEnabled(phase)
+    assert window._step_items[StepName.SEGMENT].isDisabled()
+    assert not window.segtune_button.isEnabled()
+    assert window._step_items[StepName.REGISTER_TIME].isHidden()
+
+    prepared = tmp_path / "experiment" / "fits_array.tif"
+    prepared.parent.mkdir()
+    prepared.touch()
+    window._refresh_phase_access()
+
+    for phase in range(4):
+        assert window.phase_tabs.isTabEnabled(phase)
+    assert window.phase_tabs.currentIndex() == 0
+    assert window.run_button.text() == "Run pipeline"
+    assert not window._step_items[StepName.SEGMENT].isDisabled()
+    window.step_tree.setCurrentItem(window._step_items[StepName.SEGMENT])
+    assert window.phase_tabs.currentIndex() == 2
+    assert window.settings_stack.currentWidget() is window._editors[StepName.SEGMENT]
+    assert not window._step_items[StepName.SEGMENT].isHidden()
+    assert window._step_items[StepName.CONVERT].isHidden()
+    window.close()
+
+
+def test_runtime_override_unlocks_settings_but_not_viewers(tmp_path) -> None:
+    _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_runtime_value("unlock_all_tabs", True)
+    adapter.set_step_enabled(StepName.REGISTER_CHANNEL, True)
+    window = FitsMainWindow(adapter)
+
+    assert all(window.phase_tabs.isTabEnabled(i) for i in range(4))
+    assert window.run_button.text() == "Run pipeline"
+    assert window.phase_tabs.tabText(1) == "Preprocess ✓"
+    assert not window.segtune_button.isEnabled()
+
+    window.phase_tabs.setCurrentIndex(1)
+    visible = {
+        step for step, item in window._step_items.items() if not item.isHidden()
+    }
+    assert visible == {
+        StepName.REGISTER_TIME, StepName.REGISTER_CHANNEL, StepName.BG_SUB
+    }
+    window.close()
+
+
+def test_runtime_unlock_control_updates_phase_access_immediately(tmp_path) -> None:
+    _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+
+    unlock = window.runtime_editor.widgets["unlock_all_tabs"]
+    unlock.setChecked(True)
+
+    assert adapter.runtime_value("unlock_all_tabs") is True
+    assert all(window.phase_tabs.isTabEnabled(i) for i in range(4))
+    assert window.run_button.text() == "Run pipeline"
+    assert not window.segtune_button.isEnabled()
+    window.close()
+
+
+def test_refresh_keeps_selected_phase_when_arrays_already_exist(tmp_path) -> None:
+    _application()
+    (tmp_path / "fits_array.tif").touch()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+
+    window.phase_tabs.setCurrentIndex(0)
+    window._refresh_phase_access()
+
+    assert window.phase_tabs.currentIndex() == 0
+    assert window.step_tree.currentItem() is window._step_items[StepName.CONVERT]
     window.close()
 
 
@@ -168,6 +260,47 @@ def test_user_error_message_finds_step_error_inside_executor_wrapper() -> None:
 
     assert _user_error_message(wrapper) == (
         "Step 'track' failed for experiment_3: Unknown channel 'GFP'.")
+
+
+def test_completion_report_shows_stage_counts_and_short_failure_path(tmp_path) -> None:
+    progress = RunProgress()
+    good = (tmp_path / "condition" / "good_s1").as_posix()
+    broken = (tmp_path / "condition" / "broken.nd2").as_posix()
+    progress.add(good, WorkflowStage)
+    progress.add(broken, WorkflowStage)
+    for stage in WorkflowStage:
+        progress.update(good, stage, StageStatus.COMPLETED)
+    progress.update(broken, WorkflowStage.CONVERT, StageStatus.FAILED,
+                    error=f"Could not read {broken}")
+    progress.skip_pending(broken)
+
+    report = format_run_report(progress, tmp_path)
+
+    assert "Conversion: 1 completed / 0 partial / 0 skipped / 1 failed" in report
+    assert "Preprocessing: 1 completed / 0 partial / 1 skipped / 0 failed" in report
+    assert "condition/broken.nd2" in report
+    assert tmp_path.as_posix() not in report
+
+
+def test_full_report_button_uses_latest_report_and_browser_activation(tmp_path, monkeypatch) -> None:
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    older = logs / "fits_report_20260911_080000.txt"
+    latest = logs / "fits_report_20260911_090000.txt"
+    older.write_text("older", encoding="utf-8")
+    latest.write_text("latest", encoding="utf-8")
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+    opened = []
+    monkeypatch.setattr(window, "_show_report", opened.append)
+
+    assert window.report_button.isEnabled()
+    window._open_latest_report()
+    window._open_selected_report(older)
+
+    assert opened == [latest, older]
+    window.close()
 
 
 def test_advanced_settings_reserve_space_and_conveyor_is_default():

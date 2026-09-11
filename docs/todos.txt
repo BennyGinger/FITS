@@ -1,23 +1,12 @@
 FITS TODO
 =========
 
-Interactive mask workflow — remaining work
-------------------------------------------
-The first `fits-gui` conveyor and Ref/ROI collection workflow is implemented.
-The following items remain after the connected GUI draft:
-
-[ ] Expand the final run report so completed, skipped, omitted, cancelled and
-    failed work are distinguishable. Derive it from the in-memory `RunProgress`
-    records; do not create a separate persistent manifest.
+Pipeline robustness and performance
+-----------------------------------
 [ ] Integrate the interactive coordinator with the full CPU/GPU conveyor pools
     if the conservative single-preparation/serial-downstream scheduler becomes
     a performance limitation.
-[ ] Decide what happens when a finalized mask is edited after its dependent
-    analysis has started or completed.
 [ ] Define realistic cancellation guarantees for each processing backend.
-[ ] Add the proposed GUI preparation lock only if user testing shows it is
-    useful: processing controls would unlock when usable prepared images exist
-    without changing the saved enabled/disabled settings.
 
 Mask label consistency across experiments — proposal only
 --------------------------------------------------------

@@ -166,6 +166,8 @@ class StepSettingsEditor(QWidget):
 class RuntimeSettingsEditor(QWidget):
     """Edit the application-level runtime options."""
 
+    value_changed = Signal()
+
     def __init__(
         self,
         adapter: SettingsAdapter,
@@ -180,7 +182,10 @@ class RuntimeSettingsEditor(QWidget):
 
         group = StableAdvancedGroup("Advanced runtime settings")
         form = group.form
-        for name in ("execution", "console_level", "file_level", "log_dir"):
+        form.setVerticalSpacing(8)
+        for name in (
+            "execution", "console_level", "file_level", "log_dir", "unlock_all_tabs"
+        ):
             widget = create_field_widget(
                 adapter.runtime_value(name),
                 RUNTIME_CHOICES.get(name),
@@ -188,12 +193,23 @@ class RuntimeSettingsEditor(QWidget):
             if name == "log_dir" and isinstance(widget, TextWidget):
                 widget.setPlaceholderText("Use run_dir/logs (default)")
                 widget.setToolTip("Optional log root. FITS creates a logs folder inside it; blank uses the run directory.")
+            elif name == "unlock_all_tabs":
+                widget.setToolTip(
+                    "Show all phase settings before converted arrays exist. "
+                    "Image viewers still require a real fits_array.tif file.")
+            widget.value_changed.connect(
+                lambda value, field_name=name: self._store_value(field_name, value))
             form.addRow(field_label(name), widget)
             self.widgets[name] = widget
         group.toggled.connect(self._set_fields_enabled)
+        group.setMinimumHeight(210)
         self._advanced_group = group
         outer.addWidget(group)
         self._set_fields_enabled(group.isChecked())
+
+    def _store_value(self, name: str, value: object) -> None:
+        self.adapter.set_runtime_value(name, value)
+        self.value_changed.emit()
 
     def _set_fields_enabled(self, enabled: bool) -> None:
         for widget in self.widgets.values():

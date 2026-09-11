@@ -19,6 +19,7 @@ class StageStatus(StrEnum):
     PENDING = "pending"
     ACTIVE = "active"
     COMPLETED = "completed"
+    PARTIAL = "partial"
     SKIPPED = "skipped"
     FAILED = "failed"
 
@@ -27,6 +28,7 @@ class StageStatus(StrEnum):
 class StageProgress:
     status: StageStatus = StageStatus.PENDING
     error: str | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,10 +75,11 @@ class RunProgress:
             self._notify(progress)
 
     def update(self, experiment_id: str, stage: WorkflowStage, status: StageStatus,
-               *, error: str | None = None) -> ExperimentProgress:
+               *, error: str | None = None,
+               detail: str | None = None) -> ExperimentProgress:
         with self._lock:
             current = self._experiments[experiment_id]
-            stage_progress = StageProgress(status=status, error=error)
+            stage_progress = StageProgress(status=status, error=error, detail=detail)
             stages = dict(current.stages)
             stages[stage] = stage_progress
             updated = ExperimentProgress(experiment_id, stages)
@@ -112,6 +115,21 @@ class RunProgress:
                 changed.append(updated)
         for progress in changed:
             self._notify(progress)
+
+    def skip_pending(self, experiment_id: str, *,
+                     detail: str | None = None) -> ExperimentProgress:
+        """Skip downstream stages that never started after one experiment fails."""
+        with self._lock:
+            current = self._experiments[experiment_id]
+            stages = {
+                stage: (replace(value, status=StageStatus.SKIPPED, detail=detail)
+                        if value.status == StageStatus.PENDING else value)
+                for stage, value in current.stages.items()
+            }
+            updated = ExperimentProgress(experiment_id, stages)
+            self._experiments[experiment_id] = updated
+        self._notify(updated)
+        return updated
 
     def _notify(self, progress: ExperimentProgress) -> None:
         if self._on_change is not None:

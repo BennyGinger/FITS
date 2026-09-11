@@ -22,6 +22,7 @@ def application():
 
 def test_tuner_round_trip_and_close(monkeypatch, tmp_path):
     application()
+    (tmp_path / "fits_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_field_value(StepName.SEGMENT, "workers", 3)
@@ -55,6 +56,7 @@ def test_tuner_round_trip_and_close(monkeypatch, tmp_path):
 
 def test_close_without_apply_leaves_settings_unchanged(tmp_path):
     application()
+    (tmp_path / "fits_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     window = FitsMainWindow(adapter)

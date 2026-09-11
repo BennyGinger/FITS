@@ -16,6 +16,7 @@ from fits.settings.resolution import apply_overwrite_cascade
 from fits.workflows.execute import run_workflow_scheduler_entry, run_workflow
 from fits.environment.discovery import collect_supported_files, assemble_experiment_states
 from fits.environment.log import configure_logging
+from fits.environment.report import format_run_report
 from fits.settings.loader import load_settings
 from fits.tasks import aggregate_distance_profiles, aggregate_quantification
 
@@ -31,6 +32,7 @@ def start_pipeline(
     mask_interaction=None,
     demo_step_delay: float = 0.0,
     run_progress: RunProgress | None = None,
+    convert_only: bool = False,
 ) -> None:
     # --- load settings ---
     cfg_path = (settings_path or SETTINGS_PATH).expanduser().resolve()
@@ -56,7 +58,7 @@ def start_pipeline(
     file_level = rt_settings.get("file_level", "debug")
     
     # --- logging setup once ---
-    configure_logging(
+    log_path = configure_logging(
         log_dir=log_dir,
         console_level=console_level,
         file_level=file_level,
@@ -83,33 +85,63 @@ def start_pipeline(
 
     # --- apply overwrite cascade to user config ---
     effective_cfg = apply_overwrite_cascade(user_cfg, WORKFLOW_ORDER)
+    if convert_only:
+        for step_name in WORKFLOW_ORDER:
+            if step_name in effective_cfg:
+                effective_cfg[step_name]["enabled"] = step_name == "convert"
     
     # --- build ExperimentState list from saved states + newly discovered raw files ---
     states = assemble_experiment_states(run_dir, supported_files, effective_cfg, user_name)
+
+    def save_progress_report() -> None:
+        if run_progress is None or log_path is None or not run_progress.snapshot():
+            return
+        timestamp = log_path.stem.removeprefix("fits_")
+        report_path = log_path.with_name(f"fits_report_{timestamp}.txt")
+        report_path.write_text(
+            format_run_report(run_progress, run_dir, include_header=True) + "\n",
+            encoding="utf-8")
+        logger.info("Full pipeline report saved to %s", report_path)
     
     # --- start the workflow ---
     from fits.workflows.interactive import interactive_masks_requested, run_interactive_workflow
-    if mask_interaction is not None and interactive_masks_requested(effective_cfg):
-        logger.info("Starting interactive conveyor: preparation continues while masks are drawn.")
-        final_states = run_interactive_workflow(
-            effective_cfg, states, mask_interaction,
-            step_delay_seconds=demo_step_delay, progress=run_progress)
-    else:
-        match rt_mode:
-            case "batch":
-                logger.info("Starting batch execution of workflow")
-                final_states = run_workflow(effective_cfg, states)
-            case "conveyor":
-                logger.info("Starting conveyor execution of workflow")
-                final_states = run_workflow_scheduler_entry(effective_cfg, states)
+    try:
+        if convert_only:
+            from fits.workflows.interactive import run_conversion_only
+            logger.info("Starting conversion-only execution.")
+            final_states = run_conversion_only(
+                effective_cfg,
+                states,
+                step_delay_seconds=demo_step_delay,
+                progress=run_progress,
+            )
+        elif mask_interaction is not None and interactive_masks_requested(effective_cfg):
+            logger.info("Starting interactive conveyor: preparation continues while masks are drawn.")
+            final_states = run_interactive_workflow(
+                effective_cfg, states, mask_interaction,
+                step_delay_seconds=demo_step_delay, progress=run_progress)
+        else:
+            match rt_mode:
+                case "batch":
+                    logger.info("Starting batch execution of workflow")
+                    final_states = run_workflow(effective_cfg, states)
+                case "conveyor":
+                    logger.info("Starting conveyor execution of workflow")
+                    final_states = run_workflow_scheduler_entry(effective_cfg, states)
+    except BaseException:
+        save_progress_report()
+        raise
     
     # --- log final states ---
     for st in final_states:
         logger.debug("Final state: exp_id=%s last_step=%s", st.experiment_id, st.last_step,)
 
     # --- aggregate quantification artifacts into a master Parquet file, only if needed ---
-    aggregate_quantification(effective_cfg, final_states, run_dir)
-    aggregate_distance_profiles(effective_cfg, final_states, run_dir)
+    try:
+        aggregate_quantification(effective_cfg, final_states, run_dir)
+        aggregate_distance_profiles(effective_cfg, final_states, run_dir)
+    finally:
+        save_progress_report()
     
     logger.info("Pipeline finished with %d final experiment states", len(final_states))
 

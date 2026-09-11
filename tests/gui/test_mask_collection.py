@@ -226,11 +226,30 @@ def test_finish_mode_does_not_lock_switching(window, tmp_path, monkeypatch):
     monkeypatch.setattr(window, '_confirm', lambda *args: True)
     window._finish_mode()
     assert 'reference' in window._finished_modes
-    window.switch_mode('roi')
     assert window._kind() == 'roi'
     window.switch_mode('reference')
     assert window.reference_panel.isEnabled()
     assert window.image_viewer.isEnabled()
+
+
+def test_completing_both_mask_modes_completes_session(window, tmp_path, monkeypatch):
+    window.enqueue_experiment(request(tmp_path))
+    monkeypatch.setattr(window, '_confirm', lambda *args: True)
+    outcomes = []
+    finished = []
+    window.experiment_finalized.connect(outcomes.append)
+    window.collection_finished.connect(lambda: finished.append(True))
+
+    window._finish_mode()
+    assert window._kind() == 'roi'
+    assert not window._ended
+
+    window._finish_mode()
+
+    assert window._ended
+    assert window._active is None
+    assert len(outcomes) == 1
+    assert finished == [True]
 
 
 def save_reference(req, label='edge'):
@@ -309,10 +328,11 @@ def test_control_buttons_have_tooltips_and_switch_label_follows_mode(window, tmp
     assert window.switch_button.text() == 'Go to ROI'
     window.switch_button.click()
     assert window.switch_button.text() == 'Go to ref'
-    assert window.finish_mode_button.text() == 'Finish ROI masks'
+    assert window.finish_mode_button.text() == 'Complete ROI masks'
     window.show()
     _APP.processEvents()
     assert window.finish_mode_button.y() == window.next_button.y()
+    assert window.finish_button.text() == 'Complete session'
     assert window.finish_button.y() < window.quit_button.y()
     assert window.finish_button.x() == window.quit_button.x()
 

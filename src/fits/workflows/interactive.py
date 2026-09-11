@@ -28,6 +28,10 @@ class PipelineCancelled(Exception):
     """User-requested cancellation, distinct from a processing failure."""
 
 
+class AllExperimentsFailed(RuntimeError):
+    """Every discovered experiment failed before producing a final state."""
+
+
 class MaskInteraction:
     def __init__(self, request: Callable[[MaskCollectionRequest], None],
                  input_complete: Callable[[], None] = lambda: None,
@@ -52,6 +56,49 @@ class MaskInteraction:
     def check_cancelled(self) -> None:
         if self.cancelled.is_set():
             raise PipelineCancelled("Pipeline cancelled. Completed artifacts have been kept.")
+
+
+def run_conversion_only(config: Mapping[str, Any], states: list[ExperimentState], *,
+                        step_delay_seconds: float = 0.0,
+                        progress: RunProgress | None = None) -> list[ExperimentState]:
+    """Convert each input independently and record a conversion-only report."""
+    if step_delay_seconds < 0:
+        raise ValueError('Demo step delay cannot be negative.')
+    conversion = [
+        step for step in _resolve_runtime_steps(config)
+        if step.spec.profile.step_name == StepName.CONVERT
+    ]
+    progress = progress or RunProgress()
+    final_states: list[ExperimentState] = []
+    for state in states:
+        experiment_id = _input_progress_id(state)
+        progress.add(experiment_id, {WorkflowStage.CONVERT})
+        progress.update(experiment_id, WorkflowStage.CONVERT, StageStatus.ACTIVE)
+        try:
+            produced = [state]
+            for step in conversion:
+                next_states = []
+                for current in produced:
+                    next_states.extend(
+                        step.spec.item_runner(step.settings, current, step.spec.profile))
+                produced = next_states
+            progress.update(experiment_id, WorkflowStage.CONVERT, StageStatus.COMPLETED)
+            progress.replace_experiment(
+                experiment_id, (converted.experiment_id for converted in produced))
+            final_states.extend(produced)
+            if step_delay_seconds:
+                from time import sleep
+                sleep(step_delay_seconds)
+        except Exception as error:
+            progress.update(
+                experiment_id, WorkflowStage.CONVERT, StageStatus.FAILED,
+                error=str(error))
+            logger.error(
+                "Experiment failed during conversion and will be omitted; remaining experiments will continue: %s | experiment=%s",
+                error, experiment_id, exc_info=True)
+    if states and not final_states:
+        raise AllExperimentsFailed('All experiments failed during conversion.')
+    return final_states
 
 
 def interactive_masks_requested(config: Mapping[str, Any]) -> bool:
@@ -125,6 +172,7 @@ def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentS
     for state in states:
         progress.add(_input_progress_id(state), required_stages)
     interaction.expected_count(len(states))
+    expected_drawings = [len(states)]
     prepared = Queue()
     producer_done = Event()
     stop_preparation = Event()
@@ -169,20 +217,50 @@ def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentS
         progress.update(experiment_id, stage, StageStatus.COMPLETED)
         return current
 
+    def adjust_expected_drawings(delta: int) -> None:
+        if not delta:
+            return
+        expected_drawings[0] = max(0, expected_drawings[0] + delta)
+        interaction.expected_count(expected_drawings[0])
+
+    def contain_failure(experiment_id: str, stage: WorkflowStage,
+                        error: Exception) -> None:
+        progress.skip_pending(
+            experiment_id, detail=f'not run because {stage.value} failed')
+        logger.error(
+            "Experiment failed during %s and will be omitted; remaining experiments will continue: %s | experiment=%s",
+            stage.value, error, experiment_id,
+            exc_info=error.__traceback__ is not None)
+
     def prepare():
         try:
             for original in states:
                 interaction.check_cancelled()
                 original_id = _input_progress_id(original)
-                converted = run_steps([original], conversion, WorkflowStage.CONVERT,
-                                      original_id)
+                try:
+                    converted = run_steps([original], conversion, WorkflowStage.CONVERT,
+                                          original_id)
+                except PipelineCancelled:
+                    raise
+                except Exception as error:
+                    contain_failure(original_id, WorkflowStage.CONVERT, error)
+                    adjust_expected_drawings(-1)
+                    continue
                 progress.replace_experiment(
                     original_id, (state.experiment_id for state in converted))
+                adjust_expected_drawings(len(converted) - 1)
                 for converted_state in converted:
                     experiment_id = converted_state.experiment_id
-                    prepared_states = run_steps(
-                        [converted_state], preprocessing, WorkflowStage.PREPROCESS,
-                        experiment_id)
+                    try:
+                        prepared_states = run_steps(
+                            [converted_state], preprocessing, WorkflowStage.PREPROCESS,
+                            experiment_id)
+                    except PipelineCancelled:
+                        raise
+                    except Exception as error:
+                        contain_failure(experiment_id, WorkflowStage.PREPROCESS, error)
+                        adjust_expected_drawings(-1)
+                        continue
                     for state in prepared_states:
                         if not conversion and not preprocessing:
                             pause()
@@ -191,7 +269,10 @@ def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentS
                             error = f'No prepared image for {state.experiment_id}. Enable conversion first.'
                             progress.update(state.experiment_id, WorkflowStage.PREPROCESS,
                                             StageStatus.FAILED, error=error)
-                            raise ValueError(error)
+                            contain_failure(state.experiment_id, WorkflowStage.PREPROCESS,
+                                            ValueError(error))
+                            adjust_expected_drawings(-1)
+                            continue
                         request = MaskCollectionRequest.from_settings(image,
                             extraction=settings.get(StepName.EXTRACT), profile=settings.get(StepName.DISTANCE_PROFILE))
                         request = replace(request, experiment_id=state.experiment_id)
@@ -233,12 +314,25 @@ def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentS
                     except Exception as error:
                         progress.update(request.experiment_id, WorkflowStage.DRAWING,
                                         StageStatus.FAILED, error=str(error))
-                        raise
+                        progress.skip_pending(
+                            request.experiment_id,
+                            detail='not run because mask validation failed')
+                        logger.error(
+                            'Experiment mask validation failed and analysis will be omitted; remaining experiments will continue: %s | experiment=%s',
+                            error, request.experiment_id, exc_info=True)
+                        del pending[key]
+                        continue
                     skipped = outcome.skipped_references + outcome.skipped_rois
+                    missing_inputs = []
+                    if request.requires_reference and not outcome.reference_paths:
+                        missing_inputs.append('reference mask input missing')
+                    if outcome.skipped_rois:
+                        missing_inputs.append('ROI mask input missing')
                     drawing_status = (StageStatus.SKIPPED if skipped and not (
                         outcome.reference_paths or outcome.roi_paths) else StageStatus.COMPLETED)
                     progress.update(request.experiment_id, WorkflowStage.DRAWING,
-                                    drawing_status)
+                                    drawing_status,
+                                    detail='; '.join(missing_inputs) or None)
                     selected = analysis
                     if not outcome.reference_paths:
                         selected = [s for s in analysis if s.spec.profile.step_name != StepName.DISTANCE_PROFILE]
@@ -247,20 +341,48 @@ def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentS
                     logger.info('Masks finalized for %s: %d references, %d ROIs, %d skipped requests.',
                         request.experiment_id, len(outcome.reference_paths), len(outcome.roi_paths),
                         outcome.skipped_references + outcome.skipped_rois)
-                    if selected:
-                        final_states.extend(run_steps(
-                            computed, selected, WorkflowStage.ANALYSIS,
-                            request.experiment_id))
+                    if selected and computed is not None:
+                        try:
+                            final_states.extend(run_steps(
+                                computed, selected, WorkflowStage.ANALYSIS,
+                                request.experiment_id))
+                        except PipelineCancelled:
+                            raise
+                        except Exception as error:
+                            contain_failure(request.experiment_id,
+                                            WorkflowStage.ANALYSIS, error)
+                        else:
+                            if missing_inputs:
+                                detail = '; '.join(missing_inputs)
+                                if not outcome.reference_paths and request.requires_reference:
+                                    detail += '; distance profile skipped; extraction completed'
+                                elif not outcome.roi_paths and request.uses_roi:
+                                    detail += '; distance profile completed over the whole image'
+                                progress.update(
+                                    request.experiment_id, WorkflowStage.ANALYSIS,
+                                    StageStatus.PARTIAL, detail=detail)
                     else:
-                        progress.update(request.experiment_id, WorkflowStage.ANALYSIS,
-                                        StageStatus.SKIPPED)
+                        status = StageStatus.PARTIAL if missing_inputs and computed is not None else StageStatus.SKIPPED
+                        progress.update(
+                            request.experiment_id, WorkflowStage.ANALYSIS, status,
+                            detail=('; '.join(missing_inputs) + '; configured analysis could not run')
+                            if missing_inputs else None)
+                        if computed is not None:
+                            final_states.extend(computed)
                     del pending[key]
                 try:
                     state, request = prepared.get(timeout=.1)
                 except Empty:
                     continue
-                computed = run_steps([state], computation, WorkflowStage.PROCESS,
-                                     request.experiment_id)
+                try:
+                    computed = run_steps([state], computation, WorkflowStage.PROCESS,
+                                         request.experiment_id)
+                except PipelineCancelled:
+                    raise
+                except Exception as error:
+                    contain_failure(request.experiment_id, WorkflowStage.PROCESS,
+                                    error)
+                    computed = None
                 pending[request.image_path] = (request, computed)
             producer.result()
             interaction.check_cancelled()
@@ -269,4 +391,30 @@ def run_interactive_workflow(config: Mapping[str, Any], states: list[ExperimentS
             raise
         finally:
             stop_preparation.set()
+    snapshot = progress.snapshot()
+    for stage in WorkflowStage:
+        counts = {status: 0 for status in StageStatus}
+        failures = []
+        for experiment in snapshot:
+            stage_progress = experiment.stage(stage)
+            if stage_progress is None:
+                continue
+            counts[stage_progress.status] += 1
+            if stage_progress.status == StageStatus.FAILED:
+                failures.append(f'{experiment.experiment_id}: {stage_progress.error}')
+        logger.info(
+            'Run report %s: %d completed, %d partial, %d skipped, %d failed.',
+            stage.value, counts[StageStatus.COMPLETED],
+            counts[StageStatus.PARTIAL],
+            counts[StageStatus.SKIPPED], counts[StageStatus.FAILED])
+        for failure in failures:
+            logger.error('Run report %s failure: %s', stage.value, failure)
+    if states and not final_states:
+        failures = [
+            f'{experiment.experiment_id}: {stage.error}'
+            for experiment in snapshot for stage in experiment.stages.values()
+            if stage.status == StageStatus.FAILED
+        ]
+        detail = '; '.join(failures) or 'no experiment produced a final state'
+        raise AllExperimentsFailed(f'All experiments failed. {detail}')
     return final_states

@@ -50,7 +50,7 @@ def load_roi_artifact(roi_path: str | Path, *, source_path: Path,
     array = np.asarray(loaded.array)
     axes = loaded.axes
     channels = tuple(reader.channel_labels)
-    encoding = getattr(reader, "fits_metadata", {}).get("roi_mask_encoding")
+    encoding = reader.metadata.custom_metadata.get("roi_mask_encoding")
     array = _normalize_roi_encoding(array, encoding=encoding)
     expected = tuple(size for axis, size in zip(source_axes, source_shape, strict=True)
                      if axis != "C")
@@ -79,13 +79,13 @@ def merge_roi_channels(output_path: Path, channel_mask: NDArray[np.uint8], *,
     """Merge current-format channels or replace an incompatible ROI artifact."""
     if output_path.is_file():
         reader = FitsIO.from_path(output_path)
-        encoding = getattr(reader, "fits_metadata", {}).get("roi_mask_encoding")
+        encoding = reader.metadata.custom_metadata.get("roi_mask_encoding")
         if encoding != ROI_MASK_ENCODING:
             return channel_mask, [channel_label]
 
-    def normalize_existing(array: NDArray[np.generic], reader: object,
+    def normalize_existing(array: NDArray[np.generic], reader: FitsIO,
                            ) -> NDArray[np.uint8]:
-        metadata = getattr(reader, "fits_metadata", {})
+        metadata = reader.metadata.custom_metadata
         return _normalize_roi_encoding(
             array, encoding=metadata.get("roi_mask_encoding"))
 

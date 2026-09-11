@@ -1,7 +1,164 @@
-- Status modify integrated into pipeline
-- add bg_sub
-- add registration
-- add tracking
-- add extraction data
-- add draw masks
-- build the gui/cli app
+FITS TODO
+=========
+
+Pipeline robustness and performance
+-----------------------------------
+[ ] Integrate the interactive coordinator with the full CPU/GPU conveyor pools
+    if the conservative single-preparation/serial-downstream scheduler becomes
+    a performance limitation.
+[ ] Define realistic cancellation guarantees for each processing backend.
+
+Mask label consistency across experiments — proposal only
+--------------------------------------------------------
+[ ] Consider using the first finalized experiment as the naming template for
+    the rest of the run, separately for reference and ROI masks.
+[ ] Later experiments would choose only labels established in the first one.
+    Its finalized mask counts would replace the initial expected counts for
+    subsequent experiments. Do not implement this restriction yet.
+[ ] Decide how to handle an unrepresentative first experiment, missing structures,
+    skipped labels, existing masks with different names, and deliberate exceptions.
+    Consider suggestions first, with an optional strict mode rather than a hard lock.
+
+
+Per-channel segmentation settings
+---------------------------------
+Goal: segment multiple channels with independent Cellpose settings, using
+the same configuration model in the GUI and CLI.
+Status: proposed design; implementation pending.
+
+GUI
+[ ] Replace the shared channel/settings form with one collapsible block per
+    channel, showing a summary such as "GFP | cyto3 | diameter 30".
+[ ] Add an "Add channel" button that copies the previous block's settings
+    as a starting point, and a "Remove" button for each block.
+[ ] Give each block its own channel selector, optional nuclear channel,
+    denoising option, and Cellpose settings.
+[ ] Add "Tune segmentation..." to each block. Open the tuner with that
+    block's channel/settings; "Apply and close" updates only that block.
+[ ] Keep execution, workers, ordering, and overwrite at the shared step level.
+
+Configuration and CLI
+[ ] Define repeated channel entries in TOML; the CLI continues to use the
+    settings file without adding per-channel command-line flags.
+[ ] Validate channel entries and reject duplicate target channels.
+[ ] Keep legacy channel_to_segment lists with shared settings working:
+    expand them into independent blocks initialized with identical settings.
+
+Proposed TOML structure (not yet supported):
+
+    [segment]
+    enabled = true
+
+    [segment.params]
+    overwrite = false
+    execution = "serial"
+
+    [[segment.channels]]
+    channel = "GFP"
+    do_denoise = true
+
+    [segment.channels.user_settings]
+    model_type = "cyto3"
+    diameter = 30
+
+    [[segment.channels]]
+    channel = "DAPI"
+    do_denoise = false
+
+    [segment.channels.user_settings]
+    model_type = "nuclei"
+    diameter = 15
+
+Pipeline and provenance
+[ ] Process channel entries in order with their respective settings.
+[ ] Combine channel masks into the segmentation output while preserving
+    channel identity.
+[ ] Record the settings used for each channel in workflow provenance.
+[ ] Ensure completion and overwrite decisions account for individual channels.
+
+Validation and documentation
+[ ] Test GUI add/remove, independent editing, and tuner apply/cancel behavior.
+[ ] Test TOML save/load, CLI execution, and legacy-settings compatibility.
+[ ] Test that different channels receive their own settings and retain the
+    correct output-channel mapping and provenance.
+[ ] Update the settings template and GUI/CLI documentation with examples.
+
+
+Optional processing tuners
+-------------------------
+Goal: let users quickly check representative experiments and choose settings
+before running a batch, minimizing hands-on time. Early previews on the
+original input are acceptable approximations of the final pipeline result;
+do not require users to run preceding steps before tuning.
+Status: proposed design; implementation pending.
+
+User interface and launch
+[ ] Provide distinct time-registration, channel-registration, and background-
+    subtraction tuners, launched explicitly from their respective GUI sections.
+    Each should look and behave as its own tool, rather than requiring users
+    to navigate a combined processing workflow.
+[ ] Offer manual standalone CLI launch commands for each tuner (names TBD).
+    Keep the normal pipeline CLI fully usable without opening any tuner.
+[ ] Reuse the run-directory browser to choose a representative experiment.
+[ ] Provide original/preview comparison, frame navigation, relevant settings,
+    Preview, and Apply and close. Applying transfers settings to the matching
+    main-GUI section; closing without applying leaves those settings unchanged.
+[ ] Keep previews optional and separate from saved experiment artifacts.
+[ ] Consider separate executable shortcuts/icons for the tools later.
+
+Input and preview lifetime
+[ ] Load one original input array for the active tool; do not load duplicate
+    full stacks for inactive tools. Resolve support for raw files versus
+    converted, unprocessed FITS arrays when implementing the input loader.
+[ ] When switching tools, release the previous tool's input and preview,
+    then reload the selected experiment for the newly opened tool.
+[ ] When switching experiments, release the previous input and preview before
+    loading the new experiment. Do not accumulate results across experiments.
+[ ] Reuse the loaded original input for repeated previews within a tool.
+    Replace the previous preview; never process the previous preview again.
+[ ] Run preview work off the GUI thread with progress and cancellation.
+    Finish or cancel active work before releasing its input buffers.
+
+Preview scope
+[ ] Channel registration: preview one time frame at a time using a composite
+    display with channel colours, visibility controls, and original/result
+    comparison. Build the composite only for the displayed frame.
+[ ] Time registration with previous-frame reference: process the full sequence
+    for a faithful preview of accumulated transforms.
+[ ] Time registration with first-frame reference: preview individual frames
+    against the fixed first frame.
+[ ] Time registration with mean reference: compute and reuse the full-stack
+    mean reference, then preview individual frames against it. Computing the
+    reference still requires reading the stack.
+[ ] Background subtraction: preview individual frames/channels directly from
+    the original input, without requiring registration first.
+[ ] Follow the same early-check principle for segmentation tuning; preceding
+    processing steps are not a prerequisite for optional tuning.
+[ ] Document that early previews guide parameter choice rather than reproduce
+    every upstream effect. Registration may resample intensities and alter
+    borders, so numerical equivalence is not assumed.
+[ ] Validate settings transfer, original-input reuse, preview replacement,
+    cancellation, and independent GUI/CLI launch behavior.
+
+
+Large-file handling in viewers
+-----------------------------
+Goal: prepare for occasional large stacks (including 1,000+ frames) without
+making the common small-file workflow more complicated.
+Priority: future robustness work; not a prerequisite for processing tuners.
+
+[ ] Instantiate only the active tool's image session; remove duplicate full-
+    stack loading by hidden segmentation/reference/ROI sessions.
+[ ] Estimate decoded memory needs from shape and dtype, including channels,
+    Z planes, masks, previews, and processing buffers, rather than frame count
+    or compressed file size alone.
+[ ] Add on-demand frame/plane reading with a small bounded cache where the
+    image format and reader support it.
+[ ] Consider local temporary storage for large preview outputs, displaying
+    frames on demand rather than retaining a second full stack in RAM.
+[ ] Avoid unnecessary full-stack mask copies; consider allocating editable
+    mask planes only when needed, while retaining save/interpolation behavior.
+[ ] Bound preview caches and undo history, and clean up temporary data when
+    replacing an experiment, closing a tool, or cancelling work.
+[ ] Verify memory use and responsiveness on representative large stacks,
+    including multi-channel and Z-stack examples and repeated tool switches.

@@ -17,6 +17,7 @@ class DirectoryBrowser(QWidget):
     """Tree browser rooted inside a selected directory."""
 
     path_selected = Signal(object)
+    path_activated = Signal(object)
 
     def __init__(self,
                  title: str = "Directory contents",
@@ -49,6 +50,7 @@ class DirectoryBrowser(QWidget):
         for column in range(1, self.model.columnCount()):
             self.tree.hideColumn(column)
         self.tree.clicked.connect(self._on_clicked)
+        self.tree.doubleClicked.connect(self._on_activated)
         layout.addWidget(self.tree)
 
         self.selection_label = QLabel("")
@@ -142,6 +144,10 @@ class DirectoryBrowser(QWidget):
         self.selection_label.setText(f"Selected: {label}")
         self.selection_label.show()
         self.path_selected.emit(selected)
+
+    @Slot(QModelIndex)
+    def _on_activated(self, index: QModelIndex) -> None:
+        self.path_activated.emit(Path(self.model.filePath(index)).resolve())
 
 
 class RunDirectoryBrowser(DirectoryBrowser):

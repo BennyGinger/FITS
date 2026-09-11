@@ -14,10 +14,11 @@ run_dir = ""
 # Runtime configuration
 # ============================
 [runtime]
-execution = "batch" # batch | conveyor
+execution = "conveyor" # batch | conveyor
 console_level = "info" # debug | info | warning | error | critical
 file_level = "debug" # debug | info | warning | error | critical
-log_dir = "" # Empty or omitted uses run_dir/logs (created automatically); otherwise use this directory.
+log_dir = "" # Log root. Empty uses run_dir; FITS creates a logs folder inside it.
+unlock_all_tabs = false # Show all phase settings before converted arrays exist (GUI only).
 
 # optimize = "path/to/one/input/file" # Optional; process only this input file.
 
@@ -143,6 +144,9 @@ max_distance = 150.0
 enabled = false
 
 [distance_profile.params]
+expected_ref_masks = 1 # Initial reference-mask request count per experiment (at least one).
+draw_roi_mask = false # Request interactive ROI drawing; existing masks are still discovered.
+expected_roi_masks = 1 # Initial ROI-mask request count when drawing is enabled.
 bin_width = 5.0 # Distance-bin width in pixels.
 maximum_bins = "None" # Maximum number of bins, or "None" to cover the complete region.
 overwrite = false
@@ -158,6 +162,8 @@ frame_workers = 8
 enabled = false
 
 [extract.params]
+draw_ref_mask = false # Request interactive reference drawing; existing masks are still discovered.
+expected_ref_masks = 1 # Initial reference-mask request count when drawing is enabled.
 additional_properties = "None" # A property, list of properties, or "None".
 overwrite = false
 execution = "serial" # Experiment-level execution mode.

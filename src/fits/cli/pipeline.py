@@ -1,7 +1,7 @@
 from pathlib import Path
 import typer
 
-from fits.pipeline import start_pipeline
+from fits.cli.interactive import run_pipeline_cli
 
 pipeline_app = typer.Typer(no_args_is_help=True)
 
@@ -18,4 +18,4 @@ def start(
         if not settings.is_file():
             raise typer.BadParameter(f"Settings path {settings} is not a file.")
 
-    start_pipeline(settings_path=settings)
+    run_pipeline_cli(settings_path=settings)

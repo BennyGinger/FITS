@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from PySide6.QtWidgets import (
-    QAbstractScrollArea, QComboBox, QDoubleSpinBox, QSlider, QSpinBox,
+    QAbstractScrollArea, QComboBox, QDoubleSpinBox, QSlider, QSpinBox, QWidget,
 )
 
+# Give the type checker a QWidget base without adding it at runtime (avoids MRO conflicts).
+_MixinBase = QWidget if TYPE_CHECKING else object
 
-class _FocusWheelMixin:
+
+class _FocusWheelMixin(_MixinBase):
     """Let a parent scroll area handle the wheel until this editor has focus."""
 
     _wheel_armed = False
+
 
     def mousePressEvent(self, event: Any) -> None:
         self._wheel_armed = True

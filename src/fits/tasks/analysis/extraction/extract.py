@@ -37,6 +37,8 @@ def extract(settings: ExtractSettings, exp_state: ExperimentState, step_profile:
         if run.is_complete:
             return [exp_state]
 
+        # Drawing flags/counts configure collection, not numerical extraction.
+        # Reuse every discovered reference, including when drawing is disabled.
         manager = ExtractionManager(exp_state)
         extractor = manager.prepare_quantification()
 

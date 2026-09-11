@@ -24,7 +24,7 @@ def configure_logging(
     console_level: LevelName = "info",
     file_level: LevelName = "debug",
     console_handler: logging.Handler | None = None,
-) -> None:
+) -> Path | None:
     """
     Configure global logging for the FITS pipeline.
 
@@ -63,6 +63,7 @@ def configure_logging(
     console_handler.set_name("fits_console")
     root.addHandler(console_handler)
 
+    log_path = None
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -81,6 +82,7 @@ def configure_logging(
     _quiet_logger("numcodecs")
     _quiet_logger("hydra.core.utils")
     _quiet_logger("trackastra.model.model_api")
+    return log_path
 
 
 def _quiet_logger(

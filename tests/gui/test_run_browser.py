@@ -78,3 +78,18 @@ def test_browser_can_promote_a_folder_selection_to_its_artifact(tmp_path: Path) 
     assert browser.select_path(artifact) is True
     assert browser.selected_path == artifact.resolve()
     assert browser.selection_label.text() == "Selected: experiment/fits_array.tif"
+
+
+def test_double_click_activates_file_path(tmp_path: Path) -> None:
+    app = _application()
+    report = tmp_path / "fits_report_20260911_090000.txt"
+    report.touch()
+    browser = RunDirectoryBrowser()
+    activated = []
+    browser.path_activated.connect(activated.append)
+    browser.set_root(tmp_path)
+    app.processEvents()
+
+    browser._on_activated(browser.model.index(str(report)))
+
+    assert activated == [report.resolve()]

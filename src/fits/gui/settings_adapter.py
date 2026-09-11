@@ -89,18 +89,24 @@ STEP_LAYOUTS: dict[StepName, StepLayout] = {
     ),
     StepName.EXTRACT: StepLayout(
         title="Quantification",
-        basic=("additional_properties", "overwrite"),
+        basic=("draw_ref_mask", "expected_ref_masks", "additional_properties", "overwrite"),
         advanced=("execution", "workers", "frame_workers"),
     ),
     StepName.DISTANCE_PROFILE: StepLayout(
         title="Distance profile",
-        basic=("bin_width", "maximum_bins", "overwrite"),
+        basic=("expected_ref_masks", "draw_roi_mask", "expected_roi_masks",
+               "bin_width", "maximum_bins", "overwrite"),
         advanced=("execution", "workers"),
     ),
 }
 
 
 FIELD_LABELS: dict[str, str] = {
+    "unlock_all_tabs": "Unlock all phase tabs",
+    "draw_ref_mask": "Draw reference masks",
+    "expected_ref_masks": "Expected reference masks",
+    "draw_roi_mask": "Draw ROI masks",
+    "expected_roi_masks": "Expected ROI masks",
     "bg_execution": "Frame execution",
     "bg_workers": "Frame workers",
     "cellprob_threshold": "Cell probability threshold",

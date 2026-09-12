@@ -4,7 +4,7 @@ import logging
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QPalette
 from PySide6.QtWidgets import (
     QDialog,
@@ -145,6 +145,8 @@ class FitsMainWindow(QMainWindow):
         self._segmentation_tuner = None
         self._prepared_available = False
         self._phases_unlocked = False
+        self._populating_settings = False
+        self._settings_population_generation = 0
 
         self.setWindowTitle("FITS")
         self.resize(1200, 850)
@@ -174,16 +176,28 @@ class FitsMainWindow(QMainWindow):
         run_dir_layout = QHBoxLayout(run_dir_row)
         run_dir_layout.setContentsMargins(0, 0, 0, 0)
         self.run_dir_edit = QLineEdit()
+        run_dir_tooltip = (
+            "Folder containing this FITS run. FITS reads or saves fits_settings.toml "
+            "there and writes run outputs there."
+        )
+        self.run_dir_edit.setToolTip(run_dir_tooltip)
         self.run_dir_edit.returnPressed.connect(self._run_dir_entered)
         self.run_dir_edit.textChanged.connect(self._run_dir_text_changed)
         self.browse_button = QPushButton("Browse…")
+        self.browse_button.setToolTip("Choose the folder containing this FITS run.")
         self.browse_button.clicked.connect(self._browse_run_dir)
         run_dir_layout.addWidget(self.run_dir_edit)
         run_dir_layout.addWidget(self.browse_button)
-        identity_form.addRow("Run directory", run_dir_row)
+        run_dir_label = QLabel("Run directory")
+        run_dir_label.setToolTip(run_dir_tooltip)
+        identity_form.addRow(run_dir_label, run_dir_row)
 
         self.user_name_edit = QLineEdit()
-        identity_form.addRow("User name", self.user_name_edit)
+        user_name_tooltip = "Name recorded with this run's settings."
+        self.user_name_edit.setToolTip(user_name_tooltip)
+        user_name_label = QLabel("User name")
+        user_name_label.setToolTip(user_name_tooltip)
+        identity_form.addRow(user_name_label, self.user_name_edit)
         identity.addLayout(identity_form)
 
         self.runtime_host = QWidget()
@@ -263,6 +277,7 @@ class FitsMainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _populate_from_adapter(self) -> None:
+        self._begin_settings_population()
         self.run_dir_edit.setText(self.adapter.run_dir)
         self.user_name_edit.setText(self.adapter.user_name)
         self.run_browser.set_root(self.adapter.run_dir)
@@ -301,6 +316,7 @@ class FitsMainWindow(QMainWindow):
             self._step_items[step] = item
 
             editor = StepSettingsEditor(self.adapter, step)
+            editor.value_changed.connect(self._update_run_button_text)
             if step == StepName.SEGMENT:
                 tune_row = QWidget()
                 tune_layout = QHBoxLayout(tune_row)
@@ -329,6 +345,22 @@ class FitsMainWindow(QMainWindow):
             if first_item is not None:
                 self.step_tree.setCurrentItem(first_item)
         self._refresh_phase_access()
+        self._schedule_settings_population_finish()
+
+    def _begin_settings_population(self) -> None:
+        self._settings_population_generation += 1
+        self._populating_settings = True
+
+    def _schedule_settings_population_finish(self) -> None:
+        generation = self._settings_population_generation
+        QTimer.singleShot(
+            0,
+            lambda: self._finish_populating_settings(generation),
+        )
+
+    def _finish_populating_settings(self, generation: int) -> None:
+        if generation == self._settings_population_generation:
+            self._populating_settings = False
 
     @Slot()
     def _open_segmentation_tuner(self) -> None:
@@ -379,7 +411,14 @@ class FitsMainWindow(QMainWindow):
         current: QTreeWidgetItem | None,
         previous: QTreeWidgetItem | None,
     ) -> None:
-        del previous
+        if self._populating_settings:
+            pass
+        elif previous is not None and previous is not current:
+            if self._warn_about_missing_user_fields(self._step_from_item(previous)):
+                self._restore_step_selection(previous)
+                QTimer.singleShot(
+                    0, lambda item=previous: self._restore_step_selection(item))
+                return
         if current is None:
             return
         step = self._step_from_item(current)
@@ -392,6 +431,30 @@ class FitsMainWindow(QMainWindow):
         self._show_phase_steps(phase)
         self.settings_stack.setCurrentWidget(self._editors[step])
 
+    def _restore_step_selection(self, item: QTreeWidgetItem) -> None:
+        """Keep tree selection and the displayed editor on the rejected step."""
+        if item.treeWidget() is not self.step_tree:
+            return
+        step = self._step_from_item(item)
+        phase = _STEP_PHASE[step]
+        self.step_tree.blockSignals(True)
+        self.step_tree.clearSelection()
+        self.step_tree.setCurrentItem(item)
+        item.setSelected(True)
+        self.step_tree.blockSignals(False)
+        self.phase_tabs.blockSignals(True)
+        self.phase_tabs.setCurrentIndex(phase)
+        self.phase_tabs.blockSignals(False)
+        self._show_phase_steps(phase)
+        self.settings_stack.setCurrentWidget(self._editors[step])
+
+    def _warn_about_missing_user_fields(self, step: StepName) -> bool:
+        errors = self.adapter.missing_user_fields(step)
+        if errors:
+            QMessageBox.warning(self, "Missing required setting", "\n".join(errors))
+            return True
+        return False
+
     @Slot(int)
     def _phase_selected(self, phase: int) -> None:
         if phase < 0 or not self.phase_tabs.isTabEnabled(phase):
@@ -401,6 +464,21 @@ class FitsMainWindow(QMainWindow):
         if current is not None and self._step_from_item(current) in steps:
             self._show_phase_steps(phase)
             return
+        if current is not None and not self._populating_settings:
+            previous_step = self._step_from_item(current)
+            previous_phase = _STEP_PHASE[previous_step]
+            errors = [
+                error
+                for step in _PHASE_STEPS[previous_phase][1]
+                for error in self.adapter.missing_user_fields(step)
+            ]
+            if errors:
+                QMessageBox.warning(
+                    self, "Missing required setting", "\n".join(errors))
+                self.phase_tabs.blockSignals(True)
+                self.phase_tabs.setCurrentIndex(previous_phase)
+                self.phase_tabs.blockSignals(False)
+                return
         self.step_tree.setCurrentItem(self._step_items[steps[0]])
         self._show_phase_steps(phase)
 
@@ -463,6 +541,7 @@ class FitsMainWindow(QMainWindow):
         self.adapter.set_step_enabled(step, enabled)
         self._refresh_phase_markers()
         self._editors[step].set_editable(enabled)
+        self._update_run_button_text()
         self.step_tree.setCurrentItem(item)
         self._selected_step_changed(item, None)
 
@@ -490,6 +569,7 @@ class FitsMainWindow(QMainWindow):
         self._refresh_phase_access()
 
     def _switch_run_dir(self, directory: str) -> None:
+        self._begin_settings_population()
         raw_directory = directory.strip()
         if not raw_directory:
             self.run_dir_edit.clear()
@@ -497,6 +577,7 @@ class FitsMainWindow(QMainWindow):
             self.run_browser.set_root("")
             self._refresh_report_button()
             self._refresh_phase_access()
+            self._schedule_settings_population_finish()
             return
 
         resolved = Path(raw_directory).expanduser().resolve()
@@ -509,6 +590,8 @@ class FitsMainWindow(QMainWindow):
         saved_settings = resolved / SAVED_SETTINGS_NAME
         if saved_settings.is_file():
             self._load_settings_path(saved_settings, run_dir=resolved)
+        else:
+            self._schedule_settings_population_finish()
 
     def _sync_identity(self) -> None:
         self.adapter.run_dir = self.run_dir_edit.text().strip()
@@ -532,6 +615,7 @@ class FitsMainWindow(QMainWindow):
         self._load_settings_path(Path(path))
 
     def _load_settings_path(self, path: Path, *, run_dir: Path | None = None) -> None:
+        self._begin_settings_population()
         previous_document = self.adapter.document
         previous_source = self.adapter.source_path
         try:
@@ -547,6 +631,7 @@ class FitsMainWindow(QMainWindow):
             self.adapter.document = previous_document
             self.adapter.source_path = previous_source
             QMessageBox.critical(self, "Cannot load settings", str(error))
+            self._schedule_settings_population_finish()
             return
         self._populate_from_adapter()
         self._append_log(f"Loaded settings from {path}")
@@ -730,6 +815,9 @@ class FitsMainWindow(QMainWindow):
             return
         self.run_button.setText(
             "Run pipeline" if self._phases_unlocked else "Convert experiment(s)")
+        missing = self.adapter.missing_user_fields()
+        self.run_button.setEnabled(not missing)
+        self.run_button.setToolTip("\n".join(missing))
 
     def _latest_report(self) -> Path | None:
         if not self.adapter.run_dir:

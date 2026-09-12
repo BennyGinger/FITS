@@ -44,7 +44,7 @@ def run_distance_profile(settings: DistanceProfileSettings,
         logger.exception(
             "%s failed for %s", step_profile.step_name, exp_state.experiment_id)
         raise StepExecutionError(
-            f"Step {step_profile.step_name!r} failed for "
+            f"Step {str(step_profile.step_name)!r} failed for "
             f"{exp_state.experiment_id}: {exc}") from exc
 
 

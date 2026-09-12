@@ -18,11 +18,11 @@ Pipeline robustness and performance
 
 GUI settings validation before starting a run
 --------------------------------------------
-[ ] Check critical settings for enabled steps before launching the pipeline,
-    e.g. a missing channel_to_track when tracking is enabled. Show actionable
-    feedback identifying the step and field, and prevent launch until required
-    settings are supplied. Reuse shared settings validation where possible;
-    disabled steps should not require their unused settings.
+[x] Check critical settings for enabled steps before launching the pipeline.
+    Missing conversion channel labels, channel-registration reference channel,
+    segmentation channel, or tracking channel prevents leaving the affected
+    step/phase and disables Run. Disabled steps do not require their unused
+    settings, and the segmentation tuner may choose its initial channel.
 
 Mask label consistency across experiments — proposal only
 --------------------------------------------------------
@@ -136,6 +136,10 @@ Input and preview lifetime
     Finish or cancel active work before releasing its input buffers.
 
 Preview scope
+[x] Initialize and cache SegTune's selected Cellpose model in the background
+    without running an automatic preview. Keep tuning controls editable while
+    loading, disable Run preview until ready, and initialize the latest model
+    selection when it changes during an existing load.
 [ ] Channel registration: preview one time frame at a time using a composite
     display with channel colours, visibility controls, and original/result
     comparison. Build the composite only for the displayed frame.

@@ -34,6 +34,7 @@ class CellposeSettingsPanel(QWidget):
 
     run_requested = Signal()
     apply_requested = Signal()
+    model_settings_changed = Signal()
     mask_visibility_changed = Signal(bool)
     mask_opacity_changed = Signal(float)
     CONTROL_WIDTH = 150
@@ -72,6 +73,7 @@ class CellposeSettingsPanel(QWidget):
         builtin_tip = (
             "Cellpose model bundled with or downloadable by the installed Cellpose version.")
         self.builtin_model.setToolTip(builtin_tip)
+        self.builtin_model.currentTextChanged.connect(self.model_settings_changed)
         model_row.addWidget(self.builtin_model)
         model_row.addSpacing(20)
         model_row.addWidget(QLabel("Custom model"))
@@ -81,6 +83,7 @@ class CellposeSettingsPanel(QWidget):
             "Optional trained-model file. When provided, it takes precedence "
             "over the built-in model.")
         self.custom_model.setToolTip(custom_tip)
+        self.custom_model.textChanged.connect(self.model_settings_changed)
         model_row.addWidget(self.custom_model, 1)
         self.custom_model_button = QPushButton("Browse")
         self.custom_model_button.setFixedWidth(90)
@@ -136,6 +139,7 @@ class CellposeSettingsPanel(QWidget):
             "Z-to-XY sampling ratio for 3D segmentation; for example, use 2 when Z spacing is twice the XY spacing.")
         self.denoise = QCheckBox()
         self.denoise.setChecked(True)
+        self.denoise.toggled.connect(self.model_settings_changed)
         self._add_form_row(
             form,
             "Denoise",

@@ -18,6 +18,8 @@ from fits.gui.settings_adapter import (
     SettingsAdapter,
     field_choices,
     field_label,
+    field_tooltip,
+    runtime_field_tooltip,
 )
 
 
@@ -95,19 +97,18 @@ class StepSettingsEditor(QWidget):
         for path in paths:
             value = self.adapter.field_value(self.step, path)
             widget = create_field_widget(value, field_choices(self.step, path))
-            widget.setToolTip(path)
+            tooltip = field_tooltip(self.step, path)
+            widget.setToolTip(tooltip)
             if path in ("expected_ref_masks", "expected_roi_masks") and isinstance(widget, IntWidget):
                 widget.setMinimum(1 if path == "expected_ref_masks" else 0)
-                widget.setToolTip("Initial number of masks to request per experiment.")
-            elif path in ("draw_ref_mask", "draw_roi_mask"):
-                widget.setToolTip(
-                    "Request interactive drawing. Existing saved masks are used automatically.")
             widget.value_changed.connect(
                 lambda changed_value, field_path=path: self._store_value(
                     field_path, changed_value
                 )
             )
-            form.addRow(field_label(path), widget)
+            label = QLabel(field_label(path))
+            label.setToolTip(tooltip)
+            form.addRow(label, widget)
             self.widgets[path] = widget
 
     def _store_value(self, path: str, value: object) -> None:
@@ -130,9 +131,10 @@ class StepSettingsEditor(QWidget):
                 or self._advanced_group.isChecked()
             )
             workers.setEnabled(self._editable and section_enabled and not is_serial)
-            workers.setToolTip(
-                "Ignored during serial execution." if is_serial else "workers"
-            )
+            tooltip = field_tooltip(self.step, "workers")
+            if is_serial:
+                tooltip = f"{tooltip} Ignored during serial execution."
+            workers.setToolTip(tooltip)
 
     def set_editable(self, editable: bool) -> None:
         self._editable = editable
@@ -190,16 +192,15 @@ class RuntimeSettingsEditor(QWidget):
                 adapter.runtime_value(name),
                 RUNTIME_CHOICES.get(name),
             )
+            tooltip = runtime_field_tooltip(name)
+            widget.setToolTip(tooltip)
             if name == "log_dir" and isinstance(widget, TextWidget):
                 widget.setPlaceholderText("Use run_dir/logs (default)")
-                widget.setToolTip("Optional log root. FITS creates a logs folder inside it; blank uses the run directory.")
-            elif name == "unlock_all_tabs":
-                widget.setToolTip(
-                    "Show all phase settings before converted arrays exist. "
-                    "Image viewers still require a real fits_array.tif file.")
             widget.value_changed.connect(
                 lambda value, field_name=name: self._store_value(field_name, value))
-            form.addRow(field_label(name), widget)
+            label = QLabel(field_label(name))
+            label.setToolTip(tooltip)
+            form.addRow(label, widget)
             self.widgets[name] = widget
         group.toggled.connect(self._set_fields_enabled)
         group.setMinimumHeight(210)

@@ -108,3 +108,32 @@ def test_convert_wraps_conversion_errors(monkeypatch, tmp_path: Path) -> None:
 
     with pytest.raises(StepExecutionError, match="unsupported image"):
         convert(ConvertSettings(), state, REGISTRY[StepName.CONVERT].profile)
+
+
+@pytest.mark.parametrize("projection", ["None", "max", "mean", "sum", "std"])
+def test_convert_real_z_stack(tmp_path: Path, projection: str) -> None:
+    from tifffile import imwrite
+    from fits_io import FitsIO
+    from fits.gui.settings_adapter import SettingsAdapter
+
+    raw = tmp_path / "input.tif"
+    array = (np.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5) + 40000).astype(np.uint16)
+    imwrite(raw, array, imagej=True, metadata={"axes": "TZYX"})
+    adapter = SettingsAdapter()
+    adapter.set_field_value(StepName.CONVERT, "z_projection", projection)
+    saved = adapter.save(tmp_path / "settings.toml")
+    adapter.load(saved)
+    settings = ConvertSettings.model_validate(adapter.as_mapping()["convert"]["params"])
+    results = convert(settings, ExperimentState.init(tmp_path, raw), REGISTRY[StepName.CONVERT].profile)
+    output = FitsIO.from_path(results[0].artifact("image"))
+    actual = output.get_array().array
+    if projection == "None":
+        assert settings.z_projection is None
+        assert output.reader.axes == "TZYX"
+        assert actual.dtype == array.dtype
+        np.testing.assert_array_equal(actual, array)
+    else:
+        assert output.reader.axes == "TYX"
+        expected = getattr(np, projection)(array, axis=1)
+        np.testing.assert_allclose(actual, expected, rtol=1e-6)
+    assert output.reader.metadata.fits_io.z_projection == settings.z_projection

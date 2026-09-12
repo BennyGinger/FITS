@@ -31,7 +31,7 @@ enabled = true
 [convert.params]
 channel_labels = [] # Source-channel labels in source order; leave empty to use reader defaults.
 export_channels = "all" # "all", one channel label, or a list of channel labels.
-z_projection = "max" # max | mean | sum | std
+z_projection = "max" # max | mean | sum | std | None (preserve Z for 3D)
 compression = "zlib" # zlib | lzma | jpeg | "None"
 overwrite = false
 execution = "thread" # serial | thread | process

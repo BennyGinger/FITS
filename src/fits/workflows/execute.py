@@ -45,7 +45,7 @@ def run_workflow(effective_cfg: Mapping[str, Any], exp_states: list[ExperimentSt
 
         if spec is None:
             raise ValueError(
-                f"Enabled step {step_name!r} is missing from the registry."
+                f"Enabled step {str(step_name)!r} is missing from the registry."
             )
 
         params = step_cfg.get("params", {})

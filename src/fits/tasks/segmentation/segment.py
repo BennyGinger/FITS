@@ -30,7 +30,7 @@ def segment(settings: SegmentSettings, exp_state: ExperimentState, step_profile:
     input_path = exp_state.artifact(step_profile.input_artifact)
     if input_path is None:
         raise StepExecutionError(
-            f"Step {step_profile.step_name!r} failed for {exp_state.experiment_id}: "
+            f"Step {str(step_profile.step_name)!r} failed for {exp_state.experiment_id}: "
             f"missing {step_profile.input_artifact!r} input.")
 
     try:
@@ -106,12 +106,13 @@ def segment(settings: SegmentSettings, exp_state: ExperimentState, step_profile:
                                                 artifact_kind=step_profile.output_artifact,
                                                 artifact_path=save_path,)
         
-        logger.debug("Produced new ExperimentState: %s", new_st)
+        logger.debug("Produced new ExperimentState: exp_id=%s completed_steps=%s",
+                     new_st.experiment_id, [str(step) for step in new_st.completed_steps])
         new_st.save_state()
         return [new_st]
 
     except Exception as e:
         logger.exception("%s failed for %s", step_profile.step_name, exp_state.experiment_id)
         raise StepExecutionError(
-            f"Step {step_profile.step_name!r} failed for "
+            f"Step {str(step_profile.step_name)!r} failed for "
             f"{exp_state.experiment_id}: {e}") from e

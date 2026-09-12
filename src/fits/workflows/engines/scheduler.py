@@ -59,7 +59,7 @@ def run_workflow_scheduler(effective_cfg: Mapping[str, Any], exp_states: list[Ex
         return exp_states
 
     logger.info("Scheduler starting with enabled steps: %s",
-        [step.spec.profile.step_name for step in runtime_steps],)
+        [str(step.spec.profile.step_name) for step in runtime_steps],)
 
     cpu_ready: deque[Task] = deque(
         Task(step_index=0, state=state)
@@ -170,7 +170,7 @@ def _resolve_runtime_steps(
 
         if spec is None:
             raise ValueError(
-                f"Enabled step {step_name!r} is missing from the registry."
+                f"Enabled step {str(step_name)!r} is missing from the registry."
             )
 
         params = step_cfg.get("params", {})
@@ -343,7 +343,7 @@ def _enqueue_task(
     else:
         step_name = runtime_steps[task.step_index].spec.profile.step_name
         raise ValueError(
-            f"Unsupported pool {pool!r} for step {step_name!r}."
+            f"Unsupported pool {pool!r} for step {str(step_name)!r}."
         )
 
 
@@ -357,7 +357,7 @@ def _log_heartbeat(
 ) -> None:
     running_labels = [
         (
-            runtime_steps[task.step_index].spec.profile.step_name,
+            str(runtime_steps[task.step_index].spec.profile.step_name),
             task.state.experiment_id,
         )
         for task in (*cpu_running.values(), *gpu_running.values())

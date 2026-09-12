@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pytest
@@ -14,6 +17,10 @@ from fits.gui.viewer.image_viewer import FitsImageViewer
 from fits.gui.viewer.tools.reference_mask.settings_panel import ReferenceMaskPanel
 from fits.gui.viewer.tools.roi_mask.settings_panel import RoiMaskPanel
 from fits.gui.viewer.tools.segmentation.settings_panel import CellposeSettingsPanel
+from fits.gui.viewer.tools.segmentation.worker import (
+    ModelInitializationRequest,
+    ModelInitializationWorker,
+)
 from fits.gui.viewer.segmentation_window import SegmentationTunerWindow
 from fits.gui.viewer.mask_window import MaskDrawingWindow
 from fits.settings.models import SegmentSettings
@@ -62,6 +69,81 @@ def test_cellpose_panel_returns_compact_user_settings() -> None:
     assert panel.cellprob_threshold.minimum() == -6.0
     assert panel.cellprob_threshold.maximum() == 6.0
     assert panel.flow_threshold.toolTip()
+
+
+def test_model_initialization_worker_sets_up_without_running_inference(
+    monkeypatch,
+) -> None:
+    _app()
+    calls: list[str] = []
+
+    class FakeWrapper:
+        @classmethod
+        def from_dict(cls, settings):
+            del settings
+            calls.append("from_dict")
+            return cls()
+
+        def setup(self) -> None:
+            calls.append("setup")
+
+        def run(self, *args, **kwargs):
+            raise AssertionError("model warm-up must not run inference")
+
+    monkeypatch.setattr(
+        "fits.gui.viewer.tools.segmentation.worker.CellposeWrapper", FakeWrapper)
+    request = ModelInitializationRequest(SegmentSettings(
+        channel_to_segment=["GFP"],
+        user_settings={"model_type": "cyto3"},
+    ))
+    worker = ModelInitializationWorker(request)
+    finished = []
+    worker.finished.connect(finished.append)
+
+    worker.run()
+
+    assert calls == ["from_dict", "setup"]
+    assert finished == [request]
+
+
+def test_model_initialization_only_disables_preview_button() -> None:
+    _app()
+    window = SegmentationTunerWindow()
+    window._set_source_controls_enabled(True)
+
+    window._set_running(True, initialization=True)
+
+    assert not window.settings_panel.run_button.isEnabled()
+    assert window.settings_panel.builtin_model.isEnabled()
+    assert window.settings_panel.custom_model.isEnabled()
+    assert window.settings_panel.diameter.isEnabled()
+    assert window.settings_panel.denoise.isEnabled()
+    assert window.settings_panel.apply_button.isEnabled()
+    window._set_running(False, initialization=True)
+    window.close()
+
+
+def test_latest_model_change_is_initialized_after_current_load(monkeypatch) -> None:
+    class FinishedThread:
+        def deleteLater(self) -> None:
+            pass
+
+    _app()
+    window = SegmentationTunerWindow()
+    latest = SegmentSettings(
+        channel_to_segment=["GFP"],
+        user_settings={"model_type": "nuclei"},
+    )
+    started = []
+    monkeypatch.setattr(window, "_start_model_initialization", started.append)
+    window._thread = FinishedThread()
+    window._active_operation = "initialization"
+    window._pending_model_settings = latest
+
+    window._thread_finished()
+
+    assert started == [latest]
+    window.close()
 
 
 def test_cellpose_panel_disables_volume_settings_without_z_stack() -> None:
@@ -431,14 +513,20 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
         "fits.gui.viewer.segmentation_window.SegmentationTuningSession",
         FakeSession,)
 
+    preview_requests: list[bool] = []
+    initialization_requests: list[bool] = []
+    monkeypatch.setattr(
+        SegmentationTunerWindow,
+        "_initialize_selected_model",
+        lambda self: initialization_requests.append(True),)
     window = SegmentationTunerWindow(tmp_path)
     emitted: list[SegmentSettings] = []
     window.settings_applied.connect(emitted.append)
-    preview_requests: list[bool] = []
     monkeypatch.setattr(window, "_run_preview", lambda: preview_requests.append(True))
 
     window._open_source(source)
-    assert preview_requests == [True]
+    assert initialization_requests == [True]
+    assert preview_requests == []
     assert (window.image_viewer.drawing_item.acceptedMouseButtons()
             == Qt.MouseButton.NoButton)
     window.image_viewer.set_display_levels((10.0, 20.0))
@@ -470,7 +558,7 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
     assert window.z_slider.value() == 1
     assert window.channel_combo.currentText() == "DAPI"
     assert window.show_mask.isChecked() is False
-    assert preview_requests == [True, True, True]
+    assert preview_requests == [True, True]
 
     window.channel_combo.setCurrentText("DAPI")
     window.settings_panel.denoise.setCheckState(Qt.CheckState.Unchecked)

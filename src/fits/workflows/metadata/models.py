@@ -335,13 +335,13 @@ class FitsMeta:
         steps_metadata: dict[StepName, StepsMetadata] = {} 
         for key, value in steps_data.items(): 
             if not isinstance(value, Mapping): 
-                raise TypeError(f"Metadata for step {key!r} must be a mapping.") 
+                raise TypeError(f"Metadata for step {str(key)!r} must be a mapping.")
             
             step_name = StepName(key) 
             step_meta = StepsMetadata.from_dict(value) 
             
             if step_meta.step_name != step_name: 
-                raise ValueError(f"Step key {key!r} does not match the embedded step name {step_meta.step_name.value!r}.")
+                raise ValueError(f"Step key {str(key)!r} does not match the embedded step name {step_meta.step_name.value!r}.")
             steps_metadata[step_name] = step_meta
         
         return cls(_run=run_meta, 

@@ -34,7 +34,7 @@ def register_channel(settings: RegisterChannelSettings,
     input_path = exp_state.artifact(step_profile.input_artifact)
     if input_path is None:
         raise StepExecutionError(
-            f"Step {step_profile.step_name!r} failed for {exp_state.experiment_id}: "
+            f"Step {str(step_profile.step_name)!r} failed for {exp_state.experiment_id}: "
             f"missing {step_profile.input_artifact!r} input.")
 
     try:
@@ -101,13 +101,14 @@ def register_channel(settings: RegisterChannelSettings,
         logger.debug("%s completed for %s",
                      step_profile.step_name,
                      exp_state.experiment_id,)
-        logger.debug("Produced new ExperimentState: %s", new_state)
+        logger.debug("Produced new ExperimentState: exp_id=%s completed_steps=%s",
+                     new_state.experiment_id, [str(step) for step in new_state.completed_steps])
         new_state.save_state()
         return [new_state]        
 
     except Exception as e:
         logger.exception("%s failed for %s", step_profile.step_name, exp_state.experiment_id)
         raise StepExecutionError(
-            f"Step {step_profile.step_name!r} failed for "
+            f"Step {str(step_profile.step_name)!r} failed for "
             f"{exp_state.experiment_id}: {e}") from e
     

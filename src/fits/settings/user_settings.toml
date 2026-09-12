@@ -32,7 +32,7 @@ channel_labels = ["GFP", "RFP"] # List of channel labels to set in the metadata.
 export_channels = ["GFP", "RFP"] # List of channels to export (i.e. to keep). If not specified, it will export all channels. The order here doesn't matter. This is only used for multi-channel files and will be ignored for single-channel files.
 compression = "zlib" # Compression method to use when saving the output files. Supported methods are: zlib, lzma, jpeg or "None". If not specified, it will use the default compression method (zlib).
 overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
-z_projection = "max" # Z-projection method to apply to the input files. Supported methods are: max, mean, sum, std. By default, apply max projection.
+z_projection = "max" # max | mean | sum | std | None (preserve Z for 3D)
 
 # ============================
 # Register Time step

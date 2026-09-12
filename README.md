@@ -133,7 +133,11 @@ Cellpose with the current settings. **Apply and close** copies the selected
 channel and tuning settings back to the main GUI. Closing the tuner without
 applying leaves the main settings unchanged. Use Save settings or Run pipeline
 in the main GUI to save the changes. Converted `fits_array.tif` images are
-required for previewing.
+required for previewing. When an image is opened, SegTune initializes and caches
+the selected Cellpose model in the background without running an automatic
+preview. The tuning controls remain editable while it loads, but **Run preview**
+stays disabled until the model is ready. Changing the built-in model, custom
+model path, or denoising option queues the latest model for initialization.
 
 The main settings interface groups steps into **Convert**, **Preprocess**,
 **Process**, and **Analysis** tabs. The step list on the left shows only the
@@ -144,6 +148,14 @@ successful conversion, the other tabs unlock and the button becomes **Run
 pipeline**. **Unlock all phase tabs** in advanced runtime settings allows a
 single full run from raw inputs; artifact-dependent viewers remain disabled
 until converted arrays really exist.
+
+For enabled steps, the GUI requires conversion channel labels, a channel-
+registration reference channel, at least one segmentation channel, and at
+least one tracking channel. If one is missing, the GUI keeps the affected step
+or phase selected and explains which field must be completed. **Run pipeline**
+remains disabled until all required fields belonging to enabled steps have a
+value. These checks detect omitted input only; the pipeline continues to handle
+invalid channel names and other data-dependent validation.
 
 `fits-drawmask` opens a dedicated mask editor with **Reference** and **ROI**
 tabs sharing the same experiment and image controls. `fits-segtune` opens its

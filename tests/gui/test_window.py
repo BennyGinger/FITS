@@ -7,7 +7,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
 from fits.environment.constant import StepName, WORKFLOW_ORDER
 from fits.environment.progress import RunProgress, StageStatus, WorkflowStage
@@ -21,10 +21,20 @@ def _application() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _nonblocking_warning_dialogs(monkeypatch):
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Ok,
+    )
+
+
 def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
     _application()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     (tmp_path / "fits_array.tif").touch()
     window = FitsMainWindow(adapter)
 
@@ -33,6 +43,14 @@ def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
     assert window.runtime_editor is not None
     assert window.runtime_editor.widgets["execution"].isEnabled() is False
     assert window.runtime_editor.widgets["log_dir"].value() == ""
+    assert window.run_dir_edit.toolTip()
+    assert window.browse_button.toolTip()
+    assert window.user_name_edit.toolTip()
+    for widget in window.runtime_editor.widgets.values():
+        assert widget.toolTip()
+        form = widget.parentWidget().layout()
+        label = form.labelForField(widget)
+        assert label.toolTip()
 
     segment_item = window._step_items[StepName.SEGMENT]
     segment_editor = window._editors[StepName.SEGMENT]
@@ -57,6 +75,7 @@ def test_phase_tabs_unlock_when_prepared_image_appears(tmp_path) -> None:
     _application()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     window = FitsMainWindow(adapter)
 
     assert [window.phase_tabs.tabText(i) for i in range(window.phase_tabs.count())] == [
@@ -92,6 +111,7 @@ def test_runtime_override_unlocks_settings_but_not_viewers(tmp_path) -> None:
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_runtime_value("unlock_all_tabs", True)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     adapter.set_step_enabled(StepName.REGISTER_CHANNEL, True)
     window = FitsMainWindow(adapter)
 
@@ -176,7 +196,7 @@ def test_browsing_run_directory_loads_existing_settings(
     monkeypatch,
     selection: str,
 ) -> None:
-    _application()
+    app = _application()
     saved_adapter = SettingsAdapter()
     saved_adapter.run_dir = str(tmp_path)
     saved_adapter.user_name = "Saved user"
@@ -215,7 +235,7 @@ def test_browsing_run_directory_loads_existing_settings(
 def test_run_directory_text_switches_on_enter_and_clears_when_empty(
     tmp_path: Path,
 ) -> None:
-    _application()
+    app = _application()
     window = FitsMainWindow(SettingsAdapter())
 
     window.run_dir_edit.setText(str(tmp_path))
@@ -230,6 +250,32 @@ def test_run_directory_text_switches_on_enter_and_clears_when_empty(
     assert window.run_browser.root_path is None
     assert window.run_browser.tree.isHidden() is False
     assert window.run_browser.tree.model() is window.run_browser.empty_model
+    window.close()
+
+
+def test_loading_run_directory_settings_does_not_emit_navigation_warnings(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    app = _application()
+    saved = SettingsAdapter()
+    saved.run_dir = str(tmp_path)
+    saved.user_name = "User"
+    saved.set_field_value(StepName.CONVERT, "channel_labels", ["GFP", "RFP"])
+    saved.save_to_run_dir()
+
+    window = FitsMainWindow(SettingsAdapter())
+    app.processEvents()
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
+
+    window._switch_run_dir(str(tmp_path))
+    app.processEvents()
+
+    assert warnings == []
+    assert window.adapter.field_value(StepName.CONVERT, "channel_labels") == [
+        "GFP", "RFP"
+    ]
     window.close()
 
 
@@ -249,6 +295,50 @@ def test_advanced_fields_start_collapsed_even_when_customized() -> None:
     custom_convert._advanced_group.setChecked(True)
     assert custom_convert.widgets["compression"].isEnabled() is True
     custom_window.close()
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        StepName.CONVERT,
+        StepName.REGISTER_TIME,
+        StepName.REGISTER_CHANNEL,
+        StepName.BG_SUB,
+        StepName.SEGMENT,
+        StepName.TRACK,
+        StepName.EXTRACT,
+        StepName.DISTANCE_PROFILE,
+    ],
+)
+def test_all_workflow_steps_have_descriptive_tooltips_for_every_field(
+    step: StepName,
+) -> None:
+    _application()
+    window = FitsMainWindow(SettingsAdapter())
+    editor = window._editors[step]
+
+    for path, widget in editor.widgets.items():
+        assert widget.toolTip()
+        assert widget.toolTip() != path
+        form = widget.parentWidget().layout()
+        label = form.labelForField(widget)
+        assert label.toolTip()
+        assert label.toolTip() != path
+
+    window.close()
+
+
+def test_distance_profile_mask_tooltips_explain_their_roles() -> None:
+    _application()
+    window = FitsMainWindow(SettingsAdapter())
+    editor = window._editors[StepName.DISTANCE_PROFILE]
+
+    assert "distances are measured" in editor.widgets["expected_ref_masks"].toolTip()
+    assert "whole image is analysed" in editor.widgets["draw_roi_mask"].toolTip()
+    assert "limits the distance-profile analysis" in editor.widgets[
+        "expected_roi_masks"
+    ].toolTip()
+    window.close()
 
 
 def test_user_error_message_finds_step_error_inside_executor_wrapper() -> None:
@@ -318,4 +408,196 @@ def test_advanced_settings_reserve_space_and_conveyor_is_default():
         group.setChecked(False)
         app.processEvents()
         assert group.sizeHint() == before
+    window.close()
+
+
+def test_convert_projection_none_can_be_selected() -> None:
+    _application()
+    adapter = SettingsAdapter()
+    window = FitsMainWindow(adapter)
+    combo = window._editors[StepName.CONVERT].widgets["z_projection"]
+    combo.setCurrentText("None")
+    assert adapter.field_value(StepName.CONVERT, "z_projection") == "None"
+    assert StepName.CONVERT not in adapter.validate_steps()
+    window.close()
+
+
+@pytest.mark.parametrize("navigation", ["step", "phase"])
+def test_leaving_enabled_step_warns_when_user_input_is_missing(
+    tmp_path: Path, monkeypatch, navigation: str,
+) -> None:
+    app = _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_runtime_value("unlock_all_tabs", True)
+    window = FitsMainWindow(adapter)
+    app.processEvents()
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda parent, title, message: warnings.append((title, message)),
+    )
+
+    if navigation == "step":
+        window.step_tree.setCurrentItem(window._step_items[StepName.REGISTER_TIME])
+    else:
+        window.phase_tabs.setCurrentIndex(1)
+
+    assert warnings == [(
+        "Missing required setting",
+        "Convert: Enter at least one channel label (channel_labels).",
+    )]
+    assert window.step_tree.currentItem() is window._step_items[StepName.CONVERT]
+    app.processEvents()
+    assert window.step_tree.selectedItems() == [
+        window._step_items[StepName.CONVERT]
+    ]
+    assert window.phase_tabs.currentIndex() == 0
+    window.close()
+
+
+def test_leaving_disabled_step_does_not_warn(tmp_path: Path, monkeypatch) -> None:
+    app = _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_runtime_value("unlock_all_tabs", True)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
+    window = FitsMainWindow(adapter)
+    app.processEvents()
+    window.step_tree.setCurrentItem(window._step_items[StepName.SEGMENT])
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
+
+    window.step_tree.setCurrentItem(window._step_items[StepName.TRACK])
+
+    assert warnings == []
+    window.close()
+
+
+def test_leaving_phase_checks_other_enabled_steps_in_that_phase(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    app = _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_runtime_value("unlock_all_tabs", True)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
+    adapter.set_step_enabled(StepName.REGISTER_CHANNEL, True)
+    window = FitsMainWindow(adapter)
+    app.processEvents()
+    window.step_tree.setCurrentItem(window._step_items[StepName.REGISTER_TIME])
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
+
+    window.phase_tabs.setCurrentIndex(2)
+
+    assert warnings == [
+        "Register channels: Choose a reference channel (reference_channel)."
+    ]
+    assert window.step_tree.currentItem() is window._step_items[StepName.REGISTER_TIME]
+    assert window.phase_tabs.currentIndex() == 1
+    window.close()
+
+
+def test_run_warns_for_all_missing_enabled_step_inputs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.user_name = "User"
+    for step in (StepName.REGISTER_CHANNEL, StepName.SEGMENT, StepName.TRACK):
+        adapter.set_step_enabled(step, True)
+    window = FitsMainWindow(adapter)
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda parent, title, message: warnings.append((title, message)),
+    )
+    monkeypatch.setattr(
+        window,
+        "_save_settings",
+        lambda: pytest.fail("invalid settings must prevent launch"),
+    )
+
+    window._run_pipeline()
+
+    assert len(warnings) == 1
+    title, message = warnings[0]
+    assert title == "Cannot run FITS"
+    assert "Convert: Enter at least one channel label (channel_labels)." in message
+    assert "Register channels: Choose a reference channel (reference_channel)." in message
+    assert "Segmentation: Choose at least one channel to segment (channel_to_segment)." in message
+    assert "Tracking: Choose at least one channel to track (channel_to_track)." in message
+    window.close()
+
+
+def test_run_button_tracks_missing_enabled_inputs(tmp_path: Path) -> None:
+    app = _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+    app.processEvents()
+
+    assert not window.run_button.isEnabled()
+    assert "channel_labels" in window.run_button.toolTip()
+
+    channel_labels = window._editors[StepName.CONVERT].widgets["channel_labels"]
+    channel_labels.setText("GFP")
+    channel_labels.editingFinished.emit()
+    assert window.run_button.isEnabled()
+    assert window.run_button.toolTip() == ""
+
+    window._step_items[StepName.REGISTER_CHANNEL].setCheckState(
+        0, Qt.CheckState.Checked)
+    assert not window.run_button.isEnabled()
+    assert "reference_channel" in window.run_button.toolTip()
+
+    reference_channel = window._editors[StepName.REGISTER_CHANNEL].widgets[
+        "reference_channel"
+    ]
+    reference_channel.setText("GFP")
+    reference_channel.editingFinished.emit()
+    assert window.run_button.isEnabled()
+    window.close()
+
+
+def test_segmentation_tuner_does_not_warn_about_missing_target_channel(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from fits.gui.viewer import segmentation_window
+
+    class DummySignal:
+        def connect(self, callback) -> None:
+            del callback
+
+    class DummyTuner(QWidget):
+        def __init__(self, **kwargs) -> None:
+            del kwargs
+            super().__init__()
+            self.settings_applied = DummySignal()
+
+    app = _application()
+    (tmp_path / "fits_array.tif").touch()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
+    adapter.set_step_enabled(StepName.SEGMENT, True)
+    window = FitsMainWindow(adapter)
+    app.processEvents()
+    window.step_tree.setCurrentItem(window._step_items[StepName.SEGMENT])
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
+    monkeypatch.setattr(segmentation_window, "SegmentationTunerWindow", DummyTuner)
+
+    window.segtune_button.click()
+
+    assert warnings == []
+    assert isinstance(window._segmentation_tuner, DummyTuner)
+    window._segmentation_tuner.close()
     window.close()

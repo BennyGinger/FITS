@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QThread, Qt, Signal, Slot
+from PySide6.QtCore import QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
@@ -13,7 +13,13 @@ from fits.environment.constant import FITS_ARRAY_NAME
 from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, SettingsAdapter
 from fits.gui.viewer.base_window import ImageToolWindow
 from fits.gui.viewer.tools.segmentation.settings_panel import CellposeSettingsPanel
-from fits.gui.viewer.tools.segmentation.worker import PreviewOutcome, PreviewRequest, PreviewWorker
+from fits.gui.viewer.tools.segmentation.worker import (
+    ModelInitializationRequest,
+    ModelInitializationWorker,
+    PreviewOutcome,
+    PreviewRequest,
+    PreviewWorker,
+)
 from fits.settings.models import SegmentSettings
 from fits.tasks.segmentation.preview_cache import SegmentationPreview
 from fits.tasks.segmentation.tuning import SegmentationTuningSession
@@ -34,9 +40,17 @@ class SegmentationTunerWindow(ImageToolWindow):
         self._close_on_apply = close_on_apply
         self._segmentation_session: SegmentationTuningSession | None = None
         self._thread: QThread | None = None
-        self._worker: PreviewWorker | None = None
+        self._worker: PreviewWorker | ModelInitializationWorker | None = None
         self._active_request: PreviewRequest | None = None
+        self._active_operation: str | None = None
+        self._pending_model_settings: SegmentSettings | None = None
         super().__init__(experiments_dir, parent)
+        self._model_change_timer = QTimer(self)
+        self._model_change_timer.setSingleShot(True)
+        self._model_change_timer.setInterval(300)
+        self._model_change_timer.timeout.connect(self._initialize_selected_model)
+        self.settings_panel.model_settings_changed.connect(
+            self._model_change_timer.start)
         self.setWindowTitle("FITS Segmentation Tuner")
         if close_on_apply:
             self.settings_panel.apply_button.setText("Apply and close")
@@ -122,7 +136,8 @@ class SegmentationTunerWindow(ImageToolWindow):
         self.status_label.setText(
             f"Loaded {source.parent.name} — axes "
             f"{self._segmentation_session.axes}, shape {self._segmentation_session.shape}.")
-        self._run_preview()
+        self._model_change_timer.stop()
+        self._initialize_selected_model()
 
     def _settings_for_source(self, source: Path) -> SegmentSettings | None:
         if self._provided_settings is not None:
@@ -171,6 +186,7 @@ class SegmentationTunerWindow(ImageToolWindow):
             z_index=self.z_slider.value(),
             user_settings=self.settings_panel.user_settings(),)
         self._active_request = request
+        self._active_operation = "preview"
         self._thread = QThread(self)
         self._worker = PreviewWorker(self._segmentation_session, request)
         self._worker.moveToThread(self._thread)
@@ -185,6 +201,52 @@ class SegmentationTunerWindow(ImageToolWindow):
         self.status_label.setText(
             f"Running Cellpose on frame {request.frame_index + 1}, {request.channel}…")
         self._thread.start()
+
+    @Slot()
+    def _initialize_selected_model(self) -> None:
+        if self._segmentation_session is None:
+            return
+        try:
+            settings = self.current_settings()
+        except Exception as error:
+            self.status_label.setText(f"Invalid Cellpose settings: {error}")
+            return
+        if self._thread is not None:
+            self._pending_model_settings = settings
+            self.status_label.setText(
+                "Model selection changed; the latest model will initialize next.")
+            return
+        self._start_model_initialization(settings)
+
+    def _start_model_initialization(self, settings: SegmentSettings) -> None:
+        request = ModelInitializationRequest(settings)
+        self._pending_model_settings = None
+        self._active_operation = "initialization"
+        self._thread = QThread(self)
+        self._worker = ModelInitializationWorker(request)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._model_initialized)
+        self._worker.failed.connect(self._model_initialization_failed)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread_finished)
+        self._set_running(True, initialization=True)
+        self.status_label.setText("Initializing Cellpose model…")
+        self._thread.start()
+
+    @Slot(object)
+    def _model_initialized(self, request: ModelInitializationRequest) -> None:
+        del request
+        self.status_label.setText("Cellpose model ready. Adjust settings or run a preview.")
+
+    @Slot(object, str)
+    def _model_initialization_failed(
+        self, request: ModelInitializationRequest, message: str,
+    ) -> None:
+        del request
+        self.status_label.setText(f"Cellpose model initialization failed: {message}")
 
     @Slot(object)
     def _preview_finished(self, outcome: PreviewOutcome) -> None:
@@ -220,17 +282,26 @@ class SegmentationTunerWindow(ImageToolWindow):
     @Slot()
     def _thread_finished(self) -> None:
         thread = self._thread
+        operation = self._active_operation
         self._thread = None
         self._worker = None
         self._active_request = None
-        self._set_running(False)
+        self._active_operation = None
+        self._set_running(False, initialization=operation == "initialization")
         if thread is not None:
             thread.deleteLater()
+        pending = self._pending_model_settings
+        if pending is not None:
+            self._start_model_initialization(pending)
 
     @Slot()
     def _apply_settings(self) -> None:
         if self._thread is not None:
-            self.status_label.setText("Wait for the current Cellpose preview before applying settings.")
+            activity = ("model initialization"
+                        if self._active_operation == "initialization"
+                        else "preview")
+            self.status_label.setText(
+                f"Wait for the current Cellpose {activity} before applying settings.")
             return
         try:
             settings = self.current_settings()
@@ -260,8 +331,11 @@ class SegmentationTunerWindow(ImageToolWindow):
             **self.settings_panel.user_settings(),}
         return SegmentSettings.model_validate(payload)
 
-    def _set_running(self, running: bool) -> None:
+    def _set_running(self, running: bool, *, initialization: bool = False) -> None:
         self.progress.setVisible(running)
+        if initialization:
+            self.settings_panel.run_button.setEnabled(not running)
+            return
         self.settings_panel.set_running(running)
         self.directory_edit.setEnabled(not running)
         self.browse_button.setEnabled(not running)
@@ -272,8 +346,11 @@ class SegmentationTunerWindow(ImageToolWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._thread is not None:
-            self.status_label.setText("Wait for the current Cellpose preview before closing.")
+            activity = ("model initialization"
+                        if self._active_operation == "initialization"
+                        else "preview")
+            self.status_label.setText(
+                f"Wait for the current Cellpose {activity} before closing.")
             event.ignore()
             return
         super().closeEvent(event)
-

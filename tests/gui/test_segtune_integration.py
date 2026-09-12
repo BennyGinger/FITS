@@ -2,6 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
@@ -13,6 +14,15 @@ from fits.gui.window import FitsMainWindow
 from fits.settings.models import SegmentSettings
 
 _APP = None
+
+
+@pytest.fixture(autouse=True)
+def _skip_background_model_initialization(monkeypatch):
+    monkeypatch.setattr(
+        SegmentationTunerWindow,
+        "_initialize_selected_model",
+        lambda self: None,
+    )
 
 
 def application():

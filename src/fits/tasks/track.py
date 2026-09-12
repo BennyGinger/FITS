@@ -31,7 +31,7 @@ def track(settings: TrackSettings, exp_state: ExperimentState, step_profile: Ste
     input_path = exp_state.artifact(step_profile.input_artifact) # i.e. seg_mask
     if input_path is None:
         raise StepExecutionError(
-            f"Step {step_profile.step_name!r} failed for {exp_state.experiment_id}: "
+            f"Step {str(step_profile.step_name)!r} failed for {exp_state.experiment_id}: "
             f"missing {step_profile.input_artifact!r} input.")
 
     try:
@@ -57,7 +57,7 @@ def track(settings: TrackSettings, exp_state: ExperimentState, step_profile: Ste
         image_path = exp_state.artifact(ARTI_IMG)
         if image_path is None:
             raise StepExecutionError(
-                f"Step {step_profile.step_name!r} failed for {exp_state.experiment_id}: "
+                f"Step {str(step_profile.step_name)!r} failed for {exp_state.experiment_id}: "
                 f"missing {ARTI_IMG!r} input.")
         image_reader = FitsIO.from_path(image_path)
         input_image = image_reader.get_channel(input_labels)
@@ -107,7 +107,8 @@ def track(settings: TrackSettings, exp_state: ExperimentState, step_profile: Ste
                                                 artifact_kind=step_profile.output_artifact,
                                                 artifact_path=save_path,)
         
-        logger.debug("Produced new ExperimentState: %s", new_st)
+        logger.debug("Produced new ExperimentState: exp_id=%s completed_steps=%s",
+                     new_st.experiment_id, [str(step) for step in new_st.completed_steps])
         new_st.save_state()
         return [new_st]
 
@@ -116,5 +117,5 @@ def track(settings: TrackSettings, exp_state: ExperimentState, step_profile: Ste
         if isinstance(e, StepExecutionError):
             raise
         raise StepExecutionError(
-            f"Step {step_profile.step_name!r} failed for "
+            f"Step {str(step_profile.step_name)!r} failed for "
             f"{exp_state.experiment_id}: {e}") from e

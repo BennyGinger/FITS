@@ -86,5 +86,5 @@ def convert(settings: ConvertSettings, exp_state: ExperimentState, step_profile:
     except Exception as e:
         logger.exception("%s failed for %s", step_profile.step_name, exp_state.original_image)
         raise StepExecutionError(
-            f"Step {step_profile.step_name!r} failed for "
+            f"Step {str(step_profile.step_name)!r} failed for "
             f"{exp_state.original_image}: {e}") from e

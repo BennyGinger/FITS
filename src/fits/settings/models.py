@@ -50,7 +50,8 @@ class ConvertSettings(SettingsModel):
             A single string is normalized to a one-item sequence.
         export_channels: Channel labels to retain, or ``"all"`` to retain every
             channel.
-        z_projection: Z projection applied while loading the source image.
+        z_projection: Projection method: max, mean, sum, or std.
+            Python None or the string "None" preserves Z for 3D.
         compression: TIFF compression passed to the output writer. The string
             ``"None"`` is normalized to ``None``.
 
@@ -74,9 +75,9 @@ class ConvertSettings(SettingsModel):
             return [v]
         return v
     
-    @field_validator('compression', mode='before')
+    @field_validator('z_projection', 'compression', mode='before')
     @classmethod
-    def parse_compression(cls, v):
+    def parse_optional_conversion_value(cls, v):
         if isinstance(v, str) and v.strip().lower() == 'none':
             return None
         return v    

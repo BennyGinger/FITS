@@ -75,7 +75,7 @@ def extract(settings: ExtractSettings, exp_state: ExperimentState, step_profile:
             exp_state.experiment_id,
         )
         raise StepExecutionError(
-            f"Step {step_profile.step_name!r} failed for "
+            f"Step {str(step_profile.step_name)!r} failed for "
             f"{exp_state.experiment_id}: {exc}") from exc
 
  

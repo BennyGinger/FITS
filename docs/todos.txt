@@ -291,3 +291,4 @@ Goal: ensure that each file is written in a human-readable and understandable ma
 [ ] Verify that configuration options in the modified files are well-documented and easy to understand.
 [ ] Check that error messages in the modified files are informative and guide the user towards resolving issues.
 [ ] Check for pylance warnings and errors in the modified files.
+[ ] Example, why 'S' was added to the allowed axis in fits_io

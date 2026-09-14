@@ -1,4 +1,5 @@
 from __future__ import annotations
+from copy import deepcopy
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -8,6 +9,8 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QVBoxLayout,
     QWidget,
+    QHBoxLayout,
+    QPushButton,
 )
 
 from fits.environment.constant import StepName
@@ -88,6 +91,11 @@ class StepSettingsEditor(QWidget):
         basic_form = QFormLayout(basic)
         self._add_fields(basic_form, layout_spec.basic)
         contents_layout.addWidget(basic)
+        if step == StepName.SEGMENT:
+            self.channel_sections = QWidget()
+            self.channel_sections_layout = QVBoxLayout(self.channel_sections)
+            contents_layout.addWidget(self.channel_sections)
+            self._build_channel_sections()
 
         advanced = StableAdvancedGroup("Advanced settings")
         self._add_fields(advanced.form, layout_spec.advanced)
@@ -118,6 +126,87 @@ class StepSettingsEditor(QWidget):
             form.addRow(label, widget)
             self.widgets[path] = widget
 
+    def _build_channel_sections(self) -> None:
+        self.channel_widgets: list[dict[str, ValueWidget]] = []
+        layout = self.channel_sections_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            item.widget().deleteLater()
+        entries = self.adapter.segment_channels()
+        if not entries:
+            entries = [{"channel": "", "do_denoise": True, "nuclear_channel": "None",
+                        "user_settings": {"model_type": "cyto3", "diameter": 15,
+                                          "flow_threshold": 0.4, "cellprob_threshold": 0.0,
+                                          "do_3D": False, "stitch_threshold": 0.0}}]
+            self.adapter.set_segment_channels(entries)
+        for index, entry in enumerate(entries):
+            channel_widgets = {}
+            self.channel_widgets.append(channel_widgets)
+            group = QGroupBox(f"Channel {index + 1}")
+            form = QFormLayout(group)
+            defaults = {"channel": "", "do_denoise": True, "nuclear_channel": "None",
+                        "user_settings.model_type": "cyto3", "user_settings.diameter": 15,
+                        "user_settings.flow_threshold": 0.4, "user_settings.cellprob_threshold": 0.0,
+                        "user_settings.do_3D": False, "user_settings.stitch_threshold": 0.0}
+            for path, default in defaults.items():
+                value = entry
+                for part in path.split("."):
+                    value = value.get(part, default) if isinstance(value, dict) else default
+                widget = create_field_widget("None" if value is None else value,
+                                             field_choices(self.step, path))
+                channel_widgets[path] = widget
+                widget.setToolTip(field_tooltip(self.step, path))
+                widget.value_changed.connect(
+                    lambda value, i=index, p=path: self._store_channel(i, p, value))
+                if path == "channel":
+                    row = QWidget()
+                    row_layout = QHBoxLayout(row)
+                    row_layout.setContentsMargins(0, 0, 0, 0)
+                    row_layout.addWidget(widget)
+                    add = QPushButton("+")
+                    remove = QPushButton("−")
+                    add.setFixedWidth(28)
+                    remove.setFixedWidth(28)
+                    add.setToolTip("Add another channel settings section")
+                    remove.setToolTip("Remove this channel settings section")
+                    remove.setEnabled(len(entries) > 1)
+                    add.clicked.connect(lambda checked=False, i=index: self._add_channel(i))
+                    remove.clicked.connect(lambda checked=False, i=index: self._remove_channel(i))
+                    row_layout.addWidget(add)
+                    row_layout.addWidget(remove)
+                    form.addRow("Channel to segment", row)
+                else:
+                    form.addRow(field_label(path), widget)
+            layout.addWidget(group)
+        self.channel_sections.setEnabled(self._editable)
+
+    def _store_channel(self, index: int, path: str, value: object) -> None:
+        entries = self.adapter.segment_channels()
+        node = entries[index]
+        parts = path.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
+        self.adapter.set_segment_channels(entries)
+        self.value_changed.emit()
+
+    def _add_channel(self, index: int) -> None:
+        entries = self.adapter.segment_channels()
+        entry = deepcopy(entries[index])
+        entry["channel"] = ""
+        entries.insert(index + 1, entry)
+        self.adapter.set_segment_channels(entries)
+        self._build_channel_sections()
+        self.value_changed.emit()
+
+    def _remove_channel(self, index: int) -> None:
+        entries = self.adapter.segment_channels()
+        if len(entries) > 1:
+            entries.pop(index)
+            self.adapter.set_segment_channels(entries)
+            self._build_channel_sections()
+            self.value_changed.emit()
+
     def _store_value(self, path: str, value: object) -> None:
         self.adapter.set_field_value(self.step, path, value)
         self._update_worker_state()
@@ -128,6 +217,9 @@ class StepSettingsEditor(QWidget):
     def sync_to_adapter(self) -> None:
         for path, widget in self.widgets.items():
             self.adapter.set_field_value(self.step, path, widget.value())
+        for index, widgets in enumerate(getattr(self, "channel_widgets", [])):
+            for path, widget in widgets.items():
+                self._store_channel(index, path, widget.value())
 
     def _update_worker_state(self) -> None:
         execution = self.widgets.get("execution")
@@ -146,6 +238,8 @@ class StepSettingsEditor(QWidget):
 
     def set_editable(self, editable: bool) -> None:
         self._editable = editable
+        if hasattr(self, "channel_sections"):
+            self.channel_sections.setEnabled(editable)
         self._refresh_enabled_states()
 
     def _update_mask_request_state(self) -> None:

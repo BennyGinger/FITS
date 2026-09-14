@@ -18,6 +18,17 @@ def segtune() -> None:
     _launch(SegmentationTunerWindow, "FITS Segmentation Tuner", qt_arguments)
 
 
+def trackedit() -> None:
+    parser = argparse.ArgumentParser(description="View and edit FITS tracking labels.")
+    parser.add_argument("tracking", nargs="?", type=Path,
+                        help="A fits_track.tif artifact to open.")
+    arguments, qt_arguments = parser.parse_known_args()
+    from fits.gui.viewer.tracking_window import TrackingViewerWindow
+
+    _launch(lambda: TrackingViewerWindow(tracking_path=arguments.tracking),
+            "FITS Tracking Viewer / Editor", qt_arguments)
+
+
 def drawmask() -> None:
     parser = argparse.ArgumentParser(description="Draw FITS reference and ROI masks.")
     parser.add_argument("--tool", choices=("manual", "pipeline"), default="manual")

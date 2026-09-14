@@ -12,10 +12,11 @@ from tomlkit import TOMLDocument
 
 from fits.environment.constant import WORKFLOW_ORDER, StepName
 from fits.workflows.engines.registry import REGISTRY
+from fits.settings.loader import SAVED_SETTINGS_NAME, resolve_step_params
+from fits.settings.models import SegmentSettings
 
 
 TEMPLATE_PATH = Path(__file__).parents[1] / "settings" / "template_settings.toml"
-SAVED_SETTINGS_NAME = "fits_settings.toml"
 
 
 @dataclass(frozen=True)
@@ -62,15 +63,6 @@ STEP_LAYOUTS: dict[StepName, StepLayout] = {
     StepName.SEGMENT: StepLayout(
         title="Segmentation",
         basic=(
-            "channel_to_segment",
-            "do_denoise",
-            "nuclear_channel",
-            "user_settings.model_type",
-            "user_settings.diameter",
-            "user_settings.flow_threshold",
-            "user_settings.cellprob_threshold",
-            "user_settings.do_3D",
-            "user_settings.stitch_threshold",
             "overwrite",
         ),
         advanced=("execution", "workers"),
@@ -208,9 +200,6 @@ REQUIRED_USER_FIELDS: dict[StepName, tuple[tuple[str, str], ...]] = {
     StepName.REGISTER_CHANNEL: (
         ("reference_channel", "Choose a reference channel (reference_channel)."),
     ),
-    StepName.SEGMENT: (
-        ("channel_to_segment", "Choose at least one channel to segment (channel_to_segment)."),
-    ),
     StepName.TRACK: (
         ("channel_to_track", "Choose at least one channel to track (channel_to_track)."),
     ),
@@ -333,8 +322,8 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
         "Maximum frame-level workers used by background subtraction. None lets the "
         "background routine choose."
     ),
-    (StepName.SEGMENT, "channel_to_segment"): (
-        "Channel labels on which Cellpose creates segmentation masks."
+    (StepName.SEGMENT, "channel"): (
+        "Target channel on which Cellpose creates segmentation masks."
     ),
     (StepName.SEGMENT, "do_denoise"): (
         "Use Cellpose denoising when it is supported by the selected model."
@@ -600,7 +589,7 @@ class SettingsAdapter:
     def validate_steps(self) -> dict[StepName, ValidationError]:
         errors: dict[StepName, ValidationError] = {}
         for step in WORKFLOW_ORDER:
-            params = self.document[step].get("params", {})
+            params = resolve_step_params(step, self.as_mapping()[step])
             if hasattr(params, "unwrap"):
                 params = params.unwrap()
             try:
@@ -609,6 +598,29 @@ class SettingsAdapter:
                 errors[step] = error
         return errors
 
+    def segment_channels(self) -> list[dict[str, Any]]:
+        return deepcopy(self.as_mapping()["segment"].get("channels", []))
+
+    def set_segment_channels(self, entries: list[dict[str, Any]]) -> None:
+        def toml_value(value):
+            if value is None:
+                return "None"
+            if isinstance(value, dict):
+                return {key: toml_value(child) for key, child in value.items()}
+            return value
+        tables = tomlkit.aot()
+        for entry in entries:
+            tables.append(tomlkit.item(toml_value(entry)))
+        self.document["segment"]["channels"] = tables
+
+    def segmentation_settings(self, *, for_tuning: bool = False) -> SegmentSettings:
+        config = self.as_mapping()["segment"]
+        if for_tuning:
+            config["channels"] = [entry for entry in config.get("channels", [])
+                                  if entry.get("channel", "").strip()]
+        return SegmentSettings.model_validate(
+            resolve_step_params("segment", config))
+
     def missing_user_fields(self, step: StepName | None = None) -> list[str]:
         """Describe enabled-step fields for which the user supplied no value."""
         steps = (step,) if step is not None else WORKFLOW_ORDER
@@ -616,6 +628,10 @@ class SettingsAdapter:
         for current_step in steps:
             if not self.step_enabled(current_step):
                 continue
+            if current_step == StepName.SEGMENT:
+                entries = self.segment_channels()
+                if not entries or any(not entry.get("channel", "").strip() for entry in entries):
+                    errors.append("Segmentation: Choose a target channel for every section.")
             for path, message in REQUIRED_USER_FIELDS.get(current_step, ()):
                 value = self.field_value(current_step, path)
                 missing = value is None

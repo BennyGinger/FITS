@@ -11,7 +11,7 @@ def test_adapter_updates_and_saves_comment_preserving_copy(tmp_path: Path) -> No
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "Test user"
     adapter.set_step_enabled(StepName.SEGMENT, True)
-    adapter.set_field_value(StepName.SEGMENT, "channel_to_segment", ["GFP"])
+    adapter.set_segment_channels([{"channel": "GFP"}])
 
     destination = adapter.save_to_run_dir()
 
@@ -19,13 +19,13 @@ def test_adapter_updates_and_saves_comment_preserving_copy(tmp_path: Path) -> No
     saved_text = destination.read_text(encoding="utf-8")
     assert "# FITS settings template." in saved_text
     assert "# Internal ordering control; not exposed in the GUI." in saved_text
-    assert "# Required when segmentation is enabled." in saved_text
+    assert "# Segmentation settings are independent for every target channel." in saved_text
 
     saved = tomllib.loads(saved_text)
     assert saved["run_dir"] == str(tmp_path)
     assert saved["user_name"] == "Test user"
     assert saved["segment"]["enabled"] is True
-    assert saved["segment"]["params"]["channel_to_segment"] == ["GFP"]
+    assert saved["segment"]["channels"][0]["channel"] == "GFP"
 
 
 def test_adapter_load_fills_fields_missing_from_older_settings(tmp_path: Path) -> None:
@@ -40,7 +40,7 @@ def test_adapter_load_fills_fields_missing_from_older_settings(tmp_path: Path) -
     adapter.load(settings_path)
 
     assert adapter.field_value(StepName.CONVERT, "z_projection") == "max"
-    assert adapter.field_value(StepName.SEGMENT, "channel_to_segment") == []
+    assert adapter.segment_channels() == SettingsAdapter().segment_channels()
     assert adapter.validate_steps() == {}
 
 
@@ -61,6 +61,7 @@ def test_run_validation_requires_identity_and_existing_directory(tmp_path: Path)
 
 def test_missing_user_fields_only_checks_enabled_steps() -> None:
     adapter = SettingsAdapter()
+    adapter.set_segment_channels([])
 
     assert adapter.missing_user_fields() == [
         "Convert: Enter at least one channel label (channel_labels)."
@@ -72,13 +73,13 @@ def test_missing_user_fields_only_checks_enabled_steps() -> None:
     assert adapter.missing_user_fields() == [
         "Convert: Enter at least one channel label (channel_labels).",
         "Register channels: Choose a reference channel (reference_channel).",
-        "Segmentation: Choose at least one channel to segment (channel_to_segment).",
+        "Segmentation: Choose a target channel for every section.",
         "Tracking: Choose at least one channel to track (channel_to_track).",
     ]
 
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     adapter.set_field_value(StepName.REGISTER_CHANNEL, "reference_channel", "GFP")
-    adapter.set_field_value(StepName.SEGMENT, "channel_to_segment", ["GFP"])
+    adapter.set_segment_channels([{"channel": "GFP"}])
     adapter.set_field_value(StepName.TRACK, "channel_to_track", ["GFP"])
     assert adapter.missing_user_fields() == []
 

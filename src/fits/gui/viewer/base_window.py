@@ -94,6 +94,7 @@ class ImageToolWindow(QMainWindow):
         info_row = QHBoxLayout()
         info_row.setContentsMargins(24, 0, 24, 0)
         left_controls = QHBoxLayout()
+        self.left_display_controls = left_controls
         left_controls.addWidget(QLabel("Channel"))
         self.channel_combo = QComboBox()
         left_controls.addWidget(self.channel_combo)
@@ -111,7 +112,8 @@ class ImageToolWindow(QMainWindow):
 
         right_controls = QHBoxLayout()
         right_controls.addStretch(1)
-        right_controls.addWidget(QLabel("Overlay"))
+        self.overlay_label = QLabel("Overlay")
+        right_controls.addWidget(self.overlay_label)
         self.show_mask = QCheckBox()
         self.show_mask.setChecked(True)
         self.show_mask.setToolTip("Show or hide the mask overlay.")

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from fits.settings.models import SegmentSettings
+from fits.settings.models import SegmentChannelSettings
 from fits.tasks.segmentation.tuning import SegmentationTuningSession
 
 
@@ -32,9 +32,9 @@ class FakeWrapper:
         return np.full(array.shape, 7, dtype=np.uint16)
 
 
-def _settings(**user_settings: object) -> SegmentSettings:
-    return SegmentSettings(
-        channel_to_segment=["RFP"],
+def _settings(**user_settings: object) -> SegmentChannelSettings:
+    return SegmentChannelSettings(
+        channel="RFP",
         do_denoise=False,
         user_settings={"model_type": "test", **user_settings},
     )
@@ -203,7 +203,7 @@ def test_preview_selects_display_and_nuclear_channels(
     array = np.arange(1 * 2 * 4 * 5).reshape(1, 2, 4, 5)
     reader = FakeFitsIO(array, "TCYX", ["GFP", "RFP"])
     wrapper = FakeWrapper()
-    settings = SegmentSettings(channel_to_segment=["RFP"],
+    settings = SegmentChannelSettings(channel="RFP",
                                nuclear_channel="GFP",
                                do_denoise=False,)
     monkeypatch.setattr(

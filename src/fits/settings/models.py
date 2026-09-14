@@ -309,20 +309,59 @@ class BGSubSettings(SettingsModel):
 
 ############ Segmentation settings ############
 
+class SegmentChannelSettings(BaseModel):
+    """Cellpose settings for one segmentation target channel."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    channel: str
+    do_denoise: bool = True
+    nuclear_channel: str | None = None
+    user_settings: dict[str, Any] = Field(default_factory=dict)
+    model: Any | None = None
+
+    @field_validator("channel")
+    @classmethod
+    def validate_channel(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Segmentation channel cannot be empty.")
+        return value
+
+    @field_validator("nuclear_channel", mode="before")
+    @classmethod
+    def parse_nuclear_channel(cls, value: Any) -> Any:
+        if isinstance(value, str) and value.strip().lower() == "none":
+            return None
+        return value
+
+    def cellpose_payload(self, *, threading: bool) -> dict[str, Any]:
+        """Return the settings consumed by ``CellposeWrapper``."""
+        return {
+            "do_denoise": self.do_denoise,
+            "nuclear_channel": self.nuclear_channel,
+            "user_settings": self.user_settings,
+            "model": self.model,
+            "threading": threading,
+            "use_nuclear_channel": self.nuclear_channel is not None,
+        }
+
+    def to_payload_dict(self) -> dict[str, Any]:
+        return {
+            "channel": self.channel,
+            "do_denoise": self.do_denoise,
+            "nuclear_channel": self.nuclear_channel,
+            "user_settings": self.user_settings,
+        }
+
+
 class SegmentSettings(SettingsModel):
     """Settings for Cellpose-based image segmentation.
 
     Attributes:
-        channel_to_segment: Channel labels to segment.
-        do_denoise: Enable Cellpose denoising where supported by the installed
-            Cellpose backend.
-        nuclear_channel: Optional additional channel supplied as nuclear input.
-        user_settings: Backend-specific Cellpose configuration.
-        model: Optional pre-initialized Cellpose model.
+        channels: Ordered, independent target-channel configurations.
         threading: Computed flag enabling the Cellpose inference lock when
             experiment-level execution uses threads.
-        use_nuclear_channel: Computed flag indicating whether a nuclear channel
-            was configured.
 
     Inherited attributes:
         overwrite: Recompute segmentation even when its output already exists.
@@ -332,11 +371,19 @@ class SegmentSettings(SettingsModel):
         ordered_execution: Preserve input experiment order when collecting
             parallel results. Defaults to ``False``.
     """
-    channel_to_segment: Sequence[str] = Field(exclude=True)
-    do_denoise: bool = True
-    nuclear_channel: str | None = Field(default=None, exclude=True)
-    user_settings: dict[str, Any] = Field(default_factory=dict)
-    model: Any | None = None  
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    channels: list[SegmentChannelSettings] = Field(default_factory=list, exclude=True)
+
+    @model_validator(mode="after")
+    def validate_channel_entries(self) -> "SegmentSettings":
+        targets = [entry.channel for entry in self.channels]
+        duplicates = sorted({channel for channel in targets if targets.count(channel) > 1})
+        if duplicates:
+            raise ValueError(
+                f"Duplicate segmentation target channel(s): {', '.join(duplicates)}."
+            )
+        return self
     
     @computed_field()
     @property
@@ -346,31 +393,12 @@ class SegmentSettings(SettingsModel):
         """
         return self.execution == "thread"
     
-    @computed_field()
-    @property
-    def use_nuclear_channel(self) -> bool:
-        """
-        Returns True if a nuclear channel is specified in the settings, indicating that nuclear channel mode should be enabled for Cellpose.
-        """
-        return self.nuclear_channel is not None
-    
     def to_payload_dict(self) -> dict[str, Any]:
         """
         Convert the SegmentSettings instance to a metadata dictionary suitable for serialization.
         Excludes any fields that are not relevant for metadata.
         """
-        payload = {"channel_to_segment": list(self.channel_to_segment),
-                   "do_denoise": self.do_denoise,
-                   "nuclear_channel": self.nuclear_channel,
-                   "user_settings": self.user_settings,}
-        return payload
-
-    @field_validator('nuclear_channel', mode='before')
-    @classmethod
-    def parse_nuclear_chan(cls, v):
-        if isinstance(v, str) and v.strip().lower() == 'none':
-            return None
-        return v
+        return {"channels": [entry.to_payload_dict() for entry in self.channels]}
 
 ############# Tracking settings ############
 

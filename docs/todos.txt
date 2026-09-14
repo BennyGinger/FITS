@@ -56,8 +56,55 @@ Manual tracking viewer/editor
     viewer's navigation and interaction patterns but with a multi-label
     track overlay and track-aware session/model (not the binary mask canvas).
 [ ] Support point-track annotation as explicit `(frame, x, y, track ID)`
-    observations. Display points and associate them with segmented objects
-    only on request; do not silently invent a mask for a point observation.
+    observations. Treat a click as a seed meaning "this is my cell", not as
+    its final centroid. Use the seed to propose a mask only after an explicit
+    segmentation action; after the user accepts or edits that mask, calculate
+    its centroid and use only that recalculated centroid for the displayed
+    track path.
+[ ] Add click-seeded, local cell segmentation for manual tracking and for
+    creating tracks from scratch when no `fits_track.tif` exists. The first
+    implementation should target isolated, irregular neutrophils and
+    macrophages on a relatively dark background and must not assume roundness
+    or temporal shape stability.
+
+    Plan of action:
+    1. Let the user choose an approximate overall cell size. Use it to define
+       and, when necessary, expand the local search region around the click;
+       do not use it as a circular shape constraint.
+    2. Build a fast default proposal from the current raw-image plane using
+       local background estimation, gentle denoising, foreground thresholding,
+       and the connected foreground region containing the clicked seed.
+    3. Add a seeded watershed option for a bright region containing multiple
+       cells. Each positive click identifies one cell; optional negative or
+       background clicks constrain leakage into neighbours or hotspots.
+    4. Evaluate seeded random walker or a local active-contour refinement for
+       uneven cell intensity, faint protrusions, and incomplete boundaries.
+       Keep these as alternative proposal backends rather than mandatory
+       dependencies. Consider prompt-based Micro-SAM later if classical local
+       methods are insufficient on representative data.
+    5. Show every generated boundary as a proposal before committing it. Reuse
+       the mask editor's add/erase tools so the user can correct protrusions,
+       holes, leakage, or missed regions manually, then accept or cancel it.
+    6. On acceptance, store the mask with its track ID and recalculate the
+       centroid from the final edited mask. Preserve the original click in the
+       correction log for audit/debugging, but do not display a second path.
+    7. For a gap with valid masks before and after it, offer mask interpolation
+       and image-refined interpolation as explicit alternatives. Because these
+       immune cells can change shape sharply, never apply interpolation without
+       preview and user acceptance.
+    8. Support a new-session mode opened from `fits_array.tif` without a
+       tracking artifact. Starting a track allocates an ID; accepted seeded
+       masks add detections to it. Adapt the saving panel to create a new
+       `fits_track.tif` as well as save corrected copies of existing tracking
+       artifacts.
+    9. Add undo/redo for seed placement, mask proposals, manual mask edits, and
+       track assignment. Record the proposal method, its settings, the seed,
+       the accepted centroid, and subsequent edits in the correction log.
+
+    Validation is deferred until representative neutrophil/macrophage movies
+    are available. Compare methods on isolated cells, large shape changes,
+    faint extensions, touching cells, and bright multi-cell hotspots before
+    selecting defaults.
 [ ] Load an existing tracked-label movie for manual correction: inspect a
     selected object across time; split a track at a frame; merge/reassign
     tracks from a chosen frame onward; remove detections or tracks; and
@@ -71,27 +118,25 @@ Per-channel segmentation settings
 ---------------------------------
 Goal: segment multiple channels with independent Cellpose settings, using
 the same configuration model in the GUI and CLI.
-Status: proposed design; implementation pending.
+Status: implemented in pipeline, TOML, GUI, and SegTune.
 
 GUI
-[ ] Replace the shared channel/settings form with one collapsible block per
-    channel, showing a summary such as "GFP | cyto3 | diameter 30".
-[ ] Add an "Add channel" button that copies the previous block's settings
-    as a starting point, and a "Remove" button for each block.
-[ ] Give each block its own channel selector, optional nuclear channel,
+[x] Replace the shared channel/settings form with one section per channel.
+[x] Add + and − buttons beside each target channel. Adding copies the
+    section's settings as a starting point; the last section cannot be removed.
+[x] Give each block its own channel selector, optional nuclear channel,
     denoising option, and Cellpose settings.
-[ ] Add "Tune segmentation..." to each block. Open the tuner with that
-    block's channel/settings; "Apply and close" updates only that block.
-[ ] Keep execution, workers, ordering, and overwrite at the shared step level.
+[x] Tune the channel collection in SegTune. Select a summary row to revisit
+    its controls; add the next unused channel or remove an existing row.
+    Apply and close transfers the complete collection to the main GUI.
+[x] Keep execution, workers, ordering, and overwrite at the shared step level.
 
 Configuration and CLI
-[ ] Define repeated channel entries in TOML; the CLI continues to use the
+[x] Define repeated channel entries in TOML; the CLI continues to use the
     settings file without adding per-channel command-line flags.
-[ ] Validate channel entries and reject duplicate target channels.
-[ ] Keep legacy channel_to_segment lists with shared settings working:
-    expand them into independent blocks initialized with identical settings.
+[x] Validate channel entries and reject duplicate target channels.
 
-Proposed TOML structure (not yet supported):
+Supported TOML structure:
 
     [segment]
     enabled = true
@@ -117,18 +162,20 @@ Proposed TOML structure (not yet supported):
     diameter = 15
 
 Pipeline and provenance
-[ ] Process channel entries in order with their respective settings.
-[ ] Combine channel masks into the segmentation output while preserving
+[x] Process channel entries in order with their respective settings.
+[x] Combine channel masks into the segmentation output while preserving
     channel identity.
-[ ] Record the settings used for each channel in workflow provenance.
-[ ] Ensure completion and overwrite decisions account for individual channels.
+[x] Record the settings used for each channel in workflow provenance.
+[x] Ensure completion and overwrite decisions account for individual channels.
+    A failure in any configured channel fails the step and no partial output is
+    saved; this intentionally simple policy can be revisited later.
 
 Validation and documentation
-[ ] Test GUI add/remove, independent editing, and tuner apply/cancel behavior.
-[ ] Test TOML save/load, CLI execution, and legacy-settings compatibility.
-[ ] Test that different channels receive their own settings and retain the
+[x] Test GUI add/remove, independent editing, and tuner apply/cancel behavior.
+[x] Test TOML save/load and CLI execution. Legacy settings are not supported.
+[x] Test that different channels receive their own settings and retain the
     correct output-channel mapping and provenance.
-[ ] Update the settings template and GUI/CLI documentation with examples.
+[x] Update the settings template and GUI/CLI documentation with examples.
 
 
 Optional processing tuners
@@ -223,3 +270,24 @@ Goal: provide a tool for users to generate and visualize line profiles from bioi
 [ ] Display the line profile in a separate plot window.
 [ ] Allow exporting the line profile data to a parquet file.
 [ ] Support updating the profile dynamically when the line is adjusted.
+
+
+Change logs/reports structure folder
+-------------------------------
+Goal: organize and structure the logs and reports generated by the pipeline for easier access and management.
+[ ] Define a docs/ folder for storing all non-array related files
+[ ] logs/ folder should then be stored in that folder
+[ ] reports/ folder should also be stored in the docs/ folder
+[ ] toml settings files should also be stored in the docs/ folder
+[ ] Update pipeline code to reference the new locations of logs, reports, and settings within the docs/ folder.
+
+
+Checking the different file modified by Codex
+-------------------------------
+Goal: ensure that each file is written in a human-readable and understandable manner, with clear documentation and logging.
+[ ] Review each modified file for clarity and readability.
+[ ] Add or improve docstrings for all functions and classes in the modified files.
+[ ] Ensure that logging statements in the modified files provide meaningful and actionable information.
+[ ] Verify that configuration options in the modified files are well-documented and easy to understand.
+[ ] Check that error messages in the modified files are informative and guide the user towards resolving issues.
+[ ] Check for pylance warnings and errors in the modified files.

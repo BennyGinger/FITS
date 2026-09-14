@@ -156,10 +156,8 @@ def _track_labels(masks: NDArray[np.generic]) -> NDArray[np.generic]:
 
 def _label_areas(mask: NDArray[np.generic]) -> dict[int, int]:
     """Return the pixel area occupied by each nonzero label."""
-    return {
-        int(label): int(np.count_nonzero(mask == label))
-        for label in _track_labels(mask)
-    }
+    return {int(label): int(np.count_nonzero(mask == label))
+            for label in _track_labels(mask)}
 
 
 def _overlap_counts(frame_object: NDArray[np.bool_],
@@ -167,11 +165,9 @@ def _overlap_counts(frame_object: NDArray[np.bool_],
                     ) -> dict[int, int]:
     """Count the object's pixels overlapping each supermask identity."""
     labels, counts = np.unique(supermask[frame_object], return_counts=True)
-    return {
-        int(label): int(count)
-        for label, count in zip(labels, counts, strict=True)
-        if label != 0
-    }
+    return {int(label): int(count)
+            for label, count in zip(labels, counts, strict=True)
+            if label != 0 }
 
 
 def _unique_best_supermask_label(frame_object: NDArray[np.bool_],

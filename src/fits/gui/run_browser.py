@@ -6,6 +6,7 @@ from PySide6.QtCore import QDir, QModelIndex, Signal, Slot
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QFileSystemModel,
+    QHBoxLayout,
     QLabel,
     QTreeView,
     QVBoxLayout,
@@ -53,10 +54,13 @@ class DirectoryBrowser(QWidget):
         self.tree.doubleClicked.connect(self._on_activated)
         layout.addWidget(self.tree)
 
+        selection_row = QHBoxLayout()
+        self.selection_layout = selection_row
         self.selection_label = QLabel("")
         self.selection_label.setWordWrap(True)
         self.selection_label.setStyleSheet("color: #b8b8b8;")
-        layout.addWidget(self.selection_label)
+        selection_row.addWidget(self.selection_label, 1)
+        layout.addLayout(selection_row)
         self.tree.setModel(self.empty_model)
         self.selection_label.hide()
 

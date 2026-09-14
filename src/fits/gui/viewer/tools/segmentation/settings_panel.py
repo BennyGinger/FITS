@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from cellpose_kit.backend.versioning import get_cellpose_version
 from fits.gui.viewer.tools.segmentation.cellpose_options import installed_model_options
-from fits.settings.models import SegmentSettings
+from fits.settings.models import SegmentChannelSettings
 from fits.gui.wheel_widgets import (
     FocusWheelComboBox, FocusWheelDoubleSpinBox, FocusWheelSlider,
 )
@@ -213,7 +213,7 @@ class CellposeSettingsPanel(QWidget):
         index = self.nuclear_channel.findData(nuclear_channel)
         self.nuclear_channel.setCurrentIndex(max(index, 0))
 
-    def set_settings(self, settings: SegmentSettings) -> None:
+    def set_settings(self, settings: SegmentChannelSettings) -> None:
         user = settings.user_settings
         model_type = user.get("model_type")
         pretrained_model = user.get("pretrained_model")

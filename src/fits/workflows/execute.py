@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import Any, Mapping
 
 from fits.environment.constant import WORKFLOW_ORDER
 from fits.environment.state import ExperimentState
+from fits.environment.progress import RunProgress
+from fits.workflows.engines.reporting import WorkflowReporter
 from fits.settings.models import SettingsModel
+from fits.settings.loader import resolve_step_params
 from fits.workflows.engines.executors import execute
 from fits.workflows.engines.models import StepSpec
 from fits.workflows.engines.registry import REGISTRY
@@ -17,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 
-def run_workflow(effective_cfg: Mapping[str, Any], exp_states: list[ExperimentState]) -> list[ExperimentState]:
+def run_workflow(effective_cfg: Mapping[str, Any], exp_states: list[ExperimentState],
+                 *, run_progress: RunProgress | None = None) -> list[ExperimentState]:
     """
     Execute the configured workflow sequentially for all experiment states.
 
@@ -32,6 +37,11 @@ def run_workflow(effective_cfg: Mapping[str, Any], exp_states: list[ExperimentSt
     Returns:
         List of experiment states after processing through the workflow.
     """
+    enabled_steps = [step for step in WORKFLOW_ORDER
+                     if isinstance(effective_cfg.get(step), Mapping)
+                     and effective_cfg[step].get("enabled", False)]
+    reporter = (WorkflowReporter(run_progress, enabled_steps, exp_states)
+                if run_progress is not None else None)
     for step_name in WORKFLOW_ORDER:
         step_cfg = effective_cfg.get(step_name)
 
@@ -48,18 +58,14 @@ def run_workflow(effective_cfg: Mapping[str, Any], exp_states: list[ExperimentSt
                 f"Enabled step {str(step_name)!r} is missing from the registry."
             )
 
-        params = step_cfg.get("params", {})
-
-        if not isinstance(params, Mapping):
-            raise TypeError(
-                f"Expected '{step_name}.params' to be a mapping."
-            )
+        params = resolve_step_params(str(step_name), step_cfg)
 
         settings = spec.model_validate(params)
         exp_states = _run_step_batch(
             spec=spec,
             settings=settings,
             exp_states=exp_states,
+            reporter=reporter,
         )
     
     return exp_states
@@ -68,6 +74,7 @@ def run_workflow(effective_cfg: Mapping[str, Any], exp_states: list[ExperimentSt
 def run_workflow_scheduler_entry(
     effective_cfg: Mapping[str, Any],
     exp_states: list[ExperimentState],
+    *, run_progress: RunProgress | None = None,
 ) -> list[ExperimentState]:
     """
     Execute the configured workflow using the conveyor scheduler.
@@ -83,11 +90,12 @@ def run_workflow_scheduler_entry(
     Returns:
         List of experiment states after processing through the workflow.
     """
-    return run_workflow_scheduler(effective_cfg, exp_states)
+    return run_workflow_scheduler(effective_cfg, exp_states, run_progress=run_progress)
 
 
 ########### Helper function for batch execution of a single step ###########
-def _run_step_batch(spec: StepSpec[Any], settings: SettingsModel, exp_states: list[ExperimentState],) -> list[ExperimentState]:
+def _run_step_batch(spec: StepSpec[Any], settings: SettingsModel, exp_states: list[ExperimentState],
+                    reporter: WorkflowReporter | None = None) -> list[ExperimentState]:
     profile = spec.profile
 
     logger.debug(
@@ -101,7 +109,13 @@ def _run_step_batch(spec: StepSpec[Any], settings: SettingsModel, exp_states: li
     def worker(state: ExperimentState) -> list[ExperimentState]:
         return spec.item_runner(settings, state, profile,)
 
+    if reporter is not None:
+        for state in exp_states:
+            reporter.started(profile.step_name, state)
+        worker = partial(_reported_step, spec, settings)
+
     output_states: list[ExperimentState] = []
+    first_error = None
 
     with pbar(total=len(exp_states),
               desc=profile.step_name.capitalize(),
@@ -113,7 +127,28 @@ def _run_step_batch(spec: StepSpec[Any], settings: SettingsModel, exp_states: li
             workers=settings.workers,
             ordered=settings.ordered_execution,
         ):
+            if reporter is not None:
+                source, outputs, error = produced_states
+                if error is not None:
+                    reporter.failed(profile.step_name, source, error)
+                    if settings.execution == "serial":
+                        raise error
+                    first_error = first_error or error
+                    progress.advance()
+                    continue
+                reporter.completed(profile.step_name, source, outputs)
+                produced_states = outputs
             output_states.extend(produced_states)
             progress.advance()
 
+    if first_error is not None:
+        raise first_error
     return output_states
+
+
+def _reported_step(spec, settings, state):
+    """Return outcomes to the parent process, which owns reporting state."""
+    try:
+        return state, spec.item_runner(settings, state, spec.profile), None
+    except Exception as error:
+        return state, [], error

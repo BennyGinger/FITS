@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from cellpose_kit.client import CellposeWrapper
 from fits.sessions.image import FitsImageSession
-from fits.settings.models import SegmentSettings
+from fits.settings.models import SegmentChannelSettings
 from fits.tasks.segmentation.preview_cache import PreviewCache, SegmentationPreview
 
 
@@ -26,7 +26,7 @@ class SegmentationTuningSession(FitsImageSession):
     def __init__(self,
                  source_path: str | Path,
                  *,
-                 segment_settings: SegmentSettings | Mapping[str, Any] | None = None,
+                 segment_settings: SegmentChannelSettings | Mapping[str, Any] | None = None,
                  cache_parent: str | Path | None = None,
                  ) -> None:
         super().__init__(source_path)
@@ -35,24 +35,24 @@ class SegmentationTuningSession(FitsImageSession):
         self._closed = False
 
         if segment_settings is None:
-            segment_settings = {"channel_to_segment": [self._channel_labels[0]]}
-        if not isinstance(segment_settings, SegmentSettings):
-            segment_settings = SegmentSettings.model_validate(segment_settings)
+            segment_settings = {"channel": self._channel_labels[0]}
+        if not isinstance(segment_settings, SegmentChannelSettings):
+            segment_settings = SegmentChannelSettings.model_validate(segment_settings)
         self._segment_settings = segment_settings
 
     @property
-    def segment_settings(self) -> SegmentSettings:
+    def segment_settings(self) -> SegmentChannelSettings:
         return self._segment_settings
 
     def set_segment_settings(self,
-                             settings: SegmentSettings | Mapping[str, Any],
+                             settings: SegmentChannelSettings | Mapping[str, Any],
                              ) -> None:
         """
         Replace the validated baseline used for subsequent previews.
         """
         self._ensure_open()
-        if not isinstance(settings, SegmentSettings):
-            settings = SegmentSettings.model_validate(settings)
+        if not isinstance(settings, SegmentChannelSettings):
+            settings = SegmentChannelSettings.model_validate(settings)
         with self._lock:
             self._segment_settings = settings
 
@@ -103,7 +103,7 @@ class SegmentationTuningSession(FitsImageSession):
             if cache_path.is_file():
                 return self._cache.load(cache_path)
 
-            wrapper = CellposeWrapper.from_dict(settings.model_dump())
+            wrapper = CellposeWrapper.from_dict(settings.cellpose_payload(threading=True))
             wrapper.setup()
             mask = wrapper.run(input_array, input_axes)
             mask_axes = wrapper.output_axis_order
@@ -147,7 +147,7 @@ class SegmentationTuningSession(FitsImageSession):
     def _input_channels(self,
                         channel_label: str,
                         channel_index: int,
-                        settings: SegmentSettings,
+                        settings: SegmentChannelSettings,
                         ) -> tuple[list[str], list[int]]:
         """
         Return selected labels and resolve each channel only once.
@@ -201,17 +201,17 @@ class SegmentationTuningSession(FitsImageSession):
     def _preview_settings(self,
                           channel_label: str,
                           user_settings: Mapping[str, Any] | None,
-                          ) -> SegmentSettings:
+                          ) -> SegmentChannelSettings:
         """
         Merge preview controls into the validated baseline settings.
         """
         payload = self._segment_settings.model_dump()
-        payload["channel_to_segment"] = [channel_label]
+        payload["channel"] = channel_label
         payload["nuclear_channel"] = self._segment_settings.nuclear_channel
         payload["user_settings"] = {
             **self._segment_settings.user_settings,
             **dict(user_settings or {}),}
-        return SegmentSettings.model_validate(payload)
+        return SegmentChannelSettings.model_validate(payload)
 
     def close(self) -> None:
         if self._closed:

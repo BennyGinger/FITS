@@ -36,29 +36,29 @@ def test_tuner_round_trip_and_close(monkeypatch, tmp_path):
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_field_value(StepName.SEGMENT, "workers", 3)
-    adapter.set_field_value(StepName.SEGMENT, "user_settings.diameter", 19)
+    adapter.set_segment_channels([{"channel": "GFP", "user_settings": {"diameter": 19}}])
     window = FitsMainWindow(adapter)
     window.user_name_edit.setText("Unsaved user")
     window._open_segmentation_tuner()
     tuner = window._segmentation_tuner
-    assert tuner._provided_settings.user_settings["diameter"] == 19
+    assert tuner._provided_settings.channels[0].user_settings["diameter"] == 19
     assert tuner.directory_browser.root_path == tmp_path
     assert tuner.windowModality() == Qt.WindowModality.WindowModal
     assert tuner.settings_panel.apply_button.text() == "Apply and close"
-    chosen = SegmentSettings(channel_to_segment=["GFP"], nuclear_channel=None,
-                             do_denoise=False, user_settings={"diameter": 31})
+    chosen = SegmentSettings(channels=[{"channel": "GFP", "nuclear_channel": None,
+                                         "do_denoise": False, "user_settings": {"diameter": 31}}])
     monkeypatch.setattr(tuner, "current_settings", lambda: chosen)
     tuner._apply_settings()
     assert not tuner.isVisible()
-    assert adapter.field_value(StepName.SEGMENT, "channel_to_segment") == ["GFP"]
-    assert adapter.field_value(StepName.SEGMENT, "nuclear_channel") == "None"
+    assert adapter.segment_channels()[0]["channel"] == "GFP"
+    assert adapter.segment_channels()[0]["nuclear_channel"] == "None"
     assert adapter.field_value(StepName.SEGMENT, "workers") == 3
     assert adapter.user_name == "Unsaved user"
-    assert window._editors[StepName.SEGMENT].widgets["user_settings.diameter"].value() == 31
+    assert window._editors[StepName.SEGMENT].channel_widgets[0]["user_settings.diameter"].value() == 31
     adapter.save_to_run_dir()
     reloaded = SettingsAdapter()
     reloaded.load(tmp_path / "fits_settings.toml")
-    settings = SegmentSettings.model_validate(reloaded.as_mapping()["segment"]["params"])
+    settings = reloaded.segmentation_settings().channels[0]
     assert settings.user_settings["diameter"] == 31
     assert settings.nuclear_channel is None
     window.close()

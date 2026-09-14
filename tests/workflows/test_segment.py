@@ -10,7 +10,7 @@ import pytest
 
 from fits.environment.constant import StepName
 from fits.environment.state import ExperimentState
-from fits.settings.models import SegmentSettings
+from fits.settings.models import SegmentChannelSettings, SegmentSettings
 from fits.tasks.segmentation.segment import segment
 from fits.workflows.engines.registry import REGISTRY
 from fits.workflows.errors import StepExecutionError
@@ -21,6 +21,7 @@ segment_module = importlib.import_module("fits.tasks.segmentation.segment")
 
 class DummyReader:
     channel_labels = ["GFP", "RFP", "DAPI"]
+    axes = "CYX"
 
     def __init__(self, output_path: Path) -> None:
         self.output_path = output_path
@@ -80,8 +81,17 @@ def test_segment_requires_image_artifact(tmp_path: Path) -> None:
 
     with pytest.raises(StepExecutionError, match="missing 'image' input"):
         segment(
-            SegmentSettings(channel_to_segment=["RFP"]),
+            SegmentSettings(channels=[SegmentChannelSettings(channel="RFP")]),
             state,
+            REGISTRY[StepName.SEGMENT].profile,
+        )
+
+
+def test_segment_requires_a_configured_channel(tmp_path: Path) -> None:
+    with pytest.raises(StepExecutionError, match="At least one segmentation channel"):
+        segment(
+            SegmentSettings(),
+            _image_state(tmp_path),
             REGISTRY[StepName.SEGMENT].profile,
         )
 
@@ -102,7 +112,10 @@ def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Pat
     )
 
     results = segment(
-        SegmentSettings(channel_to_segment=["GFP", "RFP"], nuclear_channel="DAPI"),
+        SegmentSettings(channels=[
+            SegmentChannelSettings(channel="GFP", nuclear_channel="DAPI"),
+            SegmentChannelSettings(channel="RFP", nuclear_channel="DAPI"),
+        ]),
         _image_state(tmp_path),
         REGISTRY[StepName.SEGMENT].profile,
     )
@@ -132,8 +145,77 @@ def test_segment_skips_when_requested_channels_are_complete(monkeypatch, tmp_pat
     )
 
     assert segment(
-        SegmentSettings(channel_to_segment=["GFP"]),
+        SegmentSettings(channels=[SegmentChannelSettings(channel="GFP")]),
         state,
         REGISTRY[StepName.SEGMENT].profile,
     ) == [state]
+    assert reader.save_calls == []
+
+
+def test_segment_uses_independent_settings_and_saves_once(monkeypatch, tmp_path: Path) -> None:
+    reader = DummyReader(tmp_path / "fits_mask.tif")
+    wrappers = [DummyWrapper(), DummyWrapper()]
+    payloads: list[dict[str, Any]] = []
+    monkeypatch.setattr(segment_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(
+        segment_module,
+        "decide_run",
+        lambda *args: SimpleNamespace(is_complete=False, pending_items=[0, 2]),
+    )
+
+    def wrapper_from_dict(payload: dict[str, Any]) -> DummyWrapper:
+        payloads.append(payload)
+        return wrappers[len(payloads) - 1]
+
+    monkeypatch.setattr(segment_module.CellposeWrapper, "from_dict", wrapper_from_dict)
+
+    segment(
+        SegmentSettings.model_validate({
+            "channels": [
+                {"channel": "GFP", "user_settings": {"model_type": "cyto2"}},
+                {"channel": "DAPI", "do_denoise": False,
+                 "user_settings": {"model_type": "nuclei"}},
+            ],
+        }),
+        _image_state(tmp_path),
+        REGISTRY[StepName.SEGMENT].profile,
+    )
+
+    assert [payload["user_settings"]["model_type"] for payload in payloads] == ["cyto2", "nuclei"]
+    assert payloads[1]["do_denoise"] is False
+    assert reader.get_channel_calls == [["GFP"], ["DAPI"]]
+    assert len(reader.save_calls) == 1
+    assert reader.save_calls[0]["export_channels"] == ["GFP", "DAPI"]
+
+
+def test_segment_failure_does_not_save_partial_output(monkeypatch, tmp_path: Path) -> None:
+    reader = DummyReader(tmp_path / "fits_mask.tif")
+    first = DummyWrapper()
+    monkeypatch.setattr(segment_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(
+        segment_module,
+        "decide_run",
+        lambda *args: SimpleNamespace(is_complete=False, pending_items=[0, 2]),
+    )
+
+    calls = 0
+
+    def wrapper_from_dict(payload: dict[str, Any]) -> DummyWrapper:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("model unavailable")
+        return first
+
+    monkeypatch.setattr(segment_module.CellposeWrapper, "from_dict", wrapper_from_dict)
+
+    with pytest.raises(StepExecutionError, match="channel 'DAPI'.*model unavailable"):
+        segment(
+            SegmentSettings.model_validate({
+                "channels": [{"channel": "GFP"}, {"channel": "DAPI"}],
+            }),
+            _image_state(tmp_path),
+            REGISTRY[StepName.SEGMENT].profile,
+        )
+
     assert reader.save_calls == []

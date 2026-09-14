@@ -18,6 +18,9 @@ from progress_bar.api import ProgressBar
 
 from fits.environment.constant import WORKFLOW_ORDER
 from fits.environment.state import ExperimentState
+from fits.environment.progress import RunProgress
+from fits.workflows.engines.reporting import WorkflowReporter
+from fits.settings.loader import resolve_step_params
 from fits.workflows.engines.models import StepSpec
 from fits.workflows.engines.registry import REGISTRY
 
@@ -45,7 +48,8 @@ FutureResult = Future[list[ExperimentState]]
 RunningTasks = dict[FutureResult, Task]
 
 
-def run_workflow_scheduler(effective_cfg: Mapping[str, Any], exp_states: list[ExperimentState],) -> list[ExperimentState]:
+def run_workflow_scheduler(effective_cfg: Mapping[str, Any], exp_states: list[ExperimentState],
+                           *, run_progress: RunProgress | None = None) -> list[ExperimentState]:
     """
     Execute the configured workflow as a conveyor pipeline.
 
@@ -54,6 +58,9 @@ def run_workflow_scheduler(effective_cfg: Mapping[str, Any], exp_states: list[Ex
     experiment to run while another experiment is still processing upstream.
     """
     runtime_steps = _resolve_runtime_steps(effective_cfg)
+    reporter = (WorkflowReporter(run_progress,
+                [step.spec.profile.step_name for step in runtime_steps], exp_states)
+                if run_progress is not None else None)
 
     if not runtime_steps:
         return exp_states
@@ -95,6 +102,7 @@ def run_workflow_scheduler(effective_cfg: Mapping[str, Any], exp_states: list[Ex
                 max_running=cpu_workers,
                 executor=cpu_executor,
                 runtime_steps=runtime_steps,
+                reporter=reporter,
             )
 
             _submit_ready_tasks(
@@ -103,6 +111,7 @@ def run_workflow_scheduler(effective_cfg: Mapping[str, Any], exp_states: list[Ex
                 max_running=1,
                 executor=gpu_executor,
                 runtime_steps=runtime_steps,
+                reporter=reporter,
             )
 
             running_futures = set(cpu_running) | set(gpu_running)
@@ -173,12 +182,7 @@ def _resolve_runtime_steps(
                 f"Enabled step {str(step_name)!r} is missing from the registry."
             )
 
-        params = step_cfg.get("params", {})
-
-        if not isinstance(params, Mapping):
-            raise TypeError(
-                f"Expected '{step_name}.params' to be a mapping."
-            )
+        params = resolve_step_params(str(step_name), step_cfg)
 
         runtime_steps.append(
             RuntimeStep(
@@ -197,6 +201,7 @@ def _submit_ready_tasks(
     max_running: int,
     executor: ThreadPoolExecutor,
     runtime_steps: list[RuntimeStep],
+    reporter: WorkflowReporter | None = None,
 ) -> None:
     while ready and len(running) < max_running:
         task = _pop_eligible_task(
@@ -217,12 +222,14 @@ def _submit_ready_tasks(
             task.state.experiment_id,
         )
 
-        future = executor.submit(
-            runtime_step.spec.item_runner,
-            runtime_step.settings,
-            task.state,
-            profile,
-        )
+        if reporter is not None:
+            future = executor.submit(
+                reporter.run, runtime_step.spec.item_runner,
+                runtime_step.settings, task.state, profile)
+        else:
+            future = executor.submit(
+                runtime_step.spec.item_runner,
+                runtime_step.settings, task.state, profile)
 
         running[future] = task
 

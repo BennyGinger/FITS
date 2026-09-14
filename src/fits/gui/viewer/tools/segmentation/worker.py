@@ -6,7 +6,7 @@ from typing import Any
 from PySide6.QtCore import QObject, Signal, Slot
 
 from cellpose_kit.client import CellposeWrapper
-from fits.settings.models import SegmentSettings
+from fits.settings.models import SegmentChannelSettings
 from fits.tasks.segmentation.preview_cache import SegmentationPreview
 from fits.tasks.segmentation.tuning import SegmentationTuningSession
 
@@ -27,7 +27,7 @@ class PreviewOutcome:
 
 @dataclass(frozen=True, slots=True)
 class ModelInitializationRequest:
-    settings: SegmentSettings
+    settings: SegmentChannelSettings
 
 
 class ModelInitializationWorker(QObject):
@@ -43,7 +43,7 @@ class ModelInitializationWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            wrapper = CellposeWrapper.from_dict(self.request.settings.model_dump())
+            wrapper = CellposeWrapper.from_dict(self.request.settings.cellpose_payload(threading=True))
             wrapper.setup()
         except Exception as error:
             self.failed.emit(self.request, str(error))

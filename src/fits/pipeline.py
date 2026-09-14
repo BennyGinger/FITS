@@ -6,10 +6,7 @@ import os
 os.environ["TQDM_DISABLE"] = "1" # Silence tqdm progress bars of trackastra pkg
 from pathlib import Path
 import logging
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from fits.environment.progress import RunProgress
+from fits.environment.progress import RunProgress
 
 from fits.environment.constant import RunTimeMode, WORKFLOW_ORDER
 from fits.settings.resolution import apply_overwrite_cascade
@@ -17,7 +14,7 @@ from fits.workflows.execute import run_workflow_scheduler_entry, run_workflow
 from fits.environment.discovery import collect_supported_files, assemble_experiment_states
 from fits.environment.log import configure_logging
 from fits.environment.report import format_run_report
-from fits.settings.loader import load_settings
+from fits.settings.loader import load_settings, save_run_settings
 from fits.tasks import aggregate_distance_profiles, aggregate_quantification
 
 
@@ -65,6 +62,11 @@ def start_pipeline(
         console_handler=console_handler,
     )
 
+    # Save the user's full configuration before execution or temporary run
+    # overrides, so the GUI can reopen this run even if processing fails.
+    saved_settings = save_run_settings(cfg_path, run_dir)
+    logger.info("Run settings saved to %s", saved_settings)
+
     # --- discover images ---
     supported_files = collect_supported_files(run_dir)
     
@@ -92,9 +94,10 @@ def start_pipeline(
     
     # --- build ExperimentState list from saved states + newly discovered raw files ---
     states = assemble_experiment_states(run_dir, supported_files, effective_cfg, user_name)
+    run_progress = run_progress if run_progress is not None else RunProgress()
 
     def save_progress_report() -> None:
-        if run_progress is None or log_path is None or not run_progress.snapshot():
+        if log_path is None:
             return
         timestamp = log_path.stem.removeprefix("fits_")
         report_path = log_path.with_name(f"fits_report_{timestamp}.txt")
@@ -124,11 +127,12 @@ def start_pipeline(
             match rt_mode:
                 case "batch":
                     logger.info("Starting batch execution of workflow")
-                    final_states = run_workflow(effective_cfg, states)
+                    final_states = run_workflow(effective_cfg, states, run_progress=run_progress)
                 case "conveyor":
                     logger.info("Starting conveyor execution of workflow")
-                    final_states = run_workflow_scheduler_entry(effective_cfg, states)
+                    final_states = run_workflow_scheduler_entry(effective_cfg, states, run_progress=run_progress)
     except BaseException:
+        run_progress.skip_unfinished()
         save_progress_report()
         raise
     

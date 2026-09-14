@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fits.environment.constant import WORKFLOW_ORDER, StepName
+from fits.environment.constant import FITS_MASK_TRACK, WORKFLOW_ORDER, StepName
 from fits.environment.progress import RunProgress
 from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, STEP_LAYOUTS, SettingsAdapter
 from fits.gui.settings_editor import RuntimeSettingsEditor, StepSettingsEditor
@@ -143,6 +143,7 @@ class FitsMainWindow(QMainWindow):
         self._editors: dict[StepName, StepSettingsEditor] = {}
         self.runtime_editor: RuntimeSettingsEditor | None = None
         self._segmentation_tuner = None
+        self._tracking_viewer = None
         self._prepared_available = False
         self._phases_unlocked = False
         self._populating_settings = False
@@ -209,6 +210,16 @@ class FitsMainWindow(QMainWindow):
 
         self.run_browser = RunDirectoryBrowser()
         self.run_browser.path_activated.connect(self._open_selected_report)
+        self.tracking_viewer_button = QPushButton("Open tracking viewer…")
+        self.tracking_viewer_button.setEnabled(False)
+        self.tracking_viewer_button.setToolTip(
+            f"Open a selected {FITS_MASK_TRACK}, or the first one in the run directory.")
+        self.tracking_viewer_button.setStyleSheet(
+            "QPushButton { background-color: #d97706; color: white; font-weight: bold; } "
+            "QPushButton:disabled { background-color: #6b4b2a; color: #aaa; }")
+        self.tracking_viewer_button.clicked.connect(
+            lambda: self._open_tracking_viewer())
+        self.run_browser.selection_layout.addWidget(self.tracking_viewer_button)
         top_splitter.addWidget(self.run_browser)
         top_splitter.setStretchFactor(0, 2)
         top_splitter.setStretchFactor(1, 1)
@@ -367,9 +378,9 @@ class FitsMainWindow(QMainWindow):
         from fits.gui.viewer.segmentation_window import SegmentationTunerWindow
 
         self._sync_identity()
+        self._editors[StepName.SEGMENT].sync_to_adapter()
         try:
-            settings = SegmentSettings.model_validate(
-                self.adapter.as_mapping()["segment"]["params"])
+            settings = self.adapter.segmentation_settings(for_tuning=True)
         except ValueError as error:
             QMessageBox.critical(self, "Cannot open segmentation tuner", str(error))
             return
@@ -388,16 +399,8 @@ class FitsMainWindow(QMainWindow):
 
     @Slot(object)
     def _apply_segmentation_settings(self, settings: SegmentSettings) -> None:
-        def store(path: str, value: object) -> None:
-            if isinstance(value, dict):
-                for key, child in value.items():
-                    store(f"{path}.{key}", child)
-            else:
-                self.adapter.set_field_value(
-                    StepName.SEGMENT, path, "None" if value is None else value)
-
-        for name, value in settings.to_payload_dict().items():
-            store(name, value)
+        self.adapter.set_segment_channels(
+            [entry.to_payload_dict() for entry in settings.channels])
         self._populate_from_adapter()
         self.step_tree.setCurrentItem(self._step_items[StepName.SEGMENT])
         self._append_log("Applied settings from the segmentation tuner.")
@@ -528,6 +531,7 @@ class FitsMainWindow(QMainWindow):
         self._show_phase_steps(self.phase_tabs.currentIndex())
         if hasattr(self, "segtune_button"):
             self.segtune_button.setEnabled(prepared)
+        self._refresh_tracking_viewer_button()
         self._update_run_button_text()
         current = self.step_tree.currentItem()
         if current is not None and self._step_from_item(current) != StepName.CONVERT and not unlocked:
@@ -822,12 +826,42 @@ class FitsMainWindow(QMainWindow):
     def _latest_report(self) -> Path | None:
         if not self.adapter.run_dir:
             return None
-        reports = sorted((Path(self.adapter.run_dir) / "logs").glob("fits_report_*.txt"))
+        log_root = str(self.adapter.runtime_value("log_dir")).strip()
+        root = Path(log_root).expanduser() if log_root else Path(self.adapter.run_dir)
+        reports = sorted((root / "logs").glob("fits_report_*.txt"))
         return reports[-1] if reports else None
 
     def _refresh_report_button(self) -> None:
         self.report_button.setEnabled(
             self._thread is None and self._latest_report() is not None)
+
+    def _tracking_artifacts(self) -> list[Path]:
+        if not self.adapter.run_dir:
+            return []
+        root = Path(self.adapter.run_dir)
+        if not root.is_dir():
+            return []
+        try:
+            return sorted(root.rglob(FITS_MASK_TRACK))
+        except OSError:
+            return []
+
+    def _refresh_tracking_viewer_button(self) -> None:
+        self.tracking_viewer_button.setEnabled(bool(self._tracking_artifacts()))
+
+    @Slot()
+    def _open_tracking_viewer(self, path: Path | None = None) -> None:
+        from fits.gui.viewer.tracking_window import TrackingViewerWindow
+
+        selected = path or self.run_browser.selected_path
+        if selected is None or selected.name != FITS_MASK_TRACK or not selected.is_file():
+            artifacts = self._tracking_artifacts()
+            selected = artifacts[0] if artifacts else None
+        if selected is None:
+            return
+        self._tracking_viewer = TrackingViewerWindow(
+            experiments_dir=self.adapter.run_dir, tracking_path=selected, parent=self)
+        self._tracking_viewer.show()
 
     @Slot()
     def _open_latest_report(self) -> None:
@@ -838,6 +872,9 @@ class FitsMainWindow(QMainWindow):
     @Slot(object)
     def _open_selected_report(self, path: object) -> None:
         report = Path(path)
+        if report.is_file() and report.name == FITS_MASK_TRACK:
+            self._open_tracking_viewer(report)
+            return
         if report.is_file() and report.name.startswith("fits_report_") and report.suffix == ".txt":
             self._show_report(report)
 

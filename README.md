@@ -41,6 +41,12 @@ Convert → Preprocess → Process → Analysis
            └─ time registration, channel registration, background subtraction
 ```
 
+Every launch saves the input configuration, including its comments, as
+`fits_settings.toml` in the run directory before processing starts. This also
+applies when running `pipeline.py` with the packaged `user_settings.toml`,
+so the GUI can later load the run's settings. The saved copy reflects the
+latest launch and remains available if processing fails.
+
 Each experiment has an `experiment_state.json` file containing its artifacts,
 completed steps, metadata, and provenance. Artifact paths, rather than a second
 workflow manifest, are the durable evidence used to resume work. Conversion can
@@ -128,9 +134,18 @@ uv run fits-segtune
 uv run fits-drawmask
 ```
 
-In `fits-gui`, select Segmentation and click **Tune segmentation…** to preview
-Cellpose with the current settings. **Apply and close** copies the selected
-channel and tuning settings back to the main GUI. Closing the tuner without
+In `fits-gui`, each segmentation channel has its own settings section. Use
+**+** beside the target channel to add a section, or **−** to remove one.
+Each channel can use a different model, diameter, denoising option, and nuclear
+helper channel. Execution and overwrite controls apply to the whole step.
+
+Click **Tune segmentation…** to preview Cellpose with those settings.
+SegTune shows a selectable list of channel configurations below its controls.
+**Apply and add another channel** retains the current settings and selects
+the next unused image channel. Click a row to revisit its settings, or its
+trash button to remove it; the last row cannot be removed. Channels assigned
+to other rows are excluded from the target selector. **Apply and close**
+copies the entire channel list back to the main GUI. Closing the tuner without
 applying leaves the main settings unchanged. Use Save settings or Run pipeline
 in the main GUI to save the changes. Converted `fits_array.tif` images are
 required for previewing. When an image is opened, SegTune initializes and caches
@@ -138,6 +153,8 @@ the selected Cellpose model in the background without running an automatic
 preview. The tuning controls remain editable while it loads, but **Run preview**
 stays disabled until the model is ready. Changing the built-in model, custom
 model path, or denoising option queues the latest model for initialization.
+Different initialized models remain cached in the Python process, so switching
+back reuses the model. Keeping multiple models also uses more CPU/GPU memory.
 
 The main settings interface groups steps into **Convert**, **Preprocess**,
 **Process**, and **Analysis** tabs. The step list on the left shows only the
@@ -159,8 +176,9 @@ invalid channel names and other data-dependent validation.
 
 `fits-drawmask` opens a dedicated mask editor with **Reference** and **ROI**
 tabs sharing the same experiment and image controls. `fits-segtune` opens its
-own segmentation window; its standalone Apply settings action updates only
-the current tuning session and does not write pipeline settings.
+own segmentation window; standalone **Apply and close** ends the tuning
+session without writing a pipeline settings file. Launch the tuner from
+`fits-gui` to transfer its settings back and save them.
 Opening an image also loads the first reference and ROI masks beside it, in
 filename order. Selecting a mask file opens its sibling image and that specific
 mask in the matching tab.

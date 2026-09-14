@@ -99,22 +99,39 @@ workers = "None" # "None" lets the executor select the worker count; ignored whe
 enabled = false
 
 [segment.params]
-channel_to_segment = [] # Required when segmentation is enabled.
-do_denoise = true
-nuclear_channel = "None" # Additional nuclear channel label or "None".
 overwrite = false
 execution = "thread" # serial | thread | process
 workers = "None" # "None" lets the executor select the worker count; ignored when execution = "serial".
 # ordered_execution = false # Internal ordering control; not exposed in the GUI.
 
-[segment.params.user_settings]
-# Backend-specific Cellpose settings can be added here. Examples:
+# Segmentation settings are independent for every target channel. Uncomment
+# this entire block, then copy it once for every channel to segment. Each copy
+# may use a completely different Cellpose model and parameter set.
+[[segment.channels]]
+channel = "GFP"
+do_denoise = true
+nuclear_channel = "None" # Optional helper channel, or "None".
+
+[segment.channels.user_settings]
 model_type = "cyto3"
-diameter = 15
+diameter = 30
 flow_threshold = 0.4
 cellprob_threshold = 0.0
 do_3D = false
 stitch_threshold = 0.0
+
+# [[segment.channels]]
+# channel = "GFP"
+# do_denoise = true
+# nuclear_channel = "None" # Optional helper channel, or "None".
+#
+# [segment.channels.user_settings]
+# model_type = "cyto3"
+# diameter = 30
+# flow_threshold = 0.4
+# cellprob_threshold = 0.0
+# do_3D = false
+# stitch_threshold = 0.0
 
 # ============================
 # Tracking

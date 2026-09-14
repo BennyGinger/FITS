@@ -23,7 +23,7 @@ from fits.gui.viewer.tools.segmentation.worker import (
 )
 from fits.gui.viewer.segmentation_window import SegmentationTunerWindow
 from fits.gui.viewer.mask_window import MaskDrawingWindow
-from fits.settings.models import SegmentSettings
+from fits.settings.models import SegmentChannelSettings
 
 
 _APPLICATION: QApplication | None = None
@@ -49,8 +49,8 @@ def test_cellpose_panel_returns_compact_user_settings() -> None:
     panel = CellposeSettingsPanel()
     assert "automatic detection of cell boundaries" in (
         panel.layout().itemAt(1).widget().text())
-    settings = SegmentSettings(
-        channel_to_segment=["GFP"],
+    settings = SegmentChannelSettings(
+        channel="GFP",
         nuclear_channel="DAPI",
         do_denoise=False,
         user_settings={"pretrained_model": "/tmp/custom_model",
@@ -92,8 +92,8 @@ def test_model_initialization_worker_sets_up_without_running_inference(
 
     monkeypatch.setattr(
         "fits.gui.viewer.tools.segmentation.worker.CellposeWrapper", FakeWrapper)
-    request = ModelInitializationRequest(SegmentSettings(
-        channel_to_segment=["GFP"],
+    request = ModelInitializationRequest(SegmentChannelSettings(
+        channel="GFP",
         user_settings={"model_type": "cyto3"},
     ))
     worker = ModelInitializationWorker(request)
@@ -130,8 +130,8 @@ def test_latest_model_change_is_initialized_after_current_load(monkeypatch) -> N
 
     _app()
     window = SegmentationTunerWindow()
-    latest = SegmentSettings(
-        channel_to_segment=["GFP"],
+    latest = SegmentChannelSettings(
+        channel="GFP",
         user_settings={"model_type": "nuclei"},
     )
     started = []
@@ -488,8 +488,8 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
     class FakeSession:
         def __init__(self, source_path: Path, *, segment_settings=None) -> None:
             self.source_path = source_path
-            self.segment_settings = segment_settings or SegmentSettings(
-                channel_to_segment=["GFP"],
+            self.segment_settings = segment_settings or SegmentChannelSettings(
+                channel="GFP",
                 user_settings={"model_type": "cyto3"},)
             self.channel_labels = ("GFP", "DAPI")
             self.frame_count = 3
@@ -500,7 +500,7 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
         def display_frame(self, frame_index: int, channel: str, z_index: int):
             return np.full((8, 8), frame_index + z_index)
 
-        def set_segment_settings(self, settings: SegmentSettings) -> None:
+        def set_segment_settings(self, settings: SegmentChannelSettings) -> None:
             self.segment_settings = settings
 
         def load_cached_preview(self, *args, **kwargs):
@@ -520,7 +520,7 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
         "_initialize_selected_model",
         lambda self: initialization_requests.append(True),)
     window = SegmentationTunerWindow(tmp_path)
-    emitted: list[SegmentSettings] = []
+    emitted: list[SegmentChannelSettings] = []
     window.settings_applied.connect(emitted.append)
     monkeypatch.setattr(window, "_run_preview", lambda: preview_requests.append(True))
 
@@ -562,12 +562,12 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
 
     window.channel_combo.setCurrentText("DAPI")
     window.settings_panel.denoise.setCheckState(Qt.CheckState.Unchecked)
-    QTest.keyClick(window.image_viewer, Qt.Key.Key_S)
-
     assert window.frame_slider.maximum() == 2
     assert window.z_slider.maximum() == 1
-    assert emitted[0].channel_to_segment == ["DAPI"]
-    assert emitted[0].do_denoise is False
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_S)
+    assert not window.isVisible()
+    assert emitted[0].channels[0].channel == "DAPI"
+    assert emitted[0].channels[0].do_denoise is False
     window.close()
 
 

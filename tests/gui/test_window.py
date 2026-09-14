@@ -56,19 +56,19 @@ def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
 
     segment_item = window._step_items[StepName.SEGMENT]
     segment_editor = window._editors[StepName.SEGMENT]
-    assert segment_editor.widgets["channel_to_segment"].isEnabled() is False
+    assert segment_editor.channel_widgets[0]["channel"].isEnabled() is False
     segment_item.setCheckState(0, Qt.CheckState.Checked)
     assert adapter.step_enabled(StepName.SEGMENT) is True
     assert window.settings_stack.currentWidget() is window._editors[StepName.SEGMENT]
-    assert segment_editor.widgets["channel_to_segment"].isEnabled() is True
+    assert segment_editor.channel_widgets[0]["channel"].isEnabled() is True
 
     register_editor = window._editors[StepName.REGISTER_TIME]
     register_editor._update_worker_state()
     assert register_editor.widgets["workers"].isEnabled() is False
 
-    segment_editor.widgets["channel_to_segment"].setText("GFP, RFP")
+    segment_editor.channel_widgets[0]["channel"].setText("GFP")
     segment_editor.sync_to_adapter()
-    assert adapter.field_value(StepName.SEGMENT, "channel_to_segment") == ["GFP", "RFP"]
+    assert adapter.segment_channels()[0]["channel"] == "GFP"
 
     window.close()
 
@@ -543,6 +543,7 @@ def test_run_warns_for_all_missing_enabled_step_inputs(
 ) -> None:
     _application()
     adapter = SettingsAdapter()
+    adapter.set_segment_channels([])
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "User"
     for step in (StepName.REGISTER_CHANNEL, StepName.SEGMENT, StepName.TRACK):
@@ -567,7 +568,7 @@ def test_run_warns_for_all_missing_enabled_step_inputs(
     assert title == "Cannot run FITS"
     assert "Convert: Enter at least one channel label (channel_labels)." in message
     assert "Register channels: Choose a reference channel (reference_channel)." in message
-    assert "Segmentation: Choose at least one channel to segment (channel_to_segment)." in message
+    assert "Segmentation: Choose a target channel for every section." in message
     assert "Tracking: Choose at least one channel to track (channel_to_track)." in message
     window.close()
 

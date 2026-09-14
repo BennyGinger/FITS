@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from fits.settings.models import SegmentSettings
+from fits.settings.models import SegmentChannelSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +54,7 @@ class PreviewCache:
              frame_index: int,
              z_index: int | None,
              input_labels: Sequence[str],
-             settings: SegmentSettings,
+             settings: SegmentChannelSettings,
              ) -> Path:
         stat = self.source_path.stat()
         payload = {"source": str(self.source_path),

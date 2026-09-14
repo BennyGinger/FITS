@@ -374,14 +374,23 @@ class SegmentSettings(SettingsModel):
 
 ############# Tracking settings ############
 
+class TrackPostprocessSettings(BaseModel):
+    """Settings for optional static-cell mask post-processing."""
+
+    enabled: bool = False
+    shape_similarity: float = Field(default=0.9, ge=0, le=1)
+    minimum_appearances: int = Field(default=5, ge=1)
+    extrapolate_start: bool = True
+    extrapolate_end: bool = True
+
+
 class TrackSettings(SettingsModel):
     """Settings for converting segmentation masks into tracked labels.
 
     Attributes:
         channel_to_track: Segmentation channel labels to track.
         backend: Tracking backend name.
-        filter_by_length: Minimum track length, in frames, retained in the
-            output. Zero disables length filtering.
+        postprocess: Optional cleanup and interpolation for static-cell tracks.
         trackastra: Configuration passed to the Trackastra backend.
 
     Inherited attributes:
@@ -394,7 +403,7 @@ class TrackSettings(SettingsModel):
     """
     channel_to_track: Sequence[str] = Field(exclude=True)
     backend: str = "trackastra"
-    filter_by_length: int = Field(default=0, ge=0)
+    postprocess: TrackPostprocessSettings = Field(default_factory=TrackPostprocessSettings)
 
     execution: ExecMode = Field(default="serial", exclude=True)
     workers: int | None = Field(default=1, ge=1, exclude=True)
@@ -410,7 +419,7 @@ class TrackSettings(SettingsModel):
         payload = {
             "channel_to_track": list(self.channel_to_track),
             "backend": self.backend,
-            "filter_by_length": self.filter_by_length,
+            "postprocess": self.postprocess.model_dump(),
             **getattr(self, self.backend, {}),
         }
         return payload

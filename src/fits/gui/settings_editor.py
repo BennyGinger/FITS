@@ -22,6 +22,13 @@ from fits.gui.settings_adapter import (
     runtime_field_tooltip,
 )
 
+TRACK_POSTPROCESS_PARAMETERS = (
+    "postprocess.shape_similarity",
+    "postprocess.minimum_appearances",
+    "postprocess.extrapolate_start",
+    "postprocess.extrapolate_end",
+)
+
 
 class StableAdvancedGroup(QGroupBox):
     """Hide advanced fields while reserving their space in the layout."""
@@ -115,6 +122,7 @@ class StepSettingsEditor(QWidget):
         self.adapter.set_field_value(self.step, path, value)
         self._update_worker_state()
         self._update_mask_request_state()
+        self._update_track_postprocess_state()
         self.value_changed.emit()
 
     def sync_to_adapter(self) -> None:
@@ -149,6 +157,19 @@ class StepSettingsEditor(QWidget):
             if count is not None:
                 count.setEnabled(self._editable and (toggle is None or toggle.value()))
 
+    def _update_track_postprocess_state(self) -> None:
+        toggle = self.widgets.get("postprocess.enabled")
+        if toggle is None:
+            return
+        parameters_enabled = (
+            self._editable
+            and bool(toggle.value())
+        )
+        for path in TRACK_POSTPROCESS_PARAMETERS:
+            parameter = self.widgets.get(path)
+            if parameter is not None:
+                parameter.setEnabled(parameters_enabled)
+
     def _refresh_enabled_states(self) -> None:
         for path, widget in self.widgets.items():
             if path != "workers":
@@ -159,6 +180,7 @@ class StepSettingsEditor(QWidget):
                 widget.setEnabled(self._editable and section_enabled)
         self._update_worker_state()
         self._update_mask_request_state()
+        self._update_track_postprocess_state()
 
     def showEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         self._update_worker_state()

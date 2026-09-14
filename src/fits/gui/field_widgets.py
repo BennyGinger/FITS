@@ -54,6 +54,8 @@ class FloatWidget(FocusWheelDoubleSpinBox):
         super().__init__()
         self.setDecimals(6)
         self.setRange(-1_000_000_000.0, 1_000_000_000.0)
+        if value < 1:
+            self.setSingleStep(0.1)
         self.setValue(value)
         self.valueChanged.connect(self.value_changed.emit)
 

@@ -110,7 +110,6 @@ enabled = true
 [track.params]
 channel_to_track = ["RFP"] # The channel to use for segmentation. This should match one of the channel labels in the input files.
 backend = "trackastra" # Tracking backend to use. Supported values are: trackastra.
-filter_by_length = 120 # Minimum track length (in frames) to keep. Tracks shorter than this length will be filtered out. Default is 0, which means no filtering based on track length.
 overwrite = false # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.
 
 [track.params.trackastra] # User-defined settings for tracking. This is a dictionary where the keys are the setting names and the values are the corresponding values to use for those settings. These settings will be passed directly to the tracking algorithm during tracking. You can specify any tracking settings here, such as max distance, max frame gap, etc. For example:
@@ -118,6 +117,13 @@ overwrite = false # Whether to overwrite existing output files. If false, it wil
 mode = "greedy_nodiv" # Tracking mode to use. Supported values are: greedy, greedy_nodiv, ilp.
 pretrained_model = "general_2d" # Pretrained model to use for feature extraction in tracking. Allowed values are: "ctc", "general_2d", "general_2d_w_SAM2_features"
 max_distance = 150.0 # Maximum distance (in pixels) between objects in consecutive frames to be considered the same object for tracking purposes.
+
+[track.params.postprocess]
+enabled = false # Enable static-cell shape cleanup and completion after tracking.
+shape_similarity = 0.9 # Minimum Dice similarity to the track's temporal consensus mask.
+minimum_appearances = 5 # Valid observations required to retain and complete a track.
+extrapolate_start = true # Copy the first valid mask to preceding frames.
+extrapolate_end = true # Copy the last valid mask to following frames.
 
 # ============================
 # Distance profile

@@ -125,7 +125,6 @@ enabled = false
 [track.params]
 channel_to_track = [] # Required when tracking is enabled.
 backend = "trackastra"
-filter_by_length = 0
 overwrite = false
 execution = "serial" # serial | thread | process
 workers = 1 # Ignored when execution = "serial".
@@ -136,6 +135,14 @@ workers = 1 # Ignored when execution = "serial".
 mode = "greedy_nodiv"
 pretrained_model = "general_2d"
 max_distance = 150.0
+
+[track.params.postprocess]
+# Optional cleanup for static or nearly static cells after tracking.
+enabled = false
+shape_similarity = 0.9 # Minimum Dice similarity to the track's temporal consensus mask.
+minimum_appearances = 5 # Valid observations required to retain and complete a track.
+extrapolate_start = true # Copy the first valid mask to preceding frames.
+extrapolate_end = true # Copy the last valid mask to following frames.
 
 # ============================
 # Distance profile

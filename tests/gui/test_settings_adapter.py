@@ -111,3 +111,22 @@ def test_mask_request_settings_round_trip(tmp_path: Path) -> None:
     assert DistanceProfileSettings.model_validate(params).draw_ref_mask is True
     assert reloaded.field_value(StepName.DISTANCE_PROFILE, "expected_roi_masks") == 2
     assert "draw_ref_mask" not in STEP_LAYOUTS[StepName.DISTANCE_PROFILE].basic
+
+
+def test_tracking_postprocess_settings_round_trip(tmp_path: Path) -> None:
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_field_value(StepName.TRACK, "postprocess.enabled", True)
+    adapter.set_field_value(StepName.TRACK, "postprocess.shape_similarity", 0.8)
+
+    path = adapter.save_to_run_dir()
+    reloaded = SettingsAdapter()
+    reloaded.load(path)
+
+    assert reloaded.field_value(StepName.TRACK, "postprocess.enabled") is True
+    assert reloaded.field_value(
+        StepName.TRACK, "postprocess.shape_similarity") == 0.8
+    assert "filter_by_length" not in reloaded.document[StepName.TRACK]["params"]
+    assert reloaded.field_value(
+        StepName.TRACK, "postprocess.minimum_appearances") == 5
+    assert "postprocess.shape_similarity" in STEP_LAYOUTS[StepName.TRACK].basic

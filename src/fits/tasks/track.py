@@ -8,6 +8,8 @@ from tracklink.api import TrackModel
 from fits.environment.constant import ARTI_IMG
 from fits.environment.state import ExperimentState
 from fits.settings.models import TrackSettings
+from fits.tracking_postprocess import StaticMaskPostprocessor
+from fits.tracking_postprocess import StaticPostprocessConfig
 from fits.workflows.engines.models import StepProfile
 from fits.workflows.engines.run_decision import decide_run
 from fits.workflows.errors import StepExecutionError
@@ -70,8 +72,14 @@ def track(settings: TrackSettings, exp_state: ExperimentState, step_profile: Ste
         tracking.configure(backend_settings)
         
         # Run tracking
-        tracking.track(input_image.array, input_mask.array) 
-        filtered_mask = tracking.filter_by_length(min_length=settings.filter_by_length)
+        tracked_mask = tracking.track(input_image.array, input_mask.array)
+        if settings.postprocess.enabled:
+            postprocess_config = StaticPostprocessConfig(
+                shape_similarity=settings.postprocess.shape_similarity,
+                minimum_appearances=settings.postprocess.minimum_appearances,
+                extrapolate_start=settings.postprocess.extrapolate_start,
+                extrapolate_end=settings.postprocess.extrapolate_end,)
+            tracked_mask = StaticMaskPostprocessor(postprocess_config).process(tracked_mask)
         
         output_path = exp_state.artifact(step_profile.output_artifact)
         if output_path is None or settings.overwrite:
@@ -79,7 +87,7 @@ def track(settings: TrackSettings, exp_state: ExperimentState, step_profile: Ste
         else:
             existing_reader = FitsIO.from_path(output_path)
         merging = mask_reader.merge_channels(existing=existing_reader,
-                                             new_array=filtered_mask,
+                                             new_array=tracked_mask,
                                              new_axes=input_mask.axes,
                                              new_channel_indices=track_idx,)
         

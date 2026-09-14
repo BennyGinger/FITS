@@ -36,6 +36,37 @@ Mask label consistency across experiments — proposal only
     Consider suggestions first, with an optional strict mode rather than a hard lock.
 
 
+Tracking post-processing for static cells
+-----------------------------------------
+[x] Implemented a FITS-owned, tracker-agnostic static-mask postprocessor.
+    It restores stable identities with a temporal nonzero-mode super-mask,
+    removes masks that differ from each track's consensus shape, discards
+    tracks below the minimum-appearances threshold, fills internal gaps, and
+    optionally extrapolates the first and last valid masks to the sequence
+    boundaries. Existing valid masks are protected and conflicting generated
+    masks fall back to the disjoint super-mask shape to avoid halo artefacts.
+    Settings are integrated into the tracking task, TOML configuration, and
+    the GUI's basic settings. The implementation remains independent of
+    `tracklink`, allowing future tracking backends to reuse it unchanged.
+
+
+Manual tracking viewer/editor
+-----------------------------
+[ ] Build a dedicated FITS tracking viewer/editor, reusing the existing image
+    viewer's navigation and interaction patterns but with a multi-label
+    track overlay and track-aware session/model (not the binary mask canvas).
+[ ] Support point-track annotation as explicit `(frame, x, y, track ID)`
+    observations. Display points and associate them with segmented objects
+    only on request; do not silently invent a mask for a point observation.
+[ ] Load an existing tracked-label movie for manual correction: inspect a
+    selected object across time; split a track at a frame; merge/reassign
+    tracks from a chosen frame onward; remove detections or tracks; and
+    provide undo/redo plus unsaved-change protection.
+[ ] Save the finalized corrected label movie as the tracking artifact and
+    record manual edits/provenance in a compact correction log so the result
+    remains auditable and can later support replaying edits.
+
+
 Per-channel segmentation settings
 ---------------------------------
 Goal: segment multiple channels with independent Cellpose settings, using
@@ -182,3 +213,13 @@ Priority: future robustness work; not a prerequisite for processing tuners.
     replacing an experiment, closing a tool, or cancelling work.
 [ ] Verify memory use and responsiveness on representative large stacks,
     including multi-channel and Z-stack examples and repeated tool switches.
+
+
+bioimagequant: Implement line profile
+-------------------------------
+Goal: provide a tool for users to generate and visualize line profiles from bioimagequant images.
+[ ] Implement line drawing and selection interface.
+[ ] Compute intensity profiles along the drawn line for each channel.
+[ ] Display the line profile in a separate plot window.
+[ ] Allow exporting the line profile data to a parquet file.
+[ ] Support updating the profile dynamically when the line is adjusted.

@@ -13,6 +13,8 @@ from fits.environment.constant import StepName, WORKFLOW_ORDER
 from fits.environment.progress import RunProgress, StageStatus, WorkflowStage
 from fits.environment.report import format_run_report
 from fits.gui.settings_adapter import SettingsAdapter
+from fits.gui.settings_editor import StepSettingsEditor
+from fits.gui.field_widgets import FloatWidget
 from fits.gui.window import FitsMainWindow, _user_error_message
 from fits.workflows.errors import StepExecutionError
 
@@ -172,6 +174,40 @@ def test_custom_runtime_settings_start_collapsed() -> None:
     assert not window.runtime_editor._advanced_group.isChecked()
     assert window.runtime_editor.widgets["execution"].currentText() == "batch"
     window.close()
+
+
+def test_tracking_postprocess_controls_follow_toggle() -> None:
+    _application()
+    adapter = SettingsAdapter()
+    editor = StepSettingsEditor(adapter, StepName.TRACK)
+
+    assert editor.widgets["postprocess.enabled"].isChecked() is False
+    for path in (
+        "postprocess.shape_similarity",
+        "postprocess.minimum_appearances",
+        "postprocess.extrapolate_start",
+        "postprocess.extrapolate_end",
+    ):
+        assert editor.widgets[path].isEnabled() is False
+
+    editor.widgets["postprocess.enabled"].setChecked(True)
+    assert adapter.field_value(StepName.TRACK, "postprocess.enabled") is True
+    for path in (
+        "postprocess.shape_similarity",
+        "postprocess.minimum_appearances",
+        "postprocess.extrapolate_start",
+        "postprocess.extrapolate_end",
+    ):
+        assert editor.widgets[path].isEnabled() is True
+
+    editor.close()
+
+
+def test_sub_unit_float_widget_uses_tenth_steps() -> None:
+    _application()
+
+    assert FloatWidget(0.4).singleStep() == pytest.approx(0.1)
+    assert FloatWidget(2.0).singleStep() == pytest.approx(1.0)
 
 
 def test_custom_log_directory_in_advanced_runtime_settings(tmp_path: Path) -> None:

@@ -77,7 +77,15 @@ STEP_LAYOUTS: dict[StepName, StepLayout] = {
     ),
     StepName.TRACK: StepLayout(
         title="Tracking",
-        basic=("channel_to_track", "filter_by_length", "overwrite"),
+        basic=(
+            "channel_to_track",
+            "postprocess.enabled",
+            "postprocess.shape_similarity",
+            "postprocess.minimum_appearances",
+            "postprocess.extrapolate_start",
+            "postprocess.extrapolate_end",
+            "overwrite",
+        ),
         advanced=(
             "backend",
             "trackastra.mode",
@@ -113,7 +121,10 @@ FIELD_LABELS: dict[str, str] = {
     "do_3D": "Process in 3D",
     "do_denoise": "Denoise",
     "export_channels": "Export channels",
-    "filter_by_length": "Minimum track length",
+    "shape_similarity": "Shape similarity",
+    "minimum_appearances": "Minimum appearances",
+    "extrapolate_start": "Complete track start",
+    "extrapolate_end": "Complete track end",
     "fit_channel": "Fitting channel",
     "frame_workers": "Frame workers",
     "nuclear_channel": "Nuclear channel",
@@ -122,6 +133,14 @@ FIELD_LABELS: dict[str, str] = {
     "bin_width": "Bin width (pixels)",
     "maximum_bins": "Maximum number of bins",
     "z_projection": "Z projection",
+}
+
+FIELD_PATH_LABELS: dict[str, str] = {
+    "postprocess.enabled": "Static-cell mask smoothing",
+    "postprocess.shape_similarity": "Shape similarity (0–1)",
+    "postprocess.minimum_appearances": "Minimum appearances",
+    "postprocess.extrapolate_start": "Complete track start",
+    "postprocess.extrapolate_end": "Complete track end",
 }
 
 
@@ -355,8 +374,21 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
     (StepName.TRACK, "channel_to_track"): (
         "Segmentation channel labels whose masks are linked into tracks."
     ),
-    (StepName.TRACK, "filter_by_length"): (
-        "Minimum track length in frames to retain. Set 0 to keep every track."
+    (StepName.TRACK, "postprocess.enabled"): (
+        "Remove inconsistent masks and complete missing masks for static-cell tracks."
+    ),
+    (StepName.TRACK, "postprocess.shape_similarity"): (
+        "Minimum Dice similarity between an observed mask and its track's temporal "
+        "consensus, expressed as a proportion from 0 to 1."
+    ),
+    (StepName.TRACK, "postprocess.minimum_appearances"): (
+        "Minimum number of valid masks required to retain and complete a track."
+    ),
+    (StepName.TRACK, "postprocess.extrapolate_start"): (
+        "Copy the first valid mask into preceding frames."
+    ),
+    (StepName.TRACK, "postprocess.extrapolate_end"): (
+        "Copy the last valid mask into following frames."
     ),
     (StepName.TRACK, "overwrite"): (
         "Repeat tracking even when an up-to-date tracked-label artifact already exists."
@@ -444,6 +476,8 @@ def field_choices(step: StepName, path: str) -> tuple[str, ...] | None:
 
 
 def field_label(path: str) -> str:
+    if path in FIELD_PATH_LABELS:
+        return FIELD_PATH_LABELS[path]
     name = path.rsplit(".", 1)[-1]
     return FIELD_LABELS.get(name, name.replace("_", " ").capitalize())
 

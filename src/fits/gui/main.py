@@ -6,7 +6,7 @@ import argparse
 from PySide6.QtWidgets import QApplication
 
 from fits.gui.theme import apply_dark_theme
-from fits.gui.window import FitsMainWindow
+from fits.gui.main_window import FitsMainWindow
 
 
 def main() -> None:

@@ -8,11 +8,11 @@ import numpy as np
 import pytest
 
 from fits.environment.constant import StepName
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import BGSubSettings
 from fits.tasks.bg_sub import remove_bg
-from fits.workflows.engines.registry import REGISTRY
-from fits.workflows.errors import StepExecutionError
+from fits.workflows.definitions.registry import REGISTRY
+from fits.workflows.runtime.errors import StepExecutionError
 
 
 class _CallableWithoutName:
@@ -91,8 +91,8 @@ def test_remove_bg_processes_only_included_channels(monkeypatch, tmp_path: Path)
         seen.update(kwargs)
         return array + 2
 
-    monkeypatch.setattr("fits.tasks.bg_sub.FitsIO.from_path", lambda path: reader)
-    monkeypatch.setattr("fits.tasks.bg_sub.decide_run", lambda *args: SimpleNamespace(is_complete=False))
+    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
     monkeypatch.setattr("fits.tasks.bg_sub.bg_sub", fake_bg_sub)
 
     result = remove_bg(
@@ -114,8 +114,8 @@ def test_remove_bg_processes_only_included_channels(monkeypatch, tmp_path: Path)
 def test_remove_bg_skips_completed_step(monkeypatch, tmp_path: Path) -> None:
     state = _image_state(tmp_path)
     reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), tmp_path / "fits_array.tif")
-    monkeypatch.setattr("fits.tasks.bg_sub.FitsIO.from_path", lambda path: reader)
-    monkeypatch.setattr("fits.tasks.bg_sub.decide_run", lambda *args: SimpleNamespace(is_complete=True))
+    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=True))
     monkeypatch.setattr(
         "fits.tasks.bg_sub.bg_sub",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("background subtraction should not run")),
@@ -127,8 +127,8 @@ def test_remove_bg_skips_completed_step(monkeypatch, tmp_path: Path) -> None:
 
 def test_remove_bg_wraps_reader_errors(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), tmp_path / "fits_array.tif")
-    monkeypatch.setattr("fits.tasks.bg_sub.FitsIO.from_path", lambda path: reader)
-    monkeypatch.setattr("fits.tasks.bg_sub.decide_run", lambda *args: SimpleNamespace(is_complete=False))
+    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
 
     with pytest.raises(StepExecutionError, match="Unknown exclude_channel"):
         remove_bg(

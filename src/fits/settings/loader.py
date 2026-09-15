@@ -5,23 +5,34 @@ from collections.abc import Mapping
 import os
 from tempfile import NamedTemporaryFile
 
+from fits.environment.paths import fits_dir
+
 
 SAVED_SETTINGS_NAME = "fits_settings.toml"
 
 
+def run_settings_path(run_dir: Path) -> Path:
+    """Return the canonical settings snapshot path for a FITS run."""
+    return fits_dir(run_dir) / SAVED_SETTINGS_NAME
+
+
 def load_settings(path: str | Path) -> dict[str, Any]:
+    """
+    Load settings from a TOML file and return them as a dictionary.
+    """
     input_path = Path(path).expanduser().resolve()
     return tomllib.loads(input_path.read_text())
 
 
 def save_run_settings(source: Path, run_dir: Path) -> Path:
-    """Preserve the input TOML, including comments, beside the run's images.
+    """
+    Preserve the input TOML, including comments, in the run's ``.fits`` folder.
 
     Replace the previous snapshot only after the complete copy is written.
     GUI launches already use this file, so copying it onto itself is a no-op.
     """
     source = source.expanduser().resolve()
-    destination = run_dir.expanduser().resolve() / SAVED_SETTINGS_NAME
+    destination = run_settings_path(run_dir)
     if source == destination.resolve():
         return destination
     contents = source.read_bytes()
@@ -41,7 +52,8 @@ def save_run_settings(source: Path, run_dir: Path) -> Path:
 
 
 def resolve_step_params(step_name: str, step_config: Mapping[str, Any]) -> dict[str, Any]:
-    """Return model parameters, including step-level structured settings.
+    """
+    Return model parameters, including step-level structured settings.
 
     Segmentation channel tables live at ``segment.channels`` in TOML so that
     shared execution controls remain grouped under ``segment.params``.

@@ -8,9 +8,9 @@ import tifffile
 from PySide6.QtWidgets import QApplication, QDialog
 
 from fits.environment.constant import ARTI_IMG, StepName, WORKFLOW_ORDER
-from fits.environment.state import ExperimentState
-from fits.gui.settings_adapter import SettingsAdapter
-from fits.gui.window import FitsMainWindow
+from fits.workflows.experiments import ExperimentState, save_experiment_state
+from fits.gui.main_window import FitsMainWindow
+from fits.gui.settings import SettingsAdapter
 from fits.tasks.reference_mask import ReferenceMaskSession
 
 _APP = None
@@ -25,8 +25,13 @@ def test_main_gui_runs_profile_after_drawing_finalization(tmp_path, monkeypatch,
     folder.mkdir()
     source = folder / 'fits_array.tif'
     tifffile.imwrite(source, np.arange(64, dtype=np.uint16).reshape(8, 8), imagej=True, metadata={'axes': 'YX'})
-    ExperimentState.init(folder, folder / "original.nd2").with_complete_step(
-        step_name=StepName.CONVERT, artifact_kind=ARTI_IMG, artifact_path=source).save_state()
+    save_experiment_state(
+        ExperimentState.init(folder, folder / "original.nd2").with_complete_step(
+            step_name=StepName.CONVERT,
+            artifact_kind=ARTI_IMG,
+            artifact_path=source,
+        )
+    )
     session = ReferenceMaskSession(source)
     mask = np.zeros((8, 8), dtype=np.uint8)
     mask[0, 0] = 1

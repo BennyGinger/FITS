@@ -1,6 +1,6 @@
 from fits.environment.constant import DIST_IO, StepName
 from fits.settings.models import ConvertSettings
-from fits.workflows.engines.registry import REGISTRY
+from fits.workflows.definitions.registry import REGISTRY
 
 
 def test_registry_profiles_match_their_keys() -> None:

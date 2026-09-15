@@ -1,9 +1,9 @@
 from pathlib import Path
 
 from fits.environment.constant import StepName
-from fits.environment.state import ExperimentState
-from fits.workflows.engines.registry import REGISTRY
-from fits.workflows.engines.run_decision import RunDecision, decide_run
+from fits.workflows.experiments import ExperimentState
+from fits.workflows.definitions.registry import REGISTRY
+from fits.workflows.runtime.run_decision import RunDecision, decide_run
 
 
 def _state_with_image(tmp_path: Path, *, completed: bool = False) -> ExperimentState:

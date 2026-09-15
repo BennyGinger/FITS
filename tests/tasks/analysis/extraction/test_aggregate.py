@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from fits.environment.constant import ARTI_QUANTI, StepName
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.tasks.analysis.extraction.aggregate import _save_master_quantification
 
 

@@ -9,10 +9,10 @@ from fits.environment.constant import (
     FITS_DISTANCE_PROFILE_NAME,
     StepName,
 )
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import DistanceProfileSettings
 from fits.tasks.analysis.dist_profile.profile import run_distance_profile
-from fits.workflows.engines.models import StepProfile
+from fits.workflows.definitions.models import StepProfile
 
 
 def test_distance_profile_task_saves_and_registers_artifact(

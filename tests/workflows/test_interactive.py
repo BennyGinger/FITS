@@ -10,20 +10,22 @@ import pytest
 import tifffile
 
 from fits.environment.constant import ARTI_IMG, StepName
-from fits.environment.progress import RunProgress, StageStatus, WorkflowStage
-from fits.environment.state import ExperimentState
+from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import DistanceProfileSettings, ExtractSettings
-from fits.sessions.collection import MaskCollectionOutcome
+from fits.workflows.runtime.interactive.messages import MaskCollectionOutcome
 from fits.tasks.reference_mask import ReferenceMaskSession
-from fits.workflows.interactive import (
+from fits.workflows.runtime.interactive import (
     AllExperimentsFailed,
     MaskInteraction,
     PipelineCancelled,
-    _existing_outcome,
-    _input_progress_id,
     run_conversion_only,
     run_interactive_workflow,
 )
+from fits.workflows.runtime.interactive.masks import (
+    existing_mask_outcome as _existing_outcome)
+from fits.workflows.runtime.interactive.progress import (
+    input_progress_id as _input_progress_id)
 
 
 def state(tmp_path, name):
@@ -80,7 +82,7 @@ def test_conversion_only_continues_after_one_input_fails(tmp_path, monkeypatch):
         output.mkdir()
         return [ExperimentState.init(output, current.original_image)]
 
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fits.workflows.runtime.interactive.conversion.resolve_runtime_steps', lambda cfg: [
         step(StepName.CONVERT, convert)])
     progress = RunProgress()
 
@@ -105,7 +107,7 @@ def test_queue_grows_and_each_experiment_waits_for_its_own_masks(tmp_path, monke
         analysed.append(current.workdir.name)
         analysis_done.set()
         return [current]
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.BG_SUB, prepare),
         step(StepName.DISTANCE_PROFILE, analyse, DistanceProfileSettings())])
     requests = Queue()
@@ -149,7 +151,7 @@ def test_raw_files_in_same_folder_have_separate_progress_entries(tmp_path, monke
             step_name=StepName.CONVERT, artifact_kind=ARTI_IMG,
             artifact_path=image)]
 
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.CONVERT, convert)])
     interaction = MaskInteraction(lambda request: interaction.resolve(_existing_outcome(request)))
     progress = RunProgress()
@@ -165,7 +167,7 @@ def test_reference_skip_omits_profile_but_allows_extraction(tmp_path, monkeypatc
     def runner(settings, current, profile):
         ran.append(profile.step_name)
         return [current]
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.DISTANCE_PROFILE, runner, DistanceProfileSettings()),
         step(StepName.EXTRACT, runner, ExtractSettings())])
     interaction = MaskInteraction(lambda request: interaction.resolve(_existing_outcome(request)))
@@ -181,7 +183,7 @@ def test_reference_skip_omits_profile_but_allows_extraction(tmp_path, monkeypatc
 def test_finish_drawing_handles_later_arrivals_without_reopening_gui(tmp_path, monkeypatch):
     states = [state(tmp_path, 'a'), state(tmp_path, 'b')]
     calls = []
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.DISTANCE_PROFILE, lambda settings, current, profile: [current], DistanceProfileSettings())])
     def request_mask(request):
         calls.append(request)
@@ -197,7 +199,7 @@ def test_cancel_interrupts_long_demo_pause(tmp_path, monkeypatch):
     def prepare(settings, current, profile):
         started.set()
         return [current]
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, prepare)])
+    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, prepare)])
     interaction = MaskInteraction(lambda request: pytest.fail('Cancelled request must not open'))
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run_interactive_workflow, {}, [current], interaction, step_delay_seconds=30)
@@ -211,7 +213,7 @@ def test_all_experiments_failed_reports_preparation_error(tmp_path, monkeypatch)
     current = state(tmp_path, 'a')
     def fail(*args):
         raise ValueError('broken preparation')
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, fail)])
+    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, fail)])
     interaction = MaskInteraction(lambda request: None)
     with pytest.raises(AllExperimentsFailed, match='broken preparation'):
         run_interactive_workflow({}, [current], interaction)
@@ -219,7 +221,7 @@ def test_all_experiments_failed_reports_preparation_error(tmp_path, monkeypatch)
 
 def test_changed_mask_manifest_stops_analysis(tmp_path, monkeypatch):
     current = state(tmp_path, 'a')
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.DISTANCE_PROFILE, lambda *args: pytest.fail('Must not run analysis'), DistanceProfileSettings())])
     def request_masks(request):
         outcome = _existing_outcome(request)
@@ -242,7 +244,7 @@ def test_middle_experiment_failure_does_not_stop_later_work(tmp_path, monkeypatc
         processed.append(current.workdir.name)
         return [current]
 
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.BG_SUB, prepare)])
     interaction = MaskInteraction(
         lambda request: interaction.resolve(_existing_outcome(request)),
@@ -269,7 +271,7 @@ def test_progress_records_parallel_process_and_drawing_join(tmp_path, monkeypatc
             analysed.set()
         return [state]
 
-    monkeypatch.setattr('fits.workflows.interactive._resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.BG_SUB, runner),
         step(StepName.SEGMENT, runner),
         step(StepName.DISTANCE_PROFILE, runner, DistanceProfileSettings()),

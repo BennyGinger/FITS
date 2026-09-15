@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 
 from stackalign import RegisterModel
-from fits_io.client import FitsIO
 
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import RegisterTimeSettings
-from fits.workflows.engines.run_decision import decide_run
-from fits.workflows.engines.models import StepProfile
+from fits.tasks.common.artifact_results import save_step_result
+from fits.tasks.common.preparation import load_input_reader, resolve_step_run
+from fits.workflows.definitions.models import StepProfile
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
-from fits.workflows.errors import StepExecutionError
+from fits.workflows.runtime.errors import StepExecutionError
 
 
 logger = logging.getLogger(__name__)
@@ -31,19 +31,10 @@ def register_time(settings: RegisterTimeSettings,
     Returns:
         List of one output experiment state. Time-wise registration produces a single output artifact.
     """
-    input_path = exp_state.artifact(step_profile.input_artifact)
-    if input_path is None:
-        raise StepExecutionError(
-            f"Step {str(step_profile.step_name)!r} failed for {exp_state.experiment_id}: "
-            f"missing {step_profile.input_artifact!r} input.")
-
     try:
-        reader = FitsIO.from_path(input_path)
-        run = decide_run(exp_state, step_profile, settings.overwrite)
+        reader = load_input_reader(exp_state, step_profile)
+        run = resolve_step_run(exp_state, step_profile, settings.overwrite)
         if run.is_complete:
-            logger.debug("Skipping %s for %s: already completed.", 
-                         step_profile.step_name, 
-                         exp_state.experiment_id)
             return [exp_state]
 
         plan = resolve_registration_plan(settings.context, 
@@ -93,26 +84,14 @@ def register_time(settings: RegisterTimeSettings,
                                                 exported_channel='all',
                                                 channels_params=params)
         
-        save_path = reader.save_array(registered_array,
-                                      output_name=step_profile.output_name,
-                                      export_channels=reader.channel_labels,
-                                      artifact_kind=step_profile.output_artifact,
-                                      created_by=step_profile.distribution,
-                                      custom_metadata=updated_state.metadata_dump)
-        
-        new_state = updated_state.with_complete_step(step_name=step_profile.step_name,
-                                                     artifact_kind=step_profile.output_artifact,
-                                                     artifact_path=save_path)
-        logger.debug("%s completed for %s",
-                     step_profile.step_name,
-                     exp_state.experiment_id,)
-        logger.debug("Produced new ExperimentState: exp_id=%s completed_steps=%s",
-                     new_state.experiment_id, [str(step) for step in new_state.completed_steps])
-        new_state.save_state()
+        new_state = save_step_result(reader=reader,
+                                    array=registered_array,
+                                    export_channels=reader.channel_labels,
+                                    updated_state=updated_state,
+                                    step_profile=step_profile,)
         return [new_state]
     
     except Exception as e:
         logger.exception("%s failed for %s", step_profile.step_name, exp_state.experiment_id)
-        raise StepExecutionError(
-            f"Step {str(step_profile.step_name)!r} failed for "
-            f"{exp_state.experiment_id}: {e}") from e
+        raise StepExecutionError(f"Step {str(step_profile.step_name)!r} failed for "
+                                f"{exp_state.experiment_id}: {e}") from e

@@ -18,13 +18,12 @@ _LEVEL_MAP: dict[LevelName, int] = {
 }
 
 
-def configure_logging(
-    *,
-    log_dir: Path | None,
-    console_level: LevelName = "info",
-    file_level: LevelName = "debug",
-    console_handler: logging.Handler | None = None,
-) -> Path | None:
+def configure_logging(*,
+                    log_dir: Path | None,
+                    console_level: LevelName = "info",
+                    file_level: LevelName = "debug",
+                    console_handler: logging.Handler | None = None,
+                    ) -> Path | None:
     """
     Configure global logging for the FITS pipeline.
 
@@ -53,9 +52,7 @@ def configure_logging(
     # Individual handlers decide which levels to emit.
     root.setLevel(logging.DEBUG)
 
-    formatter = logging.Formatter(
-        "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-    )
+    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 
     console_handler = console_handler or logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
@@ -85,8 +82,5 @@ def configure_logging(
     return log_path
 
 
-def _quiet_logger(
-    name: str,
-    level: int = logging.WARNING,
-) -> None:
+def _quiet_logger(name: str, level: int = logging.WARNING,) -> None:
     logging.getLogger(name).setLevel(level)

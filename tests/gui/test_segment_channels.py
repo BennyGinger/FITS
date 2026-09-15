@@ -7,10 +7,10 @@ import numpy as np
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from fits.environment.constant import StepName
-from fits.gui.settings_adapter import SettingsAdapter
-from fits.gui.settings_editor import StepSettingsEditor
-from fits.gui.viewer.segmentation_window import SegmentationTunerWindow
-from fits.gui.viewer.tools.segmentation.worker import ModelInitializationRequest, ModelInitializationWorker
+from fits.gui.settings import SettingsAdapter, StepSettingsEditor
+from fits.gui.viewer.segmentation import SegmentationTunerWindow
+from fits.gui.viewer.segmentation.worker import (
+    ModelInitializationRequest, ModelInitializationWorker,)
 from fits.settings.models import SegmentChannelSettings
 
 _APP = None
@@ -69,7 +69,8 @@ def test_tuner_switches_independent_channels_and_applies_collection(monkeypatch,
         def close(self):
             pass
 
-    monkeypatch.setattr("fits.gui.viewer.segmentation_window.SegmentationTuningSession", Session)
+    monkeypatch.setattr(
+        "fits.gui.viewer.segmentation.window.SegmentationTuningSession", Session)
     monkeypatch.setattr(SegmentationTunerWindow, "_initialize_selected_model", lambda self: None)
     source = tmp_path / "fits_array.tif"
     source.touch()
@@ -140,8 +141,8 @@ def test_tuner_initialization_reuses_both_models(monkeypatch):
 
 
 def test_diameter_reference_has_image_pixel_size_and_follows_visible_corner():
-    from fits.gui.viewer.image_viewer import FitsImageViewer
-    from fits.gui.viewer.tools.segmentation.diameter_reference import DiameterReference
+    from fits.gui.viewer.common.image_viewer import FitsImageViewer
+    from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
 
     application()
     viewer = FitsImageViewer()

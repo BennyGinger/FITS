@@ -9,14 +9,16 @@ import numpy as np
 import pytest
 
 from fits.environment.constant import StepName
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import SegmentChannelSettings, SegmentSettings
 from fits.tasks.segmentation.segment import segment
-from fits.workflows.engines.registry import REGISTRY
-from fits.workflows.errors import StepExecutionError
+from fits.workflows.definitions.registry import REGISTRY
+from fits.workflows.runtime.errors import StepExecutionError
 
 
 segment_module = importlib.import_module("fits.tasks.segmentation.segment")
+channels_module = importlib.import_module("fits.tasks.segmentation.channels")
+preparation_module = importlib.import_module("fits.tasks.common.preparation")
 
 
 class DummyReader:
@@ -99,14 +101,14 @@ def test_segment_requires_a_configured_channel(tmp_path: Path) -> None:
 def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(tmp_path / "fits_mask.tif")
     wrapper = DummyWrapper()
-    monkeypatch.setattr(segment_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(preparation_module.FitsIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
-        segment_module,
+        preparation_module,
         "decide_run",
         lambda *args: SimpleNamespace(is_complete=False, pending_items=[1]),
     )
     monkeypatch.setattr(
-        segment_module.CellposeWrapper,
+        channels_module.CellposeWrapper,
         "from_dict",
         lambda payload: wrapper,
     )
@@ -132,14 +134,14 @@ def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Pat
 def test_segment_skips_when_requested_channels_are_complete(monkeypatch, tmp_path: Path) -> None:
     state = _image_state(tmp_path)
     reader = DummyReader(tmp_path / "fits_mask.tif")
-    monkeypatch.setattr(segment_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(preparation_module.FitsIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
-        segment_module,
+        preparation_module,
         "decide_run",
         lambda *args: SimpleNamespace(is_complete=True),
     )
     monkeypatch.setattr(
-        segment_module.CellposeWrapper,
+        channels_module.CellposeWrapper,
         "from_dict",
         lambda payload: (_ for _ in ()).throw(AssertionError("wrapper should not be created")),
     )
@@ -156,9 +158,9 @@ def test_segment_uses_independent_settings_and_saves_once(monkeypatch, tmp_path:
     reader = DummyReader(tmp_path / "fits_mask.tif")
     wrappers = [DummyWrapper(), DummyWrapper()]
     payloads: list[dict[str, Any]] = []
-    monkeypatch.setattr(segment_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(preparation_module.FitsIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
-        segment_module,
+        preparation_module,
         "decide_run",
         lambda *args: SimpleNamespace(is_complete=False, pending_items=[0, 2]),
     )
@@ -167,7 +169,7 @@ def test_segment_uses_independent_settings_and_saves_once(monkeypatch, tmp_path:
         payloads.append(payload)
         return wrappers[len(payloads) - 1]
 
-    monkeypatch.setattr(segment_module.CellposeWrapper, "from_dict", wrapper_from_dict)
+    monkeypatch.setattr(channels_module.CellposeWrapper, "from_dict", wrapper_from_dict)
 
     segment(
         SegmentSettings.model_validate({
@@ -191,9 +193,9 @@ def test_segment_uses_independent_settings_and_saves_once(monkeypatch, tmp_path:
 def test_segment_failure_does_not_save_partial_output(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(tmp_path / "fits_mask.tif")
     first = DummyWrapper()
-    monkeypatch.setattr(segment_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(preparation_module.FitsIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
-        segment_module,
+        preparation_module,
         "decide_run",
         lambda *args: SimpleNamespace(is_complete=False, pending_items=[0, 2]),
     )
@@ -207,7 +209,7 @@ def test_segment_failure_does_not_save_partial_output(monkeypatch, tmp_path: Pat
             raise RuntimeError("model unavailable")
         return first
 
-    monkeypatch.setattr(segment_module.CellposeWrapper, "from_dict", wrapper_from_dict)
+    monkeypatch.setattr(channels_module.CellposeWrapper, "from_dict", wrapper_from_dict)
 
     with pytest.raises(StepExecutionError, match="channel 'DAPI'.*model unavailable"):
         segment(

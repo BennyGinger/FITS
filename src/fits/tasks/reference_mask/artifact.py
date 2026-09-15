@@ -153,6 +153,9 @@ def merge_reference_channels(output_path: Path,
 def _validate_reference_path(reference_path: str | Path,
                              source_path: Path,
                              ) -> tuple[Path, str]:
+    """
+    Validate the reference path and extract the label.
+    """
     path = Path(reference_path).expanduser().resolve()
     prefix, suffix = FITS_REFERENCE_TEMPLATE.split("{label}")
     if (not path.is_file()
@@ -172,27 +175,33 @@ def _validate_reference_array(reference: NDArray[np.generic],
                               source_axes: str,
                               source_shape: tuple[int, ...],
                               ) -> None:
+    """
+    Validate the reference array to ensure it is binary and matches the source shape outside the channel axis.
+    """
     if not np.all((reference == 0) | (reference == 1)):
         raise ValueError("Loaded reference masks must contain only binary values 0 and 1.")
+    
     if reference_axes.replace("C", "") != source_axes.replace("C", ""):
-        raise ValueError(
-            f"Reference axes {reference_axes!r} do not match source axes {source_axes!r}.")
-    expected_shape = tuple(
-        size for axis, size in zip(source_axes, source_shape, strict=True)
-        if axis != "C")
-    reference_shape = tuple(
-        size for axis, size in zip(reference_axes, reference.shape, strict=True)
-        if axis != "C")
+        raise ValueError(f"Reference axes {reference_axes!r} do not match source axes {source_axes!r}.")
+    
+    expected_shape = tuple(size for axis, size in zip(source_axes, source_shape, strict=True)
+                            if axis != "C")
+    
+    reference_shape = tuple(size for axis, size in zip(reference_axes, reference.shape, strict=True)
+                            if axis != "C")
+    
     if reference_shape != expected_shape:
-        raise ValueError(
-            f"Reference shape {reference.shape} does not match source shape "
-            f"{source_shape} outside the channel axis.")
+        raise ValueError(f"Reference shape {reference.shape} does not match source shape "
+                        f"{source_shape} outside the channel axis.")
 
 
 def _compact_channel_axis(array: NDArray[np.uint8],
                           labels: list[str],
                           channel_position: int,
                           ) -> tuple[NDArray[np.uint8], list[str]]:
+    """
+    Compact the channel axis if there is only one label.
+    """
     output = (np.take(array, 0, axis=channel_position)
               if len(labels) == 1
               else array)

@@ -3,7 +3,7 @@ from pathlib import Path
 import tomllib
 
 from fits.environment.constant import StepName
-from fits.gui.settings_adapter import SAVED_SETTINGS_NAME, STEP_LAYOUTS, SettingsAdapter
+from fits.gui.settings import SAVED_SETTINGS_NAME, STEP_LAYOUTS, SettingsAdapter
 
 
 def test_adapter_updates_and_saves_comment_preserving_copy(tmp_path: Path) -> None:
@@ -15,7 +15,7 @@ def test_adapter_updates_and_saves_comment_preserving_copy(tmp_path: Path) -> No
 
     destination = adapter.save_to_run_dir()
 
-    assert destination == tmp_path / SAVED_SETTINGS_NAME
+    assert destination == tmp_path / ".fits" / SAVED_SETTINGS_NAME
     saved_text = destination.read_text(encoding="utf-8")
     assert "# FITS settings template." in saved_text
     assert "# Internal ordering control; not exposed in the GUI." in saved_text

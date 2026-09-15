@@ -3,13 +3,13 @@ from __future__ import annotations
 import logging
 
 from bg_sub import bg_sub
-from fits_io import FitsIO
 
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import BGSubSettings
-from fits.workflows.engines.models import StepProfile
-from fits.workflows.engines.run_decision import decide_run
-from fits.workflows.errors import StepExecutionError
+from fits.tasks.common.artifact_results import save_step_result
+from fits.tasks.common.preparation import load_input_reader, resolve_step_run
+from fits.workflows.definitions.models import StepProfile
+from fits.workflows.runtime.errors import StepExecutionError
 
 
 logger = logging.getLogger(__name__)
@@ -28,19 +28,10 @@ def remove_bg(settings: BGSubSettings, exp_state: ExperimentState, step_profile:
     Returns:
         Single output experiment state.
     """
-    input_path = exp_state.artifact(step_profile.input_artifact)
-    if input_path is None:
-        raise StepExecutionError(
-            f"Step {str(step_profile.step_name)!r} failed for {exp_state.experiment_id}: "
-            f"missing {step_profile.input_artifact!r} input.")
-    
     try:
-        reader = FitsIO.from_path(input_path)
-        run = decide_run(exp_state, step_profile, settings.overwrite)
+        reader = load_input_reader(exp_state, step_profile)
+        run = resolve_step_run(exp_state, step_profile, settings.overwrite)
         if run.is_complete:
-            logger.debug("Skipping %s for %s: all requested channels already covered.",
-                         step_profile.step_name, 
-                         exp_state.experiment_id)
             return [exp_state]
         
         # Select the channels to be processed
@@ -62,23 +53,11 @@ def remove_bg(settings: BGSubSettings, exp_state: ExperimentState, step_profile:
                                                exported_channel=exporter_channel,
                                                channels_params=settings.to_payload_dict())
 
-        # Save output
-        save_path = reader.save_array(corrected_array,
-                                      output_name=step_profile.output_name,
-                                      export_channels=reader.channel_labels,
-                                      artifact_kind=step_profile.output_artifact,
-                                      created_by=step_profile.distribution,
-                                      custom_metadata=updated_state.metadata_dump,)
-
-        logger.debug("%s completed for %s", step_profile.step_name, exp_state.experiment_id)
-        
-        # Update and return state
-        new_st = updated_state.with_complete_step(step_name=step_profile.step_name,
-                                                artifact_kind=step_profile.output_artifact,
-                                                artifact_path=save_path,)
-        logger.debug("Produced new ExperimentState: exp_id=%s completed_steps=%s",
-                     new_st.experiment_id, [str(step) for step in new_st.completed_steps])
-        new_st.save_state()
+        new_st = save_step_result(reader=reader,
+                                array=corrected_array,
+                                export_channels=reader.channel_labels,
+                                updated_state=updated_state,
+                                step_profile=step_profile,)
         return [new_st]
     
     except Exception as e:

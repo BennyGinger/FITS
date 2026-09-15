@@ -1,0 +1,508 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from PySide6.QtCore import QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtGui import QCloseEvent, QKeyEvent
+from PySide6.QtWidgets import (
+    QHBoxLayout, QLabel, QWidget, QListWidget, QListWidgetItem, QPushButton,
+    QVBoxLayout,
+    QDoubleSpinBox, QCheckBox, QComboBox, QLineEdit,
+)
+
+from fits.environment.constant import FITS_ARRAY_NAME
+from fits.gui.settings import SettingsAdapter
+from fits.gui.viewer.common.base_window import ImageToolWindow
+from fits.gui.viewer.segmentation.settings_panel import CellposeSettingsPanel
+from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
+from fits.gui.viewer.segmentation.worker import (
+    ModelInitializationRequest,
+    ModelInitializationWorker,
+    PreviewOutcome,
+    PreviewRequest,
+    PreviewWorker,
+)
+from fits.settings.models import SegmentSettings, SegmentChannelSettings
+from fits.settings.loader import run_settings_path
+from fits.tasks.segmentation.preview_cache import SegmentationPreview
+from fits.tasks.segmentation.tuning import SegmentationTuningSession
+
+
+class SegmentationTunerWindow(ImageToolWindow):
+    """Preview segmentation and apply validated settings back to FITS."""
+
+    settings_applied = Signal(object)
+    file_filters = (FITS_ARRAY_NAME,)
+    tool_help = "R    Run preview\nS    Apply segmentation settings\n"
+
+    def __init__(self, experiments_dir: str | Path | None = None,
+                 segment_settings: SegmentSettings | Mapping[str, Any] | None = None,
+                 parent: QWidget | None = None, close_on_apply: bool = False) -> None:
+        self._provided_settings = (SegmentSettings.model_validate(segment_settings)
+                                   if segment_settings is not None else None)
+        self._close_on_apply = close_on_apply
+        self._entries: list[SegmentChannelSettings] = []
+        self._entry_index = 0
+        self._loading_entry = False
+        self._segmentation_session: SegmentationTuningSession | None = None
+        self._thread: QThread | None = None
+        self._worker: PreviewWorker | ModelInitializationWorker | None = None
+        self._active_request: PreviewRequest | None = None
+        self._active_operation: str | None = None
+        self._pending_model_settings: SegmentChannelSettings | None = None
+        super().__init__(experiments_dir, parent)
+        self._model_change_timer = QTimer(self)
+        self._model_change_timer.setSingleShot(True)
+        self._model_change_timer.setInterval(300)
+        self._model_change_timer.timeout.connect(self._initialize_selected_model)
+        self.settings_panel.model_settings_changed.connect(
+            self._model_change_timer.start)
+        for widget in self.settings_panel.findChildren(QDoubleSpinBox):
+            widget.valueChanged.connect(self._settings_edited)
+        for widget in self.settings_panel.findChildren(QCheckBox):
+            widget.toggled.connect(self._settings_edited)
+        for widget in self.settings_panel.findChildren(QComboBox):
+            widget.currentIndexChanged.connect(self._settings_edited)
+        for widget in self.settings_panel.findChildren(QLineEdit):
+            widget.textChanged.connect(self._settings_edited)
+        self.channel_combo.currentIndexChanged.connect(self._settings_edited)
+        self.setWindowTitle("FITS Segmentation Tuner")
+        self.settings_panel.apply_button.setText("Apply and close")
+
+    def _build_tools(self) -> QWidget:
+        self.settings_panel = CellposeSettingsPanel()
+        self.settings_panel.overlay_widget.hide()
+        layout = self.settings_panel.layout()
+        assert isinstance(layout, QVBoxLayout)
+        self.channel_settings_list = QListWidget()
+        self.channel_settings_list.setMaximumHeight(150)
+        self.channel_settings_list.currentRowChanged.connect(self._select_entry)
+        layout.insertWidget(layout.count() - 1, QLabel("Channel settings"))
+        layout.insertWidget(layout.count() - 1, self.channel_settings_list)
+        self.add_channel_button = QPushButton("Apply and add another channel")
+        self.add_channel_button.setEnabled(False)
+        self.add_channel_button.clicked.connect(self._add_channel)
+        layout.insertWidget(layout.count() - 1, self.add_channel_button)
+        self.tool_panel = self.settings_panel
+        return self.tool_panel
+
+    def _build_overlay_controls(self, layout: QHBoxLayout) -> None:
+        self.segmentation_mask_colours = QLabel("Label palette")
+        layout.addWidget(self.segmentation_mask_colours)
+
+    def _connect_tools(self) -> None:
+        self.diameter_reference = DiameterReference(
+            self.image_viewer.view_box, self.image_viewer.image_item)
+        self.settings_panel.diameter.valueChanged.connect(self.diameter_reference.set_diameter)
+        self.diameter_reference.set_diameter(self.settings_panel.diameter.value())
+        self.settings_panel.run_requested.connect(self._run_preview)
+        self.settings_panel.apply_requested.connect(self._apply_settings)
+        self.settings_panel.mask_visibility_changed.connect(self.image_viewer.set_mask_visible)
+        self.settings_panel.mask_opacity_changed.connect(self.image_viewer.set_mask_opacity)
+
+    def _tool_keypress(self, event: QKeyEvent) -> bool:
+        if event.modifiers() not in (Qt.KeyboardModifier.NoModifier,
+                                     Qt.KeyboardModifier.ShiftModifier):
+            return False
+        if event.key() == Qt.Key.Key_R:
+            self._run_preview()
+            return True
+        if event.key() == Qt.Key.Key_S:
+            self._apply_settings()
+            return True
+        return False
+
+    @Slot(object)
+    def _path_selected(self, selected: object) -> None:
+        if not isinstance(selected, (str, Path)):
+            return
+        source = Path(selected)
+        if source.is_dir():
+            source = source / FITS_ARRAY_NAME
+            if source.is_file() and self.directory_browser.select_path(source):
+                return
+        if source.name != FITS_ARRAY_NAME or not source.is_file():
+            self.status_label.setText(f"Select an experiment containing {FITS_ARRAY_NAME}.")
+            return
+        self._open_source(source)
+
+    def _open_source(self, source: Path) -> None:
+        if source == self._source_path:
+            return
+        if self._thread is not None:
+            self.status_label.setText("Wait for the current preview before changing experiment.")
+            return
+        self._close_session()
+        try:
+            baseline = self._settings_for_source(source)
+            self._segmentation_session = SegmentationTuningSession(source)
+            labels = self._segmentation_session.channel_labels
+            entries = self._entries or (baseline.channels if baseline is not None else [])
+            missing = [entry.channel for entry in entries if entry.channel not in labels]
+            if missing:
+                raise ValueError(f"Configured channels are missing from this image: {', '.join(missing)}.")
+            self._entries = [entry.model_copy(deep=True) for entry in entries]
+            if not self._entries:
+                self._entries = [SegmentChannelSettings(channel=labels[0])]
+            self._entry_index = min(self._entry_index, len(self._entries) - 1)
+            self._segmentation_session.set_segment_settings(self._entries[self._entry_index])
+        except Exception as error:
+            if self._segmentation_session is not None:
+                self._segmentation_session.close()
+            self._segmentation_session = None
+            self.status_label.setText(str(error))
+            return
+        self._source_path = source
+        self._image_session = self._segmentation_session
+        self.frame_slider.setRange(0, self._segmentation_session.frame_count - 1)
+        self.z_slider.setRange(0, self._segmentation_session.plane_count - 1)
+        self.frame_slider.setValue(0)
+        self.z_slider.setValue(0)
+        self._set_source_controls_enabled(True)
+        self._load_entry()
+        self.status_label.setText(
+            f"Loaded {source.parent.name} — axes "
+            f"{self._segmentation_session.axes}, shape {self._segmentation_session.shape}.")
+        self._model_change_timer.stop()
+        self._initialize_selected_model()
+
+    def _settings_for_source(self, source: Path) -> SegmentSettings | None:
+        if self._provided_settings is not None:
+            return self._provided_settings
+        root = self.directory_browser.root_path
+        for directory in (source.parent, *source.parents):
+            settings_path = run_settings_path(directory)
+            if settings_path.is_file():
+                adapter = SettingsAdapter()
+                adapter.load(settings_path)
+                return adapter.segmentation_settings()
+            if root is not None and directory == root:
+                break
+        return None
+
+    def _display_overlay(self, image, frame, channel, z_index) -> None:
+        self.diameter_reference.refresh()
+        self.image_viewer.set_drawing_enabled(False)
+        if self._segmentation_session is None:
+            return
+        if self._loading_entry:
+            return
+        settings = self.current_channel_settings()
+        self._segmentation_session.set_segment_settings(settings)
+        cached = self._segmentation_session.load_cached_preview(
+            frame, channel, z_index, self.settings_panel.user_settings())
+        if cached is not None:
+            self._display_preview_mask(cached, z_index)
+
+    def _clear_tools(self) -> None:
+        self.diameter_reference.hide()
+        if self._segmentation_session is not None:
+            self._segmentation_session.close()
+        self._segmentation_session = None
+
+    @Slot()
+    def _run_preview(self) -> None:
+        if self._segmentation_session is None or self._thread is not None:
+            return
+        try:
+            settings = self.current_channel_settings()
+            self._segmentation_session.set_segment_settings(settings)
+        except Exception as error:
+            self.status_label.setText(f"Invalid Cellpose settings: {error}")
+            return
+        request = PreviewRequest(
+            frame_index=self.frame_slider.value(),
+            channel=self.channel_combo.currentText(),
+            z_index=self.z_slider.value(),
+            user_settings=self.settings_panel.user_settings(),)
+        self._active_request = request
+        self._active_operation = "preview"
+        self._thread = QThread(self)
+        self._worker = PreviewWorker(self._segmentation_session, request)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._preview_finished)
+        self._worker.failed.connect(self._preview_failed)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread_finished)
+        self._set_running(True)
+        self.status_label.setText(
+            f"Running Cellpose on frame {request.frame_index + 1}, {request.channel}…")
+        self._thread.start()
+
+    @Slot()
+    def _initialize_selected_model(self) -> None:
+        if self._segmentation_session is None:
+            return
+        try:
+            settings = self.current_channel_settings()
+        except Exception as error:
+            self.status_label.setText(f"Invalid Cellpose settings: {error}")
+            return
+        if self._thread is not None:
+            self._pending_model_settings = settings
+            self.status_label.setText(
+                "Model selection changed; the latest model will initialize next.")
+            return
+        self._start_model_initialization(settings)
+
+    def _start_model_initialization(self, settings: SegmentChannelSettings) -> None:
+        request = ModelInitializationRequest(settings)
+        self._pending_model_settings = None
+        self._active_operation = "initialization"
+        self._thread = QThread(self)
+        self._worker = ModelInitializationWorker(request)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._model_initialized)
+        self._worker.failed.connect(self._model_initialization_failed)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread_finished)
+        self._set_running(True, initialization=True)
+        self.status_label.setText("Initializing Cellpose model…")
+        self._thread.start()
+
+    @Slot(object)
+    def _model_initialized(self, request: ModelInitializationRequest) -> None:
+        del request
+        self.status_label.setText("Cellpose model ready. Adjust settings or run a preview.")
+
+    @Slot(object, str)
+    def _model_initialization_failed(
+        self, request: ModelInitializationRequest, message: str,
+    ) -> None:
+        del request
+        self.status_label.setText(f"Cellpose model initialization failed: {message}")
+
+    @Slot(object)
+    def _preview_finished(self, outcome: PreviewOutcome) -> None:
+        if outcome.request != self._active_request:
+            return
+        try:
+            self._display_preview_mask(outcome.preview, outcome.request.z_index)
+        except ValueError as error:
+            self.status_label.setText(str(error))
+            return
+        cache_note = "loaded from preview cache" if outcome.preview.from_cache else "segmented"
+        self.status_label.setText(
+            f"Frame {outcome.request.frame_index + 1}, {outcome.request.channel}: {cache_note}.")
+
+    def _display_preview_mask(self,
+                              preview: SegmentationPreview,
+                              z_index: int,
+                              ) -> None:
+        mask = np.asarray(preview.mask)
+        axes = preview.mask_axes
+        if "Z" in axes:
+            z_axis = axes.index("Z")
+            mask = np.take(mask, z_index, axis=z_axis)
+            axes = axes.replace("Z", "", 1)
+        if axes != "YX":
+            raise ValueError(f"Cannot display preview axes {preview.mask_axes!r}.")
+        self.image_viewer.set_mask(mask)
+
+    @Slot(str)
+    def _preview_failed(self, message: str) -> None:
+        self.status_label.setText(f"Cellpose preview failed: {message}")
+
+    @Slot()
+    def _thread_finished(self) -> None:
+        thread = self._thread
+        operation = self._active_operation
+        self._thread = None
+        self._worker = None
+        self._active_request = None
+        self._active_operation = None
+        self._set_running(False, initialization=operation == "initialization")
+        if thread is not None:
+            thread.deleteLater()
+        pending = self._pending_model_settings
+        if pending is not None:
+            self._start_model_initialization(pending)
+
+    @Slot()
+    def _apply_settings(self) -> None:
+        if self._thread is not None:
+            activity = ("model initialization"
+                        if self._active_operation == "initialization"
+                        else "preview")
+            self.status_label.setText(
+                f"Wait for the current Cellpose {activity} before applying settings.")
+            return
+        try:
+            settings = self.current_settings()
+        except Exception as error:
+            self.status_label.setText(f"Invalid Cellpose settings: {error}")
+            return
+        self._provided_settings = settings
+        self.settings_applied.emit(settings)
+        self.status_label.setText("Current Cellpose settings applied.")
+        self.close()
+
+    def current_settings(self) -> SegmentSettings:
+        if self._segmentation_session is None:
+            raise RuntimeError("Load an experiment before applying settings.")
+        self._commit_entry()
+        baseline = self._provided_settings or SegmentSettings()
+        return SegmentSettings(
+            channels=[entry.model_copy(deep=True) for entry in self._entries],
+            overwrite=baseline.overwrite, execution=baseline.execution,
+            workers=baseline.workers, ordered_execution=baseline.ordered_execution)
+
+    def current_channel_settings(self) -> SegmentChannelSettings:
+        """
+        Return the complete validated settings represented by the viewer.
+        """
+        if self._segmentation_session is None:
+            raise RuntimeError("Load an experiment before applying settings.")
+        payload: dict[str, Any] = self._segmentation_session.segment_settings.model_dump()
+        payload["channel"] = self.channel_combo.currentText()
+        payload["nuclear_channel"] = self.settings_panel.selected_nuclear_channel
+        payload["do_denoise"] = self.settings_panel.denoise.isChecked()
+        payload["user_settings"] = {
+            **self._segmentation_session.segment_settings.user_settings,
+            **self.settings_panel.user_settings(),}
+        return SegmentChannelSettings.model_validate(payload)
+
+    def _commit_entry(self) -> None:
+        if self._segmentation_session is not None and not self._loading_entry:
+            self._entries[self._entry_index] = self.current_channel_settings()
+
+    def _settings_edited(self, *args) -> None:
+        if self._loading_entry or self._segmentation_session is None or not self.channel_combo.currentText():
+            return
+        self._commit_entry()
+        item = self.channel_settings_list.item(self._entry_index)
+        if item is not None:
+            row = self.channel_settings_list.itemWidget(item)
+            entry = self._entries[self._entry_index]
+            row.findChildren(QPushButton)[0].setText(
+                f"{entry.channel} | {entry.user_settings.get('model_type', 'default')} | "
+                f"diameter {entry.user_settings.get('diameter', 15)}")
+
+    def _refresh_entries(self) -> None:
+        self.channel_settings_list.blockSignals(True)
+        self.channel_settings_list.clear()
+        for index, entry in enumerate(self._entries):
+            item = QListWidgetItem()
+            self.channel_settings_list.addItem(item)
+            row = QWidget()
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(4, 0, 4, 0)
+            label = QPushButton(
+                f"{entry.channel} | {entry.user_settings.get('model_type', 'default')} | "
+                f"diameter {entry.user_settings.get('diameter', 15)}")
+            label.setCheckable(True)
+            label.setChecked(index == self._entry_index)
+            label.clicked.connect(
+                lambda checked=False, i=index: self.channel_settings_list.setCurrentRow(i))
+            layout.addWidget(label, 1)
+            remove = QPushButton("🗑")
+            remove.setFixedWidth(28)
+            remove.setToolTip(f"Remove settings for {entry.channel}")
+            remove.setEnabled(len(self._entries) > 1)
+            remove.clicked.connect(lambda checked=False, i=index: self._remove_entry(i))
+            layout.addWidget(remove)
+            item.setSizeHint(row.sizeHint())
+            self.channel_settings_list.setItemWidget(item, row)
+        self.channel_settings_list.setCurrentRow(self._entry_index)
+        self.channel_settings_list.blockSignals(False)
+        labels = self._segmentation_session.channel_labels if self._segmentation_session else ()
+        self.add_channel_button.setEnabled(len(self._entries) < len(labels) and self._thread is None)
+
+    def _load_entry(self) -> None:
+        if self._segmentation_session is None:
+            return
+        self._loading_entry = True
+        try:
+            entry = self._entries[self._entry_index]
+            self._segmentation_session.set_segment_settings(entry)
+            self.settings_panel.set_settings(entry)
+            self.settings_panel.set_3d_available(self._segmentation_session.plane_count > 1)
+            labels = self._segmentation_session.channel_labels
+            self.settings_panel.set_channels(labels, entry.nuclear_channel)
+            used = {value.channel for i, value in enumerate(self._entries)
+                    if i != self._entry_index}
+            self.channel_combo.blockSignals(True)
+            self.channel_combo.clear()
+            self.channel_combo.addItems([label for label in labels if label not in used])
+            self.channel_combo.setCurrentText(entry.channel)
+            self.channel_combo.blockSignals(False)
+        finally:
+            self._loading_entry = False
+        self._commit_entry()
+        self._refresh_entries()
+        self._display_selection()
+
+    def _select_entry(self, index: int) -> None:
+        if index < 0 or index == self._entry_index:
+            return
+        if self._thread is not None:
+            self._refresh_entries()
+            return
+        self._commit_entry()
+        self._entry_index = index
+        self._load_entry()
+        self._model_change_timer.start()
+
+    def _add_channel(self) -> None:
+        if self._thread is not None or self._segmentation_session is None:
+            return
+        self._commit_entry()
+        used = {entry.channel for entry in self._entries}
+        available = [label for label in self._segmentation_session.channel_labels if label not in used]
+        if not available:
+            return
+        entry = self._entries[self._entry_index].model_copy(deep=True)
+        entry.channel = available[0]
+        self._entries.append(entry)
+        self._entry_index = len(self._entries) - 1
+        self._load_entry()
+        self._model_change_timer.start()
+
+    def _remove_entry(self, index: int) -> None:
+        if self._thread is not None or len(self._entries) <= 1:
+            return
+        self._commit_entry()
+        self._entries.pop(index)
+        if index < self._entry_index:
+            self._entry_index -= 1
+        self._entry_index = min(self._entry_index, len(self._entries) - 1)
+        self._load_entry()
+        self._model_change_timer.start()
+
+    def _set_running(self, running: bool, *, initialization: bool = False) -> None:
+        self.progress.setVisible(running)
+        self.channel_settings_list.setEnabled(not running)
+        self.add_channel_button.setEnabled(
+            not running and self._segmentation_session is not None
+            and len(self._entries) < len(self._segmentation_session.channel_labels))
+        if initialization:
+            self.settings_panel.run_button.setEnabled(not running)
+            return
+        self.settings_panel.set_running(running)
+        self.directory_edit.setEnabled(not running)
+        self.browse_button.setEnabled(not running)
+        self.directory_browser.setEnabled(not running)
+        self.frame_slider.setEnabled(not running)
+        self.channel_combo.setEnabled(not running)
+        self.z_slider.setEnabled(not running)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._thread is not None:
+            activity = ("model initialization"
+                        if self._active_operation == "initialization"
+                        else "preview")
+            self.status_label.setText(
+                f"Wait for the current Cellpose {activity} before closing.")
+            event.ignore()
+            return
+        super().closeEvent(event)
+        self._model_change_timer.stop()

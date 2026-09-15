@@ -12,7 +12,8 @@ from fits.environment.constant import ExecMode, TimeRegiContext, ChannelRegiCont
 ############### Base settings model ############
 
 class SettingsModel(BaseModel):
-    """Shared execution settings for FITS workflow steps.
+    """
+    Shared execution settings for FITS workflow steps.
 
     Attributes:
         overwrite: Recompute a step even when its output is already complete.
@@ -22,7 +23,6 @@ class SettingsModel(BaseModel):
         ordered_execution: Preserve input experiment order when collecting
             results from a parallel batch executor.
     """
-
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     overwrite: bool = Field(default=False, exclude=True)
@@ -43,7 +43,8 @@ FitsSettings = TypeVar("FitsSettings", bound=SettingsModel)
 ############# Conversion settings ############
 
 class ConvertSettings(SettingsModel):
-    """Settings for converting source images into FITS image artifacts.
+    """
+    Settings for converting source images into FITS image artifacts.
 
     Attributes:
         channel_labels: Optional source-channel labels, in source channel order.
@@ -85,7 +86,8 @@ class ConvertSettings(SettingsModel):
 #### Registration settings and related constants ############
 
 class RegisterSettings(SettingsModel):
-    """Common backend overrides for registration settings.
+    """
+    Common backend overrides for registration settings.
 
     Attributes:
         backend: Optional registration backend override. ``None`` lets the
@@ -104,7 +106,6 @@ class RegisterSettings(SettingsModel):
 
     This model is intended to be subclassed rather than used directly.
     """
-
     backend: Literal["scikit", "pystackreg", "cv2"] | None = None
     method: Literal["translation", "rigid_body", "affine"] | None = None
 
@@ -124,7 +125,8 @@ class RegisterSettings(SettingsModel):
     
 
 class RegisterTimeSettings(RegisterSettings):
-    """Settings for time-wise registration and drift correction.
+    """
+    Settings for time-wise registration and drift correction.
 
     Attributes:
         context: Registration scenario used to resolve default backend and
@@ -155,18 +157,17 @@ class RegisterTimeSettings(RegisterSettings):
         Convert the RegisterTimeSettings instance to a metadata dictionary suitable for serialization.
         Excludes any fields that are not relevant for metadata.
         """
-        payload = {
-            "backend": self.backend,
-            "method": self.method,
-            "context": self.context,
-            "reference_strategy": self.reference_strategy,
-            "fit_channel": self.fit_channel,
-        }
+        payload = {"backend": self.backend,
+                "method": self.method,
+                "context": self.context,
+                "reference_strategy": self.reference_strategy,
+                "fit_channel": self.fit_channel,}
         return payload
 
 
 class RegisterChannelSettings(RegisterSettings):
-    """Settings for cross-channel registration.
+    """
+    Settings for cross-channel registration.
 
     Attributes:
         context: Registration scenario used to resolve default backend and
@@ -210,20 +211,19 @@ class RegisterChannelSettings(RegisterSettings):
         Convert the RegisterChannelSettings instance to a metadata dictionary suitable for serialization.
         Excludes any fields that are not relevant for metadata.
         """
-        payload = {
-            "backend": self.backend,
-            "method": self.method,
-            "context": self.context,
-            "reference_channel": self.reference_channel,
-            "exclude_channel": list(self.exclude_channel) if self.exclude_channel else None,
-            "reference_frame": self.reference_frame,
-        }
+        payload = {"backend": self.backend,
+                "method": self.method,
+                "context": self.context,
+                "reference_channel": self.reference_channel,
+                "exclude_channel": list(self.exclude_channel) if self.exclude_channel else None,
+                "reference_frame": self.reference_frame,}
         return payload
 
 ############ Background subtraction settings ############
 
 class BGSubSettings(SettingsModel):
-    """Settings for image background subtraction.
+    """
+    Settings for image background subtraction.
 
     Attributes:
         sigma: Gaussian smoothing sigma used during background estimation.
@@ -298,20 +298,19 @@ class BGSubSettings(SettingsModel):
         Convert the BGSubSettings instance to a metadata dictionary suitable for serialization.
         Excludes any fields that are not relevant for metadata.
         """
-        payload = {
-            "sigma": self.sigma,
-            "size": self.size,
-            "threshold": self.threshold,
-            "exclude_channel": list(self.exclude_channel) if self.exclude_channel else None,
-            "statistic": self.serialize_statistic_name(),
-        }
+        payload = {"sigma": self.sigma,
+                "size": self.size,
+                "threshold": self.threshold,
+                "exclude_channel": list(self.exclude_channel) if self.exclude_channel else None,
+                "statistic": self.serialize_statistic_name(),}
         return payload
 
 ############ Segmentation settings ############
 
 class SegmentChannelSettings(BaseModel):
-    """Cellpose settings for one segmentation target channel."""
-
+    """
+    Cellpose settings for one segmentation target channel.
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     channel: str
@@ -337,26 +336,23 @@ class SegmentChannelSettings(BaseModel):
 
     def cellpose_payload(self, *, threading: bool) -> dict[str, Any]:
         """Return the settings consumed by ``CellposeWrapper``."""
-        return {
-            "do_denoise": self.do_denoise,
-            "nuclear_channel": self.nuclear_channel,
-            "user_settings": self.user_settings,
-            "model": self.model,
-            "threading": threading,
-            "use_nuclear_channel": self.nuclear_channel is not None,
-        }
+        return {"do_denoise": self.do_denoise,
+                "nuclear_channel": self.nuclear_channel,
+                "user_settings": self.user_settings,
+                "model": self.model,
+                "threading": threading,
+                "use_nuclear_channel": self.nuclear_channel is not None,}
 
     def to_payload_dict(self) -> dict[str, Any]:
-        return {
-            "channel": self.channel,
-            "do_denoise": self.do_denoise,
-            "nuclear_channel": self.nuclear_channel,
-            "user_settings": self.user_settings,
-        }
+        return {"channel": self.channel,
+                "do_denoise": self.do_denoise,
+                "nuclear_channel": self.nuclear_channel,
+                "user_settings": self.user_settings,}
 
 
 class SegmentSettings(SettingsModel):
-    """Settings for Cellpose-based image segmentation.
+    """
+    Settings for Cellpose-based image segmentation.
 
     Attributes:
         channels: Ordered, independent target-channel configurations.
@@ -380,9 +376,7 @@ class SegmentSettings(SettingsModel):
         targets = [entry.channel for entry in self.channels]
         duplicates = sorted({channel for channel in targets if targets.count(channel) > 1})
         if duplicates:
-            raise ValueError(
-                f"Duplicate segmentation target channel(s): {', '.join(duplicates)}."
-            )
+            raise ValueError(f"Duplicate segmentation target channel(s): {', '.join(duplicates)}.")
         return self
     
     @computed_field()
@@ -403,8 +397,9 @@ class SegmentSettings(SettingsModel):
 ############# Tracking settings ############
 
 class TrackPostprocessSettings(BaseModel):
-    """Settings for optional static-cell mask post-processing."""
-
+    """
+    Settings for optional static-cell mask post-processing.
+    """
     enabled: bool = False
     shape_similarity: float = Field(default=0.9, ge=0, le=1)
     minimum_appearances: int = Field(default=5, ge=1)
@@ -413,7 +408,8 @@ class TrackPostprocessSettings(BaseModel):
 
 
 class TrackSettings(SettingsModel):
-    """Settings for converting segmentation masks into tracked labels.
+    """
+    Settings for converting segmentation masks into tracked labels.
 
     Attributes:
         channel_to_track: Segmentation channel labels to track.
@@ -444,18 +440,17 @@ class TrackSettings(SettingsModel):
         Convert the TrackSettings instance to a metadata dictionary suitable for serialization.
         Excludes any fields that are not relevant for metadata.
         """
-        payload = {
-            "channel_to_track": list(self.channel_to_track),
-            "backend": self.backend,
-            "postprocess": self.postprocess.model_dump(),
-            **getattr(self, self.backend, {}),
-        }
+        payload = {"channel_to_track": list(self.channel_to_track),
+                    "backend": self.backend,
+                    "postprocess": self.postprocess.model_dump(),
+                    **getattr(self, self.backend, {}),}
         return payload
 
 ############# Distance-profile settings ############
 
 class DistanceProfileSettings(SettingsModel):
-    """Settings for binned intensity measurements from a reference mask.
+    """
+    Settings for binned intensity measurements from a reference mask.
 
     The analysis is strictly two-dimensional. FITS automatically max-projects
     any Z axis before profiling. Reference and ROI masks are collapsed across
@@ -476,7 +471,6 @@ class DistanceProfileSettings(SettingsModel):
         frame_workers: Bioimagequant processes used to profile independent
             reference frames within one experiment.
     """
-
     # Drawing requests belong to FITS; analysis still discovers saved artifacts.
     draw_ref_mask: Literal[True] = True
     expected_ref_masks: int = Field(default=1, ge=1)
@@ -497,7 +491,8 @@ class DistanceProfileSettings(SettingsModel):
 ####### Quantification settings ############
 
 class ExtractSettings(SettingsModel):
-    """Settings for region-based intensity quantification.
+    """
+    Settings for region-based intensity quantification.
 
     Attributes:
         draw_ref_mask: Request optional interactive reference drawing. Existing

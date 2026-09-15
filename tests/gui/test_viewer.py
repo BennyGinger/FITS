@@ -12,17 +12,17 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from fits.environment.constant import FITS_ARRAY_NAME
-from fits.gui.run_browser import DirectoryBrowser, RunDirectoryBrowser
-from fits.gui.viewer.image_viewer import FitsImageViewer
-from fits.gui.viewer.tools.reference_mask.settings_panel import ReferenceMaskPanel
-from fits.gui.viewer.tools.roi_mask.settings_panel import RoiMaskPanel
-from fits.gui.viewer.tools.segmentation.settings_panel import CellposeSettingsPanel
-from fits.gui.viewer.tools.segmentation.worker import (
+from fits.gui.main_window.run_browser import DirectoryBrowser, RunDirectoryBrowser
+from fits.gui.viewer.common.image_viewer import FitsImageViewer
+from fits.gui.viewer.masks import MaskDrawingWindow
+from fits.gui.viewer.masks.reference_panel import ReferenceMaskPanel
+from fits.gui.viewer.masks.roi_panel import RoiMaskPanel
+from fits.gui.viewer.segmentation import SegmentationTunerWindow
+from fits.gui.viewer.segmentation.settings_panel import CellposeSettingsPanel
+from fits.gui.viewer.segmentation.worker import (
     ModelInitializationRequest,
     ModelInitializationWorker,
 )
-from fits.gui.viewer.segmentation_window import SegmentationTunerWindow
-from fits.gui.viewer.mask_window import MaskDrawingWindow
 from fits.settings.models import SegmentChannelSettings
 
 
@@ -91,7 +91,7 @@ def test_model_initialization_worker_sets_up_without_running_inference(
             raise AssertionError("model warm-up must not run inference")
 
     monkeypatch.setattr(
-        "fits.gui.viewer.tools.segmentation.worker.CellposeWrapper", FakeWrapper)
+        "fits.gui.viewer.segmentation.worker.CellposeWrapper", FakeWrapper)
     request = ModelInitializationRequest(SegmentChannelSettings(
         channel="GFP",
         user_settings={"model_type": "cyto3"},
@@ -510,7 +510,7 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
             pass
 
     monkeypatch.setattr(
-        "fits.gui.viewer.segmentation_window.SegmentationTuningSession",
+        "fits.gui.viewer.segmentation.window.SegmentationTuningSession",
         FakeSession,)
 
     preview_requests: list[bool] = []
@@ -636,7 +636,7 @@ def test_reference_tab_commits_raster_edits_and_persists_drawings(
             return self.existing_channels
 
     monkeypatch.setattr(
-        "fits.gui.viewer.mask_window.ReferenceMaskSession",
+        "fits.gui.viewer.masks.window.ReferenceMaskSession",
         FakeReferenceSession,)
     class FakeRoiSession(FakeReferenceSession):
         def __init__(self, source_path: Path, *, roi_path=None) -> None:
@@ -649,7 +649,7 @@ def test_reference_tab_commits_raster_edits_and_persists_drawings(
         def threshold_range(self, **kwargs):
             return None
 
-    monkeypatch.setattr("fits.gui.viewer.mask_window.RoiSession", FakeRoiSession)
+    monkeypatch.setattr("fits.gui.viewer.masks.window.RoiSession", FakeRoiSession)
     window = MaskDrawingWindow(tmp_path)
     window._open_source(source)
     reference_session = window._reference_session
@@ -721,13 +721,13 @@ def test_mask_window_uses_mask_sessions_for_navigation_threshold_and_save(
             saved[path.name] = array.copy()
             return path
 
-    monkeypatch.setattr("fits.sessions.image.FitsIO.from_path", lambda _: Reader())
+    monkeypatch.setattr("fits.interaction.image.FitsIO.from_path", lambda _: Reader())
 
     def unexpected_segmentation(*args, **kwargs):
         raise AssertionError("Mask drawing must not create a segmentation session")
 
     monkeypatch.setattr(
-        "fits.gui.viewer.segmentation_window.SegmentationTuningSession",
+        "fits.gui.viewer.segmentation.window.SegmentationTuningSession",
         unexpected_segmentation)
     window = MaskDrawingWindow()
     window._open_source(source)
@@ -791,7 +791,9 @@ def test_mask_window_loads_sibling_masks_and_honours_selected_file(
                 channel_labels=(channel,),
                 metadata=SimpleNamespace(custom_metadata={"roi_mask_encoding": ROI_MASK_ENCODING}),
                 get_array=lambda mask=stored_mask: SimpleNamespace(array=mask, axes="TYX"))
-    monkeypatch.setattr("fits.sessions.image.FitsIO.from_path", lambda path: readers[Path(path)])
+    monkeypatch.setattr(
+        "fits.interaction.image.FitsIO.from_path",
+        lambda path: readers[Path(path)])
     window = MaskDrawingWindow()
     selected = {"array": source, "folder": tmp_path,
                 "roi": tmp_path / "fits_roi_z.tif",

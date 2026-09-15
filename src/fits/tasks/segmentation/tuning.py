@@ -9,7 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from cellpose_kit.client import CellposeWrapper
-from fits.sessions.image import FitsImageSession
+from fits.interaction import FitsImageSession
 from fits.settings.models import SegmentChannelSettings
 from fits.tasks.segmentation.preview_cache import PreviewCache, SegmentationPreview
 
@@ -69,7 +69,9 @@ class SegmentationTuningSession(FitsImageSession):
                       channel: int | str = 0,
                       z_index: int = 0,
                       ) -> NDArray[Any]:
-        """Return one selected image plane while the tuning session is open."""
+        """
+        Return one selected image plane while the tuning session is open.
+        """
         self._ensure_open()
         return super().display_frame(frame_index, channel, z_index)
 

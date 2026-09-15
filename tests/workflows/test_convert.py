@@ -9,11 +9,11 @@ import numpy as np
 import pytest
 
 from fits.environment.constant import StepName
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import ConvertSettings
 from fits.tasks.convert import convert
-from fits.workflows.engines.registry import REGISTRY
-from fits.workflows.errors import StepExecutionError
+from fits.workflows.definitions.registry import REGISTRY
+from fits.workflows.runtime.errors import StepExecutionError
 
 
 convert_module = importlib.import_module("fits.tasks.convert")
@@ -114,7 +114,7 @@ def test_convert_wraps_conversion_errors(monkeypatch, tmp_path: Path) -> None:
 def test_convert_real_z_stack(tmp_path: Path, projection: str) -> None:
     from tifffile import imwrite
     from fits_io import FitsIO
-    from fits.gui.settings_adapter import SettingsAdapter
+    from fits.gui.settings import SettingsAdapter
 
     raw = tmp_path / "input.tif"
     array = (np.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5) + 40000).astype(np.uint16)

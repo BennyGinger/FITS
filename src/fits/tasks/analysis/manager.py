@@ -14,7 +14,7 @@ from fits.environment.constant import (
     FITS_REFERENCE_TEMPLATE,
     FITS_ROI_TEMPLATE,
 )
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,9 @@ def project_z(array: NDArray[Any],
               *,
               mask: bool,
               ) -> tuple[NDArray[Any], str]:
-    """Project Z with maximum intensity or logical mask inclusion."""
+    """
+    Project Z with maximum intensity or logical mask inclusion.
+    """
     if "Z" not in axes:
         return array, axes
     z_axis = axes.index("Z")
@@ -36,7 +38,9 @@ def project_z(array: NDArray[Any],
 
 @dataclass
 class AnalysisManager:
-    """Shared FITS artifact access for experiment-level analyses."""
+    """
+    Shared FITS artifact access for experiment-level analyses.
+    """
 
     state: ExperimentState
     _reader: FitsIO | None = field(init=False, default=None, repr=False)
@@ -63,18 +67,18 @@ class AnalysisManager:
             FITS_ROI_TEMPLATE.format(label="*"))))
 
     def isotropic_pixel_size_um(self, *, spatial_axes: str = "YX") -> float | None:
-        """Return isotropic XY calibration, or ``None`` when unavailable."""
+        """
+        Return isotropic XY calibration, or ``None`` when unavailable.
+        """
         resolution = self.image_reader.resolution
         if resolution is None:
             return None
         if "Z" in spatial_axes:
-            logger.warning(
-                "Physical distances are unavailable for unprojected Z data.")
+            logger.warning("Physical distances are unavailable for unprojected Z data.")
             return None
 
         x_size, y_size = resolution
         if not np.isclose(x_size, y_size):
-            logger.warning(
-                "Physical distances are unavailable for anisotropic XY pixels.")
+            logger.warning("Physical distances are unavailable for anisotropic XY pixels.")
             return None
         return float(x_size)

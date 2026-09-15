@@ -27,6 +27,17 @@ _VALID_METHODS: set[str] = {"translation", "rigid_body", "affine"}
 
 
 def resolve_registration_plan(context: RegistrationContext, backend: str | None = None, method: str | None = None) -> RegistrationPlan:
+    """
+    Resolve the registration plan for a given context, optionally overriding the backend and method.
+
+    Args:
+        context: The registration context to resolve.
+        backend: Optional backend to override the preset.
+        method: Optional method to override the preset.
+
+    Returns:
+        The resolved RegistrationPlan.
+    """
     preset = _PRESET_PLANS[context]
     final_backend = preset.backend if backend is None else backend
     final_method = preset.method if method is None else method

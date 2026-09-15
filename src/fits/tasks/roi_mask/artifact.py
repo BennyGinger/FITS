@@ -26,11 +26,17 @@ ROI_MASK_VALUE_TABLE = {
 
 
 def build_roi_path(source_path: Path, label: str) -> Path:
+    """
+    Build the validated ROI artifact path beside its source image.
+    """
     return source_path.with_name(
         FITS_ROI_TEMPLATE.format(label=validate_reference_label(label)))
 
 
 def saved_roi_channels(path: Path) -> tuple[str, ...]:
+    """
+    Return channel labels stored in an ROI artifact, or none if absent.
+    """
     return tuple(FitsIO.from_path(path).channel_labels) if path.is_file() else ()
 
 
@@ -38,6 +44,9 @@ def load_roi_artifact(roi_path: str | Path, *, source_path: Path,
                       source_axes: str, source_shape: tuple[int, ...],
                       source_channels: tuple[str, ...],
                       ) -> tuple[NDArray[np.uint8], str, tuple[str, ...]]:
+    """
+    Load and align a validated ROI artifact with its source image.
+    """
     path = Path(roi_path).expanduser().resolve()
     prefix, suffix = FITS_ROI_TEMPLATE.split("{label}")
     if (not path.is_file() or path.parent != source_path.parent
@@ -76,7 +85,9 @@ def merge_roi_channels(output_path: Path, channel_mask: NDArray[np.uint8], *,
                        channel_axes: str, source_axes: str,
                        channel_label: str, overwrite: bool,
                        ) -> tuple[NDArray[np.uint8], list[str]]:
-    """Merge current-format channels or replace an incompatible ROI artifact."""
+    """
+    Merge current-format channels or replace an incompatible ROI artifact.
+    """
     if output_path.is_file():
         reader = FitsIO.from_path(output_path)
         encoding = reader.metadata.custom_metadata.get("roi_mask_encoding")
@@ -85,6 +96,9 @@ def merge_roi_channels(output_path: Path, channel_mask: NDArray[np.uint8], *,
 
     def normalize_existing(array: NDArray[np.generic], reader: FitsIO,
                            ) -> NDArray[np.uint8]:
+        """
+        Validate and normalize an existing artifact before channel merging.
+        """
         metadata = reader.metadata.custom_metadata
         return _normalize_roi_encoding(
             array, encoding=metadata.get("roi_mask_encoding"))
@@ -98,10 +112,12 @@ def merge_roi_channels(output_path: Path, channel_mask: NDArray[np.uint8], *,
 
 def _normalize_roi_encoding(array: NDArray[np.generic], *,
                             encoding: object) -> NDArray[np.uint8]:
-    """Validate the current ordered ROI encoding without guessing formats."""
+    """
+    Validate the current ordered ROI encoding without guessing formats.
+    """
     if encoding != ROI_MASK_ENCODING:
-        raise ValueError(
-            f"ROI mask encoding must be {ROI_MASK_ENCODING!r}; got {encoding!r}.")
+        raise ValueError(f"ROI mask encoding must be {ROI_MASK_ENCODING!r}; got {encoding!r}.")
+    
     values = np.asarray(array)
     if not np.all(np.isin(values, (0, 1, 2, 3, 4, 5))):
         raise ValueError("Loaded ROI mask contains invalid ordered ROI states.")

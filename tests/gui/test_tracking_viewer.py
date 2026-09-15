@@ -10,9 +10,9 @@ import numpy as np
 from PySide6.QtWidgets import QApplication
 
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK, StepName
-from fits.gui.settings_adapter import SettingsAdapter
-from fits.gui.viewer.tracking_window import TrackingViewerWindow
-from fits.gui.window import FitsMainWindow
+from fits.gui.main_window import FitsMainWindow
+from fits.gui.settings import SettingsAdapter
+from fits.gui.viewer.tracking import TrackingViewerWindow
 
 
 def _app() -> QApplication:
@@ -55,9 +55,10 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
             save_array=save_tracking),
     }
     monkeypatch.setattr(
-        "fits.sessions.image.FitsIO.from_path", lambda path: readers[Path(path)])
+        "fits.interaction.image.FitsIO.from_path", lambda path: readers[Path(path)])
     monkeypatch.setattr(
-        "fits.sessions.tracking.FitsIO.from_path", lambda path: readers[Path(path)])
+        "fits.gui.viewer.tracking.session.FitsIO.from_path",
+        lambda path: readers[Path(path)])
 
     window = TrackingViewerWindow(tracking_path=track_path)
 

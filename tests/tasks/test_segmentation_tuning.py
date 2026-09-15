@@ -49,7 +49,7 @@ def test_session_navigates_noncanonical_time_and_channel_axes(
     array = np.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5)
     reader = FakeFitsIO(array, "CTYX", ["GFP", "RFP"])
     monkeypatch.setattr(
-        "fits.sessions.image.FitsIO.from_path",
+        "fits.interaction.image.FitsIO.from_path",
         lambda _: reader,
     )
 
@@ -73,7 +73,7 @@ def test_preview_is_cached_by_frame_channels_and_settings_and_cleaned_on_close(
     wrapper = FakeWrapper()
     wrapper_settings: list[dict] = []
     monkeypatch.setattr(
-        "fits.sessions.image.FitsIO.from_path",
+        "fits.interaction.image.FitsIO.from_path",
         lambda _: reader,
     )
     monkeypatch.setattr(
@@ -126,7 +126,7 @@ def test_session_preserves_z_and_selects_planes_only_for_display(
     array = np.arange(2 * 1 * 3 * 4 * 5).reshape(2, 1, 3, 4, 5)
     reader = FakeFitsIO(array, "TCZYX", ["GFP"])
     monkeypatch.setattr(
-        "fits.sessions.image.FitsIO.from_path",
+        "fits.interaction.image.FitsIO.from_path",
         lambda _: reader,
     )
 
@@ -150,7 +150,7 @@ def test_preview_passes_z_axis_unchanged_to_cellpose(
     reader = FakeFitsIO(array, "TCZYX", ["RFP"])
     wrapper = FakeWrapper()
     monkeypatch.setattr(
-        "fits.sessions.image.FitsIO.from_path",
+        "fits.interaction.image.FitsIO.from_path",
         lambda _: reader,
     )
     monkeypatch.setattr(
@@ -181,7 +181,7 @@ def test_2d_preview_uses_the_displayed_z_plane(tmp_path: Path,
     reader = FakeFitsIO(array, "CZYX", ["GFP"])
     wrapper = FakeWrapper()
     monkeypatch.setattr(
-        "fits.sessions.image.FitsIO.from_path",
+        "fits.interaction.image.FitsIO.from_path",
         lambda _: reader,)
     monkeypatch.setattr(
         "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",
@@ -207,7 +207,7 @@ def test_preview_selects_display_and_nuclear_channels(
                                nuclear_channel="GFP",
                                do_denoise=False,)
     monkeypatch.setattr(
-        "fits.sessions.image.FitsIO.from_path",
+        "fits.interaction.image.FitsIO.from_path",
         lambda _: reader,)
     monkeypatch.setattr(
         "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",

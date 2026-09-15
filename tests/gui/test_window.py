@@ -10,13 +10,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
 from fits.environment.constant import StepName, WORKFLOW_ORDER
-from fits.environment.progress import RunProgress, StageStatus, WorkflowStage
-from fits.environment.report import format_run_report
-from fits.gui.settings_adapter import SettingsAdapter
-from fits.gui.settings_editor import StepSettingsEditor
-from fits.gui.field_widgets import FloatWidget
-from fits.gui.window import FitsMainWindow, _user_error_message
-from fits.workflows.errors import StepExecutionError
+from fits.workflows.runtime.progress import (
+    RunProgress, StageStatus, WorkflowStage, format_run_report)
+from fits.gui.main_window.pipeline_worker import user_error_message
+from fits.gui.main_window.window import FitsMainWindow
+from fits.gui.settings import SettingsAdapter, StepSettingsEditor
+from fits.gui.settings.field_widgets import FloatWidget
+from fits.workflows.runtime.errors import StepExecutionError
 
 
 def _application() -> QApplication:
@@ -239,8 +239,11 @@ def test_browsing_run_directory_loads_existing_settings(
     saved_adapter.set_step_enabled(StepName.TRACK, True)
     saved_adapter.save_to_run_dir()
     copied_dir = tmp_path / "local_copy"
-    copied_dir.mkdir()
-    shutil.copy2(tmp_path / "fits_settings.toml", copied_dir / "fits_settings.toml")
+    (copied_dir / ".fits").mkdir(parents=True)
+    shutil.copy2(
+        tmp_path / ".fits" / "fits_settings.toml",
+        copied_dir / ".fits" / "fits_settings.toml",
+    )
 
     window = FitsMainWindow(SettingsAdapter())
     monkeypatch.setattr(
@@ -384,7 +387,7 @@ def test_user_error_message_finds_step_error_inside_executor_wrapper() -> None:
     wrapper = RuntimeError("Task failed for item")
     wrapper.__cause__ = step_error
 
-    assert _user_error_message(wrapper) == (
+    assert user_error_message(wrapper) == (
         "Step 'track' failed for experiment_3: Unknown channel 'GFP'.")
 
 
@@ -409,10 +412,10 @@ def test_completion_report_shows_stage_counts_and_short_failure_path(tmp_path) -
 
 
 def test_full_report_button_uses_latest_report_and_browser_activation(tmp_path, monkeypatch) -> None:
-    logs = tmp_path / "logs"
-    logs.mkdir()
-    older = logs / "fits_report_20260911_080000.txt"
-    latest = logs / "fits_report_20260911_090000.txt"
+    reports = tmp_path / ".fits" / "reports"
+    reports.mkdir(parents=True)
+    older = reports / "fits_report_20260911_080000.txt"
+    latest = reports / "fits_report_20260911_090000.txt"
     older.write_text("older", encoding="utf-8")
     latest.write_text("latest", encoding="utf-8")
     adapter = SettingsAdapter()
@@ -606,7 +609,7 @@ def test_run_button_tracks_missing_enabled_inputs(tmp_path: Path) -> None:
 def test_segmentation_tuner_does_not_warn_about_missing_target_channel(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    from fits.gui.viewer import segmentation_window
+    import fits.gui.viewer.segmentation as segmentation_viewer
 
     class DummySignal:
         def connect(self, callback) -> None:
@@ -630,7 +633,7 @@ def test_segmentation_tuner_does_not_warn_about_missing_target_channel(
     warnings: list[str] = []
     monkeypatch.setattr(
         QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
-    monkeypatch.setattr(segmentation_window, "SegmentationTunerWindow", DummyTuner)
+    monkeypatch.setattr(segmentation_viewer, "SegmentationTunerWindow", DummyTuner)
 
     window.segtune_button.click()
 

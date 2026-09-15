@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fits.environment.constant import WORKFLOW_ORDER
 from fits.settings.loader import load_settings
-from fits.workflows.engines.registry import REGISTRY
+from fits.workflows.definitions.registry import REGISTRY
 
 
 TEMPLATE_PATH = (

@@ -8,11 +8,11 @@ import numpy as np
 import pytest
 
 from fits.environment.constant import StepName
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
 from fits.tasks.registration.register_channel import register_channel
 from fits.tasks.registration.register_time import register_time
-from fits.workflows.engines.registry import REGISTRY
+from fits.workflows.definitions.registry import REGISTRY
 
 
 class DummyReader:
@@ -81,8 +81,8 @@ def test_register_channel_settings_rejects_time_context() -> None:
 def test_register_time_resolves_fit_channel_and_saves(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(np.ones((3, 2, 4, 4), dtype=np.uint16), "TCYX", tmp_path / "fits_array.tif")
     model = DummyRegisterModel("pystackreg")
-    monkeypatch.setattr("fits.tasks.registration.register_time.FitsIO.from_path", lambda path: reader)
-    monkeypatch.setattr("fits.tasks.registration.register_time.decide_run", lambda *args: SimpleNamespace(is_complete=False))
+    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
     monkeypatch.setattr("fits.tasks.registration.register_time.RegisterModel", lambda backend: model)
 
     results = register_time(
@@ -101,8 +101,8 @@ def test_register_time_resolves_fit_channel_and_saves(monkeypatch, tmp_path: Pat
 def test_register_channel_resolves_reference_and_saves(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), "CYX", tmp_path / "fits_array.tif")
     model = DummyRegisterModel("cv2")
-    monkeypatch.setattr("fits.tasks.registration.register_channel.FitsIO.from_path", lambda path: reader)
-    monkeypatch.setattr("fits.tasks.registration.register_channel.decide_run", lambda *args: SimpleNamespace(is_complete=False))
+    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
     monkeypatch.setattr("fits.tasks.registration.register_channel.RegisterModel", lambda backend: model)
 
     results = register_channel(
@@ -121,8 +121,8 @@ def test_register_channel_resolves_reference_and_saves(monkeypatch, tmp_path: Pa
 def test_registration_steps_skip_when_complete(monkeypatch, tmp_path: Path) -> None:
     state = _image_state(tmp_path)
     reader = DummyReader(np.ones((4, 4), dtype=np.uint16), "YX", tmp_path / "fits_array.tif")
-    monkeypatch.setattr("fits.tasks.registration.register_channel.FitsIO.from_path", lambda path: reader)
-    monkeypatch.setattr("fits.tasks.registration.register_channel.decide_run", lambda *args: SimpleNamespace(is_complete=True))
+    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=True))
 
     assert register_channel(
         RegisterChannelSettings(), state, REGISTRY[StepName.REGISTER_CHANNEL].profile

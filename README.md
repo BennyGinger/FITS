@@ -42,7 +42,7 @@ Convert → Preprocess → Process → Analysis
 ```
 
 Every launch saves the input configuration, including its comments, as
-`fits_settings.toml` in the run directory before processing starts. This also
+`.fits/fits_settings.toml` in the run directory before processing starts. This also
 applies when running `pipeline.py` with the packaged `user_settings.toml`,
 so the GUI can later load the run's settings. The saved copy reflects the
 latest launch and remains available if processing fails.
@@ -243,13 +243,14 @@ The drawing requests and early-finish choices are currently run-local; reopening
 a run reuses saved masks and asks for finalization again.
 
 The command-line interface is available through `uv run fits --help`. Running
-`uv run fits pipeline start` (or `python -m fits.pipeline`) launches the same
-Ref/ROI collection window when the configured analyses request interactive
-masks. Calling `start_pipeline()` directly stays noninteractive unless a mask
-interaction bridge is supplied.
+`uv run fits run path/to/settings.toml` launches the same Ref/ROI collection
+window when the configured analyses request interactive masks. Calling
+`start_pipeline()` directly stays noninteractive unless a mask interaction
+bridge is supplied.
 
-Runtime `log_dir` is the root for logs. FITS creates a `logs/` folder inside
-that directory; when `log_dir` is empty, it creates `logs/` inside `run_dir`.
+Runtime `log_dir` overrides the root for FITS metadata. FITS creates
+`.fits/logs/` and `.fits/reports/` below that root; when `log_dir` is empty,
+both are created below `run_dir`.
 
 ## Repository maintenance
 

@@ -20,16 +20,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DistanceProfileManager(AnalysisManager):
-    """Load FITS artifacts and delegate profiling to ``bioimagequant``."""
+    """
+    Load FITS artifacts and delegate profiling to ``bioimagequant``.
+    """
 
     settings: DistanceProfileSettings
 
     def calculate(self) -> pd.DataFrame:
         reference_paths = self.reference_paths()
         if not reference_paths:
-            raise ValueError(
-                "Distance profiling requires at least one reference mask "
-                f"(fits_ref_*.tif) for {self.state.experiment_id}.")
+            raise ValueError("Distance profiling requires at least one reference mask "
+                            f"(fits_ref_*.tif) for {self.state.experiment_id}.")
         reader = self.image_reader
         loaded = reader.get_array()
         source = np.asarray(loaded.array)
@@ -38,48 +39,38 @@ class DistanceProfileManager(AnalysisManager):
         image, image_axes = project_z(source, source_axes, mask=False)
         z_projection = "max" if "Z" in source_axes else None
         if z_projection is not None:
-            logger.info(
-                "Distance profile is two-dimensional; automatically max-projecting Z for %s.",
-                self.state.experiment_id,)
+            logger.info("Distance profile is two-dimensional; automatically max-projecting Z for %s.",
+                        self.state.experiment_id,)
 
-        profiler = DistanceProfiler(
-            interval=reader.interval,
-            pixel_size=self.isotropic_pixel_size_um(spatial_axes="YX"),)
-        profiler.add_intensity(
-            image,
-            image_axes,
-            channel_labels=source_channels,)
+        profiler = DistanceProfiler(interval=reader.interval,
+                                    pixel_size=self.isotropic_pixel_size_um(spatial_axes="YX"),)
+        profiler.add_intensity(image,
+                            image_axes,
+                            channel_labels=source_channels,)
 
         for path in reference_paths:
-            reference, name, channels = load_reference_artifact(
-                path,
-                source_path=self.image_path,
-                source_axes=source_axes,
-                source_shape=source.shape,
-                source_channels=source_channels,)
-            compact, axes = _compact_mask_channels(
-                reference, source_axes, source_channels, channels)
+            reference, name, channels = load_reference_artifact(path,
+                                                                source_path=self.image_path,
+                                                                source_axes=source_axes,
+                                                                source_shape=source.shape,
+                                                                source_channels=source_channels,)
+            compact, axes = _compact_mask_channels(reference, source_axes, source_channels, channels)
             projected, axes = project_z(compact != 0, axes, mask=True)
-            profiler.add_ref(
-                projected, axes, name=name, channel_labels=channels)
+            profiler.add_ref(projected, axes, name=name, channel_labels=channels)
 
         for path in self.roi_paths():
-            roi, name, channels = load_roi_artifact(
-                path,
-                source_path=self.image_path,
-                source_axes=source_axes,
-                source_shape=source.shape,
-                source_channels=source_channels,)
-            compact, axes = _compact_mask_channels(
-                roi, source_axes, source_channels, channels)
+            roi, name, channels = load_roi_artifact(path,
+                                                    source_path=self.image_path,
+                                                    source_axes=source_axes,
+                                                    source_shape=source.shape,
+                                                    source_channels=source_channels,)
+            compact, axes = _compact_mask_channels(roi, source_axes, source_channels, channels)
             projected, axes = project_z(compact >= 3, axes, mask=True)
-            profiler.add_roi(
-                projected, axes, name=name, channel_labels=channels)
+            profiler.add_roi(projected, axes, name=name, channel_labels=channels)
 
-        dataframe = profiler.calculate(
-            bin_width=self.settings.bin_width,
-            maximum_bins=self.settings.maximum_bins,
-            workers=self.settings.frame_workers,)
+        dataframe = profiler.calculate(bin_width=self.settings.bin_width,
+                                    maximum_bins=self.settings.maximum_bins,
+                                    workers=self.settings.frame_workers,)
         dataframe.insert(0, "experiment_id", self.state.experiment_id)
         roi_channel_position = dataframe.columns.get_loc("roi_channel")
         if not isinstance(roi_channel_position, (int, np.integer)):
@@ -94,7 +85,9 @@ def _compact_mask_channels(mask: NDArray[Any],
                            source_channels: tuple[str, ...],
                            mask_channels: tuple[str, ...],
                            ) -> tuple[NDArray[Any], str]:
-    """Remove empty source-channel slots introduced while loading an artifact."""
+    """
+    Remove empty source-channel slots introduced while loading an artifact.
+    """
     if "C" not in axes:
         return mask, axes
     indices = [source_channels.index(channel) for channel in mask_channels]

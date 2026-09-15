@@ -13,7 +13,7 @@ from fits.gui.theme import apply_dark_theme
 def segtune() -> None:
     parser = argparse.ArgumentParser(description="Tune FITS segmentation settings.")
     _, qt_arguments = parser.parse_known_args()
-    from fits.gui.viewer.segmentation_window import SegmentationTunerWindow
+    from fits.gui.viewer.segmentation import SegmentationTunerWindow
 
     _launch(SegmentationTunerWindow, "FITS Segmentation Tuner", qt_arguments)
 
@@ -23,7 +23,7 @@ def trackedit() -> None:
     parser.add_argument("tracking", nargs="?", type=Path,
                         help="A fits_track.tif artifact to open.")
     arguments, qt_arguments = parser.parse_known_args()
-    from fits.gui.viewer.tracking_window import TrackingViewerWindow
+    from fits.gui.viewer.tracking import TrackingViewerWindow
 
     _launch(lambda: TrackingViewerWindow(tracking_path=arguments.tracking),
             "FITS Tracking Viewer / Editor", qt_arguments)
@@ -36,11 +36,11 @@ def drawmask() -> None:
     parser.add_argument("--settings", type=Path, help="FITS settings for the pipeline panel preview.")
     arguments, qt_arguments = parser.parse_known_args()
     if arguments.tool == "manual":
-        from fits.gui.viewer.mask_window import MaskDrawingWindow
+        from fits.gui.viewer.masks import MaskDrawingWindow
         _launch(lambda: MaskDrawingWindow(arguments.experiments_dir), "FITS Mask Drawing", qt_arguments)
         return
-    from fits.gui.viewer.collection_window import MaskCollectionWindow
-    from fits.gui.settings_adapter import SettingsAdapter
+    from fits.gui.viewer.masks import MaskCollectionWindow
+    from fits.gui.settings import SettingsAdapter
     from fits.settings.models import DistanceProfileSettings, ExtractSettings
 
     # Without a settings file, preview the usual distance-profile request: one reference.

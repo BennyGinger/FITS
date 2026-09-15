@@ -6,9 +6,9 @@ from typing import Any, Mapping
 
 import pytest
 
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.resolution import apply_overwrite_cascade
-from fits.workflows.execute import run_workflow
+from fits.workflows.runtime.batch import run_batch_workflow
 
 
 @dataclass
@@ -61,14 +61,17 @@ def make_state() -> ExperimentState:
 def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
     convert = DummyStepSpec("convert")
     other = DummyStepSpec("other")
-    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert", "other"])
     monkeypatch.setattr(
-        "fits.workflows.execute.REGISTRY", {"convert": convert, "other": other})
+        "fits.workflows.runtime.batch.api.WORKFLOW_ORDER", ["convert", "other"])
     monkeypatch.setattr(
-        "fits.workflows.execute.pbar", lambda **kwargs: DummyProgress())
+        "fits.workflows.runtime.batch.api.REGISTRY",
+        {"convert": convert, "other": other})
+    monkeypatch.setattr(
+        "fits.workflows.runtime.batch.execution.pbar",
+        lambda **kwargs: DummyProgress())
 
     states = [make_state()]
-    result = run_workflow({
+    result = run_batch_workflow({
         "convert": {"enabled": True, "params": {"value": 1}},
         "other": {"enabled": True, "params": {"value": 2}},
     }, states)
@@ -82,21 +85,24 @@ def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
 
 def test_run_workflow_skips_disabled_or_missing_config(monkeypatch) -> None:
     spec = DummyStepSpec("convert")
-    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert"])
-    monkeypatch.setattr("fits.workflows.execute.REGISTRY", {"convert": spec})
+    monkeypatch.setattr(
+        "fits.workflows.runtime.batch.api.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr(
+        "fits.workflows.runtime.batch.api.REGISTRY", {"convert": spec})
     states = [make_state()]
 
-    assert run_workflow({}, states) == states
-    assert run_workflow({"convert": {"enabled": False}}, states) == states
+    assert run_batch_workflow({}, states) == states
+    assert run_batch_workflow({"convert": {"enabled": False}}, states) == states
     assert spec.validate_calls == []
 
 
 def test_run_workflow_rejects_enabled_step_missing_from_registry(monkeypatch) -> None:
-    monkeypatch.setattr("fits.workflows.execute.WORKFLOW_ORDER", ["convert"])
-    monkeypatch.setattr("fits.workflows.execute.REGISTRY", {})
+    monkeypatch.setattr(
+        "fits.workflows.runtime.batch.api.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fits.workflows.runtime.batch.api.REGISTRY", {})
 
     with pytest.raises(ValueError, match="missing from the registry"):
-        run_workflow({"convert": {"enabled": True}}, [make_state()])
+        run_batch_workflow({"convert": {"enabled": True}}, [make_state()])
 
 
 def test_apply_overwrite_cascade_propagates_downstream() -> None:

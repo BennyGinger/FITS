@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from fits.environment.constant import StepName, ARTI_QUANTI
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.tasks.analysis.aggregate import save_master_analysis_table
 
 
@@ -12,6 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 def aggregate_quantification(effective_cfg: Mapping[str, Any], final_states: Sequence[ExperimentState], run_dir: Path,) -> None:
+    """
+    Aggregate quantification artifacts from the final experiment states and save a master Parquet file.
+    
+    Args:
+        effective_cfg: The effective configuration mapping containing step settings.
+        final_states: Sequence of final ExperimentState instances to aggregate.
+        run_dir: Directory where the master Parquet file will be saved.
+    """
     extract_cfg = effective_cfg.get(StepName.EXTRACT)
 
     if isinstance(extract_cfg, Mapping) and extract_cfg.get("enabled", False):

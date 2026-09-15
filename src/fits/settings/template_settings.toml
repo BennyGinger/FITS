@@ -1,7 +1,7 @@
 # FITS settings template.
 #
 # The GUI loads this file as its initial configuration and saves an edited copy
-# as "fits_settings.toml" in the selected run directory. Required values that
+# as ".fits/fits_settings.toml" in the selected run directory. Required values that
 # depend on the experiment are intentionally empty.
 
 # ============================
@@ -17,7 +17,7 @@ run_dir = ""
 execution = "conveyor" # batch | conveyor
 console_level = "info" # debug | info | warning | error | critical
 file_level = "debug" # debug | info | warning | error | critical
-log_dir = "" # Log root. Empty uses run_dir; FITS creates a logs folder inside it.
+log_dir = "" # FITS metadata root. Empty uses run_dir; logs and reports go under .fits/.
 unlock_all_tabs = false # Show all phase settings before converted arrays exist (GUI only).
 
 # optimize = "path/to/one/input/file" # Optional; process only this input file.

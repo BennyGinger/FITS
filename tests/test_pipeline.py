@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState, save_experiment_state
 from fits.pipeline import start_pipeline
 
 
@@ -21,7 +21,7 @@ def _base_cfg(run_dir: Path) -> dict:
 
 
 @pytest.mark.parametrize("log_value", [None, "", "   ", "custom"])
-def test_pipeline_log_directory_defaults_to_run_dir_logs(monkeypatch, tmp_path, log_value):
+def test_pipeline_log_directory_defaults_to_run_dir_fits_logs(monkeypatch, tmp_path, log_value):
     captured = {}
     _patch_pipeline_services(monkeypatch, tmp_path, [], captured)
     cfg = _base_cfg(tmp_path)
@@ -31,7 +31,7 @@ def test_pipeline_log_directory_defaults_to_run_dir_logs(monkeypatch, tmp_path, 
     monkeypatch.setattr("fits.pipeline.configure_logging", lambda **kwargs: captured.update(kwargs))
     start_pipeline(settings_path=tmp_path / "settings.toml")
     expected_root = tmp_path / "custom" if log_value == "custom" else tmp_path
-    assert captured["log_dir"] == expected_root / "logs"
+    assert captured["log_dir"] == expected_root / ".fits" / "logs"
 
 
 def _saved_state(run_dir: Path, raw_path: Path, workdir_name: str) -> ExperimentState:
@@ -44,7 +44,7 @@ def _saved_state(run_dir: Path, raw_path: Path, workdir_name: str) -> Experiment
         artifact_kind="image",
         artifact_path=image,
     )
-    state.save_state()
+    save_experiment_state(state)
     return state
 
 
@@ -56,7 +56,9 @@ def _patch_pipeline_services(monkeypatch, run_dir: Path, raw_files: list[Path], 
     monkeypatch.setattr("fits.pipeline.configure_logging", lambda **_: None)
     monkeypatch.setattr("fits.pipeline.collect_supported_files", lambda _: raw_files)
     monkeypatch.setattr("fits.pipeline.apply_overwrite_cascade", lambda cfg, order: cfg)
-    monkeypatch.setattr("fits.pipeline.run_workflow", lambda _, states, **kwargs: captured.setdefault("states", states))
+    monkeypatch.setattr(
+        "fits.pipeline.run_batch_workflow",
+        lambda _, states, **kwargs: captured.setdefault("states", states))
     monkeypatch.setattr("fits.pipeline.aggregate_quantification", lambda *args: None)
     monkeypatch.setattr("fits.pipeline.aggregate_distance_profiles", lambda *args: None)
 
@@ -64,13 +66,14 @@ def _patch_pipeline_services(monkeypatch, run_dir: Path, raw_files: list[Path], 
 @pytest.mark.parametrize("source_kind", ["default", "external", "saved"])
 def test_pipeline_saves_input_settings_before_execution(monkeypatch, tmp_path, source_kind):
     from fits.settings.loader import load_settings
-    from fits.gui.settings_adapter import SettingsAdapter
+    from fits.gui.settings import SettingsAdapter
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     captured = {}
     _patch_pipeline_services(monkeypatch, run_dir, [], captured)
-    destination = run_dir / "fits_settings.toml"
+    destination = run_dir / ".fits" / "fits_settings.toml"
+    destination.parent.mkdir()
     source = destination if source_kind == "saved" else tmp_path / "user_settings.toml"
     contents = (
         "# Preserve my settings and comments.\n"
@@ -90,7 +93,7 @@ def test_pipeline_saves_input_settings_before_execution(monkeypatch, tmp_path, s
         assert destination.read_text(encoding="utf-8") == contents
         raise RuntimeError("backend failed")
 
-    monkeypatch.setattr("fits.pipeline.run_workflow", fail_workflow)
+    monkeypatch.setattr("fits.pipeline.run_batch_workflow", fail_workflow)
     with pytest.raises(RuntimeError, match="backend failed"):
         start_pipeline(settings_path=None if source_kind == "default" else source)
 
@@ -167,8 +170,9 @@ def test_start_pipeline_states_two_raw_only_one_converted(monkeypatch, tmp_path:
 ])
 def test_single_step_without_analysis_always_writes_report(monkeypatch, tmp_path, mode, step, title):
     from dataclasses import replace
-    from fits.workflows.execute import run_workflow, run_workflow_scheduler_entry
-    from fits.workflows.engines.registry import REGISTRY
+    from fits.workflows.runtime.batch import run_batch_workflow
+    from fits.workflows.runtime.scheduler import run_workflow_scheduler
+    from fits.workflows.definitions.registry import REGISTRY
 
     captured = {}
     _patch_pipeline_services(monkeypatch, tmp_path, [], captured)
@@ -185,15 +189,15 @@ def test_single_step_without_analysis_always_writes_report(monkeypatch, tmp_path
     cfg[step] = {"enabled": True, "params": params}
     monkeypatch.setattr("fits.pipeline.load_settings", lambda _: cfg)
     monkeypatch.setattr("fits.pipeline.assemble_experiment_states", lambda *args: [state])
-    monkeypatch.setattr("fits.pipeline.run_workflow", run_workflow)
-    monkeypatch.setattr("fits.pipeline.run_workflow_scheduler_entry", run_workflow_scheduler_entry)
+    monkeypatch.setattr("fits.pipeline.run_batch_workflow", run_batch_workflow)
+    monkeypatch.setattr("fits.pipeline.run_workflow_scheduler", run_workflow_scheduler)
     monkeypatch.setitem(REGISTRY, step, replace(
         REGISTRY[step], item_runner=lambda settings, current, profile: [current]))
-    logs = tmp_path / "logs"
-    logs.mkdir()
+    logs = tmp_path / ".fits" / "logs"
+    logs.mkdir(parents=True)
     monkeypatch.setattr("fits.pipeline.configure_logging", lambda **kwargs: logs / "fits_test.log")
     start_pipeline(settings_path=tmp_path / "settings.toml")
-    text = (logs / "fits_report_test.txt").read_text()
+    text = (tmp_path / ".fits" / "reports" / "fits_report_test.txt").read_text()
     assert "Experiments: 1 completed" in text
     assert f"{title}: 1 completed" in text
     assert "Analysis:" not in text
@@ -203,8 +207,9 @@ def test_single_step_without_analysis_always_writes_report(monkeypatch, tmp_path
 @pytest.mark.parametrize("mode", ["batch", "conveyor"])
 def test_failed_processing_writes_report_without_analysis(monkeypatch, tmp_path, mode):
     from dataclasses import replace
-    from fits.workflows.execute import run_workflow, run_workflow_scheduler_entry
-    from fits.workflows.engines.registry import REGISTRY
+    from fits.workflows.runtime.batch import run_batch_workflow
+    from fits.workflows.runtime.scheduler import run_workflow_scheduler
+    from fits.workflows.definitions.registry import REGISTRY
 
     _patch_pipeline_services(monkeypatch, tmp_path, [], {})
     raw = tmp_path / "input.nd2"
@@ -215,18 +220,18 @@ def test_failed_processing_writes_report_without_analysis(monkeypatch, tmp_path,
     cfg["track"] = {"enabled": True, "params": {"channel_to_track": ["GFP"]}}
     monkeypatch.setattr("fits.pipeline.load_settings", lambda _: cfg)
     monkeypatch.setattr("fits.pipeline.assemble_experiment_states", lambda *args: [state])
-    monkeypatch.setattr("fits.pipeline.run_workflow", run_workflow)
-    monkeypatch.setattr("fits.pipeline.run_workflow_scheduler_entry", run_workflow_scheduler_entry)
+    monkeypatch.setattr("fits.pipeline.run_batch_workflow", run_batch_workflow)
+    monkeypatch.setattr("fits.pipeline.run_workflow_scheduler", run_workflow_scheduler)
 
     def fail(*args):
         raise ValueError("Tracker failed")
 
     monkeypatch.setitem(REGISTRY, "track", replace(REGISTRY["track"], item_runner=fail))
-    logs = tmp_path / "logs"
-    logs.mkdir()
+    logs = tmp_path / ".fits" / "logs"
+    logs.mkdir(parents=True)
     monkeypatch.setattr("fits.pipeline.configure_logging", lambda **kwargs: logs / "fits_test.log")
     with pytest.raises(ValueError, match="Tracker failed"):
         start_pipeline(settings_path=tmp_path / "settings.toml")
-    text = (logs / "fits_report_test.txt").read_text()
+    text = (tmp_path / ".fits" / "reports" / "fits_report_test.txt").read_text()
     assert "Processing: 0 completed / 0 partial / 0 skipped / 1 failed" in text
     assert "Tracker failed" in text

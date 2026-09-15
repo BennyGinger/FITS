@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from fits.environment.constant import ARTI_DIST_PROF, StepName
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.tasks.analysis.aggregate import save_master_analysis_table
 
 

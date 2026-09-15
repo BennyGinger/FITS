@@ -11,7 +11,7 @@ run_dir = "/home/ben/Docker_mount/Test_images/nd2/Run2_sim" # Directory where th
 # ============================
 [runtime]
 execution = "conveyor" # Type of execution: batch | conveyor.
-log_dir = "/home/ben/Docker_mount/Test_images/nd2/Run2_sim" # Log root; FITS creates a logs folder inside it. Empty uses run_dir.
+log_dir = "/home/ben/Docker_mount/Test_images/nd2/Run2_sim" # FITS metadata root; logs and reports go under .fits/. Empty uses run_dir.
 unlock_all_tabs = false # Show all phase settings before converted arrays exist (GUI only).
 console_level = "info" # Console log level: debug | info | warning | error | critical
 file_level = "debug" # File log level: debug | info | warning | error | critical

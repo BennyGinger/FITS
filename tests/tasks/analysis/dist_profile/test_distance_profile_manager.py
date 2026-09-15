@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from fits.environment.constant import ARTI_IMG
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import DistanceProfileSettings
 from fits.tasks.analysis.dist_profile.manager import DistanceProfileManager
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from fits.environment.constant import ARTI_IMG, ARTI_TRACK
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.tasks.analysis.extraction.manager import ExtractionManager
 
 

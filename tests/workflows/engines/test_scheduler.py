@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from fits.environment.state import ExperimentState
-from fits.workflows.engines.scheduler import (
-    _resolve_runtime_steps,
+from fits.workflows.experiments import ExperimentState
+from fits.workflows.runtime.scheduler import (
+    resolve_runtime_steps,
     run_workflow_scheduler,
 )
 
@@ -50,12 +50,12 @@ def make_state() -> ExperimentState:
 def test_resolve_runtime_steps_uses_enabled_workflow_order(monkeypatch) -> None:
     spec = DummyStepSpec("convert", lambda *args: [])
     monkeypatch.setattr(
-        "fits.workflows.engines.scheduler.WORKFLOW_ORDER",
+        "fits.workflows.runtime.scheduler.planning.WORKFLOW_ORDER",
         ["convert", "segment"],)
     monkeypatch.setattr(
-        "fits.workflows.engines.scheduler.REGISTRY", {"convert": spec})
+        "fits.workflows.runtime.scheduler.planning.REGISTRY", {"convert": spec})
 
-    resolved = _resolve_runtime_steps({
+    resolved = resolve_runtime_steps({
         "convert": {"enabled": True, "params": {"overwrite": True}},
         "segment": {"enabled": False},
     })
@@ -79,11 +79,11 @@ def test_run_workflow_scheduler_runs_single_enabled_step(monkeypatch) -> None:
 
     spec = DummyStepSpec("convert", runner)
     monkeypatch.setattr(
-        "fits.workflows.engines.scheduler.WORKFLOW_ORDER", ["convert"])
+        "fits.workflows.runtime.scheduler.planning.WORKFLOW_ORDER", ["convert"])
     monkeypatch.setattr(
-        "fits.workflows.engines.scheduler.REGISTRY", {"convert": spec})
+        "fits.workflows.runtime.scheduler.planning.REGISTRY", {"convert": spec})
     monkeypatch.setattr(
-        "fits.workflows.engines.scheduler.pbar",
+        "fits.workflows.runtime.scheduler.api.pbar",
         lambda **kwargs: DummyProgress(),)
 
     result = run_workflow_scheduler(
@@ -94,8 +94,8 @@ def test_run_workflow_scheduler_runs_single_enabled_step(monkeypatch) -> None:
 
 def test_resolve_runtime_steps_rejects_missing_registry_step(monkeypatch) -> None:
     monkeypatch.setattr(
-        "fits.workflows.engines.scheduler.WORKFLOW_ORDER", ["convert"])
-    monkeypatch.setattr("fits.workflows.engines.scheduler.REGISTRY", {})
+        "fits.workflows.runtime.scheduler.planning.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fits.workflows.runtime.scheduler.planning.REGISTRY", {})
 
     with pytest.raises(ValueError, match="missing from the registry"):
-        _resolve_runtime_steps({"convert": {"enabled": True}})
+        resolve_runtime_steps({"convert": {"enabled": True}})

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fits.environment.constant import ARTI_DIST_PROF, StepName
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.tasks.analysis.aggregate import save_master_analysis_table
 
 
@@ -17,7 +17,9 @@ def aggregate_distance_profiles(effective_cfg: Mapping[str, Any],
                                 final_states: Sequence[ExperimentState],
                                 run_dir: Path,
                                 ) -> None:
-    """Create the master distance-profile table when the step is enabled."""
+    """
+    Create the master distance-profile table when the step is enabled.
+    """
     config = effective_cfg.get(StepName.DISTANCE_PROFILE)
     if not isinstance(config, Mapping) or not config.get("enabled", False):
         return
@@ -28,7 +30,6 @@ def aggregate_distance_profiles(effective_cfg: Mapping[str, Any],
         artifact_kind=ARTI_DIST_PROF,
         output_name="master_distance_profile.parquet",)
     if master_path is None:
-        logger.warning(
-            "No distance-profile artifacts were produced; master Parquet was not created.")
+        logger.warning("No distance-profile artifacts were produced; master Parquet was not created.")
     else:
         logger.info("Master distance profile saved to %s", master_path)

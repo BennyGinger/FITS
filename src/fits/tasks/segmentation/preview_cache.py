@@ -33,11 +33,13 @@ class PreviewCache:
     """
     Own temporary preview files and their NPZ serialization.
     """
-
     def __init__(self,
                  source_path: Path,
                  cache_parent: str | Path | None = None,
                  ) -> None:
+        """
+        Create a temporary cache directory associated with a source image.
+        """
         cache_root = (Path(cache_parent).expanduser().resolve()
                       if cache_parent is not None
                       else None)
@@ -56,6 +58,9 @@ class PreviewCache:
              input_labels: Sequence[str],
              settings: SegmentChannelSettings,
              ) -> Path:
+        """
+        Build a deterministic cache path for one preview configuration.
+        """
         stat = self.source_path.stat()
         payload = {"source": str(self.source_path),
                    "source_size": stat.st_size,
@@ -78,6 +83,9 @@ class PreviewCache:
              frame_index: int,
              input_channels: Sequence[str],
              ) -> SegmentationPreview:
+        """
+        Atomically save a preview and return its uncached representation.
+        """
         with NamedTemporaryFile(dir=cache_path.parent,
                                 prefix=f".{cache_path.stem}_",
                                 suffix=".npz",
@@ -98,6 +106,9 @@ class PreviewCache:
 
     @staticmethod
     def load(cache_path: Path) -> SegmentationPreview:
+        """
+        Load a previously saved segmentation preview from an NPZ file.
+        """
         with np.load(cache_path, allow_pickle=False) as cached:
             mask = np.asarray(cached["mask"])
             mask_axes = str(cached["mask_axes"].item())
@@ -111,10 +122,16 @@ class PreviewCache:
                                    from_cache=True,)
 
     def close(self) -> None:
+        """
+        Delete the temporary directory and all cached preview files.
+        """
         self._temporary_directory.cleanup()
 
     @staticmethod
     def _safe_name(value: str) -> str:
+        """
+        Convert a channel label into a safe cache-filename component.
+        """
         safe = "".join(
             char if char.isalnum() or char in "-_" else "_" for char in value)
         return safe.strip("_") or "channel"

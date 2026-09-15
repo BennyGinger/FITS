@@ -9,7 +9,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from fits.gui.viewer.collection_window import MaskCollectionRequest, MaskCollectionWindow
+from fits.gui.viewer.masks.collection import (
+    MaskCollectionRequest, MaskCollectionWindow,)
 from fits.settings.models import DistanceProfileSettings, ExtractSettings
 
 _APP = None

@@ -7,10 +7,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from fits.environment.constant import StepName
-from fits.gui.settings_adapter import SettingsAdapter
-from fits.gui.viewer.segmentation_window import SegmentationTunerWindow
-from fits.gui.viewer.mask_window import MaskDrawingWindow
-from fits.gui.window import FitsMainWindow
+from fits.gui.main_window import FitsMainWindow
+from fits.gui.settings import SettingsAdapter
+from fits.gui.viewer.masks import MaskDrawingWindow
+from fits.gui.viewer.segmentation import SegmentationTunerWindow
 from fits.settings.models import SegmentSettings
 
 _APP = None
@@ -57,7 +57,7 @@ def test_tuner_round_trip_and_close(monkeypatch, tmp_path):
     assert window._editors[StepName.SEGMENT].channel_widgets[0]["user_settings.diameter"].value() == 31
     adapter.save_to_run_dir()
     reloaded = SettingsAdapter()
-    reloaded.load(tmp_path / "fits_settings.toml")
+    reloaded.load(tmp_path / ".fits" / "fits_settings.toml")
     settings = reloaded.segmentation_settings().channels[0]
     assert settings.user_settings["diameter"] == 31
     assert settings.nuclear_channel is None

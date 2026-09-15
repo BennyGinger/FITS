@@ -7,15 +7,15 @@ from tifffile import imwrite
 from fits_io import FitsIO
 
 from fits.environment.constant import StepName
-from fits.environment.state import ExperimentState
+from fits.workflows.experiments import ExperimentState
 from fits.settings.models import ConvertSettings, TrackSettings
 from fits.tasks.convert import convert
-from fits.tasks.track import track
-from fits.workflows.engines.registry import REGISTRY
-from fits.workflows.errors import StepExecutionError
+from fits.tasks.tracking.track import track
+from fits.workflows.definitions.registry import REGISTRY
+from fits.workflows.runtime.errors import StepExecutionError
 
 
-track_module = importlib.import_module("fits.tasks.track")
+backend_module = importlib.import_module("fits.tasks.tracking.backend")
 PROFILE = REGISTRY[StepName.TRACK].profile
 
 
@@ -67,7 +67,7 @@ def test_tracking_channels_are_independent_and_keep_identity(
 ):
     state = segmented_state(tmp_path)
     tracker = Tracker()
-    monkeypatch.setattr(track_module, "TrackModel", lambda **kwargs: tracker)
+    monkeypatch.setattr(backend_module, "TrackModel", lambda **kwargs: tracker)
     result = track(
         TrackSettings(channel_to_track=channels,
                       postprocess={"enabled": postprocess, "minimum_appearances": 1}),
@@ -87,7 +87,7 @@ def test_tracking_channels_are_independent_and_keep_identity(
 def test_tracking_only_adds_missing_channels_and_can_overwrite(monkeypatch, tmp_path):
     state = segmented_state(tmp_path)
     tracker = Tracker()
-    monkeypatch.setattr(track_module, "TrackModel", lambda **kwargs: tracker)
+    monkeypatch.setattr(backend_module, "TrackModel", lambda **kwargs: tracker)
     first = track(TrackSettings(channel_to_track=["GFP"]), state, PROFILE)[0]
     result = track(TrackSettings(channel_to_track=["GFP", "RFP"]), first, PROFILE)[0]
     assert tracker.calls == [1, 3]
@@ -103,7 +103,7 @@ def test_tracking_only_adds_missing_channels_and_can_overwrite(monkeypatch, tmp_
 def test_channel_failure_does_not_replace_existing_tracking(monkeypatch, tmp_path):
     state = segmented_state(tmp_path)
     tracker = Tracker()
-    monkeypatch.setattr(track_module, "TrackModel", lambda **kwargs: tracker)
+    monkeypatch.setattr(backend_module, "TrackModel", lambda **kwargs: tracker)
     first = track(TrackSettings(channel_to_track=["GFP"]), state, PROFILE)[0]
     output_path = first.artifact("tracking")
     saved_output = output_path.read_bytes()

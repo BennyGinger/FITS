@@ -6,14 +6,16 @@ import os
 os.environ["TQDM_DISABLE"] = "1" # Silence tqdm progress bars of trackastra pkg
 from pathlib import Path
 import logging
-from fits.environment.progress import RunProgress
+from fits.workflows.runtime.progress import RunProgress, format_run_report
 
 from fits.environment.constant import RunTimeMode, WORKFLOW_ORDER
 from fits.settings.resolution import apply_overwrite_cascade
-from fits.workflows.execute import run_workflow_scheduler_entry, run_workflow
-from fits.environment.discovery import collect_supported_files, assemble_experiment_states
+from fits.workflows.runtime.batch import run_batch_workflow
+from fits.workflows.runtime.scheduler import run_workflow_scheduler
+from fits.workflows.experiments import (
+    assemble_experiment_states, collect_supported_files)
 from fits.environment.log import configure_logging
-from fits.environment.report import format_run_report
+from fits.environment.paths import logs_dir, reports_dir
 from fits.settings.loader import load_settings, save_run_settings
 from fits.tasks import aggregate_distance_profiles, aggregate_quantification
 
@@ -50,7 +52,8 @@ def start_pipeline(
     if isinstance(log_raw, str):
         log_raw = log_raw.strip()
     log_root = Path(log_raw).expanduser().resolve() if log_raw else run_dir
-    log_dir = log_root / "logs"
+    log_dir = logs_dir(log_root)
+    report_dir = reports_dir(log_root)
     console_level = rt_settings.get("console_level", "info")
     file_level = rt_settings.get("file_level", "debug")
     
@@ -100,17 +103,19 @@ def start_pipeline(
         if log_path is None:
             return
         timestamp = log_path.stem.removeprefix("fits_")
-        report_path = log_path.with_name(f"fits_report_{timestamp}.txt")
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / f"fits_report_{timestamp}.txt"
         report_path.write_text(
             format_run_report(run_progress, run_dir, include_header=True) + "\n",
             encoding="utf-8")
         logger.info("Full pipeline report saved to %s", report_path)
     
     # --- start the workflow ---
-    from fits.workflows.interactive import interactive_masks_requested, run_interactive_workflow
+    from fits.workflows.runtime.interactive import (
+        interactive_masks_requested, run_interactive_workflow)
     try:
         if convert_only:
-            from fits.workflows.interactive import run_conversion_only
+            from fits.workflows.runtime.interactive import run_conversion_only
             logger.info("Starting conversion-only execution.")
             final_states = run_conversion_only(
                 effective_cfg,
@@ -127,10 +132,12 @@ def start_pipeline(
             match rt_mode:
                 case "batch":
                     logger.info("Starting batch execution of workflow")
-                    final_states = run_workflow(effective_cfg, states, run_progress=run_progress)
+                    final_states = run_batch_workflow(
+                        effective_cfg, states, run_progress=run_progress)
                 case "conveyor":
                     logger.info("Starting conveyor execution of workflow")
-                    final_states = run_workflow_scheduler_entry(effective_cfg, states, run_progress=run_progress)
+                    final_states = run_workflow_scheduler(
+                        effective_cfg, states, run_progress=run_progress)
     except BaseException:
         run_progress.skip_unfinished()
         save_progress_report()
@@ -148,13 +155,3 @@ def start_pipeline(
         save_progress_report()
     
     logger.info("Pipeline finished with %d final experiment states", len(final_states))
-
-if __name__ == "__main__":
-    from time import time
-    from fits.cli.interactive import run_pipeline_cli
-    start_time = time()
-
-    run_pipeline_cli()
-    end_time = time()
-    elapsed = end_time - start_time
-    print(f"Total pipeline execution time: {elapsed:.2f} seconds")

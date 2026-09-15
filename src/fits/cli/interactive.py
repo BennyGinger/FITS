@@ -9,11 +9,11 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 
 from fits.gui.theme import apply_dark_theme
-from fits.gui.viewer.collection_window import MaskCollectionWindow
-from fits.environment.progress import RunProgress
-from fits.pipeline import SETTINGS_PATH, start_pipeline
+from fits.gui.viewer.masks import MaskCollectionWindow
+from fits.workflows.runtime.progress import RunProgress
+from fits.pipeline import start_pipeline
 from fits.settings.loader import load_settings
-from fits.workflows.interactive import MaskInteraction, PipelineCancelled
+from fits.workflows.runtime.interactive import MaskInteraction, PipelineCancelled
 
 
 class _PipelineSignals(QObject):
@@ -23,9 +23,13 @@ class _PipelineSignals(QObject):
     stopped = Signal(object)
 
 
-def run_pipeline_cli(settings_path: Path | None = None) -> None:
-    """Run the CLI pipeline and show mask collection when settings request it."""
-    config_path = (settings_path or SETTINGS_PATH).expanduser().resolve()
+def run_pipeline_cli(settings_path: Path) -> None:
+    """
+
+    Show the mask collector when the configured pipeline requests input.
+
+    """
+    config_path = settings_path.expanduser().resolve()
     config = load_settings(config_path)
     run_dir = Path(config["run_dir"]).expanduser().resolve()
 

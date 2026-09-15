@@ -1,5 +1,5 @@
 from fits.environment.constant import StepName
-from fits.workflows.metadata.models import FitsMeta
+from fits.workflows.metadata import FitsMeta
 
 
 def test_fits_metadata_records_run_and_step_provenance() -> None:

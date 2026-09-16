@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from fits.environment.constant import StepName
 from fits.gui.settings.field_widgets import (
-    IntWidget, TextWidget, ValueWidget, create_field_widget,)
+    ExportChannelsWidget, IntWidget, TextWidget, ValueWidget, create_field_widget,)
 from fits.gui.settings.adapter import (
     RUNTIME_CHOICES,
     SettingsAdapter,
@@ -112,7 +112,10 @@ class StepSettingsEditor(QWidget):
     def _add_fields(self, form: QFormLayout, paths: tuple[str, ...]) -> None:
         for path in paths:
             value = self.adapter.field_value(self.step, path)
-            widget = create_field_widget(value, field_choices(self.step, path))
+            if self.step == StepName.CONVERT and path == "export_channels":
+                widget = ExportChannelsWidget(value)
+            else:
+                widget = create_field_widget(value, field_choices(self.step, path))
             tooltip = field_tooltip(self.step, path)
             widget.setToolTip(tooltip)
             if path in ("expected_ref_masks", "expected_roi_masks") and isinstance(widget, IntWidget):

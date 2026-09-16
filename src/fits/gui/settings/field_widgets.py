@@ -86,6 +86,20 @@ class ListWidget(QLineEdit):
         return [part.strip() for part in self.text().split(",") if part.strip()]
 
 
+class ExportChannelsWidget(TextWidget):
+    """Edit the all-channels sentinel or a list of channel labels."""
+
+    def __init__(self, value: str | list[str]) -> None:
+        super().__init__(value if isinstance(value, str) else ", ".join(value))
+        self.setPlaceholderText("all or comma-separated channel labels")
+
+    def value(self) -> str | list[str]:
+        text = self.text().strip()
+        if text.lower() == "all":
+            return "all"
+        return [part.strip() for part in text.split(",") if part.strip()]
+
+
 class ChoiceWidget(FocusWheelComboBox):
     value_changed = Signal(object)
 

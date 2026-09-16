@@ -563,13 +563,13 @@ class MaskDrawingWindow(ImageToolWindow):
             "channel": self.channel_combo.currentText(),
             "z_index": self.z_slider.value()}
         try:
-            changed = self._roi_session.fill_holes(**coordinates)
+            changed = self._roi_session.fill_holes_stack(channel=coordinates["channel"])
             self.image_viewer.set_drawing_mask(
                 self._roi_session.display_mask_plane(**coordinates))
-            self.roi_panel.set_undo_available(changed)
+            self.roi_panel.set_undo_available(bool(changed))
             self.status_label.setText(
-                "Filled enclosed holes on the current ROI plane."
-                if changed else "The current ROI plane contains no enclosed holes.")
+                f"Filled holes on {changed} plane(s) in the complete "
+                f"{coordinates['channel']} ROI stack; manual exclusions preserved.")
         except Exception as error:
             self.status_label.setText(f"Could not fill ROI holes: {error}")
 
@@ -583,16 +583,14 @@ class MaskDrawingWindow(ImageToolWindow):
             "channel": self.channel_combo.currentText(),
             "z_index": self.z_slider.value()}
         try:
-            changed = self._roi_session.remove_small_objects(
-                minimum_size, **coordinates)
+            changed = self._roi_session.remove_small_objects_stack(
+                minimum_size, channel=coordinates["channel"])
             self.image_viewer.set_drawing_mask(
                 self._roi_session.display_mask_plane(**coordinates))
-            self.roi_panel.set_undo_available(changed)
+            self.roi_panel.set_undo_available(bool(changed))
             self.status_label.setText(
                 f"Removed ROI objects smaller than {minimum_size} px² "
-                "from the current plane."
-                if changed else
-                f"No ROI objects smaller than {minimum_size} px² were found.")
+                f"on {changed} plane(s) in the complete {coordinates['channel']} stack.")
         except Exception as error:
             self.status_label.setText(
                 f"Could not remove small ROI objects: {error}")

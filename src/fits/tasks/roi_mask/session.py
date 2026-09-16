@@ -131,14 +131,14 @@ class RoiSession(BinaryMaskSession):
                    channel: int | str = 0,
                    z_index: int = 0) -> bool:
         """
-        Fill enclosed holes on one plane as manual inclusions.
+        Fill enclosed holes on one plane, preserving manual exclusions.
         """
         from scipy.ndimage import binary_fill_holes
 
         current = self.mask_plane(frame_index, channel, z_index)
         visible = self._included(current).astype(bool)
         filled = np.asarray(binary_fill_holes(visible), dtype=bool)
-        additions = filled & ~visible
+        additions = filled & ~visible & ~self._manually_excluded(current)
         if not np.any(additions):
             return False
         self._remember_edit(current, frame_index, channel, z_index)
@@ -181,6 +181,26 @@ class RoiSession(BinaryMaskSession):
         self._set_roi_plane(current, frame_index=frame_index,
                             channel=channel, z_index=z_index)
         return True
+
+    def fill_holes_stack(self, *, channel: int | str = 0) -> int:
+        """Fill holes independently on every T/Z plane of one channel."""
+        changed = 0
+        for frame_index in range(self.frame_count):
+            for z_index in range(self.plane_count):
+                changed += self.fill_holes(
+                    frame_index=frame_index, channel=channel, z_index=z_index)
+        return changed
+
+    def remove_small_objects_stack(self, minimum_size: int, *,
+                                   channel: int | str = 0) -> int:
+        """Remove small 2D objects on every T/Z plane of one channel."""
+        changed = 0
+        for frame_index in range(self.frame_count):
+            for z_index in range(self.plane_count):
+                changed += self.remove_small_objects(
+                    minimum_size, frame_index=frame_index,
+                    channel=channel, z_index=z_index)
+        return changed
 
     def _remember_edit(self, current: NDArray[np.uint8], frame_index: int,
                        channel: int | str, z_index: int) -> None:

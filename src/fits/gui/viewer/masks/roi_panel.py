@@ -118,11 +118,13 @@ class RoiMaskPanel(ReferenceMaskPanel):
         self._stack_values_initialized = False
         self.clear_button.hide()
 
-        cleanup, cleanup_layout = self._section("Mask cleanup — current plane")
+        cleanup, cleanup_layout = self._section("Mask cleanup — whole stack (selected channel)")
         fill_row = QHBoxLayout()
         fill_row.addWidget(QLabel("Fill holes"))
         fill_row.addStretch(1)
         self.fill_holes_button = QPushButton("Fill")
+        self.fill_holes_button.setToolTip(
+            "Fill holes in every time/Z plane of the selected channel, preserving manually erased pixels.")
         self.fill_holes_button.setFixedWidth(self.BUTTON_WIDTH)
         self.fill_holes_button.clicked.connect(self.fill_holes_requested)
         fill_row.addWidget(self.fill_holes_button)
@@ -138,6 +140,8 @@ class RoiMaskPanel(ReferenceMaskPanel):
         self.minimum_object_size.setSuffix(" px²")
         object_row.addWidget(self.minimum_object_size)
         self.remove_small_objects_button = QPushButton("Remove")
+        self.remove_small_objects_button.setToolTip(
+            "Remove small 2D objects in every time/Z plane of the selected channel.")
         self.remove_small_objects_button.setFixedWidth(self.BUTTON_WIDTH)
         self.remove_small_objects_button.clicked.connect(
             lambda: self.remove_small_objects_requested.emit(

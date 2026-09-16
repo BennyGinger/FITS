@@ -278,6 +278,38 @@ def test_hovered_numeric_setting_does_not_consume_wheel() -> None:
     assert panel.brush_size.value() == original_size
 
 
+def test_roi_cleanup_buttons_apply_to_whole_stack(tmp_path) -> None:
+    import tifffile
+
+    _app()
+    source = tmp_path / FITS_ARRAY_NAME
+    tifffile.imwrite(source, np.zeros((3, 10, 10), dtype=np.uint16),
+                     imagej=True, metadata={"axes": "TYX"})
+    window = MaskDrawingWindow(tmp_path)
+    window._open_source(source)
+    window.tool_tabs.setCurrentWidget(window.roi_panel)
+    session = window._roi_session
+    states = np.zeros((10, 10), dtype=np.uint8)
+    states[1:7, 1:7] = session.THRESHOLD_INCLUDED
+    states[3, 3] = session.THRESHOLD_EXCLUDED
+    states[4, 4] = session.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED
+    states[9, 9] = session.THRESHOLD_INCLUDED
+    for frame in range(3):
+        session.set_mask_plane(states, frame_index=frame)
+
+    window.roi_panel.fill_holes_button.click()
+    window.roi_panel.minimum_object_size.setValue(2)
+    window.roi_panel.remove_small_objects_button.click()
+
+    for frame in range(3):
+        result = session.display_mask_plane(frame)
+        assert result[3, 3] == 1
+        assert result[4, 4] == 0
+        assert result[9, 9] == 0
+    assert "complete" in window.status_label.text()
+    window.close()
+
+
 def test_roi_panel_displays_an_editable_threshold_histogram() -> None:
     _app()
     panel = RoiMaskPanel()

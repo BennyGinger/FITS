@@ -126,6 +126,41 @@ def test_remove_small_objects_records_manual_exclusions(
     assert not np.any(session.display_mask_plane()[1:3, 1:3])
 
 
+@pytest.mark.parametrize("operation", ["fill", "remove"])
+def test_cleanup_all_time_and_z_planes_preserves_other_channels(
+    tmp_path, monkeypatch, operation,
+):
+    session, _ = create_session(
+        tmp_path, monkeypatch, np.zeros((2, 2, 3, 10, 10)),
+        "TCZYX", ["GFP", "RFP"])
+    states = np.zeros((10, 10), dtype=np.uint8)
+    states[1:7, 1:7] = session.THRESHOLD_INCLUDED
+    states[3, 3] = session.THRESHOLD_EXCLUDED
+    states[3, 4] = session.MANUALLY_EXCLUDED
+    states[4, 3] = session.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED
+    states[9, 9] = session.THRESHOLD_INCLUDED
+    for frame in range(2):
+        for z in range(3):
+            for channel in ("GFP", "RFP"):
+                session.set_mask_plane(states, frame_index=frame, channel=channel, z_index=z)
+    if operation == "fill":
+        assert session.fill_holes_stack(channel="RFP") == 6
+    else:
+        assert session.remove_small_objects_stack(2, channel="RFP") == 6
+    for frame in range(2):
+        for z in range(3):
+            np.testing.assert_array_equal(session.mask_plane(frame, "GFP", z), states)
+            result = session.mask_plane(frame, "RFP", z)
+            assert result[3, 4] == session.MANUALLY_EXCLUDED
+            assert result[4, 3] == session.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED
+            if operation == "fill":
+                assert result[3, 3] == session.MANUALLY_INCLUDED
+            else:
+                assert result[9, 9] == session.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED
+            session.undo_display_edit(frame_index=frame, channel="RFP", z_index=z)
+            np.testing.assert_array_equal(session.mask_plane(frame, "RFP", z), states)
+
+
 def test_undo_restores_ordered_state_plane(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -10,8 +10,9 @@ from fits.workflows.definitions.registry import REGISTRY
 
 @dataclass(frozen=True, slots=True)
 class RuntimeStep:
-    """Pair a registered step specification with its validated settings."""
-
+    """
+    Pair a registered step specification with its validated settings.
+    """
     spec: StepSpec[Any]
     settings: Any
 

@@ -20,8 +20,9 @@ class DummySettings:
 
 
 class DummyStepSpec:
-    def __init__(self, name: str):
+    def __init__(self, name: str, *, interactive: bool = False):
         self.profile = type("Profile", (), {"step_name": name})()
+        self.is_interactive = interactive
         self.validate_calls: list[Mapping[str, Any]] = []
         self.runner_calls: list[tuple[DummySettings, ExperimentState, Any]] = []
 
@@ -113,3 +114,15 @@ def test_apply_overwrite_cascade_propagates_downstream() -> None:
 
     assert resolved["convert"]["params"]["overwrite"] is True
     assert resolved["segment"]["params"]["overwrite"] is True
+
+
+def test_batch_rejects_interactive_steps_before_execution(monkeypatch) -> None:
+    spec = DummyStepSpec("edit_track", interactive=True)
+    monkeypatch.setattr(
+        "fits.workflows.runtime.batch.api.WORKFLOW_ORDER", ["edit_track"])
+    monkeypatch.setattr(
+        "fits.workflows.runtime.batch.api.REGISTRY", {"edit_track": spec})
+
+    with pytest.raises(ValueError, match="require the FITS GUI"):
+        run_batch_workflow(
+            {"edit_track": {"enabled": True, "params": {}}}, [make_state()])

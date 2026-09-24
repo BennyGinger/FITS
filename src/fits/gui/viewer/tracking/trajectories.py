@@ -41,6 +41,7 @@ def rasterize_path(points: NDArray[np.float64],
                     shape: tuple[int, int],
                     thickness: int,
                     show_centroids: bool,
+                    marker_size: int,
                     ) -> NDArray[np.bool_]:
     """
     Rasterize a centroid trajectory into a boolean image mask. 
@@ -58,7 +59,7 @@ def rasterize_path(points: NDArray[np.float64],
     if radius:
         canvas = dilation(canvas, disk_footprint(radius))
     if show_centroids:
-        marker_radius = max(2, radius + 1)
+        marker_radius = max(1, int(round(marker_size / 2)))
         for row, column in rounded:
             rows, columns = raster_disk(
                 (row, column), marker_radius, shape=shape)

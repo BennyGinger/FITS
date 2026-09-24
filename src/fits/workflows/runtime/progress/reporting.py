@@ -12,6 +12,7 @@ STEP_STAGES = {"convert": WorkflowStage.CONVERT,
             "bg_sub": WorkflowStage.PREPROCESS,
             "segment": WorkflowStage.PROCESS,
             "track": WorkflowStage.PROCESS,
+            "edit_track": WorkflowStage.PROCESS,
             "extract": WorkflowStage.ANALYSIS,
             "distance_profile": WorkflowStage.ANALYSIS,}
 

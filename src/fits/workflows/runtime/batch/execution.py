@@ -9,7 +9,7 @@ from progress_bar import pbar
 
 from fits.workflows.experiments import ExperimentState
 from fits.settings.models import SettingsModel
-from fits.workflows.definitions.models import StepSpec
+from fits.workflows.definitions.models import StepSpec, item_runner_for
 from fits.workflows.runtime.batch.workers import execute_items
 from fits.workflows.runtime.progress.reporting import WorkflowReporter
 
@@ -29,6 +29,7 @@ def execute_batch_step(spec: StepSpec[Any],
     Execute one configured step for every state in the current batch.
     """
     profile = spec.profile
+    item_runner = item_runner_for(spec)
     logger.debug("Executing %s with mode=%s workers=%s ordered=%s",
                 profile.step_name,
                 settings.execution,
@@ -36,27 +37,26 @@ def execute_batch_step(spec: StepSpec[Any],
                 settings.ordered_execution,)
 
     def worker(state: ExperimentState) -> list[ExperimentState]:
-        return spec.item_runner(settings, state, profile)
+        return item_runner(settings, state, profile)
 
     batch_worker: Callable[[ExperimentState], WorkerResult] = worker
 
     if reporter is not None:
         for state in exp_states:
             reporter.started(profile.step_name, state)
-        batch_worker = partial(_execute_reported_item, spec, settings)
+        batch_worker = partial(
+            _execute_reported_item, spec, settings, item_runner)
 
     output_states: list[ExperimentState] = []
     first_error: Exception | None = None
     with pbar(total=len(exp_states),
             desc=profile.step_name.capitalize(),
             logs="buffered",) as progress:
-        for produced_states in execute_items(
-            exp_states,
-            batch_worker,
-            mode=settings.execution,
-            workers=settings.workers,
-            ordered=settings.ordered_execution,
-        ):
+        for produced_states in execute_items(exp_states,
+                                            batch_worker,
+                                            mode=settings.execution,
+                                            workers=settings.workers,
+                                            ordered=settings.ordered_execution,):
             if reporter is not None:
                 source, outputs, error = cast(ReportedResult, produced_states)
                 if error is not None:
@@ -76,11 +76,13 @@ def execute_batch_step(spec: StepSpec[Any],
     return output_states
 
 
-def _execute_reported_item(spec: StepSpec[Any], settings: SettingsModel, state: ExperimentState,) -> ReportedResult:
+def _execute_reported_item(spec: StepSpec[Any], settings: SettingsModel,
+                           item_runner: Callable,
+                           state: ExperimentState,) -> ReportedResult:
     """
     Return an item's output or error so the parent can update reporting.
     """
     try:
-        return state, spec.item_runner(settings, state, spec.profile), None
+        return state, item_runner(settings, state, spec.profile), None
     except Exception as error:
         return state, [], error

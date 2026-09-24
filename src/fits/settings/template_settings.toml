@@ -162,6 +162,17 @@ extrapolate_start = true # Copy the first valid mask to preceding frames.
 extrapolate_end = true # Copy the last valid mask to following frames.
 
 # ============================
+# Edit tracking
+# ============================
+[edit_track]
+enabled = false
+
+[edit_track.params]
+overwrite = false # Reopen the editor even when an edited tracking artifact is already active.
+execution = "serial" # Interactive editing is presented one experiment at a time.
+workers = 1
+
+# ============================
 # Distance profile
 # ============================
 [distance_profile]

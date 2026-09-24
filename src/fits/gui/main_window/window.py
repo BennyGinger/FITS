@@ -6,8 +6,6 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QThread, QTimer, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QPalette
 from PySide6.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -26,11 +24,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fits.environment.constant import FITS_MASK_TRACK, WORKFLOW_ORDER, StepName
+from fits.environment.constant import (
+    FITS_MASK_TRACK,
+    FITS_MASK_TRACK_EDITED,
+    FITS_MASK_TRACK_EDITED_FILTERED,
+    WORKFLOW_ORDER,
+    StepName,
+)
 from fits.environment.paths import reports_dir
 from fits.workflows.runtime.progress import RunProgress
 from fits.gui.settings import (
     STEP_LAYOUTS, RuntimeSettingsEditor, SettingsAdapter, StepSettingsEditor,)
+from fits.gui.main_window.report_dialog import ReportDialog
 from fits.gui.main_window.run_browser import RunDirectoryBrowser
 from fits.gui.main_window.logging import LogEmitter, QtLogHandler
 from fits.gui.main_window.pipeline_worker import PipelineWorker, user_error_message
@@ -41,7 +46,7 @@ from fits.settings.loader import run_settings_path
 _PHASE_STEPS = (
     ("Convert", (StepName.CONVERT,)),
     ("Preprocess", (StepName.REGISTER_TIME, StepName.REGISTER_CHANNEL, StepName.BG_SUB)),
-    ("Process", (StepName.SEGMENT, StepName.TRACK)),
+    ("Process", (StepName.SEGMENT, StepName.TRACK, StepName.EDIT_TRACK)),
     ("Analysis", (StepName.DISTANCE_PROFILE, StepName.EXTRACT)),
 )
 _STEP_PHASE = {
@@ -64,6 +69,8 @@ class FitsMainWindow(QMainWindow):
         self.demo_step_delay = demo_step_delay
         self._mask_collection = None
         self._mask_expected_count: int | None = None
+        self._track_edit_queue: list[object] = []
+        self._tracking_editor = None
         self._run_progress: RunProgress | None = None
         self.adapter = adapter or SettingsAdapter()
         self._thread: QThread | None = None
@@ -627,6 +634,7 @@ class FitsMainWindow(QMainWindow):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.mask_requested.connect(self._enqueue_mask_request)
+        worker.track_edit_requested.connect(self._enqueue_track_edit_request)
         worker.mask_expected_count.connect(self._set_mask_expected_count)
         worker.mask_input_complete.connect(self._mask_input_complete)
         worker.cancelled.connect(self._pipeline_cancelled)
@@ -648,13 +656,15 @@ class FitsMainWindow(QMainWindow):
     @Slot(object)
     def _enqueue_mask_request(self, request) -> None:
         from fits.gui.viewer.masks import MaskCollectionWindow
-        if self._worker is None or self._worker.interaction.finished.is_set() or self._worker.interaction.cancelled.is_set():
+        if (self._worker is None
+                or self._worker.interaction.mask_finished.is_set()
+                or self._worker.interaction.cancelled.is_set()):
             return
         if self._mask_collection is None:
             window = MaskCollectionWindow(parent=self, preview=False, run_dir=Path(self.adapter.run_dir))
             interaction = self._worker.interaction
-            window.experiment_finalized.connect(interaction.resolve)
-            window.collection_finished.connect(interaction.finish)
+            window.experiment_finalized.connect(interaction.resolve_mask)
+            window.collection_finished.connect(interaction.finish_mask_collection)
             window.cancellation_requested.connect(self._cancel_pipeline)
             self._mask_collection = window
             if self._mask_expected_count is not None:
@@ -667,6 +677,37 @@ class FitsMainWindow(QMainWindow):
         self._mask_expected_count = count
         if self._mask_collection is not None:
             self._mask_collection.set_expected_experiments(count)
+
+    @Slot(object)
+    def _enqueue_track_edit_request(self, request: object) -> None:
+        if self._worker is None or self._worker.interaction.cancelled.is_set():
+            return
+        self._track_edit_queue.append(request)
+        self._open_next_track_edit()
+
+    def _open_next_track_edit(self) -> None:
+        if self._tracking_editor is not None or not self._track_edit_queue:
+            return
+        from fits.gui.viewer.tracking import TrackingViewerWindow
+
+        request = self._track_edit_queue.pop(0)
+        window = TrackingViewerWindow(
+            experiments_dir=self.adapter.run_dir,
+            tracking_path=request.tracking_path,
+            parent=self,
+            editing_enabled=True,
+            pipeline_request=request,
+        )
+        window.tracking_finalized.connect(self._tracking_edit_finalized)
+        self._tracking_editor = window
+        window.show()
+
+    @Slot(object)
+    def _tracking_edit_finalized(self, outcome: object) -> None:
+        if self._worker is not None:
+            self._worker.interaction.resolve_track_edit(outcome)
+        self._tracking_editor = None
+        QTimer.singleShot(0, self._open_next_track_edit)
 
     @Slot()
     def _cancel_pipeline(self) -> None:
@@ -687,14 +728,24 @@ class FitsMainWindow(QMainWindow):
             self._mask_collection.deleteLater()
             self._mask_collection = None
 
+    def _close_tracking_editor(self) -> None:
+        self._track_edit_queue.clear()
+        if self._tracking_editor is not None:
+            self._tracking_editor._pipeline_resolved = True
+            self._tracking_editor.close()
+            self._tracking_editor.deleteLater()
+            self._tracking_editor = None
+
     @Slot()
     def _pipeline_cancelled(self) -> None:
         self._close_mask_collection()
+        self._close_tracking_editor()
         self._append_log("Pipeline cancelled. Completed work has been kept.")
 
     @Slot()
     def _pipeline_finished(self) -> None:
         self._close_mask_collection()
+        self._close_tracking_editor()
         self._append_log("FITS pipeline completed successfully.")
         self._refresh_phase_access()
         self._refresh_report_button()
@@ -705,6 +756,7 @@ class FitsMainWindow(QMainWindow):
     @Slot(str, str)
     def _pipeline_failed(self, message: str, details: str) -> None:
         self._close_mask_collection()
+        self._close_tracking_editor()
         self._append_log(details)
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Critical)
@@ -771,7 +823,12 @@ class FitsMainWindow(QMainWindow):
         if not root.is_dir():
             return []
         try:
-            return sorted(root.rglob(FITS_MASK_TRACK))
+            names = (
+                FITS_MASK_TRACK_EDITED_FILTERED,
+                FITS_MASK_TRACK_EDITED,
+                FITS_MASK_TRACK,
+            )
+            return [path for name in names for path in sorted(root.rglob(name))]
         except OSError:
             return []
 
@@ -783,13 +840,20 @@ class FitsMainWindow(QMainWindow):
         from fits.gui.viewer.tracking import TrackingViewerWindow
 
         selected = path or self.run_browser.selected_path
-        if selected is None or selected.name != FITS_MASK_TRACK or not selected.is_file():
+        tracking_names = {
+            FITS_MASK_TRACK,
+            FITS_MASK_TRACK_EDITED,
+            FITS_MASK_TRACK_EDITED_FILTERED,
+        }
+        if (selected is None or selected.name not in tracking_names
+                or not selected.is_file()):
             artifacts = self._tracking_artifacts()
             selected = artifacts[0] if artifacts else None
         if selected is None:
             return
         self._tracking_viewer = TrackingViewerWindow(
-            experiments_dir=self.adapter.run_dir, tracking_path=selected, parent=self)
+            experiments_dir=self.adapter.run_dir, tracking_path=selected, parent=self,
+            editing_enabled=False)
         self._tracking_viewer.show()
 
     @Slot()
@@ -803,7 +867,10 @@ class FitsMainWindow(QMainWindow):
         if not isinstance(path, (str, Path)):
             return
         report = Path(path)
-        if report.is_file() and report.name == FITS_MASK_TRACK:
+        if report.is_file() and report.name in {
+                FITS_MASK_TRACK,
+                FITS_MASK_TRACK_EDITED,
+                FITS_MASK_TRACK_EDITED_FILTERED}:
             self._open_tracking_viewer(report)
             return
         if report.is_file() and report.name.startswith("fits_report_") and report.suffix == ".txt":
@@ -815,19 +882,7 @@ class FitsMainWindow(QMainWindow):
         except OSError as error:
             QMessageBox.warning(self, "Cannot open report", str(error))
             return
-        dialog = QDialog(self)
-        dialog.setWindowTitle(path.name)
-        dialog.resize(850, 600)
-        layout = QVBoxLayout(dialog)
-        display = QPlainTextEdit()
-        display.setReadOnly(True)
-        display.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        display.setPlainText(content)
-        layout.addWidget(display)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        buttons.accepted.connect(dialog.accept)
-        layout.addWidget(buttons)
-        dialog.exec()
+        ReportDialog(path, content, self).exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._thread is not None and self._thread.isRunning():

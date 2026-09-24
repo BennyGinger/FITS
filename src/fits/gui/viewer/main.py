@@ -21,11 +21,12 @@ def segtune() -> None:
 def trackedit() -> None:
     parser = argparse.ArgumentParser(description="View and edit FITS tracking labels.")
     parser.add_argument("tracking", nargs="?", type=Path,
-                        help="A fits_track.tif artifact to open.")
+                        help="A fits_track.tif to edit or fits_array.tif to start from scratch.")
     arguments, qt_arguments = parser.parse_known_args()
     from fits.gui.viewer.tracking import TrackingViewerWindow
 
-    _launch(lambda: TrackingViewerWindow(tracking_path=arguments.tracking),
+    _launch(lambda: TrackingViewerWindow(
+        tracking_path=arguments.tracking, editing_enabled=True),
             "FITS Tracking Viewer / Editor", qt_arguments)
 
 

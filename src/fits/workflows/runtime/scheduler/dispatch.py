@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from progress_bar.api import ProgressBar
 
 from fits.workflows.experiments import ExperimentState
+from fits.workflows.definitions.models import item_runner_for
 from fits.workflows.runtime.progress.reporting import WorkflowReporter
 from fits.workflows.runtime.scheduler.planning import RuntimeStep
 
@@ -40,21 +41,25 @@ def submit_ready_tasks(*, ready: deque[Task], running: RunningTasks,
         
         runtime_step = runtime_steps[task.step_index]
         profile = runtime_step.spec.profile
+        item_runner = item_runner_for(runtime_step.spec)
         logger.debug("Submitting %s for %s", profile.step_name, task.state.experiment_id)
         
         if reporter is not None:
-            future = executor.submit(
-                reporter.run, runtime_step.spec.item_runner,
-                runtime_step.settings, task.state, profile)
+            future = executor.submit(reporter.run, 
+                                     item_runner,
+                                     runtime_step.settings, 
+                                     task.state, 
+                                     profile)
         else:
-            future = executor.submit(
-                runtime_step.spec.item_runner,
-                runtime_step.settings, task.state, profile)
+            future = executor.submit(item_runner, runtime_step.settings, task.state, profile)
         running[future] = task
 
 
-def _pop_eligible_task(*, ready: deque[Task], running: RunningTasks,
-                       runtime_steps: list[RuntimeStep]) -> Task | None:
+def _pop_eligible_task(*, 
+                       ready: deque[Task], 
+                       running: RunningTasks,
+                       runtime_steps: list[RuntimeStep]
+                       ) -> Task | None:
     """
     Return the next task that does not exceed its step concurrency cap.
     """
@@ -66,27 +71,31 @@ def _pop_eligible_task(*, ready: deque[Task], running: RunningTasks,
     return None
 
 
-def _within_step_cap(*, task: Task, running: RunningTasks,
-                     runtime_steps: list[RuntimeStep]) -> bool:
+def _within_step_cap(*, 
+                     task: Task, 
+                     running: RunningTasks,
+                     runtime_steps: list[RuntimeStep]
+                     ) -> bool:
     """
     Return whether another task may run under its step concurrency limit.
     """
     cap = runtime_steps[task.step_index].spec.max_concurrency
     if cap is None:
         return True
-    running_for_step = sum(
-        running_task.step_index == task.step_index
-        for running_task in running.values())
+    running_for_step = sum(running_task.step_index == task.step_index
+                            for running_task in running.values())
     return running_for_step < cap
 
 
-def process_completed_tasks(*, done: set[FutureResult],
+def process_completed_tasks(*, 
+                            done: set[FutureResult],
                             cpu_running: RunningTasks,
                             gpu_running: RunningTasks,
                             runtime_steps: list[RuntimeStep],
                             cpu_ready: deque[Task], gpu_ready: deque[Task],
                             final_states: list[ExperimentState],
-                            progress: ProgressBar) -> int:
+                            progress: ProgressBar
+                            ) -> int:
     """
     Collect finished tasks and queue their output states for the next step.
     """
@@ -116,8 +125,12 @@ def process_completed_tasks(*, done: set[FutureResult],
     return queued_count
 
 
-def _enqueue_task(task: Task, *, runtime_steps: list[RuntimeStep],
-                  cpu_ready: deque[Task], gpu_ready: deque[Task]) -> None:
+def _enqueue_task(task: Task, 
+                  *, 
+                  runtime_steps: list[RuntimeStep],
+                  cpu_ready: deque[Task], 
+                  gpu_ready: deque[Task]
+                  ) -> None:
     """
     Place a task in the queue selected by its next step's execution pool.
     """

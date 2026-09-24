@@ -446,6 +446,13 @@ class TrackSettings(SettingsModel):
                     **getattr(self, self.backend, {}),}
         return payload
 
+
+class EditTrackSettings(SettingsModel):
+    """Settings for optional interactive correction of a tracking artifact."""
+
+    execution: ExecMode = Field(default="serial", exclude=True)
+    workers: int | None = Field(default=1, ge=1, exclude=True)
+
 ############# Distance-profile settings ############
 
 class DistanceProfileSettings(SettingsModel):

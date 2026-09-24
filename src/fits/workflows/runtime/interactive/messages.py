@@ -1,13 +1,14 @@
-"""Messages exchanged between the interactive workflow and mask-drawing UI.
+"""Messages exchanged between the interactive workflow and its GUIs.
 
 The workflow creates a :class:`MaskCollectionRequest` when an experiment is
-ready for manual mask collection. The GUI consumes that request and returns a
-:class:`MaskCollectionOutcome` describing the saved and skipped masks.
+ready for manual input. The GUI returns the corresponding outcome after mask
+collection or tracking review has finished.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Mapping
 
 from fits.settings.models import DistanceProfileSettings, ExtractSettings
 
@@ -36,8 +37,12 @@ class MaskCollectionRequest:
             raise ValueError("Expected mask counts cannot be negative.")
 
     @classmethod
-    def from_settings(cls, image_path: Path, *, extraction: ExtractSettings | None = None,
-                      profile: DistanceProfileSettings | None = None) -> MaskCollectionRequest:
+    def from_settings(cls, 
+                      image_path: Path, 
+                      *, 
+                      extraction: ExtractSettings | None = None,
+                      profile: DistanceProfileSettings | None = None
+                      ) -> MaskCollectionRequest:
         """
         Build a collection request from the enabled downstream task settings.
         """
@@ -65,3 +70,37 @@ class MaskCollectionOutcome:
     roi_paths: tuple[Path, ...]
     skipped_references: int
     skipped_rois: int
+
+
+@dataclass(frozen=True)
+class TrackEditRequest:
+    """
+    Describe one tracking artifact that is ready for interactive editing.
+    """
+    experiment_id: str
+    tracking_path: Path
+    image_path: Path
+    overwrite: bool = False
+    pipeline_metadata: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tracking_path", Path(self.tracking_path).resolve())
+        object.__setattr__(self, "image_path", Path(self.image_path).resolve())
+        if self.pipeline_metadata is not None:
+            object.__setattr__(self, "pipeline_metadata", dict(self.pipeline_metadata))
+
+
+@dataclass(frozen=True)
+class TrackEditOutcome:
+    """
+    Report an edited tracking copy, or that the source should remain active.
+    """
+    request: TrackEditRequest
+    edited_path: Path | None
+    metadata: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.edited_path is not None:
+            object.__setattr__(self, "edited_path", Path(self.edited_path).resolve())
+        if self.metadata is not None:
+            object.__setattr__(self, "metadata", dict(self.metadata))

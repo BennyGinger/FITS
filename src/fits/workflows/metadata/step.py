@@ -25,24 +25,39 @@ class ChannelStepMeta:
         object.__setattr__(self, "params", dict(self.params))
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> ChannelStepMeta:
+    def from_dict(cls, data: Mapping[str, Any], *, key: str | None = None) -> ChannelStepMeta:
         """
         Create channel metadata from its serialized representation.
         """
         channel = data.get("channel")
+        legacy_channel_label = None
+        if (not isinstance(channel, int) or channel < 0) and key is not None:
+            try:
+                key_channel = int(key)
+            except (TypeError, ValueError):
+                key_channel = -1
+            if key_channel >= 0:
+                legacy_channel_label = channel
+                channel = key_channel
         if not isinstance(channel, int) or channel < 0:
             raise ValueError("Channel step metadata must contain a non-negative integer "
                             "'channel' field.")
         params = {key: value for key, value in data.items()
                     if key not in ("channel", "timestamp")}
+        if isinstance(legacy_channel_label, str) and legacy_channel_label:
+            params.setdefault("channel_label", legacy_channel_label)
         return cls(channel=channel, params=params, timestamp=data.get("timestamp"))
 
     def to_dict(self) -> dict[str, Any]:
         """
         Serialize the channel metadata.
         """
-        return {"channel": self.channel,
-                **self.params,
+        params = dict(self.params)
+        parameter_channel = params.pop("channel", None)
+        if isinstance(parameter_channel, str) and parameter_channel:
+            params.setdefault("channel_label", parameter_channel)
+        return {**params,
+                "channel": self.channel,
                 "timestamp": self.timestamp,}
 
 
@@ -146,7 +161,7 @@ class StepMetadata:
         if not isinstance(channels_data, Mapping):
             raise TypeError("Step metadata 'channels' must be a mapping.")
         
-        channels = {str(key): ChannelStepMeta.from_dict(value)
+        channels = {str(key): ChannelStepMeta.from_dict(value, key=str(key))
                     for key, value in channels_data.items()
                     if isinstance(value, Mapping)}
         return cls(step_name=step_name,

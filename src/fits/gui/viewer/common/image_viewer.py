@@ -8,9 +8,11 @@ from typing import Any, Literal, cast
 import numpy as np
 import pyqtgraph as pg
 from numpy.typing import NDArray
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QColorDialog, QDialog, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QPolygonF
+from PySide6.QtWidgets import (
+    QColorDialog, QDialog, QPushButton, QToolButton, QVBoxLayout, QWidget,
+)
 from skimage.draw import line as raster_line, polygon as raster_polygon
 from skimage.morphology import dilation, disk
 
@@ -18,7 +20,7 @@ from fits_io.metadata.imageJ_meta import COLOR_MAP, LABEL_TO_COLOR
 
 
 DrawingMode = Literal["replace", "edit"]
-DrawingTool = Literal["freehand", "line", "circle", "square", "triangle"]
+DrawingTool = Literal["brush", "freehand", "line", "circle", "square", "triangle"]
 DrawingOperation = Literal["add", "erase"]
 DRAWING_REFRESH_SECONDS = 1 / 60
 
@@ -112,6 +114,18 @@ class FitsImageViewer(QWidget):
         self.view_box.addItem(self.image_item)
         self.view_box.addItem(self.mask_item)
         self.view_box.addItem(self.drawing_item)
+        self.home_button = QToolButton(self.canvas)
+        self.home_button.setIcon(self._home_icon())
+        self.home_button.setToolTip("Fit and center the image in the viewer.")
+        self.home_button.setAutoRaise(True)
+        self.home_button.setFixedSize(30, 30)
+        self.home_button.move(8, 8)
+        self.home_button.setStyleSheet(
+            "QToolButton { background: rgba(35, 35, 35, 190); "
+            "border: 1px solid #777; border-radius: 4px; padding: 3px; } "
+            "QToolButton:hover { background: rgba(70, 70, 70, 220); }")
+        self.home_button.clicked.connect(self.reset_view)
+        self.home_button.raise_()
         layout.addWidget(cast(QWidget, self.canvas))
 
         self.histogram = pg.HistogramLUTWidget(
@@ -135,17 +149,38 @@ class FitsImageViewer(QWidget):
         self._drawing_points: list[tuple[int, int]] = []
         self._last_drawing_render = 0.0
         self._last_drawing_selection: NDArray[np.bool_] | None = None
+        self._last_drawing_was_click = False
         self._drawing_history: list[NDArray[np.uint8]] = []
         self._drawing_mode: DrawingMode = "replace"
         self._drawing_tool: DrawingTool = "freehand"
         self._drawing_operation: DrawingOperation = "add"
         self._brush_size = 5
+        self._drawing_color = (255, 235, 0)
+        self._drawing_opacity = 0.65
         self.histogram.item.gradient.sigTicksChanged.connect(
             self._connect_gradient_markers)
         self.drawing_item.on_started = self._start_drawing
         self.drawing_item.on_moved = self._continue_drawing
         self.drawing_item.on_finished = self._finish_drawing
         self.set_channel_lut("")
+
+    @staticmethod
+    def _home_icon() -> QIcon:
+        """Create a small theme-independent home symbol."""
+        pixmap = QPixmap(18, 18)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#e8edf2"))
+        painter.drawPolygon(QPolygonF([
+            QPointF(2, 8), QPointF(9, 2), QPointF(16, 8),
+        ]))
+        painter.drawRect(4, 7, 10, 9)
+        painter.setBrush(QColor("#4b5563"))
+        painter.drawRect(8, 11, 3, 5)
+        painter.end()
+        return QIcon(pixmap)
 
     @property
     def lut_color(self) -> str:
@@ -249,16 +284,23 @@ class FitsImageViewer(QWidget):
 
     def set_image(self, image: NDArray[Any]) -> None:
         """
-        Display a 2D image and preserve manually selected LUT levels.
+        Display a 2D image while preserving the current pan and zoom.
         """
         array = np.asarray(image)
         if array.ndim != 2:
             raise ValueError(f"The image viewer requires a 2D array; got shape {array.shape}.")
+        fit_new_source = self.image_item.image is None
         self.image_item.setImage(array, autoLevels=not self._has_image)
         self.drawing_item.setImage(
             np.zeros((*array.shape, 4), dtype=np.uint8), autoLevels=False)
         self._has_image = True
-        self.view_box.autoRange()
+        if fit_new_source:
+            self.reset_view()
+
+    def reset_view(self) -> None:
+        """Fit and center the current image without changing display levels."""
+        if self.image_item.image is not None:
+            self.view_box.autoRange()
 
     @property
     def drawing_mask(self) -> NDArray[np.uint8]:
@@ -270,6 +312,13 @@ class FitsImageViewer(QWidget):
     def set_drawing_enabled(self, enabled: bool) -> None:
         """Enable or disable drawing gestures over the image."""
         self.drawing_item.set_drawing_enabled(enabled)
+
+    def set_drawing_style(self, color: QColor, opacity: float = 0.65) -> None:
+        """Set the independent colour and opacity of the working drawing layer."""
+        self._drawing_color = (color.red(), color.green(), color.blue())
+        self._drawing_opacity = min(max(float(opacity), 0.0), 1.0)
+        self.drawing_item.setOpacity(self._drawing_opacity)
+        self._render_drawing_mask()
 
     def set_drawing_options(self,
                             mode: DrawingMode,
@@ -284,14 +333,29 @@ class FitsImageViewer(QWidget):
         self._brush_size = max(1, int(brush_size))
 
     def set_drawing_mask(self, mask: NDArray[Any]) -> None:
-        """Replace the working drawing canvas and display it as the mask overlay."""
+        """Replace the working drawing canvas on its independent overlay layer."""
         array = np.asarray(mask)
         if array.ndim != 2:
             raise ValueError(f"The drawing mask must be 2D; got shape {array.shape}.")
         drawing_mask = (array != 0).astype(np.uint8)
         self._drawing_mask = drawing_mask
         self._drawing_history.clear()
-        self.set_mask(drawing_mask)
+        self._render_drawing_mask()
+
+    def clear_drawing_overlay(self) -> None:
+        """Clear the working drawing without changing the normal mask overlay."""
+        self._drawing_mask = None
+        self._drawing_history.clear()
+        self.drawing_item.clear()
+
+    def _render_drawing_mask(self) -> None:
+        if self._drawing_mask is None:
+            self.drawing_item.clear()
+            return
+        self.drawing_item.setImage(
+            self._colour_mask(self._drawing_mask, self._drawing_color),
+            autoLevels=False)
+        self.drawing_item.setOpacity(self._drawing_opacity)
 
     @property
     def can_undo_drawing(self) -> bool:
@@ -308,12 +372,17 @@ class FitsImageViewer(QWidget):
     def last_drawing_operation(self) -> DrawingOperation:
         return self._drawing_operation
 
+    @property
+    def last_drawing_was_click(self) -> bool:
+        """Return whether the last gesture was a stationary mouse click."""
+        return self._last_drawing_was_click
+
     def undo_drawing(self) -> NDArray[np.uint8] | None:
         """Restore and return the canvas from before the latest gesture."""
         if not self._drawing_history:
             return None
         self._drawing_mask = self._drawing_history.pop()
-        self.set_mask(self._drawing_mask)
+        self._render_drawing_mask()
         return self.drawing_mask
 
     def _remember_drawing(self) -> None:
@@ -328,8 +397,7 @@ class FitsImageViewer(QWidget):
             return
         self._remember_drawing()
         self._drawing_mask.fill(0)
-        mask = self._drawing_mask
-        self.set_mask(mask)
+        self._render_drawing_mask()
 
     def _start_drawing(self, x_position: float, y_position: float,
                        operation: DrawingOperation = "add") -> None:
@@ -338,7 +406,6 @@ class FitsImageViewer(QWidget):
         self.drawing_started.emit()
         self._drawing_operation = operation
         self._drawing_active = True
-        self.mask_item.setOpacity(max(self._mask_opacity, 0.8))
         self._remember_drawing()
         point = self._drawing_point(x_position, y_position)
         self._gesture_base = (np.zeros_like(self._drawing_mask)
@@ -356,7 +423,7 @@ class FitsImageViewer(QWidget):
         if self._drawing_start is None or self._gesture_base is None:
             return
         point = self._drawing_point(x_position, y_position)
-        if self._drawing_tool == "freehand":
+        if self._drawing_tool in {"brush", "freehand"}:
             if point != self._drawing_points[-1]:
                 self._drawing_points.append(point)
             self._drawing_last = point
@@ -371,12 +438,13 @@ class FitsImageViewer(QWidget):
             return
         point = self._drawing_point(x_position, y_position)
         self._apply_drawing(point)
+        self._last_drawing_was_click = (
+            len(self._drawing_points) <= 1 and point == self._drawing_start)
         self._drawing_start = None
         self._drawing_last = None
         self._drawing_points = []
         self._gesture_base = None
         self._drawing_active = False
-        self.mask_item.setOpacity(self._mask_opacity)
         self.drawing_changed.emit()
         self.drawing_finished.emit(self.drawing_mask)
 
@@ -385,11 +453,13 @@ class FitsImageViewer(QWidget):
                 or self._gesture_base is None
                 or self._drawing_start is None):
             return
-        if self._drawing_tool == "freehand":
+        if self._drawing_tool in {"brush", "freehand"}:
             if point != self._drawing_points[-1]:
                 self._drawing_points.append(point)
             self._drawing_mask = self._gesture_base.copy()
-            selected = self._freehand_polygon_selection(self._drawing_points)
+            selected = (self._brush_selection(self._drawing_points)
+                        if self._drawing_tool == "brush"
+                        else self._freehand_polygon_selection(self._drawing_points))
             self._drawing_last = point
         elif self._drawing_tool == "line":
             self._drawing_mask = self._gesture_base.copy()
@@ -399,7 +469,7 @@ class FitsImageViewer(QWidget):
             selected = self._shape_selection(self._drawing_start, point)
         self._last_drawing_selection = selected.copy()
         self._drawing_mask[selected] = 0 if self._drawing_operation == "erase" else 1
-        self.set_mask(self._drawing_mask)
+        self._render_drawing_mask()
 
     def _drawing_point(self, x_position: float, y_position: float) -> tuple[int, int]:
         if self._drawing_mask is None:
@@ -428,6 +498,19 @@ class FitsImageViewer(QWidget):
             selected[rows, columns] = True
         elif len(vertices) == 1:
             selected[tuple(vertices[0])] = True
+        return self._widen_selection(selected)
+
+    def _brush_selection(self, points: list[tuple[int, int]]) -> NDArray[np.bool_]:
+        """Rasterize a literal brush stroke without filling enclosed regions."""
+        if self._drawing_mask is None:
+            raise RuntimeError("No drawing mask is loaded.")
+        selected = np.zeros(self._drawing_mask.shape, dtype=bool)
+        if not points:
+            return selected
+        selected[points[0]] = True
+        for start, end in zip(points[:-1], points[1:], strict=True):
+            rows, columns = raster_line(*start, *end)
+            selected[rows, columns] = True
         return self._widen_selection(selected)
 
     def _line_selection(self,

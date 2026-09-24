@@ -33,11 +33,13 @@ class DummyProfile:
 
 
 class DummyStepSpec:
-    def __init__(self, name: str, runner: Any, pool: str = "cpu"):
+    def __init__(self, name: str, runner: Any, pool: str = "cpu",
+                 *, interactive: bool = False):
         self.profile = DummyProfile(name)
         self.item_runner = runner
         self.pool = pool
         self.max_concurrency = None
+        self.is_interactive = interactive
 
     def model_validate(self, params: dict[str, Any]) -> dict[str, Any]:
         return dict(params)
@@ -99,3 +101,18 @@ def test_resolve_runtime_steps_rejects_missing_registry_step(monkeypatch) -> Non
 
     with pytest.raises(ValueError, match="missing from the registry"):
         resolve_runtime_steps({"convert": {"enabled": True}})
+
+
+def test_scheduler_rejects_interactive_steps_before_submission(monkeypatch) -> None:
+    spec = DummyStepSpec(
+        "edit_track", None, interactive=True)
+    monkeypatch.setattr(
+        "fits.workflows.runtime.scheduler.planning.WORKFLOW_ORDER",
+        ["edit_track"])
+    monkeypatch.setattr(
+        "fits.workflows.runtime.scheduler.planning.REGISTRY",
+        {"edit_track": spec})
+
+    with pytest.raises(ValueError, match="require the FITS GUI"):
+        run_workflow_scheduler(
+            {"edit_track": {"enabled": True, "params": {}}}, [make_state()])

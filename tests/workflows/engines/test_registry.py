@@ -16,6 +16,13 @@ def test_convert_registry_entry_is_complete() -> None:
     assert spec.pool == "cpu"
 
 
+def test_tracking_edit_registry_entry_is_explicitly_interactive() -> None:
+    spec = REGISTRY[StepName.EDIT_TRACK]
+
+    assert spec.is_interactive
+    assert spec.item_runner is None
+
+
 def test_registry_settings_models_validate() -> None:
     settings = REGISTRY[StepName.CONVERT].model_validate({"overwrite": True})
     assert settings.overwrite is True

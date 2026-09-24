@@ -14,6 +14,7 @@ class StepName(StrEnum):
     BG_SUB = "bg_sub"
     SEGMENT = "segment"
     TRACK = "track"
+    EDIT_TRACK = "edit_track"
     EXTRACT = "extract"
     DISTANCE_PROFILE = "distance_profile"
 
@@ -24,6 +25,7 @@ WORKFLOW_ORDER: tuple[StepName, ...] = (
         StepName.BG_SUB,
         StepName.SEGMENT,
         StepName.TRACK,
+        StepName.EDIT_TRACK,
         StepName.DISTANCE_PROFILE,
         StepName.EXTRACT,
         )
@@ -38,15 +40,17 @@ DIST_TRACK = "tracklink"
 DIST_EXTRACT = "bioimagequant"
 DIST_DISTANCE_PROFILE = "bioimagequant"
 
-FitsName = Literal["fits_array.tif", "fits_mask.tif", "fits_track.tif", "fits_distance_profile.parquet", "fits_quantification.parquet"]
+FitsName = Literal["fits_array.tif", "fits_mask.tif", "fits_track.tif", "fits_track_edited.tif", "fits_track_edited_filtered.tif", "fits_distance_profile.parquet", "fits_quantification.parquet"]
 FITS_ARRAY_NAME = "fits_array.tif"
 FITS_REFERENCE_TEMPLATE = "fits_ref_{label}.tif"
 FITS_ROI_TEMPLATE = "fits_roi_{label}.tif"
 FITS_MASK_SEG = "fits_mask.tif"
 FITS_MASK_TRACK = "fits_track.tif"
+FITS_MASK_TRACK_EDITED = "fits_track_edited.tif"
+FITS_MASK_TRACK_EDITED_FILTERED = "fits_track_edited_filtered.tif"
 FITS_DISTANCE_PROFILE_NAME = "fits_distance_profile.parquet"
 FITS_QUANTI_NAME = "fits_quantification.parquet"
-FITS_FILES: set[FitsName] = {FITS_ARRAY_NAME, FITS_MASK_SEG, FITS_MASK_TRACK, FITS_DISTANCE_PROFILE_NAME, FITS_QUANTI_NAME, }
+FITS_FILES: set[FitsName] = {FITS_ARRAY_NAME, FITS_MASK_SEG, FITS_MASK_TRACK, FITS_MASK_TRACK_EDITED, FITS_MASK_TRACK_EDITED_FILTERED, FITS_DISTANCE_PROFILE_NAME, FITS_QUANTI_NAME, }
 
 EXCLUDED_PREFIXES = {'fits_'}
 

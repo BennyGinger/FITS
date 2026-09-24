@@ -28,7 +28,7 @@ SETTINGS_PATH = Path(__file__).parent / "settings" / "user_settings.toml"
 def start_pipeline(
     settings_path: Path | None = None,
     console_handler: logging.Handler | None = None,
-    mask_interaction=None,
+    interaction=None,
     demo_step_delay: float = 0.0,
     run_progress: RunProgress | None = None,
     convert_only: bool = False,
@@ -112,7 +112,7 @@ def start_pipeline(
     
     # --- start the workflow ---
     from fits.workflows.runtime.interactive import (
-        interactive_masks_requested, run_interactive_workflow)
+        interactive_inputs_requested, run_interactive_workflow)
     try:
         if convert_only:
             from fits.workflows.runtime.interactive import run_conversion_only
@@ -123,10 +123,10 @@ def start_pipeline(
                 step_delay_seconds=demo_step_delay,
                 progress=run_progress,
             )
-        elif mask_interaction is not None and interactive_masks_requested(effective_cfg):
-            logger.info("Starting interactive conveyor: preparation continues while masks are drawn.")
+        elif interaction is not None and interactive_inputs_requested(effective_cfg):
+            logger.info("Starting interactive workflow for manual inputs.")
             final_states = run_interactive_workflow(
-                effective_cfg, states, mask_interaction,
+                effective_cfg, states, interaction,
                 step_delay_seconds=demo_step_delay, progress=run_progress)
         else:
             match rt_mode:

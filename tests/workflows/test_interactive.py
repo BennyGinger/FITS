@@ -9,16 +9,21 @@ import numpy as np
 import pytest
 import tifffile
 
-from fits.environment.constant import ARTI_IMG, StepName
+from fits.environment.constant import ARTI_IMG, ARTI_TRACK, StepName
 from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
 from fits.workflows.experiments import ExperimentState
-from fits.settings.models import DistanceProfileSettings, ExtractSettings
-from fits.workflows.runtime.interactive.messages import MaskCollectionOutcome
+from fits.settings.models import (
+    DistanceProfileSettings, EditTrackSettings, ExtractSettings)
+from fits.workflows.runtime.interactive.messages import (
+    MaskCollectionOutcome, TrackEditOutcome)
+from fits.workflows.definitions.registry import REGISTRY
 from fits.tasks.reference_mask import ReferenceMaskSession
 from fits.workflows.runtime.interactive import (
     AllExperimentsFailed,
-    MaskInteraction,
+    PipelineInteraction,
     PipelineCancelled,
+    interactive_inputs_requested,
+    mask_collection_requested,
     run_conversion_only,
     run_interactive_workflow,
 )
@@ -42,6 +47,23 @@ def state(tmp_path, name):
 def step(name, runner, settings=None):
     return SimpleNamespace(settings=settings, spec=SimpleNamespace(
         profile=SimpleNamespace(step_name=name), item_runner=runner))
+
+
+@pytest.mark.parametrize(
+    ("config", "masks", "inputs"),
+    [
+        ({}, False, False),
+        ({"distance_profile": {"enabled": True}}, True, True),
+        ({"extract": {"enabled": True,
+                      "params": {"draw_ref_mask": True}}}, True, True),
+        ({"edit_track": {"enabled": True}}, False, True),
+    ],
+)
+def test_interactive_requirements_distinguish_masks_from_tracking_edits(
+    config, masks, inputs,
+):
+    assert mask_collection_requested(config) is masks
+    assert interactive_inputs_requested(config) is inputs
 
 
 def test_saved_series_from_same_raw_have_distinct_progress_ids(tmp_path):
@@ -112,7 +134,7 @@ def test_queue_grows_and_each_experiment_waits_for_its_own_masks(tmp_path, monke
         step(StepName.DISTANCE_PROFILE, analyse, DistanceProfileSettings())])
     requests = Queue()
     input_done = Event()
-    interaction = MaskInteraction(requests.put, input_done.set)
+    interaction = PipelineInteraction(requests.put, input_done.set)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run_interactive_workflow, {}, states, interaction)
         try:
@@ -121,10 +143,10 @@ def test_queue_grows_and_each_experiment_waits_for_its_own_masks(tmp_path, monke
             assert prepared == ['a', 'b']
             assert analysed == []
             assert input_done.wait(5)
-            interaction.resolve(_existing_outcome(second))
+            interaction.resolve_mask(_existing_outcome(second))
             assert analysis_done.wait(5)
             assert analysed == ['b']
-            interaction.resolve(_existing_outcome(first))
+            interaction.resolve_mask(_existing_outcome(first))
             assert len(future.result(timeout=5)) == 2
             assert analysed == ['b', 'a']
         finally:
@@ -153,7 +175,7 @@ def test_raw_files_in_same_folder_have_separate_progress_entries(tmp_path, monke
 
     monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.CONVERT, convert)])
-    interaction = MaskInteraction(lambda request: interaction.resolve(_existing_outcome(request)))
+    interaction = PipelineInteraction(lambda request: interaction.resolve_mask(_existing_outcome(request)))
     progress = RunProgress()
 
     run_interactive_workflow({}, originals, interaction, progress=progress)
@@ -170,7 +192,7 @@ def test_reference_skip_omits_profile_but_allows_extraction(tmp_path, monkeypatc
     monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.DISTANCE_PROFILE, runner, DistanceProfileSettings()),
         step(StepName.EXTRACT, runner, ExtractSettings())])
-    interaction = MaskInteraction(lambda request: interaction.resolve(_existing_outcome(request)))
+    interaction = PipelineInteraction(lambda request: interaction.resolve_mask(_existing_outcome(request)))
     progress = RunProgress()
     assert run_interactive_workflow({}, [current], interaction, progress=progress) == [current]
     assert ran == [StepName.EXTRACT]
@@ -187,8 +209,8 @@ def test_finish_drawing_handles_later_arrivals_without_reopening_gui(tmp_path, m
         step(StepName.DISTANCE_PROFILE, lambda settings, current, profile: [current], DistanceProfileSettings())])
     def request_mask(request):
         calls.append(request)
-        interaction.finish()
-    interaction = MaskInteraction(request_mask)
+        interaction.finish_mask_collection()
+    interaction = PipelineInteraction(request_mask)
     assert len(run_interactive_workflow({}, states, interaction)) == 2
     assert len(calls) == 1
 
@@ -200,7 +222,7 @@ def test_cancel_interrupts_long_demo_pause(tmp_path, monkeypatch):
         started.set()
         return [current]
     monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, prepare)])
-    interaction = MaskInteraction(lambda request: pytest.fail('Cancelled request must not open'))
+    interaction = PipelineInteraction(lambda request: pytest.fail('Cancelled request must not open'))
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run_interactive_workflow, {}, [current], interaction, step_delay_seconds=30)
         assert started.wait(5)
@@ -214,7 +236,7 @@ def test_all_experiments_failed_reports_preparation_error(tmp_path, monkeypatch)
     def fail(*args):
         raise ValueError('broken preparation')
     monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, fail)])
-    interaction = MaskInteraction(lambda request: None)
+    interaction = PipelineInteraction(lambda request: None)
     with pytest.raises(AllExperimentsFailed, match='broken preparation'):
         run_interactive_workflow({}, [current], interaction)
 
@@ -226,8 +248,8 @@ def test_changed_mask_manifest_stops_analysis(tmp_path, monkeypatch):
     def request_masks(request):
         outcome = _existing_outcome(request)
         outcome.reference_paths[0].unlink()
-        interaction.resolve(outcome)
-    interaction = MaskInteraction(request_masks)
+        interaction.resolve_mask(outcome)
+    interaction = PipelineInteraction(request_masks)
     with pytest.raises(AllExperimentsFailed, match='changed after finalization'):
         run_interactive_workflow({}, [current], interaction)
 
@@ -246,18 +268,18 @@ def test_middle_experiment_failure_does_not_stop_later_work(tmp_path, monkeypatc
 
     monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.BG_SUB, prepare)])
-    interaction = MaskInteraction(
-        lambda request: interaction.resolve(_existing_outcome(request)),
-        expected_count=expected_counts.append)
+    interaction = PipelineInteraction(
+        lambda request: interaction.resolve_mask(_existing_outcome(request)),
+        mask_expected_count=expected_counts.append)
 
     final = run_interactive_workflow({}, states, interaction, progress=progress)
 
     assert [item.workdir.name for item in final] == ['a', 'c']
     assert processed == ['a', 'c']
-    assert expected_counts == [3, 2]
+    assert expected_counts == [0]
     failed = progress.experiment(states[1].experiment_id)
     assert failed.stage(WorkflowStage.PREPROCESS).status == StageStatus.FAILED
-    assert failed.stage(WorkflowStage.DRAWING).status == StageStatus.SKIPPED
+    assert failed.stage(WorkflowStage.DRAWING) is None
 
 
 def test_progress_records_parallel_process_and_drawing_join(tmp_path, monkeypatch):
@@ -276,7 +298,7 @@ def test_progress_records_parallel_process_and_drawing_join(tmp_path, monkeypatc
         step(StepName.SEGMENT, runner),
         step(StepName.DISTANCE_PROFILE, runner, DistanceProfileSettings()),
     ])
-    interaction = MaskInteraction(requests.put)
+    interaction = PipelineInteraction(requests.put)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
             run_interactive_workflow, {}, [current], interaction,
@@ -295,9 +317,75 @@ def test_progress_records_parallel_process_and_drawing_join(tmp_path, monkeypatc
         assert before_drawing.stage(WorkflowStage.ANALYSIS).status == StageStatus.PENDING
         assert not analysed.is_set()
 
-        interaction.resolve(_existing_outcome(request))
+        interaction.resolve_mask(_existing_outcome(request))
         assert future.result(timeout=5) == [current]
 
     finished = progress.experiment(current.experiment_id)
     assert finished.stage(WorkflowStage.DRAWING).status == StageStatus.COMPLETED
     assert finished.stage(WorkflowStage.ANALYSIS).status == StageStatus.COMPLETED
+
+
+def test_tracking_edit_replaces_active_artifact_before_analysis(tmp_path, monkeypatch):
+    current = state(tmp_path, 'edit')
+    source = current.workdir / 'fits_track.tif'
+    edited = current.workdir / 'fits_track_edited.tif'
+    tifffile.imwrite(source, np.ones((8, 8), dtype=np.uint16), imagej=True,
+                     metadata={'axes': 'YX'})
+    current = current.with_complete_step(
+        step_name=StepName.TRACK,
+        artifact_kind=ARTI_TRACK,
+        artifact_path=source)
+    analysed_paths = []
+
+    def analyse(settings, state, profile):
+        analysed_paths.append(state.artifact(ARTI_TRACK))
+        return [state]
+
+    edit_runtime = SimpleNamespace(
+        settings=EditTrackSettings(),
+        spec=REGISTRY[StepName.EDIT_TRACK],
+    )
+    analysis_runtime = step(
+        StepName.EXTRACT, analyse, ExtractSettings(draw_ref_mask=False))
+    monkeypatch.setattr(
+        'fits.workflows.runtime.interactive.api.resolve_runtime_steps',
+        lambda cfg: [edit_runtime, analysis_runtime])
+
+    def edit_request(request):
+        tifffile.imwrite(edited, np.full((8, 8), 2, dtype=np.uint16),
+                         imagej=True, metadata={'axes': 'YX'})
+        interaction.resolve_track_edit(TrackEditOutcome(
+            request=request,
+            edited_path=edited,
+            metadata={
+                'source_tracking_artifact': str(source),
+                'mask_channels': ['Channel 1'],
+                'prediction_image_channels': [],
+                'operations_used': ['merge'],
+                'filter_condition': None,
+                'timestamp': '2026-09-22 10:00:00',
+                'fits_version': 'test',
+            },
+        ))
+
+    interaction = PipelineInteraction(
+        lambda request: pytest.fail('No mask collection is needed'),
+        track_edit_request=edit_request,
+    )
+    final = run_interactive_workflow(
+        {'edit_track': {'enabled': True}}, [current], interaction)
+
+    assert analysed_paths == [edited]
+    assert final[0].artifact(ARTI_TRACK) == edited
+    assert StepName.EDIT_TRACK in final[0].completed_steps
+    params = final[0].metadata_dump['steps'][StepName.EDIT_TRACK]['params']
+    assert params['operations_used'] == ['merge']
+
+    reused = PipelineInteraction(
+        lambda request: pytest.fail('No mask collection is needed'),
+        track_edit_request=lambda request: pytest.fail(
+            'A completed tracking edit must be reused'),
+    )
+    second = run_interactive_workflow(
+        {'edit_track': {'enabled': True}}, final, reused)
+    assert second[0].artifact(ARTI_TRACK) == edited

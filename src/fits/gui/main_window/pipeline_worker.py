@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from fits.pipeline import start_pipeline
 from fits.workflows.runtime.errors import StepExecutionError
-from fits.workflows.runtime.interactive import MaskInteraction, PipelineCancelled
+from fits.workflows.runtime.interactive import PipelineCancelled, PipelineInteraction
 from fits.workflows.runtime.progress import RunProgress
 
 
@@ -30,6 +30,7 @@ class PipelineWorker(QObject):
     finished = Signal()
     cancelled = Signal()
     mask_requested = Signal(object)
+    track_edit_requested = Signal(object)
     mask_input_complete = Signal()
     mask_expected_count = Signal(int)
     failed = Signal(str, str)
@@ -44,9 +45,10 @@ class PipelineWorker(QObject):
         self.log_handler = log_handler
         self.demo_step_delay = demo_step_delay
         self.convert_only = convert_only
-        self.interaction = MaskInteraction(self.mask_requested.emit,
-                                           self.mask_input_complete.emit,
-                                           self.mask_expected_count.emit,)
+        self.interaction = PipelineInteraction(self.mask_requested.emit,
+                                               self.mask_input_complete.emit,
+                                               self.mask_expected_count.emit,
+                                               self.track_edit_requested.emit,)
         self.progress = RunProgress()
 
     @Slot()
@@ -54,7 +56,7 @@ class PipelineWorker(QObject):
         try:
             start_pipeline(settings_path=self.settings_path,
                            console_handler=self.log_handler,
-                           mask_interaction=self.interaction,
+                           interaction=self.interaction,
                            demo_step_delay=self.demo_step_delay,
                            run_progress=self.progress,
                            convert_only=self.convert_only,)

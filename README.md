@@ -174,6 +174,18 @@ remains disabled until all required fields belonging to enabled steps have a
 value. These checks detect omitted input only; the pipeline continues to handle
 invalid channel names and other data-dependent validation.
 
+Enable **Edit tracking** in the Process phase to review each active tracking
+artifact after automatic tracking and before analysis. FITS opens the full
+tracking editor with the experiment's `fits_array.tif`; the displayed image
+channel can be changed independently from the mask channel and is the channel
+used by local mask prediction. **Save edited tracking** writes
+`fits_track_edited.tif`, or `fits_track_edited_filtered.tif` when track-length
+filtering is enabled, and makes that copy the experiment's active tracking
+artifact. The original `fits_track.tif` remains in place. **Use original
+tracking** completes the optional step without replacing it. Quantification
+then consumes only the active tracking artifact. Enable overwrite to reopen a
+previously completed edit.
+
 `fits-drawmask` opens a dedicated mask editor with **Reference** and **ROI**
 tabs sharing the same experiment and image controls. `fits-segtune` opens its
 own segmentation window; standalone **Apply and close** ends the tuning

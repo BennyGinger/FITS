@@ -7,7 +7,7 @@ from fits.workflows.runtime.interactive.messages import (
     MaskCollectionOutcome, MaskCollectionRequest)
 
 
-def interactive_masks_requested(config: Mapping[str, Any]) -> bool:
+def mask_collection_requested(config: Mapping[str, Any]) -> bool:
     """
     Return whether the configured workflow needs interactive mask handling.
     """

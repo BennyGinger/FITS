@@ -9,10 +9,13 @@ logger = logging.getLogger(__name__)
 WAIT_HEARTBEAT_SECONDS = 60.0
 
 
-def log_scheduler_heartbeat(*, cpu_ready: deque[Task], gpu_ready: deque[Task],
+def log_scheduler_heartbeat(*, 
+                            cpu_ready: deque[Task], 
+                            gpu_ready: deque[Task],
                             cpu_running: RunningTasks,
                             gpu_running: RunningTasks,
-                            runtime_steps: list[RuntimeStep]) -> None:
+                            runtime_steps: list[RuntimeStep]
+                            ) -> None:
     """
     Log queued and active work after a period without completion.
     """

@@ -24,6 +24,7 @@ def render_tracking_display(tracks: NDArray,
                             path_extent: str,
                             thickness: int,
                             show_centroids: bool,
+                            marker_size: int,
                             path_color_mode: str,
                             path_color: str,
                             mask_visible: bool,
@@ -48,11 +49,52 @@ def render_tracking_display(tracks: NDArray,
                                 path_extent=path_extent,
                                 thickness=thickness,
                                 show_centroids=show_centroids,
+                                marker_size=marker_size,
                                 color_mode=path_color_mode,
                                 single_color=path_color,)
                 plane = plane_selection(frame_index, channel_index, plane_index)
                 output[(*plane, slice(None))] = rendered
     return output
+
+
+def render_selected_tracking_display(
+        *,
+        frame_count: int,
+        selected_channel: int,
+        selected_z: int,
+        tracked_frame: Callable[[int, int, int], NDArray],
+        centroids: dict[int, NDArray[np.float64]],
+        show_paths: bool,
+        path_extent: str,
+        thickness: int,
+        show_centroids: bool,
+        marker_size: int,
+        path_color_mode: str,
+        path_color: str,
+        mask_visible: bool,
+        mask_opacity: float,
+        track_ids: frozenset[int] | None,
+        ) -> NDArray[np.uint8]:
+    """Render the selected channel and Z plane across time."""
+    frames: list[NDArray[np.uint8]] = []
+    for frame_index in range(frame_count):
+        labels = tracked_frame(frame_index, selected_channel, selected_z)
+        if track_ids is not None:
+            labels = np.where(np.isin(labels, tuple(track_ids)), labels, 0)
+        rendered = np.zeros((*labels.shape, 3), dtype=np.uint8)
+        if mask_visible:
+            rendered = blend_masks(rendered, labels, mask_opacity)
+        if show_paths:
+            visible_centroids = (centroids if track_ids is None else
+                                 {key: value for key, value in centroids.items()
+                                  if key in track_ids})
+            draw_paths(rendered, visible_centroids,
+                       frame_index=frame_index, path_extent=path_extent,
+                       thickness=thickness, show_centroids=show_centroids,
+                       marker_size=marker_size,
+                       color_mode=path_color_mode, single_color=path_color)
+        frames.append(rendered)
+    return np.stack(frames) if frame_count > 1 else frames[0]
 
 
 def blend_masks(image: NDArray[np.uint8], labels: NDArray[Any], opacity: float,) -> NDArray[np.uint8]:
@@ -61,12 +103,15 @@ def blend_masks(image: NDArray[np.uint8], labels: NDArray[Any], opacity: float,)
     """
     rendered = image.astype(float)
     alpha = min(max(float(opacity), 0.0), 1.0)
-    for label in np.unique(labels):
-        if label == 0:
-            continue
-        selected = labels == label
-        color = np.asarray(track_rgb(int(label)), dtype=float)
-        rendered[selected] = rendered[selected] * (1.0 - alpha) + color * alpha
+    present, inverse = np.unique(labels, return_inverse=True)
+    colors = np.asarray([
+        (0, 0, 0) if label == 0 else track_rgb(int(label))
+        for label in present
+    ], dtype=float)
+    overlay = colors[inverse].reshape((*labels.shape, 3))
+    selected = labels != 0
+    rendered[selected] = (rendered[selected] * (1.0 - alpha)
+                          + overlay[selected] * alpha)
     return rendered.astype(np.uint8)
 
 
@@ -77,6 +122,7 @@ def draw_paths(rendered: NDArray[np.uint8],
                 path_extent: str,
                 thickness: int,
                 show_centroids: bool,
+                marker_size: int,
                 color_mode: str,
                 single_color: str,
                 ) -> None:
@@ -91,7 +137,8 @@ def draw_paths(rendered: NDArray[np.uint8],
         pixels = rasterize_path(visible, 
                                 (height, width), 
                                 thickness, 
-                                show_centroids)
+                                show_centroids,
+                                marker_size)
         color = (hex_rgb(single_color)
                 if color_mode == "single" else track_rgb(track_id))
         rendered[pixels] = color

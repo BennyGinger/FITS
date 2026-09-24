@@ -174,6 +174,30 @@ def test_image_viewer_displays_image_and_mask() -> None:
     assert viewer.mask_item.image.shape == (4, 4, 4)
 
 
+def test_image_viewer_preserves_navigation_until_home_is_clicked() -> None:
+    app = _app()
+    viewer = FitsImageViewer()
+    viewer.resize(500, 400)
+    viewer.show()
+    viewer.set_image(np.zeros((200, 300)))
+    app.processEvents()
+    viewer.view_box.setRange(xRange=(40, 100), yRange=(50, 110), padding=0)
+    zoomed = viewer.view_box.viewRange()
+
+    viewer.set_image(np.ones((200, 300)))
+    app.processEvents()
+
+    np.testing.assert_allclose(viewer.view_box.viewRange(), zoomed)
+    assert viewer.home_button.toolTip() == "Fit and center the image in the viewer."
+    viewer.home_button.click()
+    app.processEvents()
+    fitted = viewer.view_box.viewRect()
+    image_bounds = viewer.image_item.boundingRect()
+    assert fitted.contains(image_bounds)
+    assert fitted.width() > zoomed[0][1] - zoomed[0][0]
+    viewer.close()
+
+
 def test_image_viewer_uses_channel_colour_mapping() -> None:
     _app()
     viewer = FitsImageViewer()
@@ -358,10 +382,11 @@ def test_replace_drawing_replaces_canvas_and_commits_on_release() -> None:
     viewer.drawing_finished.connect(committed.append)
 
     viewer._start_drawing(2, 2)
-    assert viewer.mask_item.opacity() == 0.8
+    assert viewer.drawing_item.opacity() == 0.65
     viewer._finish_drawing(6, 5)
 
     assert len(committed) == 1
+    assert not viewer.last_drawing_was_click
     assert viewer.mask_item.opacity() == 0.35
     assert np.any(committed[0][2:7, 2:7])
     assert not np.any(committed[0][9:11, 9:11])
@@ -369,6 +394,10 @@ def test_replace_drawing_replaces_canvas_and_commits_on_release() -> None:
     restored = viewer.undo_drawing()
     assert restored is not None
     np.testing.assert_array_equal(restored, previous)
+
+    viewer._start_drawing(3, 3)
+    viewer._finish_drawing(3, 3)
+    assert viewer.last_drawing_was_click
 
 
 def test_edit_drawing_keeps_existing_mask_and_commits_on_release() -> None:
@@ -423,6 +452,43 @@ def test_freehand_drawing_live_fills_its_enclosed_polygon() -> None:
     assert viewer.drawing_mask[5, 5] == 1
     viewer._finish_drawing(2, 8)
     assert np.all(viewer.drawing_mask[3:8, 3:8])
+
+
+def test_brush_never_fills_or_erases_an_enclosed_area() -> None:
+    _app()
+    viewer = FitsImageViewer()
+    viewer.set_image(np.zeros((16, 16)))
+    viewer.set_drawing_mask(np.zeros((16, 16), dtype=np.uint8))
+    viewer.set_drawing_options("edit", "brush", "add", 1)
+
+    viewer._start_drawing(3, 3)
+    viewer._continue_drawing(10, 3)
+    viewer._continue_drawing(10, 10)
+    viewer._finish_drawing(3, 10)
+
+    assert viewer.drawing_mask[3, 6] == 1
+    assert viewer.drawing_mask[6, 6] == 0
+
+    viewer.set_drawing_mask(np.zeros((16, 16), dtype=np.uint8))
+    viewer._start_drawing(3, 3)
+    viewer._continue_drawing(10, 3)
+    viewer._continue_drawing(10, 10)
+    viewer._continue_drawing(3, 10)
+    viewer._finish_drawing(3, 3)
+
+    assert viewer.drawing_mask[3, 6] == 1
+    assert viewer.drawing_mask[6, 6] == 0
+
+    viewer.set_drawing_mask(np.ones((16, 16), dtype=np.uint8))
+    viewer.set_drawing_options("edit", "brush", "erase", 1)
+    viewer._start_drawing(3, 3, "erase")
+    viewer._continue_drawing(10, 3)
+    viewer._continue_drawing(10, 10)
+    viewer._continue_drawing(3, 10)
+    viewer._finish_drawing(3, 3)
+
+    assert viewer.drawing_mask[3, 6] == 0
+    assert viewer.drawing_mask[6, 6] == 1
 
 
 def test_freehand_rasterization_does_not_rebuild_each_segment(monkeypatch) -> None:

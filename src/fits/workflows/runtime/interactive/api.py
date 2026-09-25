@@ -12,12 +12,10 @@ from fits.workflows.runtime.errors import PipelineCancelled
 from fits.workflows.runtime.interactive.execution import PhaseExecutor
 from fits.workflows.runtime.interactive.finalization import ExperimentFinalizer
 from fits.workflows.runtime.interactive.interaction import PipelineInteraction
-from fits.workflows.runtime.interactive.joining import (
-    PendingItem, collect_mask_outcomes, finalize_ready, start_next_prepared)
+from fits.workflows.runtime.interactive.joining import PendingItem, collect_mask_outcomes, finalize_ready, start_next_prepared
 from fits.workflows.runtime.interactive.messages import MaskCollectionOutcome
 from fits.workflows.runtime.interactive.plan import InteractivePlan
-from fits.workflows.runtime.interactive.preparation import (
-    PreparationProducer, PreparedItem)
+from fits.workflows.runtime.interactive.preparation import PreparationProducer, PreparedItem
 from fits.workflows.runtime.interactive.progress import input_progress_id
 from fits.workflows.runtime.interactive.reporting import report_interactive_run
 from fits.workflows.runtime.interactive.tracking_edits import TrackingEditCoordinator

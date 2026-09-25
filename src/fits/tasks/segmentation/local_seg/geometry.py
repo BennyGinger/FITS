@@ -6,24 +6,25 @@ from typing import Sequence
 import numpy as np
 from scipy.ndimage import label
 
-from fits.tasks.tracking.mask_prediction.types import (
-    Array, BoolArray, Bounds, Point)
+from fits.tasks.segmentation.local_seg.types import Array, BoolArray, Bounds, Point
 
 
-def crop_bounds(shape: tuple[int, int], 
+def crop_bounds(shape: tuple[int, int],
                 points: Sequence[Point],
-                diameter: float, 
-                *, 
-                extent_mask: Array | None = None
+                diameter: float,
+                *,
+                extent_mask: Array | None = None,
                 ) -> Bounds:
     """
-    Return a bounded crop around prompts and an optional working mask.
+    Return a conservative crop around all positive prompts.
     """
-    half_size = max(16, int(ceil(diameter * 1.5)))
+    half_size = max(12, int(ceil(diameter * 1.15)))
     center_y = int(round(np.mean([point[0] for point in points])))
     center_x = int(round(np.mean([point[1] for point in points])))
-    y0, y1 = max(0, center_y - half_size), min(shape[0], center_y + half_size + 1)
-    x0, x1 = max(0, center_x - half_size), min(shape[1], center_x + half_size + 1)
+    y0 = max(0, min(center_y - half_size, min(y for y, _ in points)))
+    y1 = min(shape[0], max(center_y + half_size + 1, max(y for y, _ in points) + 1))
+    x0 = max(0, min(center_x - half_size, min(x for _, x in points)))
+    x1 = min(shape[1], max(center_x + half_size + 1, max(x for _, x in points) + 1))
     if extent_mask is not None:
         coordinates = np.column_stack(np.nonzero(extent_mask))
         if coordinates.size:

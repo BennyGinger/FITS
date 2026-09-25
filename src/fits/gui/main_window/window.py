@@ -5,66 +5,39 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, QTimer, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QPalette
-from PySide6.QtWidgets import (
-    QFileDialog,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QMessageBox,
-    QPlainTextEdit,
-    QPushButton,
-    QSplitter,
-    QStackedWidget,
-    QTabBar,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QStackedWidget, QTabBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
-from fits.environment.constant import (
-    FITS_MASK_TRACK,
-    FITS_MASK_TRACK_EDITED,
-    FITS_MASK_TRACK_EDITED_FILTERED,
-    WORKFLOW_ORDER,
-    StepName,
-)
+from fits.environment import constant as cst
 from fits.environment.paths import reports_dir
 from fits.workflows.runtime.progress import RunProgress
-from fits.gui.settings import (
-    STEP_LAYOUTS, RuntimeSettingsEditor, SettingsAdapter, StepSettingsEditor,)
+from fits.gui.settings import STEP_LAYOUTS, RuntimeSettingsEditor, SettingsAdapter, StepSettingsEditor
 from fits.gui.main_window.report_dialog import ReportDialog
 from fits.gui.main_window.run_browser import RunDirectoryBrowser
 from fits.gui.main_window.logging import LogEmitter, QtLogHandler
-from fits.gui.main_window.pipeline_worker import PipelineWorker, user_error_message
+from fits.gui.main_window.pipeline_worker import PipelineWorker
 from fits.settings.models import SegmentSettings
 from fits.settings.loader import run_settings_path
 
 
 _PHASE_STEPS = (
-    ("Convert", (StepName.CONVERT,)),
-    ("Preprocess", (StepName.REGISTER_TIME, StepName.REGISTER_CHANNEL, StepName.BG_SUB)),
-    ("Process", (StepName.SEGMENT, StepName.TRACK, StepName.EDIT_TRACK)),
-    ("Analysis", (StepName.DISTANCE_PROFILE, StepName.EXTRACT)),
+    ("Convert", (cst.StepName.CONVERT,)),
+    ("Preprocess", (cst.StepName.REGISTER_TIME, cst.StepName.REGISTER_CHANNEL, cst.StepName.BG_SUB)),
+    ("Process", (cst.StepName.SEGMENT, cst.StepName.TRACK, cst.StepName.EDIT_TRACK)),
+    ("Analysis", (cst.StepName.DISTANCE_PROFILE, cst.StepName.EXTRACT)),
 )
-_STEP_PHASE = {
-    step: phase_index
-    for phase_index, (_, steps) in enumerate(_PHASE_STEPS)
-    for step in steps
-}
+_STEP_PHASE = {step: phase_index
+                for phase_index, (_, steps) in enumerate(_PHASE_STEPS)
+                for step in steps}
 
 
 class FitsMainWindow(QMainWindow):
     """Main FITS desktop window."""
 
-    def __init__(
-        self,
-        adapter: SettingsAdapter | None = None,
-        parent: QWidget | None = None,
-        demo_step_delay: float = 0.0,
-    ) -> None:
+    def __init__(self,
+                adapter: SettingsAdapter | None = None,
+                parent: QWidget | None = None,
+                demo_step_delay: float = 0.0,
+                ) -> None:
         super().__init__(parent)
         self.demo_step_delay = demo_step_delay
         self._mask_collection = None
@@ -75,8 +48,8 @@ class FitsMainWindow(QMainWindow):
         self.adapter = adapter or SettingsAdapter()
         self._thread: QThread | None = None
         self._worker: PipelineWorker | None = None
-        self._step_items: dict[StepName, QTreeWidgetItem] = {}
-        self._editors: dict[StepName, StepSettingsEditor] = {}
+        self._step_items: dict[cst.StepName, QTreeWidgetItem] = {}
+        self._editors: dict[cst.StepName, StepSettingsEditor] = {}
         self.runtime_editor: RuntimeSettingsEditor | None = None
         self._segmentation_tuner = None
         self._tracking_viewer = None
@@ -149,7 +122,7 @@ class FitsMainWindow(QMainWindow):
         self.tracking_viewer_button = QPushButton("Open tracking viewer…")
         self.tracking_viewer_button.setEnabled(False)
         self.tracking_viewer_button.setToolTip(
-            f"Open a selected {FITS_MASK_TRACK}, or the first one in the run directory.")
+            f"Open a selected {cst.FITS_MASK_TRACK}, or the first one in the run directory.")
         self.tracking_viewer_button.setStyleSheet(
             "QPushButton { background-color: #d97706; color: white; font-weight: bold; } "
             "QPushButton:disabled { background-color: #6b4b2a; color: #aaa; }")
@@ -245,7 +218,7 @@ class FitsMainWindow(QMainWindow):
         self.runtime_editor.value_changed.connect(self._refresh_phase_access)
         self.runtime_host_layout.addWidget(self.runtime_editor)
 
-        for step in WORKFLOW_ORDER:
+        for step in cst.WORKFLOW_ORDER:
             item = QTreeWidgetItem([STEP_LAYOUTS[step].title])
             item.setData(0, Qt.ItemDataRole.UserRole, step.value)
             item.setFlags(
@@ -264,7 +237,7 @@ class FitsMainWindow(QMainWindow):
 
             editor = StepSettingsEditor(self.adapter, step)
             editor.value_changed.connect(self._update_run_button_text)
-            if step == StepName.SEGMENT:
+            if step == cst.StepName.SEGMENT:
                 tune_row = QWidget()
                 tune_layout = QHBoxLayout(tune_row)
                 tune_layout.setContentsMargins(0, 0, 0, 0)
@@ -285,6 +258,9 @@ class FitsMainWindow(QMainWindow):
             editor.set_editable(self.adapter.step_enabled(step))
             self.settings_stack.addWidget(editor)
             self._editors[step] = editor
+
+        self._editors[cst.StepName.SEGMENT].value_changed.connect(
+            self._editors[cst.StepName.TRACK].refresh_tracking_channels)
 
         self.step_tree.blockSignals(False)
         if self.step_tree.topLevelItemCount():
@@ -314,18 +290,16 @@ class FitsMainWindow(QMainWindow):
         from fits.gui.viewer.segmentation import SegmentationTunerWindow
 
         self._sync_identity()
-        self._editors[StepName.SEGMENT].sync_to_adapter()
+        self._editors[cst.StepName.SEGMENT].sync_to_adapter()
         try:
             settings = self.adapter.segmentation_settings(for_tuning=True)
         except ValueError as error:
             QMessageBox.critical(self, "Cannot open segmentation tuner", str(error))
             return
-        tuner = SegmentationTunerWindow(
-            experiments_dir=self.adapter.run_dir or None,
-            segment_settings=settings,
-            parent=self,
-            close_on_apply=True,
-        )
+        tuner = SegmentationTunerWindow(experiments_dir=self.adapter.run_dir or None,
+                                        segment_settings=settings,
+                                        parent=self,
+                                        close_on_apply=True,)
         tuner.setWindowModality(Qt.WindowModality.WindowModal)
         tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         tuner.settings_applied.connect(self._apply_segmentation_settings)
@@ -338,18 +312,17 @@ class FitsMainWindow(QMainWindow):
         self.adapter.set_segment_channels(
             [entry.to_payload_dict() for entry in settings.channels])
         self._populate_from_adapter()
-        self.step_tree.setCurrentItem(self._step_items[StepName.SEGMENT])
+        self.step_tree.setCurrentItem(self._step_items[cst.StepName.SEGMENT])
         self._append_log("Applied settings from the segmentation tuner.")
 
-    def _step_from_item(self, item: QTreeWidgetItem) -> StepName:
-        return StepName(item.data(0, Qt.ItemDataRole.UserRole))
+    def _step_from_item(self, item: QTreeWidgetItem) -> cst.StepName:
+        return cst.StepName(item.data(0, Qt.ItemDataRole.UserRole))
 
     @Slot(QTreeWidgetItem, QTreeWidgetItem)
-    def _selected_step_changed(
-        self,
-        current: QTreeWidgetItem | None,
-        previous: QTreeWidgetItem | None,
-    ) -> None:
+    def _selected_step_changed(self,
+                                current: QTreeWidgetItem | None,
+                                previous: QTreeWidgetItem | None,
+                                ) -> None:
         if self._populating_settings:
             pass
         elif previous is not None and previous is not current:
@@ -387,7 +360,7 @@ class FitsMainWindow(QMainWindow):
         self._show_phase_steps(phase)
         self.settings_stack.setCurrentWidget(self._editors[step])
 
-    def _warn_about_missing_user_fields(self, step: StepName) -> bool:
+    def _warn_about_missing_user_fields(self, step: cst.StepName) -> bool:
         errors = self.adapter.missing_user_fields(step)
         if errors:
             QMessageBox.warning(self, "Missing required setting", "\n".join(errors))
@@ -406,14 +379,11 @@ class FitsMainWindow(QMainWindow):
         if current is not None and not self._populating_settings:
             previous_step = self._step_from_item(current)
             previous_phase = _STEP_PHASE[previous_step]
-            errors = [
-                error
-                for step in _PHASE_STEPS[previous_phase][1]
-                for error in self.adapter.missing_user_fields(step)
-            ]
+            errors = [error
+                        for step in _PHASE_STEPS[previous_phase][1]
+                        for error in self.adapter.missing_user_fields(step)]
             if errors:
-                QMessageBox.warning(
-                    self, "Missing required setting", "\n".join(errors))
+                QMessageBox.warning(self, "Missing required setting", "\n".join(errors))
                 self.phase_tabs.blockSignals(True)
                 self.phase_tabs.setCurrentIndex(previous_phase)
                 self.phase_tabs.blockSignals(False)
@@ -430,10 +400,8 @@ class FitsMainWindow(QMainWindow):
         for phase, (title, steps) in enumerate(_PHASE_STEPS):
             active = any(self.adapter.step_enabled(step) for step in steps)
             self.phase_tabs.setTabText(phase, f"{title} ✓" if active else title)
-            self.phase_tabs.setTabToolTip(
-                phase,
-                "At least one step is enabled." if active else "No steps are enabled.",
-            )
+            self.phase_tabs.setTabToolTip(phase,
+                "At least one step is enabled." if active else "No steps are enabled.",)
 
     def _refresh_phase_access(self) -> None:
         root = Path(self.adapter.run_dir).expanduser() if self.adapter.run_dir else None
@@ -470,8 +438,8 @@ class FitsMainWindow(QMainWindow):
         self._refresh_tracking_viewer_button()
         self._update_run_button_text()
         current = self.step_tree.currentItem()
-        if current is not None and self._step_from_item(current) != StepName.CONVERT and not unlocked:
-            self.step_tree.setCurrentItem(self._step_items[StepName.CONVERT])
+        if current is not None and self._step_from_item(current) != cst.StepName.CONVERT and not unlocked:
+            self.step_tree.setCurrentItem(self._step_items[cst.StepName.CONVERT])
 
     @Slot(QTreeWidgetItem, int)
     def _step_enabled_changed(self, item: QTreeWidgetItem, column: int) -> None:
@@ -487,11 +455,9 @@ class FitsMainWindow(QMainWindow):
 
     @Slot()
     def _browse_run_dir(self) -> None:
-        directory = QFileDialog.getExistingDirectory(
-            self,
-            "Select FITS run directory",
-            self.run_dir_edit.text() or str(Path.home()),
-        )
+        directory = QFileDialog.getExistingDirectory(self,
+                                                    "Select FITS run directory",
+                                                    self.run_dir_edit.text() or str(Path.home()),)
         if directory:
             self._switch_run_dir(directory)
 
@@ -544,12 +510,10 @@ class FitsMainWindow(QMainWindow):
 
     @Slot()
     def _load_settings(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load FITS settings",
-            self.run_dir_edit.text() or str(Path.home()),
-            "TOML settings (*.toml)",
-        )
+        path, _ = QFileDialog.getOpenFileName(self,
+                                            "Load FITS settings",
+                                            self.run_dir_edit.text() or str(Path.home()),
+                                            "TOML settings (*.toml)",)
         if not path:
             return
         self._load_settings_path(Path(path))
@@ -585,11 +549,9 @@ class FitsMainWindow(QMainWindow):
         step_errors = self.adapter.validate_steps()
         if step_errors:
             step, error = next(iter(step_errors.items()))
-            QMessageBox.critical(
-                self,
-                "Invalid settings",
-                f"{STEP_LAYOUTS[step].title}:\n{error}",
-            )
+            QMessageBox.critical(self,
+                                "Invalid settings",
+                                f"{STEP_LAYOUTS[step].title}:\n{error}",)
             return None
         try:
             destination = self.adapter.save_to_run_dir()
@@ -603,12 +565,11 @@ class FitsMainWindow(QMainWindow):
     def _run_pipeline(self) -> None:
         self._sync_identity()
         errors = self.adapter.validate_for_run()
-        if not self._prepared_available and not self.adapter.step_enabled(StepName.CONVERT):
-            convert_error = self.adapter.validate_steps().get(StepName.CONVERT)
+        if not self._prepared_available and not self.adapter.step_enabled(cst.StepName.CONVERT):
+            convert_error = self.adapter.validate_steps().get(cst.StepName.CONVERT)
             if convert_error is not None:
-                errors.append(
-                    f"{STEP_LAYOUTS[StepName.CONVERT].title}: "
-                    f"{convert_error.errors()[0]['msg']}")
+                errors.append(f"{STEP_LAYOUTS[cst.StepName.CONVERT].title}: "
+                                f"{convert_error.errors()[0]['msg']}")
         if errors:
             QMessageBox.warning(self, "Cannot run FITS", "\n".join(errors))
             return
@@ -620,17 +581,13 @@ class FitsMainWindow(QMainWindow):
         emitter = LogEmitter(self)
         emitter.message.connect(self._append_log)
         handler = QtLogHandler(emitter)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
 
         thread = QThread(self)
-        worker = PipelineWorker(
-            settings_path,
-            handler,
-            self.demo_step_delay,
-            convert_only=not self._phases_unlocked,
-        )
+        worker = PipelineWorker(settings_path,
+                                handler,
+                                self.demo_step_delay,
+                                convert_only=not self._phases_unlocked,)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.mask_requested.connect(self._enqueue_mask_request)
@@ -691,13 +648,11 @@ class FitsMainWindow(QMainWindow):
         from fits.gui.viewer.tracking import TrackingViewerWindow
 
         request = self._track_edit_queue.pop(0)
-        window = TrackingViewerWindow(
-            experiments_dir=self.adapter.run_dir,
-            tracking_path=request.tracking_path,
-            parent=self,
-            editing_enabled=True,
-            pipeline_request=request,
-        )
+        window = TrackingViewerWindow(experiments_dir=self.adapter.run_dir,
+                                        tracking_path=request.tracking_path,
+                                        parent=self,
+                                        editing_enabled=True,
+                                        pipeline_request=request,)
         window.tracking_finalized.connect(self._tracking_edit_finalized)
         self._tracking_editor = window
         window.show()
@@ -823,11 +778,9 @@ class FitsMainWindow(QMainWindow):
         if not root.is_dir():
             return []
         try:
-            names = (
-                FITS_MASK_TRACK_EDITED_FILTERED,
-                FITS_MASK_TRACK_EDITED,
-                FITS_MASK_TRACK,
-            )
+            names = (cst.FITS_MASK_TRACK_EDITED_FILTERED,
+                     cst.FITS_MASK_TRACK_EDITED,
+                     cst.FITS_MASK_TRACK,)
             return [path for name in names for path in sorted(root.rglob(name))]
         except OSError:
             return []
@@ -840,11 +793,9 @@ class FitsMainWindow(QMainWindow):
         from fits.gui.viewer.tracking import TrackingViewerWindow
 
         selected = path or self.run_browser.selected_path
-        tracking_names = {
-            FITS_MASK_TRACK,
-            FITS_MASK_TRACK_EDITED,
-            FITS_MASK_TRACK_EDITED_FILTERED,
-        }
+        tracking_names = {cst.FITS_MASK_TRACK,
+                          cst.FITS_MASK_TRACK_EDITED,
+                          cst.FITS_MASK_TRACK_EDITED_FILTERED,}
         if (selected is None or selected.name not in tracking_names
                 or not selected.is_file()):
             artifacts = self._tracking_artifacts()
@@ -867,10 +818,9 @@ class FitsMainWindow(QMainWindow):
         if not isinstance(path, (str, Path)):
             return
         report = Path(path)
-        if report.is_file() and report.name in {
-                FITS_MASK_TRACK,
-                FITS_MASK_TRACK_EDITED,
-                FITS_MASK_TRACK_EDITED_FILTERED}:
+        if report.is_file() and report.name in {cst.FITS_MASK_TRACK,
+                                                cst.FITS_MASK_TRACK_EDITED,
+                                                cst.FITS_MASK_TRACK_EDITED_FILTERED}:
             self._open_tracking_viewer(report)
             return
         if report.is_file() and report.name.startswith("fits_report_") and report.suffix == ".txt":
@@ -886,11 +836,9 @@ class FitsMainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._thread is not None and self._thread.isRunning():
-            QMessageBox.information(
-                self,
-                "Pipeline is running",
-                "Wait for the pipeline to finish before closing FITS.",
-            )
+            QMessageBox.information(self,
+                                    "Pipeline is running",
+                                    "Wait for the pipeline to finish before closing FITS.",)
             event.ignore()
             return
         super().closeEvent(event)

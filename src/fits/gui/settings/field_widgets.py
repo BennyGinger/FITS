@@ -5,6 +5,8 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QListWidget,
+    QListWidgetItem,
     QLineEdit,
     QWidget,
 )
@@ -84,6 +86,34 @@ class ListWidget(QLineEdit):
 
     def value(self) -> list[str]:
         return [part.strip() for part in self.text().split(",") if part.strip()]
+
+
+class ChannelSelectionWidget(QListWidget):
+    """Compact multi-selection list populated from segmentation channels."""
+
+    value_changed = Signal(object)
+
+    def __init__(self, channels: list[str], selected: list[str]) -> None:
+        super().__init__()
+        self.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        self.itemSelectionChanged.connect(
+            lambda: self.value_changed.emit(self.value()))
+        self.set_channels(channels, selected)
+
+    def set_channels(self, channels: list[str], selected: list[str] | None = None) -> None:
+        selected_values = set(self.value() if selected is None else selected)
+        self.blockSignals(True)
+        self.clear()
+        for channel in channels:
+            item = QListWidgetItem(channel)
+            self.addItem(item)
+            item.setSelected(channel in selected_values)
+        row_height = self.sizeHintForRow(0) if self.count() else self.fontMetrics().height() + 6
+        self.setFixedHeight(round(row_height * 2.5) + self.frameWidth() * 2)
+        self.blockSignals(False)
+
+    def value(self) -> list[str]:
+        return [item.text() for item in self.selectedItems()]
 
 
 class ExportChannelsWidget(TextWidget):

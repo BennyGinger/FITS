@@ -11,7 +11,10 @@ from fits.tasks.analysis.aggregate import save_master_analysis_table
 logger = logging.getLogger(__name__)
 
 
-def aggregate_quantification(effective_cfg: Mapping[str, Any], final_states: Sequence[ExperimentState], run_dir: Path,) -> None:
+def aggregate_quantification(effective_cfg: Mapping[str, Any], 
+                             final_states: Sequence[ExperimentState], 
+                             run_dir: Path,
+                             ) -> None:
     """
     Aggregate quantification artifacts from the final experiment states and save a master Parquet file.
     

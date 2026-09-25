@@ -436,8 +436,7 @@ class TrackingViewerSession:
             temporal_mask=temporal, temporal_weight=temporal_weight,
             initial_mask=initial_mask, excluded_mask=excluded_mask,
             occupied_mask=(labels != 0) & (labels != track_id),
-            expected_diameter=expected_diameter,
-            manual_stroke=manual_stroke)
+            expected_diameter=expected_diameter)
         if not np.any(proposal.mask):
             raise ValueError("No connected foreground was found at the positive point.")
         return {

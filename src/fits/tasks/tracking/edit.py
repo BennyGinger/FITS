@@ -4,13 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any, Mapping
 
-from fits.environment.constant import (
-    ARTI_IMG,
-    DIST_FITS,
-    FITS_MASK_TRACK,
-    FITS_MASK_TRACK_EDITED,
-    FITS_MASK_TRACK_EDITED_FILTERED,
-)
+from fits.environment import constant as cst
 from fits.tasks.common.artifact_results import complete_step_result
 from fits.workflows.definitions.models import StepProfile
 from fits.workflows.experiments import ExperimentState
@@ -28,7 +22,7 @@ def register_tracking_edit(exp_state: ExperimentState,
     """Register the tracking artifact finalized by the interactive editor."""
     try:
         source_path = exp_state.artifact(step_profile.input_artifact)
-        image_path = exp_state.artifact(ARTI_IMG)
+        image_path = exp_state.artifact(cst.ARTI_IMG)
         saved_path = Path(artifact_path).expanduser().resolve()
         if source_path is None or not source_path.is_file():
             raise StepExecutionError(
@@ -41,10 +35,9 @@ def register_tracking_edit(exp_state: ExperimentState,
         if not saved_path.is_file():
             raise StepExecutionError(
                 f"Edited tracking artifact does not exist: {saved_path}")
-        if saved_path.name not in {
-                FITS_MASK_TRACK,
-                FITS_MASK_TRACK_EDITED,
-                FITS_MASK_TRACK_EDITED_FILTERED}:
+        if saved_path.name not in {cst.FITS_MASK_TRACK,
+                                   cst.FITS_MASK_TRACK_EDITED,
+                                   cst.FITS_MASK_TRACK_EDITED_FILTERED}:
             raise StepExecutionError(
                 f"Unexpected edited tracking filename: {saved_path.name}")
         if saved_path.parent != source_path.parent:
@@ -53,7 +46,7 @@ def register_tracking_edit(exp_state: ExperimentState,
 
         updated_state = exp_state.with_metadata(
             step_name=step_profile.step_name,
-            created_by=DIST_FITS,
+            created_by=cst.DIST_FITS,
             exported_channel="all",
             channels_params=dict(edit_metadata),)
         return complete_step_result(updated_state, step_profile, saved_path)

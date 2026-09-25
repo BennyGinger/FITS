@@ -105,19 +105,11 @@ def test_tuner_styles_actions_and_preview_restores_overlay():
 
     assert viewer.width() >= 1500
     assert viewer.height() >= 950
-    panel_layout = viewer.settings_panel.layout()
-    run_button_index = panel_layout.indexOf(viewer.settings_panel.run_button)
-    apply_button_index = panel_layout.indexOf(viewer.settings_panel.apply_button)
-    channel_list_index = panel_layout.indexOf(viewer.channel_settings_list)
-    add_button_index = panel_layout.indexOf(viewer.add_channel_button)
-
-    assert channel_list_index < run_button_index
-    assert run_button_index + 1 == add_button_index
-    assert add_button_index + 1 == apply_button_index
-    viewer.show()
-    QApplication.processEvents()
-    assert viewer.settings_panel.run_button.width() == viewer.add_channel_button.width()
-    assert viewer.settings_panel.run_button.width() == viewer.settings_panel.apply_button.width()
+    settings_layout = viewer.settings_panel.controls_scroll.widget().layout()
+    run_button_item = settings_layout.itemAt(
+        settings_layout.indexOf(viewer.settings_panel.run_button))
+    assert run_button_item.alignment() == (
+        Qt.AlignmentFlag.AlignRight)
     assert "#d97706" in viewer.settings_panel.run_button.styleSheet()
     assert "#4f8f5b" in viewer.add_channel_button.styleSheet()
     assert "#16803b" in viewer.settings_panel.apply_button.styleSheet()

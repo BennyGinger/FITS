@@ -7,8 +7,7 @@ from fits.workflows.experiments import ExperimentState
 from fits.workflows.runtime.errors import PipelineCancelled
 from fits.workflows.runtime.interactive.execution import PhaseExecutor
 from fits.workflows.runtime.interactive.masks import validate_mask_outcome
-from fits.workflows.runtime.interactive.messages import (
-    MaskCollectionOutcome, MaskCollectionRequest)
+from fits.workflows.runtime.interactive.messages import MaskCollectionOutcome, MaskCollectionRequest
 from fits.workflows.runtime.interactive.plan import InteractivePlan
 from fits.workflows.runtime.progress import StageStatus, WorkflowStage
 from fits.workflows.runtime.scheduler.planning import RuntimeStep

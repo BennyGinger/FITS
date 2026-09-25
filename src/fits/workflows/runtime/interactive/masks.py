@@ -3,8 +3,7 @@
 from collections.abc import Mapping
 from typing import Any
 
-from fits.workflows.runtime.interactive.messages import (
-    MaskCollectionOutcome, MaskCollectionRequest)
+from fits.workflows.runtime.interactive.messages import MaskCollectionOutcome, MaskCollectionRequest
 
 
 def mask_collection_requested(config: Mapping[str, Any]) -> bool:

@@ -4,7 +4,6 @@ from pathlib import Path
 import colorsys
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import (
@@ -1069,8 +1068,6 @@ class TrackingViewerWindow(ImageToolWindow):
             self._manual_excluded_mask |= selection
         else:
             self._manual_excluded_mask[selection] = False
-            self._negative_points = [
-                point for point in self._negative_points if not selection[point]]
         if self.image_viewer.last_drawing_was_click:
             coordinates = np.column_stack(np.nonzero(selection))
             point_y, point_x = np.round(np.mean(coordinates, axis=0)).astype(int)
@@ -1081,7 +1078,6 @@ class TrackingViewerWindow(ImageToolWindow):
         mask = self._clip_local_mask(mask)
         self.image_viewer.set_drawing_mask(mask.astype(np.uint8))
         if not np.any(mask):
-            self._local_manual_stroke = False
             self._local_segmentation_preview = None
             self._manual_excluded_mask = np.zeros(mask.shape, dtype=bool)
             self._update_edit_buttons()
@@ -1123,23 +1119,12 @@ class TrackingViewerWindow(ImageToolWindow):
                 f"Track {occupied} occupies this pixel. Ctrl+click it to edit that mask.")
             return
         if positive:
-            # The working mask carries earlier edits. Replaying every old
-            # foreground point can resurrect regions the user just erased.
-            self._positive_points = [(y, x)]
-            self._negative_points.clear()
+            self._positive_points.append((y, x))
         else:
-            working = self.image_viewer.drawing_mask
-            if working is not None and np.any(working):
-                # Seed safely inside the current mask, away from the correction.
-                distances = distance_transform_edt(np.asarray(working, dtype=bool))
-                anchor = np.unravel_index(int(np.argmax(distances)), distances.shape)
-                self._positive_points = [(int(anchor[0]), int(anchor[1]))]
             if not self._positive_points:
                 self.status_label.setText("Place a foreground point before adding background points.")
                 return
-            # Earlier erasures already live in excluded_mask; only the current
-            # point should steer this random-walker correction.
-            self._negative_points = [(y, x)]
+            self._negative_points.append((y, x))
         if not self._positive_points:
             return
         options = dict(
@@ -1152,7 +1137,6 @@ class TrackingViewerWindow(ImageToolWindow):
             negative_points=list(self._negative_points),
             expected_diameter=self.local_cell_diameter.value(),
             initial_mask=self.image_viewer.drawing_mask,
-            manual_stroke=self._local_manual_stroke,
             excluded_mask=(None if self._manual_excluded_mask is None else
                            self._manual_excluded_mask.copy()),
         )
@@ -1170,6 +1154,7 @@ class TrackingViewerWindow(ImageToolWindow):
         self._local_segmentation_worker = worker
         self.progress.show()
         self.image_viewer.set_drawing_enabled(False)
+        self.image_viewer.clear_drawing_overlay()
         self.status_label.setText("Predicting local mask…")
         self._update_edit_buttons()
         thread.start()
@@ -1279,7 +1264,6 @@ class TrackingViewerWindow(ImageToolWindow):
             return
         self._positive_points.clear()
         self._negative_points.clear()
-        self._local_manual_stroke = False
         self._local_segmentation_preview = None
         session = self._tracking_session
         if session is not None:
@@ -1300,7 +1284,6 @@ class TrackingViewerWindow(ImageToolWindow):
         self._local_segmentation_preview = None
         self._positive_points.clear()
         self._negative_points.clear()
-        self._local_manual_stroke = False
         self._collect_local_prompts = False
         self._local_segmentation_context = None
         self._local_target_track_id = None

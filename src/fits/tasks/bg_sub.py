@@ -15,7 +15,10 @@ from fits.workflows.runtime.errors import StepExecutionError
 logger = logging.getLogger(__name__)
 
 
-def remove_bg(settings: BGSubSettings, exp_state: ExperimentState, step_profile: StepProfile) -> list[ExperimentState]:
+def remove_bg(settings: BGSubSettings, 
+              exp_state: ExperimentState, 
+              step_profile: StepProfile
+              ) -> list[ExperimentState]:
     """
     Process a single experiment through the background substraction step.
 

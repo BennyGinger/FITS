@@ -71,10 +71,6 @@ class MaskDrawingWindow(ImageToolWindow):
         layout.addWidget(self.reference_mask_colour_button)
 
     def _tool_keypress(self, event: QKeyEvent) -> bool:
-        if (event.modifiers() == Qt.KeyboardModifier.ControlModifier
-                and event.key() == Qt.Key.Key_Z):
-            self._undo_reference_drawing()
-            return True
         if (event.modifiers() in (Qt.KeyboardModifier.NoModifier,
                                   Qt.KeyboardModifier.ShiftModifier)
                 and event.key() == Qt.Key.Key_S):
@@ -84,6 +80,9 @@ class MaskDrawingWindow(ImageToolWindow):
                 self._save_roi_mask()
             return True
         return False
+
+    def _undo(self) -> None:
+        self._undo_reference_drawing()
 
     def _connect_tools(self) -> None:
         self.reference_panel.drawing_options_changed.connect(

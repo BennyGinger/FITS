@@ -38,6 +38,7 @@ class CellposeSettingsPanel(QWidget):
     mask_visibility_changed = Signal(bool)
     mask_opacity_changed = Signal(float)
     CONTROL_WIDTH = 150
+    BUTTON_WIDTH = 160
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -153,6 +154,7 @@ class CellposeSettingsPanel(QWidget):
             "Optional second image channel supplied as nuclear information where the Cellpose backend supports it.")
         settings_layout.addLayout(form)
         self.run_button = QPushButton("Run preview")
+        self.run_button.setFixedWidth(self.BUTTON_WIDTH)
         self.run_button.clicked.connect(self.run_requested)
         self.run_button.setDefault(True)
         controls_layout.addWidget(settings_section)
@@ -162,7 +164,7 @@ class CellposeSettingsPanel(QWidget):
             "QPushButton:hover { background-color: #ea8a0c; } "
             "QPushButton:pressed { background-color: #b85f05; }")
         controls_layout.addWidget(
-            self.run_button, alignment=Qt.AlignmentFlag.AlignRight)
+            self.run_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
         controls_layout.addStretch(1)
 

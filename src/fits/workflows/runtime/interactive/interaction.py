@@ -5,9 +5,7 @@ from queue import Queue
 from threading import Event
 from typing import Callable
 
-from fits.workflows.runtime.interactive.messages import (
-    MaskCollectionOutcome, MaskCollectionRequest,
-    TrackEditOutcome, TrackEditRequest)
+from fits.workflows.runtime.interactive.messages import MaskCollectionOutcome, MaskCollectionRequest, TrackEditOutcome, TrackEditRequest
 from fits.workflows.runtime.errors import PipelineCancelled, StepExecutionError
 
 

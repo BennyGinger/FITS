@@ -22,8 +22,7 @@ from fits.gui.main_window import FitsMainWindow
 from fits.gui.settings import SettingsAdapter
 from fits.gui.viewer.tracking import TrackingViewerSession, TrackingViewerWindow
 from fits.gui.viewer.tracking.path_item import TrackPathsItem
-from fits.tasks.tracking.mask_prediction import SplitPredictor
-from fits.tasks.tracking.mask_prediction.split_geometry import split_mask_automatically
+from fits.tasks.segmentation.local_seg import SplitPredictor
 from fits.workflows.runtime.interactive.messages import TrackEditRequest
 from fits.workflows.metadata import FitsMeta
 
@@ -173,7 +172,7 @@ def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
     assert "tracking_edit" not in custom
 
 
-def test_automatic_split_detects_neck_and_has_balanced_fallback() -> None:
+def test_split_predictor_uses_mask_geometry_as_prediction_evidence() -> None:
     snowman = np.zeros((60, 60), dtype=bool)
     rows, columns = disk((38, 30), 14, shape=snowman.shape)
     snowman[rows, columns] = True
@@ -181,16 +180,15 @@ def test_automatic_split_detects_neck_and_has_balanced_fallback() -> None:
     snowman[rows, columns] = True
     snowman[24:27, 27:34] = True
 
-    proposal = split_mask_automatically(snowman)
+    proposal = SplitPredictor().predict(snowman)
 
-    assert proposal.method == "detected_neck"
     assert proposal.regions[16, 30] != proposal.regions[38, 30]
 
     rectangle = np.zeros((30, 50), dtype=bool)
     rectangle[5:25, 5:45] = True
-    fallback = split_mask_automatically(rectangle)
-    sizes = [np.count_nonzero(fallback.regions == value) for value in (1, 2)]
-    assert fallback.method == "balanced_watershed"
+    rectangle_proposal = SplitPredictor().predict(rectangle)
+    sizes = [np.count_nonzero(rectangle_proposal.regions == value)
+             for value in (1, 2)]
     assert abs(sizes[0] - sizes[1]) <= np.count_nonzero(rectangle) * 0.3
 
 
@@ -216,6 +214,9 @@ def test_split_preview_does_not_edit_until_applied_and_preserves_old_region() ->
     assert session.has_edits
     assert session.tracked_frame(1)[38, 30] == 9
     assert session.tracked_frame(1)[16, 30] == 10
+    assert session.undo_last_edit() == 1
+    assert np.all(session.tracked_frame(1)[snowman] == 9)
+    assert not session.has_edits
 
 
 def test_local_segmentation_adds_and_deletes_one_frame_with_auxiliary_support() -> None:
@@ -348,7 +349,8 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert window.path_color_button.isHidden()
     assert "color: black" in window.mask_edit_colors_button.styleSheet()
     assert window.local_cell_diameter.parent() is window.image_viewer.canvas
-    assert window.diameter_reference.rect().width() == 40
+    assert window.local_cell_diameter.value() == 4  # From the 3x3 mask, clamped to the control minimum.
+    assert window.diameter_reference.rect().width() == 4
     window.local_cell_diameter.setValue(32)
     assert window.diameter_reference.rect().width() == 32
     assert window.image_viewer.mask_item.image[3, 4, 3] == 255
@@ -381,6 +383,16 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert (window.image_viewer.drawing_item.acceptedMouseButtons()
             != Qt.MouseButton.NoButton)
     assert np.all(window.image_viewer.drawing_mask[2:5, 3:6])
+    guide = np.zeros((8, 8), dtype=bool)
+    guide[2:5, 4] = True
+    window._preview_selected_split(guide=guide)
+    assert window._split_preview is not None
+    window._apply_previewed_split()
+    assert window.frame_slider.value() == 1
+    assert window._selected_track_ids == [7]
+    window._undo()
+    assert window.frame_slider.value() == 0
+    assert np.all(window._tracking_session.tracked_frame(0, "GFP")[2:5, 3:6] == 7)
     window._switch_split_target(7)
     assert window._selected_track_ids == []
     window.preview_split_button.setChecked(False)
@@ -442,6 +454,8 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     empty_window.image_viewer._last_drawing_was_click = False
     empty_window.image_viewer._drawing_operation = "add"
     empty_window._local_drawing_finished(manual_mask)
+    assert empty_window._local_manual_stroke
+    assert empty_window._positive_points == []
     assert empty_window.accept_mask_button.isEnabled()
     empty_window.accept_mask_button.click()
     assert np.all(empty_window._tracking_session.tracked_frame(0, 0)[2:5, 3:6] == 1)
@@ -475,8 +489,17 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert pipeline_window.save_tracking_button.text() == "Save edited tracking"
     assert pipeline_window.save_tracking_button.isEnabled()
     assert pipeline_window.use_original_button.text() == "Use original tracking"
-    pipeline_window._pipeline_resolved = True
-    pipeline_window.close()
+    outcomes = []
+    pipeline_window.tracking_finalized.connect(outcomes.append)
+    edited_path = tmp_path / "fits_track_edited.tif"
+    pipeline_window._edited_tracking_saved((edited_path, {"edited": True}))
+    assert outcomes == []
+    assert not pipeline_window._pipeline_resolved
+    pipeline_window._tracking_save_finished()
+    assert len(outcomes) == 1
+    assert outcomes[0].edited_path == edited_path
+    assert outcomes[0].metadata == {"edited": True}
+    assert pipeline_window._pipeline_resolved
 
 
 def test_main_window_tracking_button_and_double_click_launch(

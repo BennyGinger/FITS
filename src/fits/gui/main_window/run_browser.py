@@ -4,14 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QDir, QModelIndex, Signal, Slot
 from PySide6.QtGui import QStandardItemModel
-from PySide6.QtWidgets import (
-    QFileSystemModel,
-    QHBoxLayout,
-    QLabel,
-    QTreeView,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QFileSystemModel, QHBoxLayout, QLabel, QTreeView, QVBoxLayout, QWidget
 
 
 class DirectoryBrowser(QWidget):

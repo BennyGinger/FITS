@@ -98,10 +98,12 @@ class SegmentationTunerWindow(ImageToolWindow):
             "padding: 6px 12px; border-radius: 4px; } "
             "QPushButton:hover { background-color: #5ca568; } "
             "QPushButton:pressed { background-color: #3f7449; }")
-        layout.insertWidget(layout.count() - 1, self.settings_panel.run_button)
         self.add_channel_button.setEnabled(False)
         self.add_channel_button.clicked.connect(self._add_channel)
         layout.insertWidget(layout.count() - 1, self.add_channel_button)
+        layout.insertWidget(
+            layout.count() - 1, self.settings_panel.run_button,
+            alignment=Qt.AlignmentFlag.AlignRight)
         self.tool_panel = self.settings_panel
         return self.tool_panel
 

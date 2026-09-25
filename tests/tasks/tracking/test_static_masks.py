@@ -65,7 +65,7 @@ def test_process_preserves_labels_shape_and_dtype() -> None:
     assert np.all(np.any(result == 9, axis=(1, 2)))
 
 
-def test_completion_uses_supermask_on_overlap_without_leaving_halo() -> None:
+def test_completion_discards_track_blocked_by_another_cell() -> None:
     masks = np.zeros((3, 12, 12), dtype=np.uint16)
     masks[:, 3:6, 3:6] = 9
     masks[0, 3:6, 0:3] = 2
@@ -77,8 +77,7 @@ def test_completion_uses_supermask_on_overlap_without_leaving_halo() -> None:
     )
 
     np.testing.assert_array_equal(result[:, 3:6, 3:6], 9)
-    assert np.all(np.any(result == 2, axis=(1, 2)))
-    assert not np.any((result == 2)[:, 3:6, 3:6])
+    assert not np.any(result == 2)
 
 
 @pytest.mark.parametrize("masks", [

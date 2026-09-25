@@ -10,8 +10,7 @@ from fits.workflows.runtime.interactive.execution import PhaseExecutor
 from fits.workflows.runtime.interactive.finalization import ExperimentFinalizer
 from fits.workflows.runtime.interactive.interaction import PipelineInteraction
 from fits.workflows.runtime.interactive.masks import existing_mask_outcome
-from fits.workflows.runtime.interactive.messages import (
-    MaskCollectionOutcome, MaskCollectionRequest, TrackEditRequest)
+from fits.workflows.runtime.interactive.messages import MaskCollectionOutcome, MaskCollectionRequest, TrackEditRequest
 from fits.workflows.runtime.interactive.plan import InteractivePlan
 from fits.workflows.runtime.interactive.preparation import PreparedItem
 from fits.workflows.runtime.interactive.tracking_edits import TrackingEditCoordinator

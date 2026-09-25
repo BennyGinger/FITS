@@ -13,7 +13,10 @@ from fits.workflows.runtime.errors import StepExecutionError
 logger = logging.getLogger(__name__)
 
 
-def extract(settings: ExtractSettings, exp_state: ExperimentState, step_profile: StepProfile,) -> list[ExperimentState]:
+def extract(settings: ExtractSettings, 
+            exp_state: ExperimentState, 
+            step_profile: StepProfile,
+            ) -> list[ExperimentState]:
     """
     Process a single experiment through the extract step.
     

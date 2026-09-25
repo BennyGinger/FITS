@@ -9,20 +9,15 @@ from fits_io import FitsIO
 from numpy.typing import NDArray
 
 from fits.environment.constant import FITS_ROI_TEMPLATE
-from fits.tasks.reference_mask.artifact import (
-    merge_reference_channels,
-    validate_reference_label,
-)
+from fits.tasks.reference_mask.artifact import merge_reference_channels, validate_reference_label
 
 ROI_MASK_ENCODING = "ordered-threshold-manual-v2"
-ROI_MASK_VALUE_TABLE = {
-    "0": {"threshold": "excluded", "manual": "none", "final": "excluded"},
-    "1": {"threshold": "excluded", "manual": "excluded", "final": "excluded"},
-    "2": {"threshold": "included", "manual": "excluded", "final": "excluded"},
-    "3": {"threshold": "excluded", "manual": "included", "final": "included"},
-    "4": {"threshold": "included", "manual": "none", "final": "included"},
-    "5": {"threshold": "included", "manual": "included", "final": "included"},
-}
+ROI_MASK_VALUE_TABLE = {"0": {"threshold": "excluded", "manual": "none", "final": "excluded"},
+                        "1": {"threshold": "excluded", "manual": "excluded", "final": "excluded"},
+                        "2": {"threshold": "included", "manual": "excluded", "final": "excluded"},
+                        "3": {"threshold": "excluded", "manual": "included", "final": "included"},
+                        "4": {"threshold": "included", "manual": "none", "final": "included"},
+                        "5": {"threshold": "included", "manual": "included", "final": "included"},}
 
 
 def build_roi_path(source_path: Path, label: str) -> Path:

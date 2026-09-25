@@ -1,4 +1,4 @@
-"""Shared array types and results for local segmentation."""
+"""Shared array types and results for local segmentation predictions."""
 
 from dataclasses import dataclass
 from typing import Any, TypeAlias
@@ -30,4 +30,3 @@ class SplitProposal:
 
     regions: NDArray[np.uint8]
     gap: BoolArray
-    method: str

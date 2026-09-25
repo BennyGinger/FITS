@@ -15,7 +15,7 @@ from fits.workflows.runtime.progress import (
 from fits.gui.main_window.pipeline_worker import user_error_message
 from fits.gui.main_window.window import FitsMainWindow
 from fits.gui.settings import SettingsAdapter, StepSettingsEditor
-from fits.gui.settings.field_widgets import FloatWidget
+from fits.gui.settings.field_widgets import ChannelSelectionWidget, FloatWidget
 from fits.workflows.runtime.errors import StepExecutionError
 
 
@@ -70,6 +70,33 @@ def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
     segment_editor.sync_to_adapter()
     assert adapter.segment_channels()[0]["channel"] == "GFP"
 
+    window.close()
+
+
+def test_tracking_channels_follow_segmentation_multi_selection(tmp_path) -> None:
+    _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_segment_channels([{"channel": "BFP"}, {"channel": "GFP"}])
+    adapter.set_field_value(StepName.TRACK, "channel_to_track", [])
+    window = FitsMainWindow(adapter)
+    segment_editor = window._editors[StepName.SEGMENT]
+    tracking_editor = window._editors[StepName.TRACK]
+    selector = tracking_editor.widgets["channel_to_track"]
+
+    assert isinstance(selector, ChannelSelectionWidget)
+    assert selector.value() == ["BFP", "GFP"]
+    assert selector.height() < selector.sizeHintForRow(0) * 3
+
+    selector.item(0).setSelected(False)
+    assert adapter.field_value(StepName.TRACK, "channel_to_track") == ["GFP"]
+    segment_editor.channel_widgets[1]["channel"].setText("RFP")
+    segment_editor.channel_widgets[1]["channel"].editingFinished.emit()
+
+    assert [selector.item(index).text() for index in range(selector.count())] == [
+        "BFP", "RFP"]
+    assert selector.value() == ["RFP"]
+    assert adapter.field_value(StepName.TRACK, "channel_to_track") == ["RFP"]
     window.close()
 
 

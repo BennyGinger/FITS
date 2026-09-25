@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 STEP_CONVERT = StepName.CONVERT
 
 
-def convert(settings: ConvertSettings, exp_state: ExperimentState, step_profile: StepProfile) -> list[ExperimentState]:
+def convert(settings: ConvertSettings, 
+            exp_state: ExperimentState, 
+            step_profile: StepProfile
+            ) -> list[ExperimentState]:
     """
     Process a single experiment through the convert step.
     

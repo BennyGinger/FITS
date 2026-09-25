@@ -5,7 +5,7 @@ from typing import Sequence
 
 import numpy as np
 
-from fits.tasks.tracking.mask_prediction.types import Array, BoolArray
+from fits.tasks.segmentation.local_seg.types import Array, BoolArray
 
 
 def mask_agreement(target_masks: Sequence[Array],

@@ -261,7 +261,7 @@ def test_existing_mask_blocks_prediction_on_its_far_side() -> None:
 
 
 
-def test_random_walker_follows_irregular_membrane_with_two_clicks() -> None:
+def test_edge_guided_prediction_follows_irregular_membrane_with_two_clicks() -> None:
     training = [_membrane_cell(center) for center in ((20, 20), (40, 30), (70, 65))]
     model = AddEditPredictor()
     model.fit([image for image, _ in training], [labels for _, labels in training])
@@ -380,3 +380,4 @@ def test_random_walker_handles_noisy_interior_and_membrane_gap() -> None:
     assert not trimmed[25, 36]
     assert trimmed[25, 25]
     assert np.count_nonzero(first & ~trimmed) > 10
+

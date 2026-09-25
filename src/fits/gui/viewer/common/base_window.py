@@ -273,6 +273,10 @@ class ImageToolWindow(QMainWindow):
                 QTimer.singleShot(0, self.image_viewer.setFocus)
             return super().eventFilter(watched, event)
 
+        if (key == Qt.Key.Key_Z
+                and event.modifiers() == Qt.KeyboardModifier.ControlModifier):
+            self._undo()
+            return True
         if self._tool_keypress(event):
             return True
         if event.modifiers() not in (Qt.KeyboardModifier.NoModifier,
@@ -429,6 +433,9 @@ class ImageToolWindow(QMainWindow):
 
     def _tool_keypress(self, event: QKeyEvent) -> bool:
         raise NotImplementedError
+
+    def _undo(self) -> None:
+        """Undo the latest edit when the active tool maintains edit history."""
 
     def _display_overlay(self, image, frame, channel, z_index) -> None:
         raise NotImplementedError

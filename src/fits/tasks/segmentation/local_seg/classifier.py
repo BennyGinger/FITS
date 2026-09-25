@@ -3,10 +3,10 @@
 import numpy as np
 from scipy.ndimage import gaussian_filter, sobel, uniform_filter
 
-from fits.tasks.tracking.mask_prediction.types import Array, FloatArray
+from fits.tasks.segmentation.local_seg.types import Array, FloatArray
 
 
-def pixel_features(image: Array) -> FloatArray:
+def pixel_features(image: Array, *, intensity_range: tuple[float, float] | None = None) -> FloatArray:
     """
     Build normalized intensity, scale, edge, and texture features.
     """
@@ -15,7 +15,8 @@ def pixel_features(image: Array) -> FloatArray:
     if finite.size == 0:
         normalized = np.zeros_like(values)
     else:
-        low, high = np.percentile(finite, (1.0, 99.0))
+        low, high = (np.percentile(finite, (1.0, 99.0))
+                     if intensity_range is None else intensity_range)
         scale = high - low
         normalized = (np.zeros_like(values) if scale <= 0 else
                       np.clip((values - low) / scale, 0, 1))

@@ -9,14 +9,7 @@ from numpy.typing import NDArray
 from fits.environment.constant import ARTI_ROI, DIST_FITS
 from fits.interaction import BinaryMaskSession
 from fits.tasks.reference_mask.artifact import validate_reference_label
-from fits.tasks.roi_mask.artifact import (
-    ROI_MASK_ENCODING,
-    ROI_MASK_VALUE_TABLE,
-    build_roi_path,
-    load_roi_artifact,
-    merge_roi_channels,
-    saved_roi_channels,
-)
+from fits.tasks.roi_mask.artifact import ROI_MASK_ENCODING, ROI_MASK_VALUE_TABLE, build_roi_path, load_roi_artifact, merge_roi_channels, saved_roi_channels
 
 
 class RoiSession(BinaryMaskSession):

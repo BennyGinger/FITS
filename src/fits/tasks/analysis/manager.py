@@ -9,11 +9,7 @@ from fits_io import FitsIO
 import numpy as np
 from numpy.typing import NDArray
 
-from fits.environment.constant import (
-    ARTI_IMG,
-    FITS_REFERENCE_TEMPLATE,
-    FITS_ROI_TEMPLATE,
-)
+from fits.environment import constant as cst
 from fits.workflows.experiments import ExperimentState
 
 
@@ -47,7 +43,7 @@ class AnalysisManager:
 
     @property
     def image_path(self) -> Path:
-        path = self.state.artifact(ARTI_IMG)
+        path = self.state.artifact(cst.ARTI_IMG)
         if path is None or not path.is_file():
             raise ValueError("Analysis requires an image artifact.")
         return path
@@ -60,11 +56,11 @@ class AnalysisManager:
 
     def reference_paths(self) -> tuple[Path, ...]:
         return tuple(sorted(self.state.workdir.glob(
-            FITS_REFERENCE_TEMPLATE.format(label="*"))))
+            cst.FITS_REFERENCE_TEMPLATE.format(label="*"))))
 
     def roi_paths(self) -> tuple[Path, ...]:
         return tuple(sorted(self.state.workdir.glob(
-            FITS_ROI_TEMPLATE.format(label="*"))))
+            cst.FITS_ROI_TEMPLATE.format(label="*"))))
 
     def isotropic_pixel_size_um(self, *, spatial_axes: str = "YX") -> float | None:
         """

@@ -5,10 +5,8 @@ from numpy.typing import NDArray
 
 from fits.tasks.tracking.static_masks.completion import complete_tracks
 from fits.tasks.tracking.static_masks.filtering import filter_tracks
-from fits.tasks.tracking.static_masks.identities import (
-    build_temporal_supermask, reconnect_identities)
-from fits.tasks.tracking.static_masks.validation import (
-    validate_masks, validate_parameters)
+from fits.tasks.tracking.static_masks.identities import build_temporal_supermask, reconnect_identities
+from fits.tasks.tracking.static_masks.validation import validate_masks, validate_parameters
 
 
 def process_static_masks(masks: NDArray[np.generic],
@@ -31,6 +29,5 @@ def process_static_masks(masks: NDArray[np.generic],
                             shape_similarity=shape_similarity,
                             minimum_appearances=minimum_appearances,)
     return complete_tracks(filtered,
-                            supermask,
                             extrapolate_start=extrapolate_start,
                             extrapolate_end=extrapolate_end,)

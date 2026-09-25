@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
 
 from fits.environment.constant import StepName
 from fits.gui.settings.field_widgets import (
-    ExportChannelsWidget, IntWidget, TextWidget, ValueWidget, create_field_widget,)
+    ChannelSelectionWidget, ExportChannelsWidget, IntWidget, TextWidget,
+    ValueWidget, create_field_widget,)
 from fits.gui.settings.adapter import (
     RUNTIME_CHOICES,
     SettingsAdapter,
@@ -114,6 +115,11 @@ class StepSettingsEditor(QWidget):
             value = self.adapter.field_value(self.step, path)
             if self.step == StepName.CONVERT and path == "export_channels":
                 widget = ExportChannelsWidget(value)
+            elif self.step == StepName.TRACK and path == "channel_to_track":
+                channels = self._segmentation_channel_labels()
+                selected = [label for label in value if label in channels]
+                widget = ChannelSelectionWidget(channels, selected or channels)
+                self.adapter.set_field_value(self.step, path, widget.value())
             else:
                 widget = create_field_widget(value, field_choices(self.step, path))
             tooltip = field_tooltip(self.step, path)
@@ -129,6 +135,27 @@ class StepSettingsEditor(QWidget):
             label.setToolTip(tooltip)
             form.addRow(label, widget)
             self.widgets[path] = widget
+
+    def _segmentation_channel_labels(self) -> list[str]:
+        return list(dict.fromkeys(
+            str(entry.get("channel", "")).strip()
+            for entry in self.adapter.segment_channels()
+            if str(entry.get("channel", "")).strip()))
+
+    def refresh_tracking_channels(self) -> None:
+        """Refresh choices from segmentation, selecting newly added channels."""
+        widget = self.widgets.get("channel_to_track")
+        if not isinstance(widget, ChannelSelectionWidget):
+            return
+        previous_options = [widget.item(index).text()
+                            for index in range(widget.count())]
+        selected = widget.value()
+        channels = self._segmentation_channel_labels()
+        selected.extend(channel for channel in channels
+                        if channel not in previous_options)
+        widget.set_channels(channels, selected)
+        self.adapter.set_field_value(self.step, "channel_to_track", widget.value())
+        self.value_changed.emit()
 
     def _build_channel_sections(self) -> None:
         self.channel_widgets: list[dict[str, ValueWidget]] = []

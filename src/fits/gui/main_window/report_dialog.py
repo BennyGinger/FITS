@@ -6,11 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QDialogButtonBox, QHeaderView, QLabel,
-    QPlainTextEdit, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QAbstractItemView, QDialog, QDialogButtonBox, QHeaderView, QLabel, QPlainTextEdit, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget
 
 
 _COUNTS = re.compile(

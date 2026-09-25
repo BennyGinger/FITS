@@ -7,14 +7,7 @@ from numpy.typing import NDArray
 
 from fits.environment.constant import ARTI_REF, DIST_FITS
 from fits.interaction import BinaryMaskSession
-from fits.tasks.reference_mask.artifact import (
-    build_reference_path,
-    load_reference_artifact,
-    merge_reference_channels,
-    saved_reference_channels,
-    validate_reference_label,
-)
-
+from fits.tasks.reference_mask.artifact import build_reference_path, load_reference_artifact, merge_reference_channels, saved_reference_channels, validate_reference_label
 
 class ReferenceMaskSession(BinaryMaskSession):
     """

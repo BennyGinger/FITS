@@ -6,10 +6,7 @@ from fits_io import FitsIO
 import numpy as np
 from bioimagequant import ExtractData
 
-from fits.environment.constant import (
-    ARTI_SEG,
-    ARTI_TRACK,
-)
+from fits.environment import constant as cst
 from fits.tasks.analysis.manager import AnalysisManager, project_z
 
 
@@ -27,15 +24,15 @@ class ExtractionManager(AnalysisManager):
         Returns a tuple of (label_name, label_path).
         """
         
-        tracking = self.state.artifact(ARTI_TRACK)
+        tracking = self.state.artifact(cst.ARTI_TRACK)
 
         if tracking is not None and tracking.exists():
-            return ARTI_TRACK, tracking
+            return cst.ARTI_TRACK, tracking
 
-        segmentation = self.state.artifact(ARTI_SEG)
+        segmentation = self.state.artifact(cst.ARTI_SEG)
 
         if segmentation is not None and segmentation.exists():
-            return ARTI_SEG, segmentation
+            return cst.ARTI_SEG, segmentation
 
         raise ValueError("Extraction requires a tracking or segmentation artifact.")
 
@@ -56,28 +53,21 @@ class ExtractionManager(AnalysisManager):
         label_array, label_axes = project_z(
             np.asarray(labels.array), labels.axes, mask=False)
         if "Z" in image.axes or "Z" in labels.axes:
-            logger.info(
-                "Extraction is two-dimensional; automatically max-projecting Z for %s.",
-                self.state.experiment_id,)
+            logger.info("Extraction is two-dimensional; automatically max-projecting Z for %s.",
+                        self.state.experiment_id,)
 
-        pixel_size = self.isotropic_pixel_size_um(
-            spatial_axes=label_axes.replace("T", "").replace("C", ""),)
-        extractor = ExtractData(
-            interval=image_reader.interval,
-            pixel_size=pixel_size,)
+        pixel_size = self.isotropic_pixel_size_um(spatial_axes=label_axes.replace("T", "").replace("C", ""),)
+        extractor = ExtractData(interval=image_reader.interval,
+                                pixel_size=pixel_size,)
 
-        extractor.add_intensity(
-            image_array,
-            image_axes,
-            channel_labels=image_reader.channel_labels,
-        )
+        extractor.add_intensity(image_array,
+                                image_axes,
+                                channel_labels=image_reader.channel_labels,)
 
-        extractor.add_labels(
-            label_array,
-            label_axes,
-            name=label_name,
-            channel_labels=label_reader.channel_labels,
-        )
+        extractor.add_labels(label_array,
+                            label_axes,
+                            name=label_name,
+                            channel_labels=label_reader.channel_labels,)
 
         for reference_path in self.reference_paths():
             reference_reader = FitsIO.from_path(reference_path)
@@ -85,10 +75,8 @@ class ExtractionManager(AnalysisManager):
             reference_array, reference_axes = project_z(
                 np.asarray(reference.array), reference.axes, mask=True)
             reference_name = reference_path.stem.removeprefix("fits_ref_")
-            extractor.add_ref(
-                reference_array,
-                reference_axes,
-                name=reference_name,
-                channel_labels=reference_reader.channel_labels,)
-
+            extractor.add_ref(reference_array,
+                                reference_axes,
+                                name=reference_name,
+                                channel_labels=reference_reader.channel_labels,)
         return extractor

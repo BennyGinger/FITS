@@ -22,13 +22,119 @@ from fits.gui.viewer.tracking.rendering import render_selected_tracking_display
 from fits.gui.viewer.tracking.trajectories import calculate_track_centroids
 from fits.interaction import FitsImageSession
 from fits.tasks.segmentation.local_seg import (
+    AddEditProposal,
     AddEditPredictor,
     SplitPredictor,
     combine_auxiliary_masks,
     mask_agreement,
 )
+from fits.tasks.segmentation.local_seg.microsam import MICROSAM_PREDICTOR
 from fits.workflows.metadata._values import distribution_version, utc_now
 from fits.workflows.metadata import FitsMeta
+
+# Temporary smoke-test switch. Set to False to restore the classical Add/Edit
+# predictor without changing Split or any manual editing behavior.
+USE_MICROSAM_ADD_EDIT = True
+# Use OpenCV to transport an accepted mask to the next frame before μSAM
+# refines it. This is independent of the older conservative restrictions below.
+USE_MICROSAM_REGISTERED_PRIOR = True
+# Preserve an accepted/displayed prototype outside small corrective click
+# neighborhoods, without constraining the automatic registered prediction.
+USE_MICROSAM_LOCAL_REFINEMENT_PROTECTION = True
+# Preserve the experimental temporal propagation and conservative correction
+# code, but keep it out of the current point-driven SAM trial. When disabled,
+# a missing mask is inferred from clicks on the current image only and SAM's
+# native iterative logits are used without FITS' shape restrictions.
+USE_MICROSAM_TEMPORAL_RESTRICTIONS = False
+MICROSAM_POSITIVE_REFINEMENT_RADIUS = 0.30
+MICROSAM_NEGATIVE_REFINEMENT_RADIUS = 0.10
+MICROSAM_EROSION_SECTORS = 8
+MICROSAM_ALLOWED_SHRINK_PIXELS = 1.0
+
+
+def _register_mask_translation(
+        previous_image: NDArray, current_image: NDArray,
+        previous_mask: NDArray, expected_diameter: float,
+        ) -> tuple[NDArray[np.bool_], tuple[float, float], float]:
+    """Translate a mask with crop-local OpenCV phase correlation and ECC."""
+    import cv2
+
+    mask = np.asarray(previous_mask, dtype=bool)
+    coordinates = np.column_stack(np.nonzero(mask))
+    if coordinates.size == 0:
+        return mask.copy(), (0.0, 0.0), 0.0
+
+    shape = mask.shape
+    margin = max(12, int(round(expected_diameter * 1.5)))
+    y0 = max(0, int(np.min(coordinates[:, 0])) - margin)
+    y1 = min(shape[0], int(np.max(coordinates[:, 0])) + margin + 1)
+    x0 = max(0, int(np.min(coordinates[:, 1])) - margin)
+    x1 = min(shape[1], int(np.max(coordinates[:, 1])) + margin + 1)
+
+    def normalized_crop(image: NDArray) -> NDArray[np.float32]:
+        crop = np.nan_to_num(
+            np.asarray(image[y0:y1, x0:x1], dtype=np.float32), copy=True)
+        crop -= float(np.min(crop))
+        scale = float(np.max(crop))
+        if scale > 0:
+            crop /= scale
+        return np.asarray(cv2.GaussianBlur(crop, (5, 5), 0), dtype=np.float32)
+
+    reference = normalized_crop(previous_image)
+    moving = normalized_crop(current_image)
+    if not np.any(reference) or not np.any(moving):
+        return mask.copy(), (0.0, 0.0), 0.0
+
+    (phase_x, phase_y), phase_response = cv2.phaseCorrelate(reference, moving)
+    warp = np.asarray(
+        [[1.0, 0.0, phase_x], [0.0, 1.0, phase_y]], dtype=np.float32)
+    try:
+        ecc_score, warp = cv2.findTransformECC(
+            reference, moving, warp, cv2.MOTION_TRANSLATION,
+            (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 1e-4),
+            None, 3)
+        confidence = float(ecc_score)
+    except cv2.error:
+        confidence = float(phase_response)
+
+    shift_x = float(warp[0, 2])
+    shift_y = float(warp[1, 2])
+    maximum_shift = max(8.0, float(expected_diameter) * 3.0)
+    if (not np.isfinite(confidence) or confidence < 0.1
+            or np.hypot(shift_y, shift_x) > maximum_shift):
+        return mask.copy(), (0.0, 0.0), 0.0
+
+    translated = cv2.warpAffine(
+        mask.astype(np.uint8),
+        np.asarray([[1.0, 0.0, shift_x], [0.0, 1.0, shift_y]], dtype=np.float32),
+        (shape[1], shape[0]), flags=cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    return np.asarray(translated, dtype=bool), (shift_y, shift_x), confidence
+
+
+def _protect_directional_erosion(prior: NDArray, candidate: NDArray) -> NDArray:
+    """Restore prior pixels when a radial sector shrinks by more than one pixel."""
+    prior_mask = np.asarray(prior, dtype=bool)
+    protected = np.asarray(candidate, dtype=bool).copy()
+    if not np.any(prior_mask) or not np.any(protected):
+        return protected
+    center = np.mean(np.column_stack(np.nonzero(prior_mask)), axis=0)
+    rows, columns = np.indices(prior_mask.shape)
+    delta_y = rows - center[0]
+    delta_x = columns - center[1]
+    radius = np.hypot(delta_y, delta_x)
+    angles = (np.arctan2(delta_y, delta_x) + 2.0 * np.pi) % (2.0 * np.pi)
+    sectors = np.floor(
+        angles * MICROSAM_EROSION_SECTORS / (2.0 * np.pi)).astype(int)
+    for sector in range(MICROSAM_EROSION_SECTORS):
+        prior_sector = prior_mask & (sectors == sector)
+        if not np.any(prior_sector):
+            continue
+        prior_extent = float(np.max(radius[prior_sector]))
+        protected |= (
+            prior_sector
+            & (radius <= prior_extent - MICROSAM_ALLOWED_SHRINK_PIXELS))
+    return protected
 
 
 @dataclass(frozen=True)
@@ -89,6 +195,8 @@ class TrackingViewerSession:
         self._edited_mask_channels: set[int] = set()
         self._prediction_channels: list[dict[str, str]] = []
         self._undo_history: list[_TrackingUndo] = []
+        self._original_add_edit_masks: dict[
+            tuple[int, int, int, int], NDArray[np.bool_]] = {}
         if len(self._axes) != self._tracks.ndim or not {"Y", "X"}.issubset(self._axes):
             raise ValueError(f"Tracking axes {self._axes!r} do not match a YX label movie "
                              f"with shape {self._tracks.shape}.")
@@ -304,6 +412,19 @@ class TrackingViewerSession:
         self._record_edit("stop", channel)
         return new_track_id
 
+    def delete_track(self, track_id: int, channel: int | str, z_index: int) -> None:
+        """Delete every mask belonging to one track in this channel and Z plane."""
+        changed_frames = sorted(self._frames_for(track_id, channel, z_index))
+        if not changed_frames:
+            raise ValueError("The selected track has no masks in this channel and Z plane.")
+        self._remember_undo(channel, z_index, changed_frames)
+        for frame_index in changed_frames:
+            labels = self.tracked_frame(frame_index, channel, z_index)
+            labels[labels == track_id] = 0
+        self._invalidate_centroids(channel, z_index)
+        self._has_edits = True
+        self._record_edit("delete-track", channel)
+
     def preview_split(self, track_id: int, frame_index: int,
                       channel: int | str, z_index: int,
                       *, image_channel: int | str | None = None,
@@ -414,30 +535,180 @@ class TrackingViewerSession:
             initial_mask: NDArray | None = None,
             excluded_mask: NDArray | None = None,
             manual_stroke: bool = False,
+            continue_from_previous: bool = False,
             ) -> dict[str, Any]:
         """Predict a new or replacement mask from image evidence and prompts."""
         if self.image_session is None:
             raise ValueError("Local segmentation requires a sibling fits_array.tif image.")
         labels = self.tracked_frame(frame_index, mask_channel, z_index)
         replace_existing = bool(np.any(labels == track_id))
-        model = self._add_edit_predictor(
-            image_channel, mask_channel, z_index, frame_index=frame_index,
-            positive_points=positive_points, negative_points=negative_points,
-            expected_diameter=expected_diameter)
         auxiliary_masks, auxiliary_weights = self._auxiliary_mask_priors(
             frame_index, mask_channel, z_index)
         auxiliary, weight = combine_auxiliary_masks(auxiliary_masks, auxiliary_weights)
-        temporal, temporal_weight = self._temporal_mask_prior(
-            track_id, frame_index, mask_channel, z_index, positive_points[0])
+        # A click may position the prior only for the initial prediction. Once
+        # SAM has produced a prototype, corrective clicks must refine its
+        # logits without translating the whole temporal mask to the new click.
+        temporal_anchor = (
+            None if continue_from_previous or not positive_points
+            else positive_points[0])
+        if (not USE_MICROSAM_ADD_EDIT or manual_stroke
+                or USE_MICROSAM_TEMPORAL_RESTRICTIONS):
+            temporal, temporal_weight = self._temporal_mask_prior(
+                track_id, frame_index, mask_channel, z_index,
+                temporal_anchor)
+        else:
+            temporal, temporal_weight = None, 0.0
         image = self.display_frame(frame_index, image_channel, z_index)
-        proposal = model.predict(
-            image, positive_points, negative_points,
-            auxiliary_mask=auxiliary, auxiliary_weight=weight,
-            temporal_mask=temporal, temporal_weight=temporal_weight,
-            initial_mask=initial_mask, excluded_mask=excluded_mask,
-            occupied_mask=(labels != 0) & (labels != track_id),
-            expected_diameter=expected_diameter,
-            manual_stroke=manual_stroke)
+        if USE_MICROSAM_ADD_EDIT and not manual_stroke:
+            # For a missing observation, FITS has already translated the
+            # nearest earlier mask so its centroid meets the current click.
+            # Use it to initialize SAM on the current image; later clicks use
+            # SAM's returned logits rather than repeatedly binarizing the mask.
+            temporal_prompt = (
+                temporal if not replace_existing and temporal is not None
+                and np.any(temporal) else None)
+            existing_prompt = (
+                np.asarray(initial_mask, dtype=bool)
+                if initial_mask is not None
+                and (replace_existing or not positive_points)
+                and np.any(initial_mask) else None)
+            sam_mask_prompt = (
+                existing_prompt if existing_prompt is not None else temporal_prompt)
+            predictor_positive_points = list(positive_points)
+            if sam_mask_prompt is not None:
+                coordinates = np.column_stack(np.nonzero(sam_mask_prompt))
+                centroid = np.round(np.mean(coordinates, axis=0)).astype(int)
+                anchor = (int(centroid[0]), int(centroid[1]))
+                if anchor not in predictor_positive_points:
+                    predictor_positive_points.insert(0, anchor)
+            prediction_context = (
+                track_id, frame_index, self._resolve_channel(mask_channel), z_index)
+            proposal = MICROSAM_PREDICTOR.predict(
+                image, predictor_positive_points, negative_points,
+                initial_mask=sam_mask_prompt, excluded_mask=excluded_mask,
+                occupied_mask=(labels != 0) & (labels != track_id),
+                expected_diameter=expected_diameter,
+                prediction_context=prediction_context,
+                continue_from_previous=continue_from_previous,
+                auxiliary_weight=weight, temporal_weight=temporal_weight)
+            if (USE_MICROSAM_TEMPORAL_RESTRICTIONS
+                    and not positive_points and sam_mask_prompt is not None):
+                y0, y1, x0, x1 = proposal.bounds
+                prior_crop = np.asarray(
+                    sam_mask_prompt[y0:y1, x0:x1], dtype=bool)
+                candidate = np.asarray(proposal.mask, dtype=bool)
+                prior_area = int(np.count_nonzero(prior_crop))
+                collapsed_prediction = (
+                    prior_area > 0 and np.count_nonzero(candidate)
+                    < max(2, int(0.1 * prior_area)))
+                if np.any(candidate) and np.any(prior_crop):
+                    prior_center = np.mean(np.column_stack(np.nonzero(prior_crop)), axis=0)
+                    candidate_center = np.mean(
+                        np.column_stack(np.nonzero(candidate)), axis=0)
+                    shift = np.round(prior_center - candidate_center).astype(int)
+                    if np.any(shift):
+                        shifted = np.zeros_like(candidate)
+                        source_y, source_x = np.nonzero(candidate)
+                        target_y = source_y + int(shift[0])
+                        target_x = source_x + int(shift[1])
+                        valid = (
+                            (target_y >= 0) & (target_y < shifted.shape[0])
+                            & (target_x >= 0) & (target_x < shifted.shape[1]))
+                        shifted[target_y[valid], target_x[valid]] = True
+                        occupied_crop = np.asarray(
+                            ((labels != 0) & (labels != track_id))[y0:y1, x0:x1],
+                            dtype=bool)
+                        shifted[occupied_crop] = False
+                        if excluded_mask is not None:
+                            shifted[np.asarray(
+                                excluded_mask[y0:y1, x0:x1], dtype=bool)] = False
+                        proposal = AddEditProposal(
+                            mask=shifted,
+                            bounds=proposal.bounds,
+                            probability=shifted.astype(np.float64),
+                            auxiliary_weight=proposal.auxiliary_weight,
+                            temporal_weight=proposal.temporal_weight)
+                protected = _protect_directional_erosion(
+                    prior_crop, np.asarray(proposal.mask, dtype=bool))
+                occupied_crop = np.asarray(
+                    ((labels != 0) & (labels != track_id))[y0:y1, x0:x1],
+                    dtype=bool)
+                protected[occupied_crop] = False
+                if excluded_mask is not None:
+                    protected[np.asarray(
+                        excluded_mask[y0:y1, x0:x1], dtype=bool)] = False
+                proposal = AddEditProposal(
+                    mask=protected,
+                    bounds=proposal.bounds,
+                    probability=protected.astype(np.float64),
+                    auxiliary_weight=proposal.auxiliary_weight,
+                    temporal_weight=proposal.temporal_weight)
+                if collapsed_prediction:
+                    proposal = AddEditProposal(
+                        mask=prior_crop,
+                        bounds=proposal.bounds,
+                        probability=prior_crop.astype(np.float64),
+                        auxiliary_weight=proposal.auxiliary_weight,
+                        temporal_weight=proposal.temporal_weight)
+            if ((USE_MICROSAM_TEMPORAL_RESTRICTIONS
+                    or USE_MICROSAM_LOCAL_REFINEMENT_PROTECTION)
+                    and continue_from_previous and initial_mask is not None
+                    and (positive_points or negative_points)):
+                y0, y1, x0, x1 = proposal.bounds
+                working = np.asarray(initial_mask[y0:y1, x0:x1], dtype=bool)
+                candidate = np.asarray(proposal.mask, dtype=bool)
+                rows, columns = np.ogrid[:candidate.shape[0], :candidate.shape[1]]
+                positive_influence = np.zeros(candidate.shape, dtype=bool)
+                negative_influence = np.zeros(candidate.shape, dtype=bool)
+                positive_radius = max(
+                    3.0, float(expected_diameter)
+                    * MICROSAM_POSITIVE_REFINEMENT_RADIUS)
+                negative_radius = max(
+                    2.0, float(expected_diameter)
+                    * MICROSAM_NEGATIVE_REFINEMENT_RADIUS)
+                for point_y, point_x in positive_points:
+                    local_y, local_x = point_y - y0, point_x - x0
+                    positive_influence |= (
+                        (rows - local_y) ** 2 + (columns - local_x) ** 2
+                        <= positive_radius ** 2)
+                for point_y, point_x in negative_points:
+                    local_y, local_x = point_y - y0, point_x - x0
+                    negative_influence |= (
+                        (rows - local_y) ** 2 + (columns - local_x) ** 2
+                        <= negative_radius ** 2)
+                localized = working.copy()
+                # Foreground clicks only add; background clicks only remove.
+                # This keeps a local correction from damaging another part of
+                # the current Cellpose or propagated prototype.
+                localized[positive_influence] |= candidate[positive_influence]
+                localized[negative_influence] &= candidate[negative_influence]
+                occupied_crop = np.asarray(
+                    ((labels != 0) & (labels != track_id))[y0:y1, x0:x1], dtype=bool)
+                localized[occupied_crop] = False
+                if excluded_mask is not None:
+                    localized[np.asarray(
+                        excluded_mask[y0:y1, x0:x1], dtype=bool)] = False
+                proposal = AddEditProposal(
+                    mask=localized,
+                    bounds=proposal.bounds,
+                    probability=localized.astype(np.float64),
+                    auxiliary_weight=proposal.auxiliary_weight,
+                    temporal_weight=proposal.temporal_weight)
+            MICROSAM_PREDICTOR.synchronize_mask(
+                proposal.mask, prediction_context)
+        else:
+            model = self._add_edit_predictor(
+                image_channel, mask_channel, z_index, frame_index=frame_index,
+                positive_points=positive_points, negative_points=negative_points,
+                expected_diameter=expected_diameter)
+            proposal = model.predict(
+                image, positive_points, negative_points,
+                auxiliary_mask=auxiliary, auxiliary_weight=weight,
+                temporal_mask=temporal, temporal_weight=temporal_weight,
+                initial_mask=initial_mask, excluded_mask=excluded_mask,
+                occupied_mask=(labels != 0) & (labels != track_id),
+                expected_diameter=expected_diameter,
+                manual_stroke=manual_stroke)
         if not np.any(proposal.mask):
             raise ValueError("No connected foreground was found at the positive point.")
         return {
@@ -474,6 +745,14 @@ class TrackingViewerSession:
         y0, y1, x0, x1 = preview["bounds"]
         candidate = np.asarray(preview["mask"], dtype=bool)
         crop = labels[y0:y1, x0:x1]
+        baseline_key = (
+            int(preview["frame_index"]), int(preview["mask_channel"]),
+            int(preview["z_index"]), track_id)
+        baselines = getattr(self, "_original_add_edit_masks", None)
+        if baselines is None:
+            baselines = {}
+            self._original_add_edit_masks = baselines
+        baselines.setdefault(baseline_key, np.asarray(labels == track_id, dtype=bool).copy())
         # Do not silently overwrite masks belonging to another track.
         collision = candidate & (crop != 0) & (crop != track_id)
         if np.any(collision):
@@ -587,7 +866,7 @@ class TrackingViewerSession:
 
     def _temporal_mask_prior(self, track_id: int, frame_index: int,
                              mask_channel: int | str, z_index: int,
-                             anchor: tuple[int, int],
+                             anchor: tuple[int, int] | None,
                              ) -> tuple[NDArray[np.bool_] | None, float]:
         """Translate the nearest earlier mask toward the current positive click."""
         previous_frame = None
@@ -601,10 +880,29 @@ class TrackingViewerSession:
                 break
         if previous_frame is None or previous_mask is None:
             return None, 0.0
+        mask_index = self._resolve_channel(mask_channel)
+        baseline_key = (previous_frame, mask_index, z_index, track_id)
+        baselines = getattr(self, "_original_add_edit_masks", {})
+        previous_original = np.asarray(
+            baselines.get(baseline_key, previous_mask), dtype=bool)
+        current_key = (frame_index, mask_index, z_index, track_id)
+        current_original = np.asarray(baselines.get(
+            current_key,
+            self.tracked_frame(frame_index, mask_index, z_index) == track_id),
+            dtype=bool)
+        if np.any(current_original):
+            additions = previous_mask & ~previous_original
+            removals = previous_original & ~previous_mask
+            propagated = current_original.copy()
+            if np.any(additions):
+                propagated |= previous_mask
+            if np.any(removals):
+                propagated &= previous_mask
+            previous_mask = propagated
         coordinates = np.column_stack(np.nonzero(previous_mask))
         center_y, center_x = np.mean(coordinates, axis=0)
-        shift_y = int(round(anchor[0] - center_y))
-        shift_x = int(round(anchor[1] - center_x))
+        shift_y = 0 if anchor is None else int(round(anchor[0] - center_y))
+        shift_x = 0 if anchor is None else int(round(anchor[1] - center_x))
         translated = np.zeros_like(previous_mask, dtype=bool)
         source_y, source_x = np.nonzero(previous_mask)
         target_y = source_y + shift_y
@@ -615,6 +913,35 @@ class TrackingViewerSession:
         gap = frame_index - previous_frame
         weight = 0.9 / (1.0 + 0.25 * max(0, gap - 1))
         return translated, weight
+
+    def _registered_temporal_mask_prior(
+            self, track_id: int, frame_index: int,
+            image_channel: int | str, mask_channel: int | str, z_index: int,
+            expected_diameter: float,
+            ) -> tuple[NDArray[np.bool_] | None, tuple[float, float], float]:
+        """Register the nearest earlier track mask onto the current image."""
+        if frame_index <= 0:
+            return None, (0.0, 0.0), 0.0
+        previous_frame = None
+        previous_mask = None
+        for candidate_frame in range(frame_index - 1, -1, -1):
+            candidate = self.tracked_frame(
+                candidate_frame, mask_channel, z_index) == track_id
+            if np.any(candidate):
+                previous_frame = candidate_frame
+                previous_mask = candidate
+                break
+        if previous_frame is None or previous_mask is None:
+            return None, (0.0, 0.0), 0.0
+        registered, shift, confidence = _register_mask_translation(
+            self.display_frame(previous_frame, image_channel, z_index),
+            self.display_frame(frame_index, image_channel, z_index),
+            previous_mask, expected_diameter)
+        if confidence <= 0.0:
+            return None, shift, confidence
+        labels = self.tracked_frame(frame_index, mask_channel, z_index)
+        registered[(labels != 0) & (labels != track_id)] = False
+        return registered, shift, confidence
 
     def _invalidate_after_mask_edit(self, channel: int | str, z_index: int) -> None:
         self._invalidate_centroids(channel, z_index)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from types import ModuleType
+
 import numpy as np
 from scipy.ndimage import binary_erosion, binary_fill_holes
 from skimage.draw import disk
@@ -11,6 +14,148 @@ from fits.tasks.segmentation.local_seg import (
     mask_agreement,
 )
 from fits.tasks.segmentation.local_seg.random_walk import random_walk_candidate
+from fits.tasks.segmentation.local_seg.microsam import MicroSamPredictor
+
+
+def test_microsam_reuses_the_active_crop_embedding(monkeypatch) -> None:
+    backend = MicroSamPredictor()
+    calls = []
+    fake_util = ModuleType("micro_sam.util")
+
+    def precompute(predictor, crop, **kwargs):
+        calls.append((predictor, crop.copy(), kwargs))
+        return {"features": "cached"}
+
+    fake_util.precompute_image_embeddings = precompute
+    monkeypatch.setitem(sys.modules, "micro_sam.util", fake_util)
+    monkeypatch.setattr(backend, "_get_predictor", lambda: "predictor")
+    crop = np.arange(25, dtype=np.float32).reshape(5, 5)
+
+    first, first_reused = backend._get_embeddings(crop)
+    second, second_reused = backend._get_embeddings(crop.copy())
+
+    assert first is second
+    assert not first_reused
+    assert second_reused
+    assert len(calls) == 1
+
+
+def test_microsam_smoke_backend_translates_prompts_and_masks_owners(
+    monkeypatch,
+) -> None:
+    backend = MicroSamPredictor()
+    embedding_calls = []
+    prompt_calls = []
+
+    def fake_embeddings(crop):
+        embedding_calls.append(crop.copy())
+        return "embedding", bool(len(embedding_calls) > 1)
+
+    def fake_segment(predictor, points_yx, labels, embeddings):
+        prompt_calls.append((points_yx.copy(), labels.copy(), embeddings))
+        mask = np.ones((1, 25, 25), dtype=bool)
+        return mask, np.asarray([0.9]), np.zeros((1, 1), dtype=float)
+
+    monkeypatch.setattr(backend, "_get_embeddings", fake_embeddings)
+    monkeypatch.setattr(backend, "_get_predictor", lambda: "predictor")
+    monkeypatch.setattr(backend, "_segment_from_points", fake_segment)
+    image = np.zeros((60, 60), dtype=np.float32)
+    occupied = np.zeros_like(image, dtype=bool)
+    excluded = np.zeros_like(image, dtype=bool)
+    occupied[29, 29] = True
+    excluded[31, 31] = True
+
+    proposal = backend.predict(
+        image, [(30, 30)], [(32, 33)], expected_diameter=10,
+        occupied_mask=occupied, excluded_mask=excluded)
+
+    y0, _, x0, _ = proposal.bounds
+    assert np.array_equal(
+        prompt_calls[0][0], [[30 - y0, 30 - x0], [32 - y0, 33 - x0]])
+    assert np.array_equal(prompt_calls[0][1], [1, 0])
+    assert not proposal.mask[29 - y0, 29 - x0]
+    assert not proposal.mask[31 - y0, 31 - x0]
+    assert not proposal.mask[32 - y0, 33 - x0]
+    assert np.array_equal(proposal.probability, proposal.mask.astype(float))
+
+
+def test_microsam_uses_previous_logits_for_same_crop_correction(monkeypatch) -> None:
+    backend = MicroSamPredictor()
+    embedding = object()
+    point_calls = []
+    refinement_calls = []
+    monkeypatch.setattr(
+        backend, "_get_embeddings", lambda crop: (embedding, bool(point_calls)))
+    monkeypatch.setattr(backend, "_get_predictor", lambda: "predictor")
+
+    def points(predictor, points_yx, labels, embeddings):
+        point_calls.append(points_yx.copy())
+        return (
+            np.ones((1, 25, 25), dtype=bool), np.asarray([0.8]),
+            np.full((1, 256, 256), 3.0, dtype=np.float32))
+
+    def refine(predictor, points_yx, labels, embeddings, logits):
+        refinement_calls.append(logits.copy())
+        return (
+            np.ones((1, 25, 25), dtype=bool), np.asarray([0.9]),
+            np.full((1, 256, 256), 4.0, dtype=np.float32))
+
+    monkeypatch.setattr(backend, "_segment_from_points", points)
+    monkeypatch.setattr(backend, "_refine_from_logits", refine)
+    image = np.zeros((60, 60), dtype=np.float32)
+    context = (7, 2, 0, 0)
+
+    backend.predict(
+        image, [(30, 30)], expected_diameter=10,
+        prediction_context=context)
+    backend.predict(
+        image, [(30, 30)], [(31, 34)], expected_diameter=10,
+        prediction_context=context, continue_from_previous=True)
+
+    assert len(point_calls) == 1
+    assert len(refinement_calls) == 1
+    assert np.all(refinement_calls[0] == 3.0)
+
+
+def test_microsam_can_initialize_from_mask_without_a_click(monkeypatch) -> None:
+    backend = MicroSamPredictor()
+    captured = {}
+    monkeypatch.setattr(backend, "_get_embeddings", lambda crop: ("embedding", False))
+    monkeypatch.setattr(backend, "_get_predictor", lambda: "predictor")
+
+    def from_mask(predictor, mask, points_xy, labels, embeddings):
+        captured.update(points=points_xy, labels=labels, mask=mask.copy())
+        return (
+            mask[None], np.asarray([0.9]),
+            np.ones((1, 256, 256), dtype=np.float32))
+
+    monkeypatch.setattr(backend, "_segment_from_mask", from_mask)
+    image = np.zeros((60, 60), dtype=np.float32)
+    prior = np.zeros_like(image, dtype=bool)
+    prior[25:36, 26:37] = True
+
+    proposal = backend.predict(
+        image, [], expected_diameter=16, initial_mask=prior,
+        prediction_context=(7, 2, 0, 0))
+
+    assert captured["points"] is None
+    assert captured["labels"] is None
+    assert np.any(proposal.mask)
+
+
+def test_microsam_synchronizes_refinement_logits_to_displayed_mask(monkeypatch) -> None:
+    backend = MicroSamPredictor()
+    context = (7, 3, 0, 0)
+    backend._prediction_context = context
+    displayed = np.zeros((25, 25), dtype=bool)
+    displayed[8:17, 9:18] = True
+    expected_logits = np.full((256, 256), 5.0, dtype=np.float32)
+    monkeypatch.setattr(
+        backend, "_mask_to_logits", lambda mask: expected_logits.copy())
+
+    assert backend.synchronize_mask(displayed, context)
+    assert np.array_equal(backend._previous_logits, expected_logits)
+    assert not backend.synchronize_mask(displayed, (8, 3, 0, 0))
 
 
 def test_split_predictor_clips_guidance_and_keeps_image_supported_gap() -> None:
@@ -327,6 +472,30 @@ def test_click_inside_manual_outline_preserves_and_fills_entire_outline() -> Non
     assert np.all(predicted[outline])
     assert np.all(predicted[30:71, 27:74])
     assert not predicted[20, 20]
+
+
+def test_brush_line_can_close_against_existing_mask_and_fill_only_enclosure() -> None:
+    training = [_cell_plane(center) for center in ((20, 20), (40, 30), (58, 55))]
+    model = AddEditPredictor()
+    model.fit([image for image, _ in training], [labels for _, labels in training])
+    image = np.zeros((100, 100), dtype=np.float32)
+    working = np.zeros(image.shape, dtype=bool)
+    working[30:71, 20:31] = True  # Existing mask supplies the left border.
+    working[30, 30:61] = True
+    working[70, 30:61] = True
+    working[30:71, 60] = True
+
+    proposal = model.predict(
+        image, [(50, 45)], initial_mask=working,
+        expected_diameter=24, manual_stroke=True)
+    predicted = np.zeros_like(working)
+    y0, y1, x0, x1 = proposal.bounds
+    predicted[y0:y1, x0:x1] = proposal.mask
+
+    assert np.all(predicted[32:69, 31:59])
+    assert np.all(predicted[working])
+    assert not predicted[25, 45]
+    assert not predicted[50, 70]
 
 
 

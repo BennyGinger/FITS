@@ -312,11 +312,39 @@ class MaskPredictionFoundation:
         if manual_stroke and initial_mask is not None:
             working = np.asarray(initial_mask[y0:y1, x0:x1], dtype=bool)
             if np.any(working):
-                closed = binary_closing(
-                    working, iterations=max(1, int(round(diameter * 0.08))))
-                enclosed = np.asarray(binary_fill_holes(closed), dtype=bool)
+                # Prefer the literal border drawn by the user. Closing is only
+                # a fallback for a genuinely open, slightly gapped outline;
+                # using it first can expand an add-outline beyond its border.
+                enclosed = np.asarray(binary_fill_holes(working), dtype=bool)
                 selected = components_at_points(enclosed, positive_points, bounds)
-                if np.count_nonzero(selected) > 1.2 * np.count_nonzero(working):
+                # A brush line may close against the existing mask rather than
+                # against itself. If the click is in newly enclosed interior,
+                # trust that explicit border and do not retain an unrelated
+                # automatic candidate outside it.
+                clicked_new_interior = False
+                for point_y, point_x in positive_points:
+                    local_y, local_x = point_y - y0, point_x - x0
+                    if (0 <= local_y < selected.shape[0]
+                            and 0 <= local_x < selected.shape[1]
+                            and selected[local_y, local_x]
+                            and not working[local_y, local_x]):
+                        clicked_new_interior = True
+                        break
+                if not clicked_new_interior:
+                    closed = binary_closing(
+                        working, iterations=max(1, int(round(diameter * 0.08))))
+                    enclosed = np.asarray(binary_fill_holes(closed), dtype=bool)
+                    selected = components_at_points(enclosed, positive_points, bounds)
+                    for point_y, point_x in positive_points:
+                        local_y, local_x = point_y - y0, point_x - x0
+                        if (0 <= local_y < selected.shape[0]
+                                and 0 <= local_x < selected.shape[1]
+                                and selected[local_y, local_x]
+                                and not working[local_y, local_x]):
+                            clicked_new_interior = True
+                            break
+                if clicked_new_interior or (
+                        np.count_nonzero(selected) > 1.2 * np.count_nonzero(working)):
                     candidate = selected | working
                 else:
                     candidate |= working

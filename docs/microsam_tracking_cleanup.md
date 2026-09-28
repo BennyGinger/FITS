@@ -67,6 +67,13 @@ application dependencies such as napari, a Qt binding, magicgui, superqt,
 training utilities, and tracking packages. FITS only needs model loading,
 checkpoint caching, embeddings, point/mask/box prompts, and iterative logits.
 
+This is also tracked upstream in
+[`micro-sam` issue #1113: Installing micro-sam headless](https://github.com/computational-cell-analytics/micro-sam/issues/1113).
+The issue was opened on 26 September 2025 for the same plugin and headless/HPC
+use case. As checked on 28 September 2026, it remains open without a linked
+branch or pull request, and released/current packaging still makes napari and a
+Qt binding base dependencies.
+
 Create a separately versioned, headless fork/workspace package instead of only
 removing dependency declarations. Inference imports must also be separated from
 GUI, training, tracking, BioImage.IO, and other unrelated modules. A suitable
@@ -99,6 +106,13 @@ Development requirements for the fork:
 - Prefer a distinct distribution and import name to avoid conflicts with the
   upstream `micro-sam` package.
 
+Develop the fork as an upstream-compatible refactoring where practical rather
+than as a permanently divergent implementation. Once the headless dependency
+split and clean-environment tests are working, consider proposing it upstream
+as a pull request linked to issue #1113. FITS can remain pinned to the fork until
+an accepted change is included in an official release; if it is not accepted,
+the narrowly scoped fork remains easier to synchronize than a broad rewrite.
+
 A Git submodule/workspace is appropriate during development. Before publishing
 FITS, either publish the headless package separately, include the narrowly
 scoped adapter in FITS with attribution, or contribute an accepted core/GUI
@@ -119,4 +133,3 @@ submodules.
 9. Add independently configurable static-only shrinkage protection.
 10. Replace the full upstream dependency with the tested headless workspace
     package and verify clean installation on supported platforms.
-

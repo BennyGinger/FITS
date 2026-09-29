@@ -1,8 +1,9 @@
 # µSAM tracking editor: cleanup direction
 
-Status: design agreement following the interactive µSAM smoke test. The current
-implementation is intentionally experimental and should be committed before the
-cleanup described here.
+Status: the headless µSAM Add/Edit backend is integrated and working. The FITS
+integration is committed as `d12cb23`, and the fork revision used by FITS is
+`8b3b337`. Focused FITS tests pass, a real-image MobileSAM prediction was
+successful, and the TrackEdit behavior has been checked manually.
 
 ## Agreed responsibilities
 
@@ -67,69 +68,50 @@ application dependencies such as napari, a Qt binding, magicgui, superqt,
 training utilities, and tracking packages. FITS only needs model loading,
 checkpoint caching, embeddings, point/mask/box prompts, and iterative logits.
 
-This is also tracked upstream in
+The packaging work is tracked by
 [`micro-sam` issue #1113: Installing micro-sam headless](https://github.com/computational-cell-analytics/micro-sam/issues/1113).
-The issue was opened on 26 September 2025 for the same plugin and headless/HPC
-use case. As checked on 28 September 2026, it remains open without a linked
-branch or pull request, and released/current packaging still makes napari and a
-Qt binding base dependencies.
+The implementation has now been proposed upstream in
+[`micro-sam` PR #1384: Make GUI and application dependencies optional](https://github.com/computational-cell-analytics/micro-sam/pull/1384).
 
-Create a separately versioned, headless fork/workspace package instead of only
-removing dependency declarations. Inference imports must also be separated from
-GUI, training, tracking, BioImage.IO, and other unrelated modules. A suitable
-layout is:
+The fork keeps the existing `micro_sam` distribution and import name. Its base
+installation contains the packages required for prompt-based inference, while
+the existing GUI, training, tracking, BioImage.IO, and other application
+dependencies are available through:
 
-```text
-micro_sam_core/
-    models.py
-    checkpoints.py
-    embeddings.py
-    prompts.py
-    predictor.py
+```bash
+pip install micro-sam[full]
 ```
 
-The core dependency set should be limited to what inference actually imports,
-principally NumPy, PyTorch, the compatible SAM/MobileSAM implementation, and a
-small checkpoint downloader. GUI, training, and tracking dependencies should be
-optional extras if those upstream features are retained in the fork.
+Optional `imageio` and `python-elf` imports are loaded only inside the functions
+that use them. A clean-install CI job checks that the inference API imports
+without napari, Qt, magicgui, superqt, torch-em, trackastra, or python-elf. The
+normal full test jobs install `micro-sam[full]` so the upstream test suite keeps
+its previous dependency coverage.
 
-Development requirements for the fork:
+FITS currently keeps the fork as the `micro-sam-headless` Git submodule and
+resolves `micro-sam` to that local path with uv. `micro-sam` and `mobile-sam`
+remain in the default-installed `dev` group while FITS has only one user. This
+is sufficient for current FITS development but is not a publication solution:
+PyPI installations do not retrieve Git submodules or apply uv source overrides.
 
-- Preserve the upstream license, copyright, and attribution.
-- Keep an `upstream` Git remote and periodically incorporate relevant fixes.
-- Tag and pin known-compatible versions from FITS.
-- Verify checkpoint URLs, hashes, architecture compatibility, and licenses.
-- Provide CI that imports and runs inference in an environment without napari,
-  PyQt, or PySide.
-- Expose a small public API; do not make FITS depend on private underscore APIs
-  such as `_compute_logits_from_mask`.
-- Prefer a distinct distribution and import name to avoid conflicts with the
-  upstream `micro-sam` package.
-
-Develop the fork as an upstream-compatible refactoring where practical rather
-than as a permanently divergent implementation. Once the headless dependency
-split and clean-environment tests are working, consider proposing it upstream
-as a pull request linked to issue #1113. FITS can remain pinned to the fork until
-an accepted change is included in an official release; if it is not accepted,
-the narrowly scoped fork remains easier to synchronize than a broad rewrite.
-
-A Git submodule/workspace is appropriate during development. Before publishing
-FITS, either publish the headless package separately, include the narrowly
-scoped adapter in FITS with attribution, or contribute an accepted core/GUI
-split upstream. PyPI installations do not automatically retrieve Git
-submodules.
+Until the upstream PR is reviewed, FITS should remain pinned to the tested fork
+revision. If the change is accepted and released, FITS can depend on the
+official release. Before distributing FITS to other users, move the runtime
+dependencies out of `dev` and verify how MobileSAM will be installed.
 
 ## Proposed cleanup order
 
-1. Preserve the current experiment with integration tests and a commit.
-2. Define a small Add/Edit backend interface.
-3. Make µSAM the only learned Add/Edit predictor.
-4. Separate deterministic brush operations from model inference.
-5. Remove the legacy Add/Edit classifier/random-walker path while retaining
+1. **Done:** preserve the experiment with integration tests and a commit.
+2. **Done:** define a small injectable Add/Edit backend interface.
+3. **Done:** make µSAM the TrackEdit Add/Edit backend and verify it on real data.
+4. **Done:** create and test the headless dependency split; submit upstream PR
+   #1384.
+5. Separate deterministic brush operations from model inference.
+6. Remove the legacy Add/Edit classifier/random-walker path while retaining
    `SplitPredictor`.
-6. Extract registration and temporal decisions into a dedicated policy.
-7. Add static/moving/uncertain classification.
-8. Add static-only edit-delta propagation.
-9. Add independently configurable static-only shrinkage protection.
-10. Replace the full upstream dependency with the tested headless workspace
-    package and verify clean installation on supported platforms.
+7. Extract registration and temporal decisions into a dedicated policy.
+8. Add static/moving/uncertain classification.
+9. Add static-only edit-delta propagation.
+10. Add independently configurable static-only shrinkage protection.
+11. After an upstream release, replace the fork pin and prepare the dependencies
+    for distributing FITS to other users.

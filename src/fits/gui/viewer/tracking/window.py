@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-import colorsys
 
 import numpy as np
+import pyqtgraph as pg
 from scipy.ndimage import distance_transform_edt
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QKeyEvent
@@ -23,6 +23,12 @@ from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
 from fits.gui.viewer.tracking.session import TrackingViewerSession
 from fits.gui.viewer.tracking.path_item import TrackPathsItem
+from fits.gui.viewer.tracking.rendering import track_rgb
+from fits.tasks.segmentation.local_seg import (
+    component_at_point,
+    fill_clicked_enclosure,
+    remove_clicked_component,
+)
 from fits.workflows.runtime.interactive.messages import (
     TrackEditOutcome, TrackEditRequest)
 
@@ -57,6 +63,23 @@ class _LocalSegmentationWorker(QObject):
     def run(self) -> None:
         try:
             self.finished.emit(self.session.preview_add_edit(**self.options))
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
+class _LocalBackendPreparationWorker(QObject):
+    finished = Signal()
+    failed = Signal(str)
+
+    def __init__(self, session: TrackingViewerSession) -> None:
+        super().__init__()
+        self.session = session
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.session.prepare_add_edit_backend()
+            self.finished.emit()
         except Exception as error:
             self.failed.emit(str(error))
 
@@ -173,7 +196,7 @@ class TrackingViewerWindow(ImageToolWindow):
         "Ctrl + D    Delete the selected mask in the current frame\n"
         "Ctrl + Shift + D    Delete the selected track and all its masks\n"
         "S    Accept current Split or Add/Edit preview\n"
-        "Split mode: Ctrl + click a cell, then click where the division should "
+        "Split Mask: Ctrl + click a cell, then click where the division should "
         "pass or drag along the proposed split line. Stroke pixels outside the "
         "selected mask are ignored.\n"
         "Add/Edit: left click predicts/adds; right click predicts/removes; "
@@ -183,14 +206,17 @@ class TrackingViewerWindow(ImageToolWindow):
                  tracking_path: str | Path | None = None,
                  parent: QWidget | None = None,
                  *, editing_enabled: bool = True,
+                 selection_enabled: bool = False,
                  pipeline_request: TrackEditRequest | None = None) -> None:
         self.editing_enabled = editing_enabled
+        self.selection_enabled = selection_enabled
         self._pipeline_request = pipeline_request
         self._pipeline_resolved = False
         if not editing_enabled:
             self.file_filters = (FITS_MASK_TRACK,)
         self._tracking_session: TrackingViewerSession | None = None
         self._track_path_items: list[TrackPathsItem] = []
+        self._track_id_items: list[pg.TextItem] = []
         self._save_thread: QThread | None = None
         self._save_worker: _SaveWorker | None = None
         self._tracking_save_thread: QThread | None = None
@@ -201,6 +227,8 @@ class TrackingViewerWindow(ImageToolWindow):
         self._local_segmentation_preview: dict[str, object] | None = None
         self._local_segmentation_thread: QThread | None = None
         self._local_segmentation_worker: _LocalSegmentationWorker | None = None
+        self._local_preparation_thread: QThread | None = None
+        self._local_preparation_worker: _LocalBackendPreparationWorker | None = None
         self._positive_points: list[tuple[int, int]] = []
         self._negative_points: list[tuple[int, int]] = []
         self._collect_local_prompts = False
@@ -282,6 +310,16 @@ class TrackingViewerWindow(ImageToolWindow):
         self.path_color_button.hide()
         color_row.addWidget(self.path_color_button)
         display.addLayout(color_row)
+        track_id_row = QHBoxLayout()
+        track_id_row.addWidget(QLabel("Track IDs"))
+        self.track_id_display_mode = QComboBox()
+        self.track_id_display_mode.addItem("None", "none")
+        self.track_id_display_mode.addItem("Selected", "selected")
+        self.track_id_display_mode.addItem("All", "all")
+        self.track_id_display_mode.setCurrentIndex(
+            self.track_id_display_mode.findData("selected"))
+        track_id_row.addWidget(self.track_id_display_mode, 1)
+        display.addLayout(track_id_row)
         layout.addWidget(display_section)
 
         filter_section, filters = self._section("Track filtering")
@@ -314,49 +352,71 @@ class TrackingViewerWindow(ImageToolWindow):
 
         track_section, track_editing = self._section("Track operations")
         self.track_edit_section = track_section
-        instructions = QLabel(
-            "Ctrl+click a mask or centroid to select it; Ctrl+click it again to unselect. "
-            "Edits remain in memory.")
-        instructions.setWordWrap(True)
-        track_editing.addWidget(instructions)
+        selection_row = QHBoxLayout()
         self.track_selection_label = QLabel("Selected tracks: none")
-        track_editing.addWidget(self.track_selection_label)
-        edit_row = QHBoxLayout()
-        self.merge_tracks_button = QPushButton("Merge from this frame")
+        self.track_selection_label.setStyleSheet(
+            "background-color: #243b53; border: 1px solid #4da3ff; "
+            "border-radius: 4px; color: white; font-weight: bold; padding: 6px;")
+        selection_row.addWidget(self.track_selection_label, 1)
+        self.clear_track_selection_button = QPushButton("Clear selection")
+        self.clear_track_selection_button.setToolTip(
+            "Clear the current track selection without changing masks or tracks.")
+        selection_row.addWidget(self.clear_track_selection_button)
+        track_editing.addLayout(selection_row)
+        merge_split_row = QHBoxLayout()
+        self.merge_tracks_button = QPushButton("Merge Tracks")
         self.merge_tracks_button.setToolTip(
-            "Combine two selected tracks from the current frame onward.")
-        edit_row.addWidget(self.merge_tracks_button)
+            "Merge two masks in the current frame and join their tracks from "
+            "this frame onward.")
+        merge_split_row.addWidget(self.merge_tracks_button, 1)
+        self.preview_split_button = QPushButton("Split Mask")
+        self.preview_split_button.setCheckable(True)
+        self.preview_split_button.setToolTip(
+            "Select one track, then click or draw through its current mask to "
+            "preview a split. Press S to accept the preview.")
+        self.preview_split_button.setStyleSheet(
+            "QPushButton:checked { background-color: #2563a6; color: white; "
+            "font-weight: bold; }")
+        merge_split_row.addWidget(self.preview_split_button, 1)
+        self.apply_split_button = QPushButton("Accept split")
+        self.apply_split_button.setToolTip(
+            "Apply the displayed split to this frame. Shortcut: S.")
+        merge_split_row.addWidget(self.apply_split_button, 1)
+        self.cancel_split_button = QPushButton("Cancel split")
+        self.cancel_split_button.setToolTip(
+            "Discard the current split preview without changing the mask.")
+        merge_split_row.addWidget(self.cancel_split_button, 1)
+        track_editing.addLayout(merge_split_row)
+        track_editing.addSpacing(7)
+        history_row = QHBoxLayout()
         self.link_tracks_button = QPushButton("Link histories")
         self.link_tracks_button.setToolTip(
-            "Join two selected track histories across the complete movie.")
-        edit_row.addWidget(self.link_tracks_button)
-        self.stop_track_button = QPushButton("Stop after this frame")
+            "Join two selected track fragments into one history across the movie.")
+        history_row.addWidget(self.link_tracks_button)
+        self.stop_track_button = QPushButton("Split Track")
         self.stop_track_button.setToolTip(
-            "End one selected track here and assign its later masks a new ID.")
-        edit_row.addWidget(self.stop_track_button)
-        track_editing.addLayout(edit_row)
-        self.clear_track_selection_button = QPushButton("Clear selection")
-        track_editing.addWidget(self.clear_track_selection_button)
+            "Split the selected track history after the current frame. Later "
+            "masks remain unchanged but receive a new track ID.")
+        history_row.addWidget(self.stop_track_button)
+        self.unlink_track_button = QPushButton("Unlink entire track")
+        self.unlink_track_button.setToolTip(
+            "Keep every mask pixel unchanged, but give every frame-local mask "
+            "component an independent track ID.")
+        self.unlink_track_button.setStyleSheet(
+            "QPushButton { background-color: #a33a3a; color: white; } "
+            "QPushButton:hover { background-color: #bb4747; } "
+            "QPushButton:pressed { background-color: #842f2f; }")
+        history_row.addWidget(self.unlink_track_button)
+        track_editing.addLayout(history_row)
         layout.addWidget(track_section)
 
         mask_section, mask_editing = self._section("Mask editing")
         self.mask_edit_section = mask_section
-        split_row = QHBoxLayout()
-        self.preview_split_button = QCheckBox("Split mode")
-        self.preview_split_button.setToolTip(
-            "Preview a split using the mask shape, raw image, and your click or stroke.")
-        split_row.addWidget(self.preview_split_button)
-        self.apply_split_button = QPushButton("Accept split")
-        self.apply_split_button.setToolTip("Apply the displayed split to this frame.")
-        split_row.addWidget(self.apply_split_button)
-        self.cancel_split_button = QPushButton("Cancel preview")
-        split_row.addWidget(self.cancel_split_button)
-        mask_editing.addLayout(split_row)
-        mask_editing.addSpacing(8)
         local_row = QHBoxLayout()
         self.add_mask_button = QCheckBox("Add / edit masks mode")
         self.add_mask_button.setToolTip(
-            "Create a new mask, or edit the selected track's mask across frames.")
+            "Create a new mask or edit the selected track across frames. "
+            "Press S to accept the current prediction.")
         local_row.addWidget(self.add_mask_button)
         self.accept_mask_button = QPushButton("Accept mask")
         local_row.addWidget(self.accept_mask_button)
@@ -364,10 +424,26 @@ class TrackingViewerWindow(ImageToolWindow):
         local_row.addWidget(self.cancel_mask_button)
         mask_editing.addLayout(local_row)
         mask_editing.addSpacing(8)
-        self.delete_mask_button = QPushButton("Delete selected mask")
+        delete_row = QHBoxLayout()
+        self.delete_mask_button = QPushButton("Delete current mask")
         self.delete_mask_button.setToolTip(
-            "Remove the selected track's mask from this frame only.")
-        mask_editing.addWidget(self.delete_mask_button)
+            "Delete the selected track's mask from this frame only. "
+            "Shortcut: Ctrl+D.")
+        self.delete_mask_button.setStyleSheet(
+            "QPushButton { background-color: #b23a48; color: white; } "
+            "QPushButton:hover { background-color: #c94a58; } "
+            "QPushButton:pressed { background-color: #922f3b; }")
+        delete_row.addWidget(self.delete_mask_button)
+        self.delete_track_button = QPushButton("Delete current track")
+        self.delete_track_button.setToolTip(
+            "Delete every mask belonging to the selected track in this channel "
+            "and Z plane. Shortcut: Ctrl+Shift+D.")
+        self.delete_track_button.setStyleSheet(
+            "QPushButton { background-color: #8f1d2c; color: white; } "
+            "QPushButton:hover { background-color: #a82536; } "
+            "QPushButton:pressed { background-color: #711723; }")
+        delete_row.addWidget(self.delete_track_button)
+        mask_editing.addLayout(delete_row)
         mask_editing.addSpacing(8)
         brush_row = QHBoxLayout()
         brush_row.addWidget(QLabel("Brush size"))
@@ -381,16 +457,9 @@ class TrackingViewerWindow(ImageToolWindow):
         self.mask_edit_colors_button.setToolTip(
             "Outer border: other masks. Inner fill: the mask being edited.")
         self._update_mask_edit_colors_button()
-        brush_row.addWidget(self.mask_edit_colors_button)
         brush_row.addStretch(1)
+        brush_row.addWidget(self.mask_edit_colors_button)
         mask_editing.addLayout(brush_row)
-        self.local_segmentation_help = QLabel(
-            "Click for automatic prediction: left adds foreground, right removes it. "
-            "Drag to add or erase. Press S to accept Split or Add/Edit previews. "
-            "Ctrl+click a mask or centroid to select or unselect its track. "
-            "In the color window, left-click sets the active mask and right-click sets others.")
-        self.local_segmentation_help.setWordWrap(True)
-        mask_editing.addWidget(self.local_segmentation_help)
         self.local_cell_diameter = QSpinBox()
         self.local_cell_diameter.setRange(4, 1000)
         self.local_cell_diameter.setValue(40)
@@ -442,10 +511,20 @@ class TrackingViewerWindow(ImageToolWindow):
             self.save_tracking_button.setEnabled(False)
             self.save_tracking_button.setToolTip(
                 "Save a label-mask copy and make it the active downstream tracking artifact.")
+            self.save_tracking_button.setStyleSheet(
+                "QPushButton { background-color: #16803b; color: white; "
+                "font-weight: bold; padding: 7px 12px; border-radius: 4px; } "
+                "QPushButton:hover { background-color: #1c9848; } "
+                "QPushButton:pressed { background-color: #11652f; }")
             finalize_row.addWidget(self.save_tracking_button)
             self.use_original_button = QPushButton("Use original tracking")
             self.use_original_button.setToolTip(
                 "Finish this edit step without changing the active tracking artifact.")
+            self.use_original_button.setStyleSheet(
+                "QPushButton { background-color: #d97706; color: white; "
+                "font-weight: bold; padding: 7px 12px; border-radius: 4px; } "
+                "QPushButton:hover { background-color: #ea8a0c; } "
+                "QPushButton:pressed { background-color: #b85f05; }")
             finalize_row.addWidget(self.use_original_button)
             finalize.addLayout(finalize_row)
             layout.addWidget(finalize_section, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -477,6 +556,8 @@ class TrackingViewerWindow(ImageToolWindow):
         self.raw_image_toggle.toggled.connect(self.image_viewer.image_item.setVisible)
         self.mask_channel_combo.currentIndexChanged.connect(self._display_selection)
         self.show_track_paths.toggled.connect(self._display_track_paths)
+        self.track_id_display_mode.currentIndexChanged.connect(
+            self._display_track_paths)
         self.path_extent.currentIndexChanged.connect(self._display_track_paths)
         self.path_thickness.valueChanged.connect(self._display_track_paths)
         self.path_color_mode.currentIndexChanged.connect(self._path_color_mode_changed)
@@ -499,11 +580,13 @@ class TrackingViewerWindow(ImageToolWindow):
         self.merge_tracks_button.clicked.connect(self._merge_selected_tracks)
         self.link_tracks_button.clicked.connect(self._link_selected_tracks)
         self.stop_track_button.clicked.connect(self._stop_selected_track)
+        self.unlink_track_button.clicked.connect(self._unlink_selected_track)
         self.clear_track_selection_button.clicked.connect(self._clear_track_selection)
         self.preview_split_button.toggled.connect(self._toggle_split_mode)
         self.apply_split_button.clicked.connect(self._apply_previewed_split)
         self.cancel_split_button.clicked.connect(self._cancel_split_preview)
         self.delete_mask_button.clicked.connect(self._delete_selected_mask)
+        self.delete_track_button.clicked.connect(self._delete_selected_track)
         self.add_mask_button.toggled.connect(self._toggle_local_segmentation_mode)
         self.accept_mask_button.clicked.connect(self._accept_local_segmentation)
         self.cancel_mask_button.clicked.connect(self._cancel_local_segmentation)
@@ -527,7 +610,7 @@ class TrackingViewerWindow(ImageToolWindow):
                 and event.modifiers() == (
                     Qt.KeyboardModifier.ControlModifier
                     | Qt.KeyboardModifier.ShiftModifier)
-                and self.delete_mask_button.isEnabled()):
+                and self.delete_track_button.isEnabled()):
             self._delete_selected_track()
             return True
         if event.key() == Qt.Key.Key_S and self._split_preview is not None:
@@ -727,8 +810,7 @@ class TrackingViewerWindow(ImageToolWindow):
     def _display_track_paths(self) -> None:
         self._clear_track_paths()
         session = self._tracking_session
-        if (session is None or not self.show_track_paths.isChecked()
-                or self.mask_channel_combo.currentIndex() < 0):
+        if session is None or self.mask_channel_combo.currentIndex() < 0:
             return
         centroids = session.track_centroids(
             self.mask_channel_combo.currentText(), self.z_slider.value())
@@ -737,6 +819,9 @@ class TrackingViewerWindow(ImageToolWindow):
             centroids = {track_id: points for track_id, points in centroids.items()
                          if track_id in accepted}
         current_frame = self.frame_slider.value()
+        self._display_track_ids(centroids, current_frame)
+        if not self.show_track_paths.isChecked():
+            return
         full_path = self.path_extent.currentData() == "full"
         thickness = self.path_thickness.value()
         show_markers = self.show_centroids.isChecked()
@@ -754,18 +839,48 @@ class TrackingViewerWindow(ImageToolWindow):
         self.image_viewer.view_box.addItem(item)
         self._track_path_items.append(item)
 
+    def _display_track_ids(
+            self, centroids: dict[int, np.ndarray], current_frame: int,
+            ) -> None:
+        mode = self.track_id_display_mode.currentData()
+        if mode == "none":
+            return
+        visible_ids = (
+            set(self._selected_track_ids) if mode == "selected"
+            else set(centroids))
+        for track_id in sorted(visible_ids):
+            points = centroids.get(track_id)
+            if points is None:
+                continue
+            current = points[points[:, 0] == current_frame]
+            if not len(current):
+                continue
+            _, x_position, y_position = current[-1]
+            item = pg.TextItem(
+                str(track_id), color=self._palette_track_color(track_id),
+                anchor=(0.0, 1.0), fill=QColor(20, 20, 20, 190))
+            item.setZValue(60)
+            marker_corner_offset = 4.0
+            item.setPos(
+                float(x_position) + marker_corner_offset,
+                float(y_position) - marker_corner_offset)
+            self.image_viewer.view_box.addItem(item)
+            self._track_id_items.append(item)
+
     def _track_color(self, track_id: int) -> QColor:
         if track_id in self._selected_track_ids:
             return QColor(255, 255, 255)
         if self.path_color_mode.currentData() == "single":
             return self._path_color
-        hue = (track_id * 0.61803398875) % 1.0
-        red, green, blue = colorsys.hsv_to_rgb(hue, 0.75, 1.0)
-        return QColor.fromRgbF(red, green, blue)
+        return self._palette_track_color(track_id)
+
+    @staticmethod
+    def _palette_track_color(track_id: int) -> QColor:
+        return QColor(*track_rgb(track_id))
 
     @Slot(object)
     def _tracking_scene_clicked(self, event: object) -> None:
-        if (not self.editing_enabled
+        if ((not self.editing_enabled and not self.selection_enabled)
                 or self._tracking_session is None
                 or self._save_thread is not None
                 or not hasattr(event, "button")):
@@ -777,10 +892,13 @@ class TrackingViewerWindow(ImageToolWindow):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         control = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-        if not control:
+        if self.editing_enabled and not control:
             return
         track_id = self._track_at_position(position.x(), position.y())
         if track_id is not None:
+            if not self.editing_enabled:
+                self._select_single_track(track_id)
+                return
             if self._collect_local_prompts:
                 self._switch_local_edit_target(track_id)
                 return
@@ -846,6 +964,12 @@ class TrackingViewerWindow(ImageToolWindow):
         projected = starts + fractions[:, None] * vectors
         return float(np.min(np.linalg.norm(projected - point, axis=1)))
 
+    def _select_single_track(self, track_id: int) -> None:
+        self._selected_track_ids[:] = (
+            [] if self._selected_track_ids == [track_id] else [track_id])
+        self._update_edit_buttons()
+        self._display_track_paths()
+
     def _toggle_track_selection(self, track_id: int) -> None:
         if self._save_thread is not None:
             return
@@ -870,7 +994,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     def _update_edit_buttons(self) -> None:
         count = len(self._selected_track_ids)
-        local_busy = self._local_segmentation_thread is not None
+        local_busy = (
+            self._local_segmentation_thread is not None
+            or self._local_preparation_thread is not None)
         local_active = self._collect_local_prompts or self._local_segmentation_preview is not None
         editable = (self._save_thread is None
                     and self._tracking_save_thread is None
@@ -881,6 +1007,7 @@ class TrackingViewerWindow(ImageToolWindow):
         self.merge_tracks_button.setEnabled(editable and count == 2)
         self.link_tracks_button.setEnabled(editable and count == 2)
         self.stop_track_button.setEnabled(editable and count == 1)
+        self.unlink_track_button.setEnabled(editable and count == 1)
         self.clear_track_selection_button.setEnabled(editable and count > 0)
         split_mode_available = (self._tracking_session is not None
                                 and self._tracking_save_thread is None
@@ -891,6 +1018,7 @@ class TrackingViewerWindow(ImageToolWindow):
         has_image = (self._tracking_session is not None
                      and self._tracking_session.image_session is not None)
         self.delete_mask_button.setEnabled(editable and count == 1)
+        self.delete_track_button.setEnabled(editable and count == 1)
         self.add_mask_button.setEnabled(
             has_image and self._save_thread is None
             and self._tracking_save_thread is None
@@ -913,7 +1041,7 @@ class TrackingViewerWindow(ImageToolWindow):
             else:
                 self._display_selection()
                 self.status_label.setText(
-                    "Split mode: Ctrl+click a mask or centroid to select it.")
+                    "Split Mask: Ctrl+click a mask or centroid to select it.")
             return
         if self._split_preview is not None:
             self._split_preview = None
@@ -922,7 +1050,7 @@ class TrackingViewerWindow(ImageToolWindow):
         self.image_viewer.set_mask_color(None)
         self._display_selection()
         self._update_edit_buttons()
-        self.status_label.setText("Split mode stopped.")
+        self.status_label.setText("Split Mask stopped.")
 
     def _switch_split_target(self, track_id: int) -> None:
         active = self._selected_track_ids == [track_id]
@@ -949,7 +1077,7 @@ class TrackingViewerWindow(ImageToolWindow):
             return
         self._split_preview = None
         self._display_selection()
-        self.image_viewer.set_drawing_style(self._active_mask_color, 0.65)
+        self.image_viewer.set_drawing_style(self._other_mask_color, 0.65)
         self.image_viewer.set_drawing_mask(selected.astype(np.uint8))
         self.image_viewer.set_drawing_options(
             "edit", "brush", "add", self.local_brush_size.value())
@@ -1036,7 +1164,7 @@ class TrackingViewerWindow(ImageToolWindow):
         existing_mask = labels == track_id
         prototype_mask = existing_mask
         registration_note = ""
-        if propagate_previous and not np.any(existing_mask):
+        if propagate_previous:
             registered, shift, confidence = (
                 self._tracking_session._registered_temporal_mask_prior(
                     track_id, self.frame_slider.value(),
@@ -1094,14 +1222,57 @@ class TrackingViewerWindow(ImageToolWindow):
                 continue_from_previous=False,
                 excluded_mask=self._manual_excluded_mask.copy(),
             ))
+        elif not self._tracking_session.add_edit_backend_ready:
+            self._prepare_local_backend()
         if np.any(prototype_mask):
             self.status_label.setText(
                 "Initializing μSAM from the registered mask and its centroid…"
                 + registration_note)
-        else:
+        elif self._local_preparation_thread is None:
             self.status_label.setText(
                 "Click inside the missing cell. Right-click regions that should "
                 "be excluded; press S to accept.")
+
+    def _prepare_local_backend(self) -> None:
+        session = self._tracking_session
+        if session is None or self._local_preparation_thread is not None:
+            return
+        thread = QThread(self)
+        worker = _LocalBackendPreparationWorker(session)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(self._local_preparation_failed)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._local_preparation_finished)
+        self._local_preparation_thread = thread
+        self._local_preparation_worker = worker
+        self.progress.show()
+        self.image_viewer.set_drawing_enabled(False)
+        self.status_label.setText("Loading μSAM model…")
+        self._update_edit_buttons()
+        thread.start()
+
+    @Slot(str)
+    def _local_preparation_failed(self, message: str) -> None:
+        self.status_label.setText(f"Could not load μSAM: {message}")
+
+    @Slot()
+    def _local_preparation_finished(self) -> None:
+        thread = self._local_preparation_thread
+        self._local_preparation_worker = None
+        self._local_preparation_thread = None
+        self.progress.hide()
+        if self._collect_local_prompts:
+            self.image_viewer.set_drawing_enabled(True)
+            if self._tracking_session is not None:
+                if self._tracking_session.add_edit_backend_ready:
+                    self.status_label.setText(
+                        "μSAM ready. Click inside the cell to predict.")
+        self._update_edit_buttons()
+        if thread is not None:
+            thread.deleteLater()
 
     @Slot()
     def _configure_local_drawing(self) -> None:
@@ -1125,19 +1296,58 @@ class TrackingViewerWindow(ImageToolWindow):
         operation = self.image_viewer.last_drawing_operation
         if self._manual_excluded_mask is None:
             self._manual_excluded_mask = np.zeros(selection.shape, dtype=bool)
+        if self.image_viewer.last_drawing_was_click:
+            coordinates = np.column_stack(np.nonzero(selection))
+            point_y, point_x = np.round(np.mean(coordinates, axis=0)).astype(int)
+            drawing_base = self.image_viewer.last_drawing_base
+            before_click = (
+                np.asarray(drawing_base, dtype=bool)
+                if drawing_base is not None
+                else np.asarray(drawing, dtype=bool))
+            point = (int(point_y), int(point_x))
+            if operation == "add":
+                unlocked = component_at_point(
+                    self._manual_excluded_mask, point)
+                self._manual_excluded_mask[unlocked] = False
+            deterministic = (
+                remove_clicked_component(before_click, point)
+                if operation == "erase"
+                else fill_clicked_enclosure(before_click, point))
+            if deterministic is not None:
+                if operation == "erase":
+                    self._manual_excluded_mask |= before_click & ~deterministic
+                    message = "Removed the clicked disconnected region."
+                else:
+                    self._manual_excluded_mask[deterministic & ~before_click] = False
+                    message = "Filled the clicked enclosed region."
+                self._positive_points.clear()
+                self._negative_points.clear()
+                self._set_local_mask_preview(
+                    deterministic, message, manual_stroke=False)
+                return
+            self.image_viewer.set_drawing_mask(before_click.astype(np.uint8))
+            self._add_local_segmentation_prompt(
+                *point, positive=operation == "add")
+            return
         if operation == "erase":
             self._manual_excluded_mask |= selection
         else:
             self._manual_excluded_mask[selection] = False
             self._negative_points = [
                 point for point in self._negative_points if not selection[point]]
-        if self.image_viewer.last_drawing_was_click:
-            coordinates = np.column_stack(np.nonzero(selection))
-            point_y, point_x = np.round(np.mean(coordinates, axis=0)).astype(int)
-            self._add_local_segmentation_prompt(
-                int(point_y), int(point_x), positive=operation == "add")
-            return
         mask = np.asarray(drawing, dtype=bool)
+        self._set_local_mask_preview(
+            mask,
+            "Manual mask updated. Continue drawing, accept it, or cancel this frame.",
+            manual_stroke=True)
+
+    def _set_local_mask_preview(
+            self, mask: np.ndarray, message: str, *,
+            manual_stroke: bool,
+            ) -> None:
+        session = self._tracking_session
+        if session is None:
+            return
         mask = self._clip_local_mask(mask)
         self.image_viewer.set_drawing_mask(mask.astype(np.uint8))
         if not np.any(mask):
@@ -1148,7 +1358,7 @@ class TrackingViewerWindow(ImageToolWindow):
             self.status_label.setText(
                 "The working mask is empty. Draw or click to predict a new mask.")
             return
-        self._local_manual_stroke = True
+        self._local_manual_stroke = manual_stroke
         self._local_segmentation_preview = {
             "track_id": self._local_target_track_id,
             "frame_index": self.frame_slider.value(),
@@ -1161,8 +1371,7 @@ class TrackingViewerWindow(ImageToolWindow):
             "replace_existing": not self._local_target_is_new,
         }
         self._update_edit_buttons()
-        self.status_label.setText(
-            "Manual mask updated. Continue drawing, accept it, or cancel this frame.")
+        self.status_label.setText(message)
 
     def _add_local_segmentation_prompt(self, y: int, x: int, *, positive: bool) -> None:
         session = self._tracking_session
@@ -1391,7 +1600,10 @@ class TrackingViewerWindow(ImageToolWindow):
         self._update_mask_edit_colors_button()
         drawing = (self.image_viewer.drawing_mask
                    if self._collect_local_prompts else None)
-        self.image_viewer.set_drawing_style(self._active_mask_color, 0.65)
+        drawing_color = (
+            self._other_mask_color if self.preview_split_button.isChecked()
+            else self._active_mask_color)
+        self.image_viewer.set_drawing_style(drawing_color, 0.65)
         self._display_selection()
         if drawing is not None:
             self.image_viewer.set_drawing_mask(drawing)
@@ -1512,11 +1724,25 @@ class TrackingViewerWindow(ImageToolWindow):
             new_track_id = session.stop_track(
                 track_id, self.frame_slider.value(), channel, z_index)
         except ValueError as error:
-            QMessageBox.warning(self, "Cannot stop track", str(error))
+            QMessageBox.warning(self, "Cannot split track", str(error))
             return
         self._finish_track_edit(
-            f"Stopped track {track_id} after frame {self.frame_slider.value() + 1}; "
+            f"Split track {track_id} after frame {self.frame_slider.value() + 1}; "
             f"later masks are track {new_track_id}.")
+
+    @Slot()
+    def _unlink_selected_track(self) -> None:
+        if len(self._selected_track_ids) != 1:
+            return
+        session, channel, z_index = self._edit_context()
+        track_id = self._selected_track_ids[0]
+        try:
+            assigned_ids = session.unlink_track(track_id, channel, z_index)
+        except ValueError as error:
+            QMessageBox.warning(self, "Cannot unlink track", str(error))
+            return
+        self._finish_track_edit(
+            f"Unlinked track {track_id} into {len(assigned_ids)} independent masks.")
 
     def _finish_track_edit(self, message: str, preserve_track_id: int | None = None) -> None:
         self._split_preview = None
@@ -1532,6 +1758,9 @@ class TrackingViewerWindow(ImageToolWindow):
         for item in self._track_path_items:
             self.image_viewer.view_box.removeItem(item)
         self._track_path_items.clear()
+        for item in self._track_id_items:
+            self.image_viewer.view_box.removeItem(item)
+        self._track_id_items.clear()
 
     def _path_color_mode_changed(self) -> None:
         single_color = self.path_color_mode.currentData() == "single"
@@ -1784,6 +2013,10 @@ class TrackingViewerWindow(ImageToolWindow):
                 and self._local_segmentation_thread.isRunning()):
             self._local_segmentation_thread.quit()
             self._local_segmentation_thread.wait()
+        if (self._local_preparation_thread is not None
+                and self._local_preparation_thread.isRunning()):
+            self._local_preparation_thread.quit()
+            self._local_preparation_thread.wait()
         self._clear_local_segmentation_state()
         if self._save_thread is not None and self._save_thread.isRunning():
             self._save_thread.quit()

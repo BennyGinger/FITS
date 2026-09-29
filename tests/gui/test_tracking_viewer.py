@@ -98,6 +98,18 @@ def test_tracking_session_merge_link_and_stop_recalculate_tracks() -> None:
     assert stop.stop_track(70, 0, 0, 0) == 71
     assert stop.tracked_frame(0)[1, 1] == 70
     assert np.all(stop._tracks[1:, 1, 1] == 71)
+
+    unlink_data = np.zeros((3, 8, 8), dtype=np.uint16)
+    unlink_data[:, 1:3, 1:3] = 80
+    unlink_data[1, 5:7, 5:7] = 80
+    unlink = _editing_session(unlink_data)
+    geometry = unlink_data != 0
+    assigned = unlink.unlink_track(80, 0, 0)
+    assert len(assigned) == 4
+    assert len(set(assigned)) == 4
+    assert np.array_equal(unlink._tracks != 0, geometry)
+    assert unlink.undo_last_edit() == 0
+    assert np.all(unlink._tracks[geometry] == 80)
     assert merge._operations_used == {"merge"}
     assert link._operations_used == {"link"}
     assert stop._operations_used == {"stop"}
@@ -336,6 +348,59 @@ def test_registered_prototype_survives_a_collapsed_corrective_prediction(
     assert np.array_equal(preview["mask"], prototype)
 
 
+def test_positive_correction_can_replace_stale_trailing_mask() -> None:
+    labels = np.zeros((40, 40), dtype=np.uint16)
+    labels[10:25, 10:25] = 7
+    image = np.zeros((40, 40), dtype=np.float32)
+    candidate = np.zeros((40, 40), dtype=bool)
+    candidate[10:25, 16:31] = True
+    session = object.__new__(TrackingViewerSession)
+    session.image_session = SimpleNamespace(channel_labels=("GFP",))
+    session.tracked_frame = lambda *args: labels
+    session.display_frame = lambda *args: image
+    session._resolve_channel = lambda channel: 0
+    session._add_edit_backend = SimpleNamespace(
+        predict=lambda *args, **kwargs: SimpleNamespace(
+            mask=candidate, bounds=(0, 40, 0, 40)),
+        synchronize_mask=lambda *args: True,
+    )
+
+    preview = session.preview_add_edit(
+        7, 0, 0, 0, 0, [(17, 28)], [], 30,
+        initial_mask=labels == 7, continue_from_previous=True)
+
+    assert np.array_equal(preview["mask"], candidate)
+    assert not np.any(preview["mask"][10:25, 10:16])
+
+
+def test_negative_click_can_remove_a_broader_local_area(monkeypatch) -> None:
+    labels = np.zeros((40, 40), dtype=np.uint16)
+    labels[10:30, 10:30] = 7
+    image = np.zeros((40, 40), dtype=np.float32)
+    initial_mask = labels == 7
+    candidate = np.zeros((40, 40), dtype=bool)
+    session = object.__new__(TrackingViewerSession)
+    session.image_session = SimpleNamespace(channel_labels=("GFP",))
+    session.tracked_frame = lambda *args: labels
+    session.display_frame = lambda *args: image
+    session._resolve_channel = lambda channel: 0
+
+    monkeypatch.setattr(
+        "fits.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.predict",
+        lambda *args, **kwargs: SimpleNamespace(
+            mask=candidate, bounds=(0, 40, 0, 40)))
+    monkeypatch.setattr(
+        "fits.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.synchronize_mask",
+        lambda *args: True)
+
+    preview = session.preview_add_edit(
+        7, 0, 0, 0, 0, [], [(20, 20)], 20,
+        initial_mask=initial_mask, continue_from_previous=True)
+
+    assert not preview["mask"][20, 24]
+    assert preview["mask"][20, 26]
+
+
 def test_local_segmentation_can_replace_an_existing_mask() -> None:
     tracks = np.zeros((1, 12, 12), dtype=np.uint16)
     tracks[0, 1:4, 1:4] = 7
@@ -365,6 +430,8 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
 ) -> None:
     monkeypatch.setattr(
         TrackingViewerWindow, "_request_local_segmentation", lambda *args: None)
+    monkeypatch.setattr(
+        TrackingViewerWindow, "_prepare_local_backend", lambda *args: None)
     _app()
     image_path = tmp_path / FITS_ARRAY_NAME
     track_path = tmp_path / FITS_MASK_TRACK
@@ -418,7 +485,8 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert window.raw_image_toggle.text() == "Display raw image"
     assert window.channel_combo.currentText() == "GFP"
     assert window.mask_channel_combo.currentText() == "GFP"
-    assert window.preview_split_button.text() == "Split mode"
+    assert window.preview_split_button.text() == "Split Mask"
+    assert window.preview_split_button.isCheckable()
     assert window.add_mask_button.text() == "Add / edit masks mode"
     assert window.add_mask_button.isEnabled()
     assert window.path_color_button.text() == "Center Color"
@@ -431,6 +499,15 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
         window.path_color_mode.findData("track"))
     assert window.path_color_button.isHidden()
     assert "color: black" in window.mask_edit_colors_button.styleSheet()
+    assert window.track_id_display_mode.currentData() == "selected"
+    assert window.merge_tracks_button.text() == "Merge Tracks"
+    assert window.stop_track_button.text() == "Split Track"
+    assert window.unlink_track_button.text() == "Unlink entire track"
+    assert window.delete_mask_button.text() == "Delete current mask"
+    assert window.delete_track_button.text() == "Delete current track"
+    assert "#b23a48" in window.delete_mask_button.styleSheet()
+    assert "#8f1d2c" in window.delete_track_button.styleSheet()
+    assert "#a33a3a" in window.unlink_track_button.styleSheet()
     assert window.local_cell_diameter.parent() is window.image_viewer.canvas
     assert window.local_cell_diameter.value() == 4  # From the 3x3 mask, clamped to the control minimum.
     assert window.diameter_reference.rect().width() == 4
@@ -443,7 +520,20 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     window.show_track_paths.setChecked(True)
     window._toggle_track_selection(7)
     assert window.track_selection_label.text() == "Selected tracks: 7"
+    assert "font-weight: bold" in window.track_selection_label.styleSheet()
+    assert len(window._track_id_items) == 1
+    assert window._track_id_items[0].toPlainText() == "7"
+    assert window._track_id_items[0].pos().x() == 8
+    assert window._track_id_items[0].pos().y() == -1
+    window.track_id_display_mode.setCurrentIndex(
+        window.track_id_display_mode.findData("none"))
+    assert window._track_id_items == []
+    window.track_id_display_mode.setCurrentIndex(
+        window.track_id_display_mode.findData("selected"))
     assert window.stop_track_button.isEnabled()
+    assert window.delete_mask_button.isEnabled()
+    assert window.delete_track_button.isEnabled()
+    assert window.unlink_track_button.isEnabled()
     assert not window.merge_tracks_button.isEnabled()
     window._toggle_track_selection(8)
     assert window.merge_tracks_button.isEnabled()
@@ -457,12 +547,58 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     window._switch_local_edit_target(7)
     assert window._selected_track_ids == [7]
     assert np.all(window.image_viewer.drawing_mask[2:5, 3:6])
+    enclosure = np.zeros((8, 8), dtype=np.uint8)
+    enclosure[1, 1:7] = 1
+    enclosure[6, 1:7] = 1
+    enclosure[1:7, 1] = 1
+    enclosure[1:7, 6] = 1
+    click = np.zeros((8, 8), dtype=bool)
+    click[3, 3] = True
+    clicked_enclosure = enclosure.copy()
+    clicked_enclosure[click] = 1
+    window.image_viewer._last_drawing_base = enclosure.copy()
+    window.image_viewer._last_drawing_selection = click
+    window.image_viewer._last_drawing_was_click = True
+    window.image_viewer._drawing_operation = "add"
+    window._local_drawing_finished(clicked_enclosure)
+    assert np.all(window.image_viewer.drawing_mask[2:6, 2:6])
+    assert not window._local_manual_stroke
+
+    predictions = []
+    monkeypatch.setattr(
+        window, "_request_local_segmentation", predictions.append)
+    filled = window.image_viewer.drawing_mask
+    erased = filled.copy()
+    erased[click] = 0
+    window.image_viewer._last_drawing_base = filled.copy()
+    window.image_viewer._last_drawing_selection = click
+    window.image_viewer._drawing_operation = "erase"
+    window._local_drawing_finished(erased)
+    assert predictions[-1]["negative_points"] == [(3, 3)]
+    assert predictions[-1]["manual_stroke"] is False
+    propagated = np.zeros((8, 8), dtype=bool)
+    propagated[4:7, 4:7] = True
+    monkeypatch.setattr(
+        window._tracking_session, "_registered_temporal_mask_prior",
+        lambda *args: (propagated, (1.0, 1.0), 0.9))
+    window.frame_slider.setValue(1)
+    window._start_local_segmentation(propagate_previous=True)
+    assert np.array_equal(window.image_viewer.drawing_mask, propagated)
+    assert window._local_segmentation_preview["replace_existing"] is True
+    window._clear_local_segmentation_state(stop_mode=False)
+    window.frame_slider.setValue(0)
+    window._start_local_segmentation()
     window._switch_local_edit_target(7)
     assert window._selected_track_ids == []
     window.add_mask_button.setChecked(False)
     window.preview_split_button.setChecked(True)
     window._switch_split_target(7)
     assert window._selected_track_ids == [7]
+    assert window.image_viewer._drawing_color == (
+        window._other_mask_color.red(),
+        window._other_mask_color.green(),
+        window._other_mask_color.blue(),
+    )
     assert (window.image_viewer.drawing_item.acceptedMouseButtons()
             != Qt.MouseButton.NoButton)
     assert np.all(window.image_viewer.drawing_mask[2:5, 3:6])
@@ -551,7 +687,7 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     empty_window.close()
 
     view_only_window = TrackingViewerWindow(
-        tracking_path=track_path, editing_enabled=False)
+        tracking_path=track_path, editing_enabled=False, selection_enabled=True)
     assert view_only_window.windowTitle() == "FITS Tracking Viewer"
     assert view_only_window.track_edit_section.isHidden()
     assert view_only_window.mask_edit_section.isHidden()
@@ -560,6 +696,13 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert view_only_window.display_label_edit.placeholderText() == "Optional"
     assert view_only_window.save_display_button.text() == "Save current display"
     assert view_only_window.save_display_button.isEnabled()
+    view_only_window._select_single_track(7)
+    assert view_only_window._selected_track_ids == [7]
+    assert [item.toPlainText() for item in view_only_window._track_id_items] == ["7"]
+    view_only_window._select_single_track(11)
+    assert view_only_window._selected_track_ids == [11]
+    view_only_window._select_single_track(11)
+    assert view_only_window._selected_track_ids == []
     view_only_window.close()
 
     request = TrackEditRequest(
@@ -571,7 +714,11 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
         tracking_path=track_path, pipeline_request=request)
     assert pipeline_window.save_tracking_button.text() == "Save edited tracking"
     assert pipeline_window.save_tracking_button.isEnabled()
+    assert "background-color: #16803b" in (
+        pipeline_window.save_tracking_button.styleSheet())
     assert pipeline_window.use_original_button.text() == "Use original tracking"
+    assert "background-color: #d97706" in (
+        pipeline_window.use_original_button.styleSheet())
     outcomes = []
     pipeline_window.tracking_finalized.connect(outcomes.append)
     edited_path = tmp_path / "fits_track_edited.tif"

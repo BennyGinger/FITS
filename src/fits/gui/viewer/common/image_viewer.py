@@ -149,6 +149,7 @@ class FitsImageViewer(QWidget):
         self._drawing_points: list[tuple[int, int]] = []
         self._last_drawing_render = 0.0
         self._last_drawing_selection: NDArray[np.bool_] | None = None
+        self._last_drawing_base: NDArray[np.uint8] | None = None
         self._last_drawing_was_click = False
         self._drawing_history: list[NDArray[np.uint8]] = []
         self._drawing_mode: DrawingMode = "replace"
@@ -373,6 +374,12 @@ class FitsImageViewer(QWidget):
         return self._drawing_operation
 
     @property
+    def last_drawing_base(self) -> NDArray[np.uint8] | None:
+        """Return the canvas as it was before the most recent gesture."""
+        return (None if self._last_drawing_base is None
+                else self._last_drawing_base.copy())
+
+    @property
     def last_drawing_was_click(self) -> bool:
         """Return whether the last gesture was a stationary mouse click."""
         return self._last_drawing_was_click
@@ -440,6 +447,7 @@ class FitsImageViewer(QWidget):
         self._apply_drawing(point)
         self._last_drawing_was_click = (
             len(self._drawing_points) <= 1 and point == self._drawing_start)
+        self._last_drawing_base = self._gesture_base.copy()
         self._drawing_start = None
         self._drawing_last = None
         self._drawing_points = []

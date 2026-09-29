@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.ndimage import label
 from fits_io import FitsIO
 
 from fits.environment.constant import (
@@ -33,7 +34,34 @@ from fits.workflows.metadata import FitsMeta
 
 # Keep corrective clicks local to the current displayed mask.
 MICROSAM_POSITIVE_REFINEMENT_RADIUS = 0.30
-MICROSAM_NEGATIVE_REFINEMENT_RADIUS = 0.10
+MICROSAM_NEGATIVE_REFINEMENT_RADIUS = 0.25
+
+
+def _is_confident_mask_replacement(
+        previous: NDArray, candidate: NDArray,
+        positive_points: list[tuple[int, int]],
+        expected_diameter: float,
+        ) -> bool:
+    """Return whether a complete μSAM correction is spatially plausible."""
+    old = np.asarray(previous, dtype=bool)
+    new = np.asarray(candidate, dtype=bool)
+    old_area = int(np.count_nonzero(old))
+    new_area = int(np.count_nonzero(new))
+    if not positive_points or old_area == 0 or new_area == 0:
+        return False
+    if any(not new[point_y, point_x]
+           for point_y, point_x in positive_points):
+        return False
+    overlap = int(np.count_nonzero(old & new)) / min(old_area, new_area)
+    area_ratio = new_area / old_area
+    old_center = np.mean(np.column_stack(np.nonzero(old)), axis=0)
+    new_center = np.mean(np.column_stack(np.nonzero(new)), axis=0)
+    center_shift = float(np.linalg.norm(new_center - old_center))
+    return (
+        overlap >= 0.25
+        and 0.35 <= area_ratio <= 2.85
+        and center_shift <= max(6.0, float(expected_diameter) * 0.75)
+    )
 
 
 def _register_mask_translation(
@@ -375,6 +403,31 @@ class TrackingViewerSession:
         self._record_edit("stop", channel)
         return new_track_id
 
+    def unlink_track(self, track_id: int, channel: int | str,
+                     z_index: int) -> tuple[int, ...]:
+        """Give every frame-local component its own ID without changing geometry."""
+        changed_frames = sorted(self._frames_for(track_id, channel, z_index))
+        if not changed_frames:
+            raise ValueError("The selected track has no masks in this channel and Z plane.")
+        self._remember_undo(channel, z_index, changed_frames)
+        assigned_ids: list[int] = []
+        keep_original = True
+        for frame_index in changed_frames:
+            labels = self.tracked_frame(frame_index, channel, z_index)
+            components = np.zeros(labels.shape, dtype=np.int32)
+            label(labels == track_id, output=components)
+            component_count = int(np.max(components))
+            labels[labels == track_id] = 0
+            for component in range(1, component_count + 1):
+                component_id = track_id if keep_original else self._next_track_id()
+                keep_original = False
+                labels[components == component] = component_id
+                assigned_ids.append(component_id)
+        self._invalidate_centroids(channel, z_index)
+        self._has_edits = True
+        self._record_edit("unlink", channel)
+        return tuple(assigned_ids)
+
     def delete_track(self, track_id: int, channel: int | str, z_index: int) -> None:
         """Delete every mask belonging to one track in this channel and Z plane."""
         changed_frames = sorted(self._frames_for(track_id, channel, z_index))
@@ -544,6 +597,14 @@ class TrackingViewerSession:
                 y0, y1, x0, x1 = proposal.bounds
                 working = np.asarray(initial_mask[y0:y1, x0:x1], dtype=bool)
                 candidate = np.asarray(proposal.mask, dtype=bool)
+                local_positive_points = [
+                    (point_y - y0, point_x - x0)
+                    for point_y, point_x in positive_points
+                    if y0 <= point_y < y1 and x0 <= point_x < x1
+                ]
+                full_replacement = _is_confident_mask_replacement(
+                    working, candidate, local_positive_points,
+                    expected_diameter)
                 rows, columns = np.ogrid[:candidate.shape[0], :candidate.shape[1]]
                 positive_influence = np.zeros(candidate.shape, dtype=bool)
                 negative_influence = np.zeros(candidate.shape, dtype=bool)
@@ -563,9 +624,12 @@ class TrackingViewerSession:
                     negative_influence |= (
                         (rows - local_y) ** 2 + (columns - local_x) ** 2
                         <= negative_radius ** 2)
-                localized = working.copy()
-                localized[positive_influence] |= candidate[positive_influence]
-                localized[negative_influence] &= candidate[negative_influence]
+                if full_replacement:
+                    localized = candidate.copy()
+                else:
+                    localized = working.copy()
+                    localized[positive_influence] |= candidate[positive_influence]
+                    localized[negative_influence] &= candidate[negative_influence]
                 localized[np.asarray(
                     occupied_mask[y0:y1, x0:x1], dtype=bool)] = False
                 if excluded_mask is not None:
@@ -651,6 +715,13 @@ class TrackingViewerSession:
     def next_track_id(self) -> int:
         """Return the next label available for a newly drawn track."""
         return self._next_track_id()
+
+    @property
+    def add_edit_backend_ready(self) -> bool:
+        return self._add_edit_backend.is_ready
+
+    def prepare_add_edit_backend(self) -> None:
+        self._add_edit_backend.prepare()
 
     def _registered_temporal_mask_prior(
             self, track_id: int, frame_index: int,

@@ -804,7 +804,7 @@ class FitsMainWindow(QMainWindow):
             return
         self._tracking_viewer = TrackingViewerWindow(
             experiments_dir=self.adapter.run_dir, tracking_path=selected, parent=self,
-            editing_enabled=False)
+            editing_enabled=False, selection_enabled=True)
         self._tracking_viewer.show()
 
     @Slot()

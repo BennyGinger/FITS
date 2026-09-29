@@ -7,7 +7,10 @@ import numpy as np
 from fits.tasks.segmentation.local_seg import (
     MicroSamPredictor,
     SplitPredictor,
+    component_at_point,
+    fill_clicked_enclosure,
     fill_enclosed_mask,
+    remove_clicked_component,
 )
 
 
@@ -89,6 +92,17 @@ def test_microsam_reuses_the_active_crop_embedding(monkeypatch) -> None:
     assert not first_reused
     assert second_reused
     assert len(calls) == 1
+
+
+def test_microsam_prepare_loads_the_model_without_prediction(monkeypatch) -> None:
+    backend = MicroSamPredictor()
+    loaded = []
+    monkeypatch.setattr(
+        backend, "_get_predictor", lambda: loaded.append(True) or object())
+
+    backend.prepare()
+
+    assert loaded == [True]
 
 
 def test_microsam_smoke_backend_translates_prompts_and_masks_owners(
@@ -272,3 +286,47 @@ def test_manual_fill_respects_other_tracks_and_erased_pixels() -> None:
 
     assert not np.any(proposal.mask & occupied[y0:y1, x0:x1])
     assert not np.any(proposal.mask & excluded[y0:y1, x0:x1])
+
+
+def test_click_fills_only_the_enclosed_background_region() -> None:
+    mask = np.zeros((20, 30), dtype=bool)
+    mask[3, 3:12] = True
+    mask[11, 3:12] = True
+    mask[3:12, 3] = True
+    mask[3:12, 11] = True
+    mask[3, 17:26] = True
+    mask[11, 17:26] = True
+    mask[3:12, 17] = True
+    mask[3:12, 25] = True
+
+    filled = fill_clicked_enclosure(mask, (7, 7))
+
+    assert filled is not None
+    assert np.all(filled[4:11, 4:11])
+    assert not np.any(filled[4:11, 18:25])
+    assert fill_clicked_enclosure(mask, (0, 0)) is None
+
+
+def test_click_removes_only_the_selected_disconnected_component() -> None:
+    mask = np.zeros((20, 30), dtype=bool)
+    mask[3:10, 3:10] = True
+    mask[5:12, 18:25] = True
+
+    reduced = remove_clicked_component(mask, (7, 21))
+
+    assert reduced is not None
+    assert np.all(reduced[3:10, 3:10])
+    assert not np.any(reduced[5:12, 18:25])
+    assert remove_clicked_component(mask[0:12, 0:12], (7, 7)) is None
+
+
+def test_component_at_point_selects_only_the_clicked_region() -> None:
+    mask = np.zeros((12, 20), dtype=bool)
+    mask[2:6, 2:6] = True
+    mask[4:9, 12:17] = True
+
+    selected = component_at_point(mask, (6, 14))
+
+    assert not np.any(selected[2:6, 2:6])
+    assert np.all(selected[4:9, 12:17])
+    assert not np.any(component_at_point(mask, (0, 0)))

@@ -418,6 +418,7 @@ def test_edit_drawing_keeps_existing_mask_and_commits_on_release() -> None:
 
     assert changed == [True]
     assert len(committed) == 1
+    np.testing.assert_array_equal(viewer.last_drawing_base, existing)
     assert viewer.drawing_mask[1, 1] == 1
     assert np.any(viewer.drawing_mask[4:9, 4:9])
 

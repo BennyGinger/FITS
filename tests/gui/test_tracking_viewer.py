@@ -275,14 +275,13 @@ def test_local_segmentation_adds_and_deletes_one_frame_with_auxiliary_support(
     assert session.has_edits
 
 
-def test_microsam_new_mask_does_not_use_the_rendered_click_as_mask_prompt(
-    monkeypatch,
-) -> None:
+def test_microsam_new_mask_does_not_use_the_rendered_click_as_mask_prompt() -> None:
     labels = np.zeros((20, 20), dtype=np.uint16)
     image = np.zeros((20, 20), dtype=np.float32)
     click_drawing = np.zeros((20, 20), dtype=bool)
     click_drawing[10, 10] = True
     captured = {}
+    synchronized = []
     session = object.__new__(TrackingViewerSession)
     session.image_session = SimpleNamespace(channel_labels=("GFP",))
     session.tracked_frame = lambda *args: labels
@@ -298,14 +297,18 @@ def test_microsam_new_mask_does_not_use_the_rendered_click_as_mask_prompt(
             mask=np.ones((20, 20), dtype=bool), bounds=(0, 20, 0, 20),
             auxiliary_weight=0.0, temporal_weight=0.0)
 
-    monkeypatch.setattr(
-        "fits.gui.viewer.tracking.session.MICROSAM_PREDICTOR.predict", fake_predict)
+    session._add_edit_backend = SimpleNamespace(
+        predict=fake_predict,
+        synchronize_mask=lambda mask, context: synchronized.append(
+            (mask.copy(), context)) or True,
+    )
 
     session.preview_add_edit(
         7, 0, 0, 0, 0, [(10, 10)], [], 12,
         initial_mask=click_drawing)
 
     assert captured["initial_mask"] is None
+    assert synchronized[0][1] == (7, 0, 0, 0)
 
 
 def test_opencv_registration_translates_previous_mask_to_current_cell() -> None:

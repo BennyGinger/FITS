@@ -85,6 +85,7 @@ stackalign = { workspace = true }
 mask-interpolation = { workspace = true }
 bioimagequant = { workspace = true }
 mobile-sam = { git = "https://github.com/ChaoningZhang/MobileSAM.git" }
+micro-sam = { path = "micro-sam-headless", editable = true }
 
 [[tool.uv.index]]
 name = "pytorch-cu129"

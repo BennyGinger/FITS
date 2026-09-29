@@ -25,3 +25,6 @@
 [submodule "bioimagequant"]
 	path = bioimagequant
 	url = https://github.com/BennyGinger/bioimagequant.git
+[submodule "micro-sam-headless"]
+	path = micro-sam-headless
+	url = https://github.com/BennyGinger/micro-sam-headless.git

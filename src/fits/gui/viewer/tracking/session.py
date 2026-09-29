@@ -22,6 +22,7 @@ from fits.gui.viewer.tracking.rendering import render_selected_tracking_display
 from fits.gui.viewer.tracking.trajectories import calculate_track_centroids
 from fits.interaction import FitsImageSession
 from fits.tasks.segmentation.local_seg import (
+    AddEditBackend,
     AddEditProposal,
     AddEditPredictor,
     SplitPredictor,
@@ -156,8 +157,12 @@ class TrackingViewerSession:
 
     """
 
+    _add_edit_backend: AddEditBackend = MICROSAM_PREDICTOR
+
     def __init__(self, tracking_path: str | Path,
-                 image_path: str | Path | None = None) -> None:
+                 image_path: str | Path | None = None, *,
+                 add_edit_backend: AddEditBackend = MICROSAM_PREDICTOR) -> None:
+        self._add_edit_backend = add_edit_backend
         self.source_path = Path(tracking_path).expanduser().resolve()
         tracking_names = {
             FITS_MASK_TRACK,
@@ -583,7 +588,7 @@ class TrackingViewerSession:
                     predictor_positive_points.insert(0, anchor)
             prediction_context = (
                 track_id, frame_index, self._resolve_channel(mask_channel), z_index)
-            proposal = MICROSAM_PREDICTOR.predict(
+            proposal = self._add_edit_backend.predict(
                 image, predictor_positive_points, negative_points,
                 initial_mask=sam_mask_prompt, excluded_mask=excluded_mask,
                 occupied_mask=(labels != 0) & (labels != track_id),
@@ -694,7 +699,7 @@ class TrackingViewerSession:
                     probability=localized.astype(np.float64),
                     auxiliary_weight=proposal.auxiliary_weight,
                     temporal_weight=proposal.temporal_weight)
-            MICROSAM_PREDICTOR.synchronize_mask(
+            self._add_edit_backend.synchronize_mask(
                 proposal.mask, prediction_context)
         else:
             model = self._add_edit_predictor(

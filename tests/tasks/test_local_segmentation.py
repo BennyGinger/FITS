@@ -17,6 +17,63 @@ from fits.tasks.segmentation.local_seg.random_walk import random_walk_candidate
 from fits.tasks.segmentation.local_seg.microsam import MicroSamPredictor
 
 
+def test_microsam_adapter_integrates_with_upstream_inference_api(
+    monkeypatch,
+) -> None:
+    """Preserve the upstream API contract used by the Add/Edit experiment."""
+    calls = {}
+    predictor = object()
+    fake_util = ModuleType("micro_sam.util")
+    fake_prompts = ModuleType("micro_sam.prompt_based_segmentation")
+
+    def get_sam_model(*, model_type, device):
+        calls["model"] = (model_type, device)
+        return predictor
+
+    def precompute_image_embeddings(model, image, **kwargs):
+        calls["embedding"] = (model, image.copy(), kwargs)
+        return {"crop_shape": image.shape}
+
+    def segment_from_points(
+        model, points, labels, *, image_embeddings,
+        multimask_output, return_all,
+    ):
+        calls["prompt"] = (
+            model, points.copy(), labels.copy(), image_embeddings,
+            multimask_output, return_all,
+        )
+        mask = np.ones((1, *image_embeddings["crop_shape"]), dtype=bool)
+        logits = np.zeros((1, 256, 256), dtype=np.float32)
+        return mask, np.asarray([0.9]), logits
+
+    fake_util.get_sam_model = get_sam_model
+    fake_util.precompute_image_embeddings = precompute_image_embeddings
+    fake_prompts.segment_from_points = segment_from_points
+    monkeypatch.setitem(sys.modules, "micro_sam.util", fake_util)
+    monkeypatch.setitem(
+        sys.modules, "micro_sam.prompt_based_segmentation", fake_prompts)
+
+    backend = MicroSamPredictor()
+    image = np.zeros((60, 60), dtype=np.float32)
+    proposal = backend.predict(
+        image, [(30, 31)], [(32, 34)], expected_diameter=10,
+        prediction_context=(7, 0, 0, 0),
+    )
+
+    y0, y1, x0, x1 = proposal.bounds
+    assert calls["model"] == ("vit_t_lm", "cpu")
+    assert calls["embedding"][0] is predictor
+    assert calls["embedding"][1].shape == (y1 - y0, x1 - x0)
+    assert calls["embedding"][2] == {"ndim": 2, "verbose": False}
+    assert calls["prompt"][0] is predictor
+    assert np.array_equal(
+        calls["prompt"][1], [[30 - y0, 31 - x0], [32 - y0, 34 - x0]])
+    assert np.array_equal(calls["prompt"][2], [1, 0])
+    assert calls["prompt"][4:] == (False, True)
+    assert proposal.mask.shape == (y1 - y0, x1 - x0)
+    assert not proposal.mask[32 - y0, 34 - x0]
+
+
 def test_microsam_reuses_the_active_crop_embedding(monkeypatch) -> None:
     backend = MicroSamPredictor()
     calls = []

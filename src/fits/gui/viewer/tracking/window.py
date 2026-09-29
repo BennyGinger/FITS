@@ -21,10 +21,7 @@ from fits.environment.constant import (
 )
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
-from fits.gui.viewer.tracking.session import (
-    TrackingViewerSession, USE_MICROSAM_ADD_EDIT,
-    USE_MICROSAM_REGISTERED_PRIOR,
-    USE_MICROSAM_TEMPORAL_RESTRICTIONS)
+from fits.gui.viewer.tracking.session import TrackingViewerSession
 from fits.gui.viewer.tracking.path_item import TrackPathsItem
 from fits.workflows.runtime.interactive.messages import (
     TrackEditOutcome, TrackEditRequest)
@@ -1039,8 +1036,7 @@ class TrackingViewerWindow(ImageToolWindow):
         existing_mask = labels == track_id
         prototype_mask = existing_mask
         registration_note = ""
-        if (propagate_previous and USE_MICROSAM_REGISTERED_PRIOR
-                and not np.any(existing_mask)):
+        if propagate_previous and not np.any(existing_mask):
             registered, shift, confidence = (
                 self._tracking_session._registered_temporal_mask_prior(
                     track_id, self.frame_slider.value(),
@@ -1052,12 +1048,6 @@ class TrackingViewerWindow(ImageToolWindow):
                 registration_note = (
                     f" Registered shift: Δy={shift[0]:.1f}, Δx={shift[1]:.1f} "
                     f"(confidence {confidence:.2f}).")
-        elif propagate_previous and USE_MICROSAM_TEMPORAL_RESTRICTIONS:
-            propagated, _ = self._tracking_session._temporal_mask_prior(
-                track_id, self.frame_slider.value(),
-                self.mask_channel_combo.currentText(), self.z_slider.value(), None)
-            if propagated is not None and np.any(propagated):
-                prototype_mask = propagated
         self._positive_points.clear()
         self._negative_points.clear()
         self._local_manual_stroke = False
@@ -1082,8 +1072,6 @@ class TrackingViewerWindow(ImageToolWindow):
                 "bounds": (0, image.shape[0], 0, image.shape[1]),
                 "mask": prototype_mask.copy(),
                 "replace_existing": bool(np.any(existing_mask)),
-                "auxiliary_weight": 0.0,
-                "temporal_weight": 0.0,
             }
         self._manual_excluded_mask = np.zeros(image.shape, dtype=bool)
         self._update_edit_buttons()
@@ -1170,8 +1158,6 @@ class TrackingViewerWindow(ImageToolWindow):
             "z_index": self.z_slider.value(),
             "bounds": (0, mask.shape[0], 0, mask.shape[1]),
             "mask": mask,
-            "auxiliary_weight": 0.0,
-            "temporal_weight": 0.0,
             "replace_existing": not self._local_target_is_new,
         }
         self._update_edit_buttons()
@@ -1195,36 +1181,28 @@ class TrackingViewerWindow(ImageToolWindow):
                 f"Track {occupied} occupies this pixel. Ctrl+click it to edit that mask.")
             return
         if positive:
-            if USE_MICROSAM_ADD_EDIT and not self._local_manual_stroke:
-                if (y, x) not in self._positive_points:
-                    self._positive_points.append((y, x))
-            else:
-                # The classical path carries earlier edits in the working mask.
+            if self._local_manual_stroke:
                 self._positive_points = [(y, x)]
                 self._negative_points.clear()
+            elif (y, x) not in self._positive_points:
+                self._positive_points.append((y, x))
         else:
-            if not USE_MICROSAM_ADD_EDIT or self._local_manual_stroke:
+            if self._local_manual_stroke:
                 working = self.image_viewer.drawing_mask
                 if working is not None and np.any(working):
-                    # Seed safely inside the current mask, away from the correction.
                     distances = distance_transform_edt(np.asarray(working, dtype=bool))
                     anchor = np.unravel_index(int(np.argmax(distances)), distances.shape)
                     self._positive_points = [(int(anchor[0]), int(anchor[1]))]
             if (not self._positive_points
-                    and not (USE_MICROSAM_ADD_EDIT
-                             and self._local_segmentation_preview is not None)):
+                    and self._local_segmentation_preview is None):
                 self.status_label.setText("Place a foreground point before adding background points.")
                 return
-            if USE_MICROSAM_ADD_EDIT and not self._local_manual_stroke:
-                if (y, x) not in self._negative_points:
-                    self._negative_points.append((y, x))
-            else:
-                # Earlier erasures already live in excluded_mask; only the current
-                # point should steer this random-walker correction.
+            if self._local_manual_stroke:
                 self._negative_points = [(y, x)]
+            elif (y, x) not in self._negative_points:
+                self._negative_points.append((y, x))
         if (not self._positive_points
-                and not (USE_MICROSAM_ADD_EDIT
-                         and self._local_segmentation_preview is not None)):
+                and self._local_segmentation_preview is None):
             return
         options = dict(
             track_id=self._local_target_track_id,
@@ -1288,13 +1266,8 @@ class TrackingViewerWindow(ImageToolWindow):
             self._local_segmentation_preview = preview
             self._display_selection()
             self._set_local_drawing_from_preview(preview)
-            weight = float(preview.get("auxiliary_weight", 0.0))
-            note = f" Cross-channel support: {weight:.0%}." if weight > 0 else ""
-            temporal_weight = float(preview.get("temporal_weight", 0.0))
-            if temporal_weight > 0:
-                note += f" Previous-frame support: {temporal_weight:.0%}."
             self.status_label.setText(
-                "Mask preview updated. Add clicks, accept, or cancel." + note)
+                "Mask preview updated. Add clicks, accept, or cancel.")
 
     def _clip_local_mask(self, mask: np.ndarray) -> np.ndarray:
         session = self._tracking_session
@@ -1358,9 +1331,7 @@ class TrackingViewerWindow(ImageToolWindow):
             return
         self._clear_local_segmentation_state(stop_mode=False)
         self.frame_slider.setValue(completed_frame + 1)
-        self._start_local_segmentation(
-            propagate_previous=(USE_MICROSAM_REGISTERED_PRIOR
-                                or USE_MICROSAM_TEMPORAL_RESTRICTIONS))
+        self._start_local_segmentation(propagate_previous=True)
         self._display_track_paths()
         self.status_label.setText(
             f"Added a mask to track {track_id}; moved to frame {completed_frame + 2}. "

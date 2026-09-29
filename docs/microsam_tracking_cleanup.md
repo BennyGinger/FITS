@@ -106,9 +106,10 @@ dependencies out of `dev` and verify how MobileSAM will be installed.
 3. **Done:** make µSAM the TrackEdit Add/Edit backend and verify it on real data.
 4. **Done:** create and test the headless dependency split; submit upstream PR
    #1384.
-5. Separate deterministic brush operations from model inference.
-6. Remove the legacy Add/Edit classifier/random-walker path while retaining
-   `SplitPredictor`.
+5. **Done:** separate deterministic brush and enclosed-fill operations from
+   model inference.
+6. **Done:** remove the legacy Add/Edit classifier/random-walker path while
+   retaining `SplitPredictor`.
 7. Extract registration and temporal decisions into a dedicated policy.
 8. Add static/moving/uncertain classification.
 9. Add static-only edit-delta propagation.

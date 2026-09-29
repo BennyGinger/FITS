@@ -1,4 +1,4 @@
-"""Temporary low-level micro-SAM backend for the Add/Edit smoke test."""
+"""Headless micro-SAM backend for interactive Add/Edit prediction."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ DEVICE = "cpu"
 
 
 class MicroSamPredictor:
-    """Lazy, single-crop micro-SAM predictor for an interactive smoke test."""
+    """Lazy, single-crop micro-SAM predictor for interactive editing."""
 
     def __init__(self) -> None:
         self._predictor: Any | None = None
@@ -30,8 +30,6 @@ class MicroSamPredictor:
     def _get_predictor(self) -> Any:
         if self._predictor is None:
             started = perf_counter()
-            # Keep this import lazy: importing micro_sam.util also imports napari,
-            # although this backend does not use its GUI or annotator modules.
             from micro_sam.util import get_sam_model
 
             self._predictor = get_sam_model(model_type=MODEL_TYPE, device=DEVICE)
@@ -98,11 +96,23 @@ class MicroSamPredictor:
 
     @staticmethod
     def _mask_to_logits(mask: np.ndarray) -> np.ndarray:
-        # This is the same binary-mask conversion used by micro-sam's public
-        # segment_from_mask path, kept lazy with the rest of its imports.
-        from micro_sam.prompt_based_segmentation import _compute_logits_from_mask
+        """Convert a displayed binary mask to SAM's 256-square logit input."""
+        import torch
+        from segment_anything.utils.transforms import ResizeLongestSide
 
-        return np.asarray(_compute_logits_from_mask(mask)[0], dtype=np.float32)
+        binary = np.asarray(mask == 1, dtype=np.float32)
+        if binary.shape != (256, 256):
+            resized = ResizeLongestSide(256).apply_image_torch(
+                torch.from_numpy(binary[None, None]))
+            binary = np.asarray(resized.numpy().squeeze(), dtype=np.float32)
+            if binary.shape != (256, 256):
+                padding = ((0, 256 - binary.shape[0]),
+                           (0, 256 - binary.shape[1]))
+                binary = np.pad(binary, padding, mode="constant")
+        foreground_logit = np.log(0.999 / 0.001)
+        return np.asarray(
+            np.where(binary > 0.5, foreground_logit, -foreground_logit),
+            dtype=np.float32)
 
     def synchronize_mask(self, mask: Array, prediction_context: object) -> bool:
         """Make the next refinement start from the mask displayed by FITS."""
@@ -125,8 +135,6 @@ class MicroSamPredictor:
             expected_diameter: float,
             prediction_context: object | None = None,
             continue_from_previous: bool = False,
-            auxiliary_weight: float = 0.0,
-            temporal_weight: float = 0.0,
             ) -> AddEditProposal:
         """Predict a crop-local mask from accumulated global YX prompts."""
         if not positive_points and initial_mask is None:
@@ -227,15 +235,8 @@ class MicroSamPredictor:
             "reused" if reused else "new", refinement,
             "used" if used_initial_mask else "unused",
             perf_counter() - started)
-        return AddEditProposal(
-            mask=candidate,
-            bounds=bounds,
-            probability=candidate.astype(np.float64),
-            auxiliary_weight=float(auxiliary_weight),
-            temporal_weight=float(temporal_weight),
-        )
+        return AddEditProposal(mask=candidate, bounds=bounds)
 
 
-# Deliberately process-local and one-entry: enough to reuse the model and the
-# active crop embedding while keeping this experiment trivial to remove.
-MICROSAM_PREDICTOR = MicroSamPredictor()
+# Process-local so the model and active crop embedding survive between clicks.
+DEFAULT_MICROSAM_BACKEND = MicroSamPredictor()

@@ -7,7 +7,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 Array: TypeAlias = NDArray[Any]
-FloatArray: TypeAlias = NDArray[np.float64]
 BoolArray: TypeAlias = NDArray[np.bool_]
 Point: TypeAlias = tuple[int, int]
 Bounds: TypeAlias = tuple[int, int, int, int]
@@ -15,13 +14,10 @@ Bounds: TypeAlias = tuple[int, int, int, int]
 
 @dataclass(frozen=True)
 class AddEditProposal:
-    """One crop-local prediction and the information needed to place it."""
+    """One crop-local mask and the information needed to place it."""
 
     mask: BoolArray
     bounds: Bounds
-    probability: FloatArray
-    auxiliary_weight: float
-    temporal_weight: float
 
 
 class AddEditBackend(Protocol):
@@ -39,8 +35,6 @@ class AddEditBackend(Protocol):
             expected_diameter: float,
             prediction_context: object | None = None,
             continue_from_previous: bool = False,
-            auxiliary_weight: float = 0.0,
-            temporal_weight: float = 0.0,
             ) -> AddEditProposal:
         """Return a crop-local prediction for the supplied prompts."""
         ...

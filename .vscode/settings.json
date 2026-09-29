@@ -4,6 +4,10 @@
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
+    "python.analysis.extraPaths": [
+        "./src",
+        "./micro-sam-headless"
+    ],
     "files.watcherExclude": {
         "**/.venv/**": true
     },

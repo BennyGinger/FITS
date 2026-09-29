@@ -4,17 +4,11 @@ import sys
 from types import ModuleType
 
 import numpy as np
-from scipy.ndimage import binary_erosion, binary_fill_holes
-from skimage.draw import disk
-
 from fits.tasks.segmentation.local_seg import (
-    AddEditPredictor,
+    MicroSamPredictor,
     SplitPredictor,
-    combine_auxiliary_masks,
-    mask_agreement,
+    fill_enclosed_mask,
 )
-from fits.tasks.segmentation.local_seg.random_walk import random_walk_candidate
-from fits.tasks.segmentation.local_seg.microsam import MicroSamPredictor
 
 
 def test_microsam_adapter_integrates_with_upstream_inference_api(
@@ -133,7 +127,6 @@ def test_microsam_smoke_backend_translates_prompts_and_masks_owners(
     assert not proposal.mask[29 - y0, 29 - x0]
     assert not proposal.mask[31 - y0, 31 - x0]
     assert not proposal.mask[32 - y0, 33 - x0]
-    assert np.array_equal(proposal.probability, proposal.mask.astype(float))
 
 
 def test_microsam_uses_previous_logits_for_same_crop_correction(monkeypatch) -> None:
@@ -215,6 +208,17 @@ def test_microsam_synchronizes_refinement_logits_to_displayed_mask(monkeypatch) 
     assert not backend.synchronize_mask(displayed, (8, 3, 0, 0))
 
 
+def test_microsam_converts_displayed_mask_without_private_upstream_api() -> None:
+    mask = np.zeros((40, 24), dtype=bool)
+    mask[10:30, 7:18] = True
+
+    logits = MicroSamPredictor._mask_to_logits(mask)
+
+    assert logits.shape == (256, 256)
+    assert np.max(logits) > 0
+    assert np.min(logits) < 0
+
+
 def test_split_predictor_clips_guidance_and_keeps_image_supported_gap() -> None:
     mask = np.zeros((40, 60), dtype=bool)
     mask[8:32, 8:52] = True
@@ -231,299 +235,18 @@ def test_split_predictor_clips_guidance_and_keeps_image_supported_gap() -> None:
     assert np.any(proposal.gap[:, 29:31])
 
 
-def _cell_plane(center: tuple[int, int], *, intensity: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
-    image = np.zeros((80, 80), dtype=np.float32)
-    labels = np.zeros((80, 80), dtype=np.uint16)
-    rows, columns = disk(center, 9, shape=image.shape)
-    image[rows, columns] = intensity
-    labels[rows, columns] = 1
-    image += np.random.default_rng(sum(center)).normal(0, 0.03, image.shape)
-    return image, labels
 
-
-def test_local_model_learns_existing_masks_and_refines_with_points() -> None:
-    training = [_cell_plane(center) for center in ((20, 20), (40, 30), (58, 55))]
-    model = AddEditPredictor(maximum_samples_per_class=8_000)
-    model.fit([item[0] for item in training], [item[1] for item in training])
-    image, expected = _cell_plane((38, 46))
-
-    first = model.predict(image, [(38, 46)])
-
-    y0, y1, x0, x1 = first.bounds
-    expected_crop = expected[y0:y1, x0:x1] != 0
-    intersection = np.count_nonzero(first.mask & expected_crop)
-    union = np.count_nonzero(first.mask | expected_crop)
-    assert first.mask[38 - y0, 46 - x0]
-    assert intersection / union > 0.75
-
-    refined = model.predict(image, [(38, 46)], [(38, 52)])
-    ry0, _, rx0, _ = refined.bounds
-    assert refined.mask[38 - ry0, 46 - rx0]
-    assert not refined.mask[38 - ry0, 52 - rx0]
-
-    temporal = model.predict(
-        image, [(38, 46)], temporal_mask=expected != 0, temporal_weight=0.9)
-    assert temporal.temporal_weight == 0.9
-    assert np.mean(temporal.probability[expected_crop]) > np.mean(
-        first.probability[expected_crop])
-
-    drawn = expected != 0
-    drawn[37:40, 53:61] = True
-    corrected = model.predict(
-        image, [(38, 46)], [(38, 58)], initial_mask=drawn)
-    cy0, _, cx0, _ = corrected.bounds
-    corrected_expected = expected[
-        corrected.bounds[0]:corrected.bounds[1],
-        corrected.bounds[2]:corrected.bounds[3]] != 0
-    assert np.count_nonzero(corrected.mask & corrected_expected) > 0.9 * np.count_nonzero(
-        corrected_expected)
-    assert not corrected.mask[38 - cy0, 58 - cx0]
-
-
-def test_repeated_remove_clicks_stay_local_and_leave_addition_possible() -> None:
-    model = AddEditPredictor()
-    model.feature_mean = np.zeros(6)
-    model.feature_scale = np.ones(6)
-    model.coefficients = np.zeros(6)
-    model.intercept = 10.0
-    model.typical_diameter = 40.0
-    model.typical_area = np.pi * 20.0 ** 2
-    image = np.zeros((100, 100), dtype=np.float32)
-
-    proposal = model.predict(
-        image, [(50, 50)], [(50, 60)] * 12, expected_diameter=40)
-    y0, _, x0, _ = proposal.bounds
-
-    assert proposal.mask[50 - y0, 50 - x0]
-    assert not proposal.mask[50 - y0, 60 - x0]
-    assert proposal.mask[50 - y0, 42 - x0]
-
-def test_auxiliary_mask_reliability_rewards_agreement_and_combines_softly() -> None:
-
-    target = np.zeros((20, 20), dtype=np.uint8)
-    target[5:15, 5:15] = 1
-    matching = target.copy()
-    unrelated = np.zeros_like(target)
-    unrelated[:4, :4] = 1
-
-    assert mask_agreement([target], [matching]) == 1.0
-    assert mask_agreement([target], [unrelated]) == 0.0
-    combined, confidence = combine_auxiliary_masks(
-        [matching != 0, unrelated != 0], [0.9, 0.05])
-
-    assert combined is not None
-    assert combined[10, 10]
-    assert not combined[1, 1]
-    assert np.isclose(confidence, 0.475)
-
-
-def test_local_model_can_bootstrap_an_empty_session_from_a_click() -> None:
-    image, expected = _cell_plane((35, 42))
-    model = AddEditPredictor(maximum_samples_per_class=8_000)
-
-    model.fit_from_prompts(image, [(35, 42)], [], expected_diameter=18)
-    proposal = model.predict(image, [(35, 42)])
-
-    y0, y1, x0, x1 = proposal.bounds
-    expected_crop = expected[y0:y1, x0:x1] != 0
-    assert proposal.mask[35 - y0, 42 - x0]
-    assert np.count_nonzero(proposal.mask & expected_crop) > 0.7 * np.count_nonzero(expected_crop)
-
-
-def test_positive_click_strongly_favours_inside_a_drawn_border() -> None:
-    training = [_cell_plane(center) for center in ((20, 20), (40, 30), (58, 55))]
-    model = AddEditPredictor(maximum_samples_per_class=8_000)
-    model.fit([item[0] for item in training], [item[1] for item in training])
-    image = np.zeros((80, 80), dtype=np.float32)
-    border = np.zeros_like(image, dtype=bool)
-    border[28, 28:53] = True
-    border[52, 28:53] = True
-    border[28:53, 28] = True
-    border[28:53, 52] = True
-
-    proposal = model.predict(image, [(40, 40)], initial_mask=border)
-
-    y0, _, x0, _ = proposal.bounds
-    interior = proposal.mask[30 - y0:51 - y0, 30 - x0:51 - x0]
-    assert np.mean(interior) > 0.9
-
-
-def test_prompt_similarity_reaches_matching_pixels_beyond_click_radius() -> None:
-    features = np.zeros((20, 20, 3), dtype=np.float64)
-    features[12:, :, :] = 4.0
-
-    similarity = AddEditPredictor._prompt_feature_similarity(
-        features, 3, 3)
-
-    assert similarity[3, 3] == 1.0
-    assert similarity[9, 16] > 0.99
-    assert similarity[16, 16] < 0.01
-
-def test_raw_image_boundary_limits_oversized_shape_priors() -> None:
-    training = [_cell_plane(center) for center in ((20, 20), (40, 30), (58, 55))]
-    model = AddEditPredictor(maximum_samples_per_class=8_000)
-    model.fit([image for image, _ in training], [mask for _, mask in training])
-    image, expected = _cell_plane((38, 46))
-    oversized = np.zeros_like(expected, dtype=bool)
-    oversized[25:52, 33:60] = True
-
-    proposal = model.predict(
-        image, [(38, 46)], temporal_mask=oversized, temporal_weight=0.9,
-        auxiliary_mask=oversized, auxiliary_weight=1.0)
-    y0, y1, x0, x1 = proposal.bounds
-    expected_crop = expected[y0:y1, x0:x1] != 0
-
-    assert np.count_nonzero(proposal.mask & expected_crop) > 0.9 * np.count_nonzero(expected_crop)
-    assert np.count_nonzero(proposal.mask & ~expected_crop) < 0.1 * np.count_nonzero(expected_crop)
-
-
-def test_previous_mask_support_outweighs_cross_channel_support() -> None:
-    training = [_cell_plane(center) for center in ((20, 20), (40, 30), (58, 55))]
-    model = AddEditPredictor(maximum_samples_per_class=8_000)
-    model.fit([image for image, _ in training], [mask for _, mask in training])
-    image, expected = _cell_plane((38, 46), intensity=0.55)
-    prior = expected != 0
-
-    temporal = model.predict(image, [(38, 46)], temporal_mask=prior, temporal_weight=0.9)
-    auxiliary = model.predict(image, [(38, 46)], auxiliary_mask=prior, auxiliary_weight=0.9)
-    y0, y1, x0, x1 = temporal.bounds
-    inside = prior[y0:y1, x0:x1]
-
-    assert np.mean(temporal.probability[inside]) > np.mean(auxiliary.probability[inside])
-
-def _membrane_cell(
-    center: tuple[int, int], *, radius: int = 11
-) -> tuple[np.ndarray, np.ndarray]:
-    image = np.full((100, 100), 0.04, dtype=np.float32)
-    labels = np.zeros(image.shape, dtype=np.uint16)
-    rows, columns = disk(center, radius, shape=image.shape)
-    labels[rows, columns] = 1
-    image[rows, columns] = 0.9
-    rows, columns = disk(center, radius - 3, shape=image.shape)
-    image[rows, columns] = 0.08
-    return image, labels
-
-
-def test_membrane_cell_keeps_dim_interior_without_overshooting() -> None:
-    training = [_membrane_cell(center) for center in ((20, 20), (40, 30), (70, 65))]
-    model = AddEditPredictor()
-    model.fit([image for image, _ in training], [labels for _, labels in training])
-    image, labels = _membrane_cell((48, 48))
-
-    proposal = model.predict(image, [(48, 48)], expected_diameter=22)
-    y0, y1, x0, x1 = proposal.bounds
-    predicted = np.zeros_like(labels, dtype=bool)
-    predicted[y0:y1, x0:x1] = proposal.mask
-    expected = labels != 0
-
-    assert predicted[48, 48]
-    assert np.mean(predicted[expected]) > 0.95
-    assert np.count_nonzero(predicted & ~expected) < 0.3 * np.count_nonzero(expected)
-    assert np.array_equal(binary_fill_holes(predicted), predicted)
-
-    refined = model.predict(
-        image, [(48, 48), (48, 52)], initial_mask=predicted, expected_diameter=22)
-    assert np.count_nonzero(refined.mask) < 1.6 * np.count_nonzero(expected)
-
-
-def test_selected_diameter_controls_crop_even_with_training_masks() -> None:
-    training = [_cell_plane(center) for center in ((20, 20), (40, 30), (58, 55))]
-    model = AddEditPredictor()
-    model.fit([image for image, _ in training], [labels for _, labels in training])
-    image, _ = _cell_plane((38, 46))
-
-    small = model.predict(image, [(38, 46)], expected_diameter=12)
-    large = model.predict(image, [(38, 46)], expected_diameter=30)
-
-    assert small.bounds[1] - small.bounds[0] < large.bounds[1] - large.bounds[0]
-    assert small.bounds[3] - small.bounds[2] < large.bounds[3] - large.bounds[2]
-
-
-def test_existing_mask_blocks_prediction_on_its_far_side() -> None:
-    model = AddEditPredictor()
-    model.feature_mean = np.zeros(6)
-    model.feature_scale = np.ones(6)
-    model.coefficients = np.zeros(6)
-    model.intercept = 10.0
-    model.typical_diameter = 60.0
-    model.typical_area = np.pi * 30.0 ** 2
-    image = np.zeros((100, 100), dtype=np.float32)
-    occupied = np.zeros(image.shape, dtype=bool)
-    occupied[:, 43:47] = True
-
-    proposal = model.predict(
-        image, [(50, 30)], occupied_mask=occupied, expected_diameter=60)
-    y0, y1, x0, x1 = proposal.bounds
-    predicted = np.zeros_like(occupied)
-    predicted[y0:y1, x0:x1] = proposal.mask
-
-    assert predicted[50, 30]
-    assert not np.any(predicted & occupied)
-    assert not np.any(predicted[:, 47:])
-
-
-
-def test_random_walker_follows_irregular_membrane_with_two_clicks() -> None:
-    training = [_membrane_cell(center) for center in ((20, 20), (40, 30), (70, 65))]
-    model = AddEditPredictor()
-    model.fit([image for image, _ in training], [labels for _, labels in training])
-    rows, columns = np.ogrid[:100, :100]
-    angle = np.arctan2(rows - 50, columns - 50)
-    radius = np.hypot(rows - 50, columns - 50)
-    expected = radius < 11 * (1 + 0.28 * np.cos(3 * angle))
-    interior = binary_erosion(expected, iterations=3)
-    image = np.full(expected.shape, 0.04, dtype=np.float32)
-    image[expected] = 0.9
-    image[interior] = 0.08
-
-    proposal = model.predict(image, [(50, 50)], expected_diameter=22)
-    y0, y1, x0, x1 = proposal.bounds
-    predicted = np.zeros_like(expected)
-    predicted[y0:y1, x0:x1] = proposal.mask
-    intersection = np.count_nonzero(predicted & expected)
-    union = np.count_nonzero(predicted | expected)
-
-    assert intersection / union > 0.8
-    assert predicted[50, 63]  # A protrusion beyond the classifier's round guard.
-    assert np.array_equal(binary_fill_holes(predicted), predicted)
-
-    corrected = model.predict(
-        image, [(50, 50)], [(50, 63)], expected_diameter=22)
-    cy0, cy1, cx0, cx1 = corrected.bounds
-    trimmed = np.zeros_like(expected)
-    trimmed[cy0:cy1, cx0:cx1] = corrected.mask
-    assert trimmed[50, 50]
-    assert not trimmed[50, 63]
-
-    occupied = np.zeros_like(expected)
-    occupied[:, 58:61] = True
-    blocked = model.predict(
-        image, [(50, 50)], occupied_mask=occupied, expected_diameter=22)
-    by0, by1, bx0, bx1 = blocked.bounds
-    constrained = np.zeros_like(expected)
-    constrained[by0:by1, bx0:bx1] = blocked.mask
-    assert constrained[50, 50]
-    assert not np.any(constrained & occupied)
-    assert not np.any(constrained[:, 61:])
-
-
-
-def test_click_inside_manual_outline_preserves_and_fills_entire_outline() -> None:
-    training = [_cell_plane(center) for center in ((20, 20), (40, 30), (58, 55))]
-    model = AddEditPredictor()
-    model.fit([image for image, _ in training], [labels for _, labels in training])
-    image = np.zeros((100, 100), dtype=np.float32)
-    outline = np.zeros(image.shape, dtype=bool)
+def test_manual_fill_keeps_outline_and_fills_clicked_enclosure() -> None:
+    outline = np.zeros((100, 100), dtype=bool)
     outline[28, 25:76] = True
     outline[72, 25:76] = True
     outline[28:73, 25] = True
     outline[28:73, 75] = True
 
-    proposal = model.predict(
-        image, [(50, 50)], initial_mask=outline,
-        expected_diameter=20, manual_stroke=True)
-    y0, y1, x0, x1 = proposal.bounds
+    proposal = fill_enclosed_mask(
+        outline, [(50, 50)], expected_diameter=20)
     predicted = np.zeros_like(outline)
+    y0, y1, x0, x1 = proposal.bounds
     predicted[y0:y1, x0:x1] = proposal.mask
 
     assert np.all(predicted[outline])
@@ -531,78 +254,21 @@ def test_click_inside_manual_outline_preserves_and_fills_entire_outline() -> Non
     assert not predicted[20, 20]
 
 
-def test_brush_line_can_close_against_existing_mask_and_fill_only_enclosure() -> None:
-    training = [_cell_plane(center) for center in ((20, 20), (40, 30), (58, 55))]
-    model = AddEditPredictor()
-    model.fit([image for image, _ in training], [labels for _, labels in training])
-    image = np.zeros((100, 100), dtype=np.float32)
-    working = np.zeros(image.shape, dtype=bool)
-    working[30:71, 20:31] = True  # Existing mask supplies the left border.
-    working[30, 30:61] = True
-    working[70, 30:61] = True
-    working[30:71, 60] = True
+def test_manual_fill_respects_other_tracks_and_erased_pixels() -> None:
+    outline = np.zeros((60, 60), dtype=bool)
+    outline[15, 15:46] = True
+    outline[45, 15:46] = True
+    outline[15:46, 15] = True
+    outline[15:46, 45] = True
+    occupied = np.zeros_like(outline)
+    occupied[28:33, 28:33] = True
+    excluded = np.zeros_like(outline)
+    excluded[20:24, 20:24] = True
 
-    proposal = model.predict(
-        image, [(50, 45)], initial_mask=working,
-        expected_diameter=24, manual_stroke=True)
-    predicted = np.zeros_like(working)
+    proposal = fill_enclosed_mask(
+        outline, [(25, 25)], expected_diameter=20,
+        occupied_mask=occupied, excluded_mask=excluded)
     y0, y1, x0, x1 = proposal.bounds
-    predicted[y0:y1, x0:x1] = proposal.mask
 
-    assert np.all(predicted[32:69, 31:59])
-    assert np.all(predicted[working])
-    assert not predicted[25, 45]
-    assert not predicted[50, 70]
-
-
-
-def test_random_walker_reaches_larger_hollow_cell_with_neighbor_diameter() -> None:
-    training = [
-        _membrane_cell(center, radius=10)
-        for center in ((20, 20), (40, 30), (70, 65))
-    ]
-    model = AddEditPredictor()
-    model.fit([image for image, _ in training], [labels for _, labels in training])
-    image, labels = _membrane_cell((50, 50), radius=16)
-
-    proposal = model.predict(image, [(50, 50)], expected_diameter=20)
-    y0, y1, x0, x1 = proposal.bounds
-    predicted = np.zeros_like(labels, dtype=bool)
-
-    predicted[y0:y1, x0:x1] = proposal.mask
-    expected = labels != 0
-    intersection = np.count_nonzero(predicted & expected)
-    union = np.count_nonzero(predicted | expected)
-
-    assert intersection / union > 0.8
-    assert predicted[50, 64]
-
-
-def test_random_walker_handles_noisy_interior_and_membrane_gap() -> None:
-    rng = np.random.default_rng(5)
-    rows, columns = np.ogrid[:90, :90]
-    radius = np.hypot(rows - 45, columns - 45)
-    angle = np.arctan2(rows - 45, columns - 45)
-    expected = radius < 15 * (1 + 0.1 * np.cos(3 * angle))
-    interior = binary_erosion(expected, iterations=3)
-    image = np.full((90, 90), 0.07, dtype=np.float64)
-    image[expected] = 0.78
-    image[interior] = 0.18
-    image += rng.normal(0, 0.055, image.shape)
-    gap = expected & ~interior & (angle > 0.45) & (angle < 0.85)
-    image[gap] = 0.19
-
-    bounds = (20, 71, 20, 71)
-    crop = image[20:71, 20:71]
-    allowed = np.ones(crop.shape, dtype=bool)
-    first = random_walk_candidate(crop, [(45, 45)], [], bounds, 30, allowed)
-    assert first is not None
-    truth = expected[20:71, 20:71]
-    assert np.count_nonzero(first & truth) / np.count_nonzero(first | truth) > 0.85
-
-    trimmed = random_walk_candidate(
-        crop, [(45, 45)], [(45, 56)], bounds, 30, allowed)
-    assert trimmed is not None
-    assert not trimmed[25, 36]
-    assert trimmed[25, 25]
-    assert np.count_nonzero(first & ~trimmed) > 10
+    assert not np.any(proposal.mask & occupied[y0:y1, x0:x1])
+    assert not np.any(proposal.mask & excluded[y0:y1, x0:x1])

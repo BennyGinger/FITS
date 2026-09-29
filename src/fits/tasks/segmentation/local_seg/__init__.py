@@ -1,8 +1,10 @@
-"""Shared local segmentation with dedicated Add/Edit and Split APIs."""
+"""Local segmentation backends for tracking-mask editing."""
 
-from fits.tasks.segmentation.local_seg.add_edit import AddEditPredictor
-from fits.tasks.segmentation.local_seg.evidence import combine_auxiliary_masks, mask_agreement
-from fits.tasks.segmentation.local_seg.foundation import MaskPredictionFoundation
+from fits.tasks.segmentation.local_seg.manual import fill_enclosed_mask
+from fits.tasks.segmentation.local_seg.microsam import (
+    DEFAULT_MICROSAM_BACKEND,
+    MicroSamPredictor,
+)
 from fits.tasks.segmentation.local_seg.split import SplitPredictor
 from fits.tasks.segmentation.local_seg.types import (
     AddEditBackend,
@@ -11,12 +13,11 @@ from fits.tasks.segmentation.local_seg.types import (
 )
 
 __all__ = [
-    "AddEditPredictor",
     "AddEditBackend",
     "AddEditProposal",
-    "MaskPredictionFoundation",
+    "DEFAULT_MICROSAM_BACKEND",
+    "MicroSamPredictor",
     "SplitPredictor",
     "SplitProposal",
-    "combine_auxiliary_masks",
-    "mask_agreement",
+    "fill_enclosed_mask",
 ]

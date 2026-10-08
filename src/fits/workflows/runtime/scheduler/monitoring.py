@@ -17,12 +17,15 @@ def log_scheduler_heartbeat(*,
                             runtime_steps: list[RuntimeStep]
                             ) -> None:
     """
-    Log queued and active work after a period without completion.
+    Log queued and active work after a period without task completion.
+
+    Long-running tasks may still be progressing normally, so this diagnostic
+    belongs at debug level rather than indicating a possible failure.
     """
     running_labels = [(str(runtime_steps[task.step_index].spec.profile.step_name),
                     task.state.experiment_id)
                     for task in (*cpu_running.values(), *gpu_running.values())]
-    logger.warning("Scheduler heartbeat: no completion for %.1fs | "
+    logger.debug("Scheduler heartbeat: no completion for %.1fs | "
                     "running=%d ready_cpu=%d ready_gpu=%d in_flight=%s",
                     WAIT_HEARTBEAT_SECONDS,
                     len(cpu_running) + len(gpu_running),

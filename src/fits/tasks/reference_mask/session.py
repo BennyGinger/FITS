@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 
 from fits.environment.constant import ARTI_REF, DIST_FITS
 from fits.interaction import BinaryMaskSession
+from fits.interaction.planes import disk_copy
 from fits.tasks.reference_mask.artifact import build_reference_path, load_reference_artifact, merge_reference_channels, saved_reference_channels, validate_reference_label
 
 class ReferenceMaskSession(BinaryMaskSession):
@@ -34,8 +35,12 @@ class ReferenceMaskSession(BinaryMaskSession):
                     reference_path,
                     source_path=self.source_path,
                     source_axes=self._axes,
-                    source_shape=self._array.shape,
-                    source_channels=self._channel_labels,))
+                    source_shape=self.shape,
+                    source_channels=self._channel_labels, lazy=True))
+
+    def close(self) -> None:
+        self._edit_history.clear()
+        super().close()
 
     @property
     def reference_label(self) -> str | None:
@@ -92,8 +97,9 @@ class ReferenceMaskSession(BinaryMaskSession):
             channel_label=channel_label,
             overwrite=overwrite,)
 
+        self._mask.preserve_source(output_path)
         return self._reader.save_array(
-            output_mask.astype(np.uint16, copy=False),
+            disk_copy(output_mask, dtype=np.uint16),
             channel_labels=self._channel_labels,
             export_channels=output_labels,
             artifact_kind=ARTI_REF,
@@ -139,7 +145,7 @@ class ReferenceMaskSession(BinaryMaskSession):
         if visible.shape != current.shape or comparison.shape != current.shape:
             raise ValueError("Reference drawing and preview must match the image plane.")
         key = frame_index, self._resolve_channel(channel), z_index
-        self._edit_history.setdefault(key, []).append(current.copy())
+        self._edit_history.setdefault(key, []).append(disk_copy(current))
         del self._edit_history[key][:-50]
         changed = visible != comparison
         current[changed] = visible[changed]
@@ -154,7 +160,7 @@ class ReferenceMaskSession(BinaryMaskSession):
         """
         key = frame_index, self._resolve_channel(channel), z_index
         self._edit_history.setdefault(key, []).append(
-            self.mask_plane(frame_index, channel, z_index))
+            disk_copy(self.mask_plane(frame_index, channel, z_index)))
         del self._edit_history[key][:-50]
         self.set_mask_plane(mask, frame_index=frame_index,
                             channel=channel, z_index=z_index)
@@ -183,7 +189,7 @@ class ReferenceMaskSession(BinaryMaskSession):
         """
         key = frame_index, self._resolve_channel(channel), z_index
         self._edit_history.setdefault(key, []).append(
-            self.mask_plane(frame_index, channel, z_index))
+            disk_copy(self.mask_plane(frame_index, channel, z_index)))
         del self._edit_history[key][:-50]
         super().clear_mask_plane(
             frame_index=frame_index, channel=channel, z_index=z_index)

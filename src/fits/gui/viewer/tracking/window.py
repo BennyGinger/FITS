@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections import OrderedDict
+from typing import Any, cast
 
 import numpy as np
 import pyqtgraph as pg
+from pyqtgraph.GraphicsScene.mouseEvents import MouseClickEvent
 from scipy.ndimage import distance_transform_edt
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QSpinBox, QVBoxLayout, QWidget,
+    QProgressBar, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from fits.environment.constant import (
@@ -22,7 +25,8 @@ from fits.environment.constant import (
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
 from fits.gui.viewer.tracking.session import TrackingViewerSession
-from fits.gui.viewer.tracking.path_item import TrackPathsItem
+from fits.gui.viewer.tracking.path_item import (
+    PreparedPaths, TrackPathsItem, prepare_paths)
 from fits.gui.viewer.tracking.rendering import track_rgb
 from fits.tasks.segmentation.local_seg import (
     component_at_point,
@@ -31,6 +35,65 @@ from fits.tasks.segmentation.local_seg import (
 )
 from fits.workflows.runtime.interactive.messages import (
     TrackEditOutcome, TrackEditRequest)
+
+
+# Drawings live in temporary mapped files. Bound both their disk use and count.
+TRAJECTORY_CACHE_BYTES = 2 * 1024 ** 3
+TRAJECTORY_CACHE_ENTRIES = 4
+
+
+class _TrajectoryWorker(QObject):
+    progress = Signal(int, int, str)
+    ready = Signal(object)
+    failed = Signal(str)
+    done = Signal()
+
+    def __init__(self, session: TrackingViewerSession, key: tuple,
+                 channel: int, z: int, options: dict[str, Any]) -> None:
+        super().__init__()
+        self.session, self.key = session, key
+        self.channel, self.z, self.options = channel, z, options
+
+    def _report_progress(self, value: int, total: int, stage: str) -> None:
+        if value in (1, total) or value % max(1, total // 100) == 0:
+            self.progress.emit(value, total, stage)
+
+    @Slot()
+    def run(self) -> None:
+        cancelled = QThread.currentThread().isInterruptionRequested
+        try:
+            centroids = self.session.centroid_cache.calculate(
+                self.session.centroid_frame, count=self.session.frame_count,
+                channel=self.channel, z=self.z, source=self.session.centroid_source, cancelled=cancelled,
+                progress=lambda n, total: self._report_progress(n, total, "Calculating centroids"))
+            if centroids is None or cancelled():
+                return
+            accepted = None
+            if self.options["filter"]:
+                accepted = self.session.track_ids_matching(
+                    self.channel, self.z, self.options["operator"],
+                    self.options["value"], self.options["maximum"])
+                centroids = {track: points for track, points in centroids.items()
+                             if track in accepted}
+            selected = self.options["selected"]
+            single = self.options["single"]
+            color = self.options["color"]
+            def color_for(track: int) -> QColor:
+                return (QColor("white") if track in selected else
+                        QColor(color) if single else QColor(*track_rgb(track)))
+            prepared = None
+            if self.options["paths"]:
+                prepared = prepare_paths(
+                    centroids, color_for=color_for, thickness=self.options["thickness"],
+                    show_markers=self.options["markers"], marker_size=self.options["size"],
+                    cancelled=cancelled,
+                    progress=lambda n, total: self._report_progress(n, total, "Preparing trajectories"))
+            if not cancelled():
+                self.ready.emit((self.key, centroids, prepared, accepted))
+        except Exception as error:
+            self.failed.emit(str(error))
+        finally:
+            self.done.emit()
 
 
 class _SaveWorker(QObject):
@@ -217,14 +280,24 @@ class TrackingViewerWindow(ImageToolWindow):
         self._tracking_session: TrackingViewerSession | None = None
         self._track_path_items: list[TrackPathsItem] = []
         self._track_id_items: list[pg.TextItem] = []
+        self._id_pool: dict[int, pg.TextItem] = {}
+        self._trajectory_thread: QThread | None = None
+        self._trajectory_worker: _TrajectoryWorker | None = None
+        self._trajectory_ready_key: tuple | None = None
+        self._trajectory_failed_key: tuple | None = None
+        self._trajectory_cache: OrderedDict[tuple, tuple[dict[int, np.ndarray], PreparedPaths | None]] = OrderedDict()
+        self._trajectory_cache_context: tuple | None = None
+        self._visible_centroids: dict[int, np.ndarray] = {}
+        self._visible_accepted: frozenset[int] | None = None
+        self._id_frame: tuple | None = None
         self._save_thread: QThread | None = None
         self._save_worker: _SaveWorker | None = None
         self._tracking_save_thread: QThread | None = None
         self._tracking_save_worker: _TrackingSaveWorker | None = None
-        self._pending_tracking_save: tuple[Path, object] | None = None
+        self._pending_tracking_save: tuple[Path, dict[str, Any]] | None = None
         self._selected_track_ids: list[int] = []
-        self._split_preview: dict[str, object] | None = None
-        self._local_segmentation_preview: dict[str, object] | None = None
+        self._split_preview: dict[str, Any] | None = None
+        self._local_segmentation_preview: dict[str, Any] | None = None
         self._local_segmentation_thread: QThread | None = None
         self._local_segmentation_worker: _LocalSegmentationWorker | None = None
         self._local_preparation_thread: QThread | None = None
@@ -325,7 +398,7 @@ class TrackingViewerWindow(ImageToolWindow):
         filter_section, filters = self._section("Track filtering")
         self.filter_tracks = QCheckBox("Filter by track length")
         self.filter_tracks.setToolTip(
-            "Track length is the number of frames in which that track appears.")
+            "Track length is the last frame minus the first frame plus one, including gaps.")
         filters.addWidget(self.filter_tracks)
         filter_row = QHBoxLayout()
         self.filter_operator = QComboBox()
@@ -340,11 +413,13 @@ class TrackingViewerWindow(ImageToolWindow):
         self.filter_value.setRange(1, 1_000_000)
         self.filter_value.setValue(100)
         self.filter_value.setSuffix(" frames")
+        self.filter_value.setKeyboardTracking(False)
         filter_row.addWidget(self.filter_value)
         self.filter_maximum = QSpinBox()
         self.filter_maximum.setRange(1, 1_000_000)
         self.filter_maximum.setValue(200)
         self.filter_maximum.setSuffix(" frames")
+        self.filter_maximum.setKeyboardTracking(False)
         self.filter_maximum.hide()
         filter_row.addWidget(self.filter_maximum)
         filters.addLayout(filter_row)
@@ -541,7 +616,8 @@ class TrackingViewerWindow(ImageToolWindow):
         layout.addWidget(self.mask_channel_combo)
 
     def _connect_tools(self) -> None:
-        self.local_cell_diameter.setParent(self.image_viewer.canvas)
+        self.image_viewer.canvas.setBackground("black")
+        self.local_cell_diameter.setParent(cast(QWidget, self.image_viewer.canvas))
         self.local_cell_diameter.setFixedSize(105, 30)
         self.local_cell_diameter.move(44, 8)
         self.local_cell_diameter.setStyleSheet(
@@ -554,6 +630,14 @@ class TrackingViewerWindow(ImageToolWindow):
             self.diameter_reference.set_diameter)
         self.diameter_reference.set_diameter(self.local_cell_diameter.value())
         self.raw_image_toggle.toggled.connect(self.image_viewer.image_item.setVisible)
+        self.trajectory_status = QLabel()
+        self.trajectory_progress = QProgressBar()
+        self.trajectory_progress.setFixedWidth(140)
+        self.trajectory_status.hide()
+        self.trajectory_progress.hide()
+        status_layout = cast(QHBoxLayout, self.status_bar.layout())
+        status_layout.addWidget(self.trajectory_status)
+        status_layout.addWidget(self.trajectory_progress)
         self.mask_channel_combo.currentIndexChanged.connect(self._display_selection)
         self.show_track_paths.toggled.connect(self._display_track_paths)
         self.track_id_display_mode.currentIndexChanged.connect(
@@ -575,7 +659,7 @@ class TrackingViewerWindow(ImageToolWindow):
         if self._pipeline_request is not None:
             self.save_tracking_button.clicked.connect(self._save_edited_tracking)
             self.use_original_button.clicked.connect(self._use_original_tracking)
-        self.image_viewer.canvas.scene().sigMouseClicked.connect(
+        cast(pg.GraphicsScene, self.image_viewer.canvas.scene()).sigMouseClicked.connect(
             self._tracking_scene_clicked)
         self.merge_tracks_button.clicked.connect(self._merge_selected_tracks)
         self.link_tracks_button.clicked.connect(self._link_selected_tracks)
@@ -703,10 +787,17 @@ class TrackingViewerWindow(ImageToolWindow):
         session = self._tracking_session
         self._source_path = source
         self._image_session = session.image_session
+        self.channel_combo.blockSignals(True)
+        self.mask_channel_combo.blockSignals(True)
         self.channel_combo.clear()
         self.channel_combo.addItems(session.channel_labels)
         self.mask_channel_combo.clear()
         self.mask_channel_combo.addItems(session.track_channel_labels)
+        image_channel = self.channel_combo.findText(self.mask_channel_combo.currentText())
+        if image_channel >= 0:
+            self.channel_combo.setCurrentIndex(image_channel)
+        self.channel_combo.blockSignals(False)
+        self.mask_channel_combo.blockSignals(False)
         self.frame_slider.setRange(0, session.frame_count - 1)
         self.z_slider.setRange(0, session.plane_count - 1)
         # Start the Ø control near the actual mask size, while leaving it editable.
@@ -779,10 +870,12 @@ class TrackingViewerWindow(ImageToolWindow):
         if (session is None or not self.filter_tracks.isChecked()
                 or self.mask_channel_combo.currentIndex() < 0):
             return None
-        return session.track_ids_matching(
-            self.mask_channel_combo.currentText(), self.z_slider.value(),
-            str(self.filter_operator.currentData()), self.filter_value.value(),
-            self.filter_maximum.value())
+        channel = session._resolve_channel(self.mask_channel_combo.currentText())
+        z = self.z_slider.value()
+        if session.centroid_cache.cached(channel, z) is None:
+            return frozenset()
+        return session.track_ids_matching(channel, z, str(self.filter_operator.currentData()),
+                                         self.filter_value.value(), self.filter_maximum.value())
 
     @Slot()
     def _filter_changed(self) -> None:
@@ -806,65 +899,203 @@ class TrackingViewerWindow(ImageToolWindow):
         self.image_viewer.image_item.setVisible(self.raw_image_toggle.isChecked())
         self._display_track_paths()
 
-    @Slot()
-    def _display_track_paths(self) -> None:
-        self._clear_track_paths()
+    def _trajectory_key(self) -> tuple | None:
         session = self._tracking_session
         if session is None or self.mask_channel_combo.currentIndex() < 0:
-            return
-        centroids = session.track_centroids(
-            self.mask_channel_combo.currentText(), self.z_slider.value())
-        accepted = self._accepted_track_ids()
-        if accepted is not None:
-            centroids = {track_id: points for track_id, points in centroids.items()
-                         if track_id in accepted}
-        current_frame = self.frame_slider.value()
-        self._display_track_ids(centroids, current_frame)
-        if not self.show_track_paths.isChecked():
-            return
-        full_path = self.path_extent.currentData() == "full"
-        thickness = self.path_thickness.value()
-        show_markers = self.show_centroids.isChecked()
-        visible_tracks = {}
-        for track_id, points in centroids.items():
-            visible = points if full_path else points[points[:, 0] <= current_frame]
-            if not len(visible):
-                continue
-            visible_tracks[track_id] = visible
-        item = TrackPathsItem()
-        item.set_tracks(visible_tracks, color_for=self._track_color,
-                        thickness=thickness, show_markers=show_markers,
-                        marker_size=self.centroid_size.value())
-        item.setZValue(50)
-        self.image_viewer.view_box.addItem(item)
-        self._track_path_items.append(item)
+            return None
+        return (id(session), session.centroid_cache.revision,
+                self.mask_channel_combo.currentText(), self.z_slider.value(),
+                self.filter_tracks.isChecked(), str(self.filter_operator.currentData()),
+                self.filter_value.value(), self.filter_maximum.value(),
+                tuple(self._selected_track_ids), self.path_color_mode.currentData(),
+                self._path_color.name(), self.path_thickness.value(),
+                self.show_centroids.isChecked(), self.centroid_size.value(),
+                self.show_track_paths.isChecked())
 
-    def _display_track_ids(
-            self, centroids: dict[int, np.ndarray], current_frame: int,
-            ) -> None:
+    @Slot()
+    def _display_track_paths(self) -> None:
+        key = self._trajectory_key()
+        session = self._tracking_session
+        if key is None or session is None or key == self._trajectory_failed_key:
+            return
+        if key != self._trajectory_ready_key:
+            if self._trajectory_cache_context != key[:2]:
+                self._trajectory_cache.clear()
+                self._trajectory_cache_context = key[:2]
+            all_centroids = session.centroid_cache.cached(
+                session._resolve_channel(self.mask_channel_combo.currentText()), self.z_slider.value())
+            if all_centroids is not None:
+                accepted = self._accepted_track_ids()
+                visible_ids = frozenset(all_centroids) if accepted is None else accepted
+                drawing_key = key[:4], visible_ids, key[8:]
+                cached = self._trajectory_cache.get(drawing_key)
+                if cached is not None:
+                    if self._trajectory_thread is not None:
+                        self._trajectory_thread.requestInterruption()
+                    self._trajectory_cache.move_to_end(drawing_key)
+                    self.trajectory_status.hide()
+                    self.trajectory_progress.hide()
+                    self._apply_trajectories(key, cached[0], cached[1], accepted)
+                    return
+            for item in self._track_path_items:
+                item.hide()
+            for item in self._track_id_items:
+                item.hide()
+            if self._trajectory_thread is not None:
+                if self._trajectory_worker is not None and key != self._trajectory_worker.key:
+                    self._trajectory_thread.requestInterruption()
+                return
+            options = {
+                "filter": self.filter_tracks.isChecked(),
+                "operator": str(self.filter_operator.currentData()),
+                "value": self.filter_value.value(), "maximum": self.filter_maximum.value(),
+                "selected": tuple(self._selected_track_ids),
+                "single": self.path_color_mode.currentData() == "single",
+                "color": self._path_color.name(), "thickness": self.path_thickness.value(),
+                "markers": self.show_centroids.isChecked(), "size": self.centroid_size.value(),
+                "paths": self.show_track_paths.isChecked(),
+            }
+            worker = _TrajectoryWorker(session, key, session._resolve_channel(
+                self.mask_channel_combo.currentText()), self.z_slider.value(), options)
+            stage = "Preparing trajectories" if all_centroids is not None else "Calculating centroids"
+            self._start_trajectory_worker(worker, session.frame_count, stage)
+            return
+        # A user can return to the displayed filter while a different drawing
+        # is still running. Reveal the existing result and cancel that worker.
+        if (self._trajectory_thread is not None and self._trajectory_worker is not None
+                and self._trajectory_worker.key != key):
+            self._trajectory_thread.requestInterruption()
+        if self.image_viewer.view_box.opacity() == 0.0:
+            self._id_frame = None
+        self.image_viewer.view_box.setOpacity(1.0)
+        self.trajectory_status.hide()
+        self.trajectory_progress.hide()
+        frame = self.frame_slider.value()
+        full = self.path_extent.currentData() == "full"
+        self._display_track_ids(self._visible_centroids, frame)
+        for item in self._track_path_items:
+            item.set_frame(frame, full=full)
+            item.setVisible(self.show_track_paths.isChecked())
+
+    def _start_trajectory_worker(self, worker: _TrajectoryWorker,
+                                 total: int, stage: str) -> None:
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._trajectory_progress_changed)
+        worker.ready.connect(self._trajectories_ready)
+        worker.failed.connect(self._trajectories_failed)
+        worker.done.connect(thread.quit)
+        worker.done.connect(worker.deleteLater)
+        thread.finished.connect(self._trajectory_finished)
+        self._trajectory_thread, self._trajectory_worker = thread, worker
+        # Hiding a ViewBox collapses its GraphicsLayout geometry to zero, which
+        # may persist after show(). Transparency keeps the display area intact.
+        self.image_viewer.view_box.setOpacity(0.0)
+        self.trajectory_status.setText(f"{stage}…")
+        self.trajectory_progress.setRange(0, total)
+        self.trajectory_progress.setValue(0)
+        self.trajectory_status.show()
+        self.trajectory_progress.show()
+        thread.start()
+
+    @Slot(int, int, str)
+    def _trajectory_progress_changed(self, value: int, total: int, stage: str) -> None:
+        if self.sender() is not self._trajectory_worker:
+            return
+        self.trajectory_status.setText(f"{stage}: {value}/{total}")
+        self.trajectory_progress.setRange(0, max(1, total))
+        self.trajectory_progress.setValue(value)
+
+    @Slot(object)
+    def _trajectories_ready(self, result: tuple) -> None:
+        key, centroids, prepared, accepted = result
+        if key != self._trajectory_key():
+            return
+        drawing_key = key[:4], frozenset(centroids), key[8:]
+        self._trajectory_cache[drawing_key] = centroids, prepared
+        self._trajectory_cache.move_to_end(drawing_key)
+        def size(entry: tuple[dict[int, np.ndarray], PreparedPaths | None]) -> int:
+            drawing = entry[1]
+            if drawing is None:
+                return 0
+            return (drawing.frames.nbytes if drawing.frames is not None
+                    else drawing.full_image.sizeInBytes())
+        total = sum(size(entry) for entry in self._trajectory_cache.values())
+        while (len(self._trajectory_cache) > TRAJECTORY_CACHE_ENTRIES
+               or total > TRAJECTORY_CACHE_BYTES):
+            _, removed = self._trajectory_cache.popitem(last=False)
+            total -= size(removed)
+        self._apply_trajectories(key, centroids, prepared, accepted)
+
+    def _apply_trajectories(self, key: tuple, centroids: dict[int, np.ndarray],
+                            prepared: PreparedPaths | None, accepted: frozenset[int] | None) -> None:
+        """Display a completed or cached drawing without starting another worker."""
+        self._trajectory_ready_key = key
+        self._visible_centroids = centroids
+        self._visible_accepted = accepted
+        self._id_frame = None
+        if isinstance(prepared, PreparedPaths):
+            if not self._track_path_items:
+                item = TrackPathsItem()
+                item.setZValue(50)
+                self.image_viewer.view_box.addItem(item)
+                self._track_path_items.append(item)
+            self._track_path_items[0].set_prepared(prepared)
+        self._display_selection()
+        self.image_viewer.view_box.setOpacity(1.0)
+
+    @Slot(str)
+    def _trajectories_failed(self, message: str) -> None:
+        if self._trajectory_worker is not None and self.sender() is self._trajectory_worker:
+            self._trajectory_failed_key = self._trajectory_worker.key
+            if self._trajectory_failed_key == self._trajectory_key():
+                self.image_viewer.view_box.setOpacity(1.0)
+            self.status_label.setText(f"Trajectory preparation failed: {message}")
+
+    @Slot()
+    def _trajectory_finished(self) -> None:
+        thread = self.sender()
+        if thread is not self._trajectory_thread:
+            return
+        self._trajectory_thread = None
+        self._trajectory_worker = None
+        self.trajectory_status.hide()
+        self.trajectory_progress.hide()
+        if isinstance(thread, QThread):
+            thread.deleteLater()
+        if self._tracking_session is not None:
+            self._display_track_paths()
+
+    def _display_track_ids(self, centroids: dict[int, np.ndarray], current_frame: int) -> None:
         mode = self.track_id_display_mode.currentData()
+        frame_key = (self._trajectory_ready_key, current_frame, mode)
+        if self._id_frame == frame_key:
+            return
+        self._id_frame = frame_key
+        for item in self._track_id_items:
+            item.hide()
+        self._track_id_items.clear()
         if mode == "none":
             return
-        visible_ids = (
-            set(self._selected_track_ids) if mode == "selected"
-            else set(centroids))
+        visible_ids = (set(self._selected_track_ids) if mode == "selected" else set(centroids))
         for track_id in sorted(visible_ids):
             points = centroids.get(track_id)
             if points is None:
                 continue
-            current = points[points[:, 0] == current_frame]
-            if not len(current):
+            index = int(np.searchsorted(points[:, 0], current_frame))
+            if index >= len(points) or points[index, 0] != current_frame:
                 continue
-            _, x_position, y_position = current[-1]
-            item = pg.TextItem(
-                str(track_id), color=self._palette_track_color(track_id),
-                anchor=(0.0, 1.0), fill=QColor(20, 20, 20, 190))
-            item.setZValue(60)
-            marker_corner_offset = 4.0
-            item.setPos(
-                float(x_position) + marker_corner_offset,
-                float(y_position) - marker_corner_offset)
-            self.image_viewer.view_box.addItem(item)
+            _, x_position, y_position = points[index]
+            item = self._id_pool.get(track_id)
+            if item is None:
+                item = pg.TextItem(str(track_id), color=self._palette_track_color(track_id),
+                                   anchor=(0.0, 1.0), fill=QColor(20, 20, 20, 190))
+                item.setZValue(60)
+                self.image_viewer.view_box.addItem(item)
+                self._id_pool[track_id] = item
+            item.setPos(float(x_position) + 4.0, float(y_position) - 4.0)
+            item.show()
             self._track_id_items.append(item)
 
     def _track_color(self, track_id: int) -> QColor:
@@ -879,9 +1110,11 @@ class TrackingViewerWindow(ImageToolWindow):
         return QColor(*track_rgb(track_id))
 
     @Slot(object)
-    def _tracking_scene_clicked(self, event: object) -> None:
+    def _tracking_scene_clicked(self, event: MouseClickEvent) -> None:
         if ((not self.editing_enabled and not self.selection_enabled)
                 or self._tracking_session is None
+                or not self.image_viewer.view_box.isVisible()
+                or self.image_viewer.view_box.opacity() == 0.0
                 or self._save_thread is not None
                 or not hasattr(event, "button")):
             return
@@ -932,7 +1165,9 @@ class TrackingViewerWindow(ImageToolWindow):
                 return label
         if not self.show_track_paths.isChecked():
             return None
-        centroids = session.track_centroids(channel, z_index)
+        centroids = session.centroid_cache.cached(session._resolve_channel(channel), z_index)
+        if centroids is None:
+            return None
         accepted = self._accepted_track_ids()
         x_pixel, y_pixel = self.image_viewer.view_box.viewPixelSize()
         click = np.asarray([x_position / x_pixel, y_position / y_pixel])
@@ -1399,7 +1634,7 @@ class TrackingViewerWindow(ImageToolWindow):
             if self._local_manual_stroke:
                 working = self.image_viewer.drawing_mask
                 if working is not None and np.any(working):
-                    distances = distance_transform_edt(np.asarray(working, dtype=bool))
+                    distances = cast(np.ndarray, distance_transform_edt(np.asarray(working, dtype=bool)))
                     anchor = np.unravel_index(int(np.argmax(distances)), distances.shape)
                     self._positive_points = [(int(anchor[0]), int(anchor[1]))]
             if (not self._positive_points
@@ -1505,7 +1740,7 @@ class TrackingViewerWindow(ImageToolWindow):
         if thread is not None:
             thread.deleteLater()
 
-    def _set_local_drawing_from_preview(self, preview: dict[str, object]) -> None:
+    def _set_local_drawing_from_preview(self, preview: dict[str, Any]) -> None:
         session = self._tracking_session
         if session is None:
             return
@@ -1563,8 +1798,9 @@ class TrackingViewerWindow(ImageToolWindow):
             self._manual_excluded_mask = np.zeros(image.shape, dtype=bool)
         self._update_edit_buttons()
         self._display_selection()
-        self.image_viewer.set_drawing_mask(np.zeros(
-            self.image_viewer.image_item.image.shape, dtype=np.uint8))
+        displayed_image = self.image_viewer.image_item.image
+        if displayed_image is not None:
+            self.image_viewer.set_drawing_mask(np.zeros(displayed_image.shape, dtype=np.uint8))
         self.image_viewer.set_drawing_enabled(True)
         self.status_label.setText(
             "Current mask cleared. Click or draw again, or turn off Add masks mode.")
@@ -1688,7 +1924,7 @@ class TrackingViewerWindow(ImageToolWindow):
         if len(self._selected_track_ids) != 2:
             return
         session, channel, z_index = self._edit_context()
-        selected = tuple(self._selected_track_ids)
+        selected = (self._selected_track_ids[0], self._selected_track_ids[1])
         try:
             survivor = session.merge_tracks(
                 selected, self.frame_slider.value(), channel, z_index)
@@ -1704,7 +1940,7 @@ class TrackingViewerWindow(ImageToolWindow):
         if len(self._selected_track_ids) != 2:
             return
         session, channel, z_index = self._edit_context()
-        selected = tuple(self._selected_track_ids)
+        selected = (self._selected_track_ids[0], self._selected_track_ids[1])
         try:
             target, conflict = session.link_tracks(selected, channel, z_index)
         except ValueError as error:
@@ -1758,9 +1994,17 @@ class TrackingViewerWindow(ImageToolWindow):
         for item in self._track_path_items:
             self.image_viewer.view_box.removeItem(item)
         self._track_path_items.clear()
-        for item in self._track_id_items:
+        for item in self._id_pool.values():
             self.image_viewer.view_box.removeItem(item)
+        self._id_pool.clear()
         self._track_id_items.clear()
+        self._trajectory_ready_key = None
+        self._trajectory_failed_key = None
+        self._trajectory_cache.clear()
+        self._trajectory_cache_context = None
+        self._visible_centroids = {}
+        self._visible_accepted = None
+        self._id_frame = None
 
     def _path_color_mode_changed(self) -> None:
         single_color = self.path_color_mode.currentData() == "single"
@@ -1944,6 +2188,8 @@ class TrackingViewerWindow(ImageToolWindow):
         if not isinstance(result, tuple) or len(result) != 2:
             return
         path, metadata = result
+        if not isinstance(path, (str, Path)) or not isinstance(metadata, dict):
+            return
         self._pending_tracking_save = (Path(path), metadata)
 
     @Slot(str)
@@ -1988,7 +2234,7 @@ class TrackingViewerWindow(ImageToolWindow):
         self.close()
 
     @Slot(object)
-    def _display_saved(self, saved: object) -> None:
+    def _display_saved(self, saved: Path) -> None:
         self.status_label.setText(f"Saved tracking display to {Path(saved).name}.")
 
     @Slot(str)
@@ -2007,6 +2253,16 @@ class TrackingViewerWindow(ImageToolWindow):
             thread.deleteLater()
 
     def _clear_tools(self) -> None:
+        if self._trajectory_thread is not None:
+            self._trajectory_thread.requestInterruption()
+            self._trajectory_thread.quit()
+            self._trajectory_thread.wait()
+            self._trajectory_thread.deleteLater()
+            self._trajectory_thread = None
+            self._trajectory_worker = None
+        self.trajectory_progress.hide()
+        self.trajectory_status.hide()
+        self.image_viewer.view_box.setOpacity(1.0)
         self.diameter_reference.hide()
         self.local_cell_diameter.setEnabled(False)
         if (self._local_segmentation_thread is not None
@@ -2028,6 +2284,8 @@ class TrackingViewerWindow(ImageToolWindow):
         self._clear_track_paths()
         self._selected_track_ids.clear()
         self._update_edit_buttons()
+        if self._tracking_session is not None:
+            self._tracking_session.close()
         self._tracking_session = None
 
     def closeEvent(self, event: QCloseEvent) -> None:

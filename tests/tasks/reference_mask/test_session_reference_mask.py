@@ -13,8 +13,15 @@ class FakeFitsIO:
     def __init__(self, array: np.ndarray, axes: str, labels: list[str]) -> None:
         self._array = array
         self._axes = axes
+        self.axes = axes
+        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"))
         self.channel_labels = labels
         self.saved: dict[str, Any] | None = None
+
+    def get_plane(self, frame_index=0, channel=0, z_index=0) -> SimpleNamespace:
+        positions = {"T": frame_index, "C": channel, "Z": z_index}
+        selection = tuple(positions.get(axis, slice(None)) for axis in self.axes)
+        return SimpleNamespace(array=self._array[selection], axes="YX")
 
     def get_array(self) -> SimpleNamespace:
         return SimpleNamespace(array=self._array, axes=self._axes)

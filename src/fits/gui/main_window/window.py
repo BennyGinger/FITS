@@ -9,7 +9,8 @@ from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLi
 
 from fits.environment import constant as cst
 from fits.environment.paths import reports_dir
-from fits.workflows.runtime.progress import RunProgress
+from fits.workflows.runtime.progress import RunProgress, StageStatus
+from fits.workflows.runtime.interactive.messages import TrackEditRequest, TrackEditOutcome
 from fits.gui.settings import STEP_LAYOUTS, RuntimeSettingsEditor, SettingsAdapter, StepSettingsEditor
 from fits.gui.main_window.report_dialog import ReportDialog
 from fits.gui.main_window.run_browser import RunDirectoryBrowser
@@ -23,7 +24,7 @@ _PHASE_STEPS = (
     ("Convert", (cst.StepName.CONVERT,)),
     ("Preprocess", (cst.StepName.REGISTER_TIME, cst.StepName.REGISTER_CHANNEL, cst.StepName.BG_SUB)),
     ("Process", (cst.StepName.SEGMENT, cst.StepName.TRACK, cst.StepName.EDIT_TRACK)),
-    ("Analysis", (cst.StepName.DISTANCE_PROFILE, cst.StepName.EXTRACT)),
+    ("Analysis", (cst.StepName.EXTRACT, cst.StepName.DISTANCE_PROFILE)),
 )
 _STEP_PHASE = {step: phase_index
                 for phase_index, (_, steps) in enumerate(_PHASE_STEPS)
@@ -42,12 +43,13 @@ class FitsMainWindow(QMainWindow):
         self.demo_step_delay = demo_step_delay
         self._mask_collection = None
         self._mask_expected_count: int | None = None
-        self._track_edit_queue: list[object] = []
+        self._track_edit_queue: list[TrackEditRequest] = []
         self._tracking_editor = None
         self._run_progress: RunProgress | None = None
         self.adapter = adapter or SettingsAdapter()
         self._thread: QThread | None = None
         self._worker: PipelineWorker | None = None
+        self._running = False
         self._step_items: dict[cst.StepName, QTreeWidgetItem] = {}
         self._editors: dict[cst.StepName, StepSettingsEditor] = {}
         self.runtime_editor: RuntimeSettingsEditor | None = None
@@ -74,8 +76,8 @@ class FitsMainWindow(QMainWindow):
         outer = QVBoxLayout(central)
 
         top_splitter = QSplitter(Qt.Orientation.Horizontal)
-        top_splitter.setMinimumHeight(310)
-        top_splitter.setMaximumHeight(370)
+        top_splitter.setMinimumHeight(280)
+        top_splitter.setMaximumHeight(340)
 
         identity_panel = QWidget()
         identity = QVBoxLayout(identity_panel)
@@ -129,10 +131,15 @@ class FitsMainWindow(QMainWindow):
         self.tracking_viewer_button.clicked.connect(
             lambda: self._open_tracking_viewer())
         self.run_browser.selection_layout.addWidget(self.tracking_viewer_button)
+        self.run_browser.selection_layout.addStretch()
+        self.report_button = QPushButton("Full Report")
+        self.report_button.setEnabled(False)
+        self.report_button.clicked.connect(self._open_latest_report)
+        self.run_browser.selection_layout.addWidget(self.report_button)
         top_splitter.addWidget(self.run_browser)
         top_splitter.setStretchFactor(0, 2)
         top_splitter.setStretchFactor(1, 1)
-        top_splitter.setSizes([760, 400])
+        top_splitter.setSizes([800, 360])
         outer.addWidget(top_splitter)
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -181,16 +188,12 @@ class FitsMainWindow(QMainWindow):
         self.load_button = QPushButton("Load settings")
         self.save_button = QPushButton("Save settings")
         self.run_button = QPushButton("Run pipeline")
-        self.report_button = QPushButton("Full Report")
-        self.report_button.setEnabled(False)
         self.load_button.clicked.connect(self._load_settings)
         self.save_button.clicked.connect(self._save_settings)
         self.run_button.clicked.connect(self._run_pipeline)
-        self.report_button.clicked.connect(self._open_latest_report)
         buttons.addWidget(self.load_button)
         buttons.addWidget(self.save_button)
         buttons.addStretch()
-        buttons.addWidget(self.report_button)
         buttons.addWidget(self.run_button)
         outer.addLayout(buttons)
 
@@ -218,7 +221,7 @@ class FitsMainWindow(QMainWindow):
         self.runtime_editor.value_changed.connect(self._refresh_phase_access)
         self.runtime_host_layout.addWidget(self.runtime_editor)
 
-        for step in cst.WORKFLOW_ORDER:
+        for step in (step for _, steps in _PHASE_STEPS for step in steps):
             item = QTreeWidgetItem([STEP_LAYOUTS[step].title])
             item.setData(0, Qt.ItemDataRole.UserRole, step.value)
             item.setFlags(
@@ -412,10 +415,12 @@ class FitsMainWindow(QMainWindow):
             except OSError:
                 prepared = False
         unlocked = prepared or bool(self.adapter.runtime_value("unlock_all_tabs"))
+        settings_available = unlocked or self._running
         selected_phase = self.phase_tabs.currentIndex()
         self.phase_tabs.blockSignals(True)
+        tree_signals_blocked = self.step_tree.blockSignals(True)
         for phase, (_, steps) in enumerate(_PHASE_STEPS):
-            available = phase == 0 or unlocked
+            available = phase == 0 or settings_available
             self.phase_tabs.setTabEnabled(phase, available)
             for step in steps:
                 item = self._step_items.get(step)
@@ -424,7 +429,8 @@ class FitsMainWindow(QMainWindow):
                     item.setDisabled(not available)
                 if editor is not None:
                     editor.setEnabled(available)
-        if unlocked and selected_phase >= 0:
+        self.step_tree.blockSignals(tree_signals_blocked)
+        if settings_available and selected_phase >= 0:
             self.phase_tabs.setCurrentIndex(selected_phase)
         else:
             self.phase_tabs.setCurrentIndex(0)
@@ -438,7 +444,7 @@ class FitsMainWindow(QMainWindow):
         self._refresh_tracking_viewer_button()
         self._update_run_button_text()
         current = self.step_tree.currentItem()
-        if current is not None and self._step_from_item(current) != cst.StepName.CONVERT and not unlocked:
+        if current is not None and self._step_from_item(current) != cst.StepName.CONVERT and not settings_available:
             self.step_tree.setCurrentItem(self._step_items[cst.StepName.CONVERT])
 
     @Slot(QTreeWidgetItem, int)
@@ -487,17 +493,16 @@ class FitsMainWindow(QMainWindow):
             return
 
         resolved = Path(raw_directory).expanduser().resolve()
-        self.run_dir_edit.setText(str(resolved))
+        # Each selected folder starts from the template, never the previous run.
+        self.adapter = SettingsAdapter(template_path=self.adapter.template_path)
         self.adapter.run_dir = str(resolved)
-        self.run_browser.set_root(resolved)
-        self._refresh_report_button()
-        self._refresh_phase_access()
+        self._populate_from_adapter()
 
         saved_settings = run_settings_path(resolved)
         if saved_settings.is_file():
             self._load_settings_path(saved_settings, run_dir=resolved)
         else:
-            self._schedule_settings_population_finish()
+            self._append_log(f"Loaded template settings for {resolved}")
 
     def _sync_identity(self) -> None:
         self.adapter.run_dir = self.run_dir_edit.text().strip()
@@ -608,6 +613,7 @@ class FitsMainWindow(QMainWindow):
         self._run_progress = worker.progress
         self._set_running(True)
         self._append_log("Starting FITS pipeline…")
+        self._append_log("Settings edited while running apply to the next run.")
         thread.start()
 
     @Slot(object)
@@ -636,7 +642,7 @@ class FitsMainWindow(QMainWindow):
             self._mask_collection.set_expected_experiments(count)
 
     @Slot(object)
-    def _enqueue_track_edit_request(self, request: object) -> None:
+    def _enqueue_track_edit_request(self, request: TrackEditRequest) -> None:
         if self._worker is None or self._worker.interaction.cancelled.is_set():
             return
         self._track_edit_queue.append(request)
@@ -658,7 +664,7 @@ class FitsMainWindow(QMainWindow):
         window.show()
 
     @Slot(object)
-    def _tracking_edit_finalized(self, outcome: object) -> None:
+    def _tracking_edit_finalized(self, outcome: TrackEditOutcome) -> None:
         if self._worker is not None:
             self._worker.interaction.resolve_track_edit(outcome)
         self._tracking_editor = None
@@ -701,18 +707,33 @@ class FitsMainWindow(QMainWindow):
     def _pipeline_finished(self) -> None:
         self._close_mask_collection()
         self._close_tracking_editor()
-        self._append_log("FITS pipeline completed successfully.")
+        had_errors = self._run_progress is not None and any(
+            stage.status == StageStatus.FAILED or stage.error is not None
+            for experiment in self._run_progress.snapshot()
+            for stage in experiment.stages.values()
+        )
+        self._append_log("FITS pipeline completed with errors." if had_errors
+                         else "FITS pipeline completed successfully.")
         self._refresh_phase_access()
         self._refresh_report_button()
         report = self._latest_report()
         if report is not None:
-            self._show_report(report)
+            if had_errors:
+                self._show_report(report)
+            else:
+                self._append_log("The run report is available through Full Report.")
 
     @Slot(str, str)
     def _pipeline_failed(self, message: str, details: str) -> None:
         self._close_mask_collection()
         self._close_tracking_editor()
         self._append_log(details)
+        self._refresh_phase_access()
+        self._refresh_report_button()
+        report = self._latest_report()
+        if report is not None and self._run_progress is not None and self._run_progress.snapshot():
+            self._show_report(report)
+            return
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Critical)
         dialog.setWindowTitle("Pipeline stopped")
@@ -735,23 +756,22 @@ class FitsMainWindow(QMainWindow):
         self.console.appendPlainText(message)
 
     def _set_running(self, running: bool) -> None:
+        self._running = running
         self.run_button.setEnabled(not running)
         self.load_button.setEnabled(not running)
         self.save_button.setEnabled(not running)
         self.browse_button.setEnabled(not running)
         self.run_dir_edit.setEnabled(not running)
         self.user_name_edit.setEnabled(not running)
-        self.step_tree.setEnabled(not running)
-        self.settings_stack.setEnabled(not running)
-        self.phase_tabs.setEnabled(not running)
         if running:
             self.run_button.setText("Running…")
         else:
             self._update_run_button_text()
         self.report_button.setEnabled(not running and self._latest_report() is not None)
+        self._refresh_phase_access()
 
     def _update_run_button_text(self) -> None:
-        if self._thread is not None:
+        if self._running or self._thread is not None:
             return
         self.run_button.setText(
             "Run pipeline" if self._phases_unlocked else "Convert experiment(s)")

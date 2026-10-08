@@ -3,6 +3,8 @@ import logging
 from fits.workflows.experiments import ExperimentState
 from fits.settings.models import ExtractSettings
 from fits.tasks.analysis.extraction.manager import ExtractionManager
+from fits.tasks.analysis.identity import add_quantification_ids
+from fits.tasks.analysis.tracking_summary import add_track_statistics
 from fits.tasks.common.artifact_results import complete_step_result
 from fits.tasks.common.preparation import resolve_step_run
 from fits.tasks.common.table_results import save_parquet
@@ -44,7 +46,8 @@ def extract(settings: ExtractSettings,
                                     workers=settings.frame_workers,)
 
         # Add FITS-specific provenance to the extracted measurements.
-        dataframe.insert(0, "experiment_id", exp_state.experiment_id)
+        dataframe = add_quantification_ids(dataframe, exp_state.analysis_experiment_id)
+        add_track_statistics(dataframe)
 
         # Save the quantification DataFrame to a Parquet file in the experiment's workdir
         output_path = (exp_state.workdir / step_profile.output_name)

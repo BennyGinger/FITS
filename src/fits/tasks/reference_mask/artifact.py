@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 import numpy as np
 from fits_io import FitsIO
 from numpy.typing import NDArray
 
 from fits.environment.constant import FITS_REFERENCE_TEMPLATE
+from fits.interaction.planes import PlaneStore, aligned_mask_store
 
 
 _WINDOWS_INVALID_FILENAME_CHARACTERS = frozenset('<>:"/\\|?*')
@@ -52,18 +53,42 @@ def saved_reference_channels(path: Path) -> tuple[str, ...]:
     return tuple(FitsIO.from_path(path).channel_labels)
 
 
+@overload
+def load_reference_artifact(reference_path: str | Path, *, source_path: Path,
+                        source_axes: str, source_shape: tuple[int, ...],
+                        source_channels: tuple[str, ...], lazy: Literal[True],
+                        ) -> tuple[PlaneStore, str, tuple[str, ...]]: ...
+
+
+@overload
+def load_reference_artifact(reference_path: str | Path, *, source_path: Path,
+                        source_axes: str, source_shape: tuple[int, ...],
+                        source_channels: tuple[str, ...], lazy: Literal[False] = False,
+                        ) -> tuple[NDArray[np.uint8], str, tuple[str, ...]]: ...
+
+
 def load_reference_artifact(reference_path: str | Path,
                             *,
                             source_path: Path,
                             source_axes: str,
                             source_shape: tuple[int, ...],
                             source_channels: tuple[str, ...],
-                            ) -> tuple[NDArray[np.uint8], str, tuple[str, ...]]:
+                            lazy: bool = False,
+                            ) -> tuple[NDArray[np.uint8] | PlaneStore, str, tuple[str, ...]]:
     """
     Load a compact reference artifact into a source-shaped binary array.
     """
     path, label = _validate_reference_path(reference_path, source_path)
     reference_reader = FitsIO.from_path(path)
+    if lazy:
+        def validate_plane(plane: NDArray) -> NDArray:
+            if not np.all((plane == 0) | (plane == 1)):
+                raise ValueError("Loaded reference masks must contain only binary values 0 and 1.")
+            return plane
+        store = aligned_mask_store(
+            reference_reader, source_axes=source_axes, source_shape=source_shape,
+            source_channels=source_channels, transform=validate_plane)
+        return store, label, tuple(reference_reader.channel_labels)
     loaded = reference_reader.get_array()
     reference = np.asarray(loaded.array)
     reference_axes = loaded.axes

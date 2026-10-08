@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from numpy.typing import NDArray
 
 from fits.environment.constant import FITS_ARRAY_NAME
 from fits_io import FitsIO
+from fits.interaction.planes import PlaneStore
 
 
 class FitsImageSession:
@@ -28,18 +28,18 @@ class FitsImageSession:
                             f"named {FITS_ARRAY_NAME!r}; got {self.source_path.name!r}.")
 
         self._reader = FitsIO.from_path(self.source_path)
-        loaded = self._reader.get_array()
-        self._array = np.asarray(loaded.array)
-        self._axes = loaded.axes
+        self._axes = self._reader.axes
+        self._shape = tuple(self._reader.reader.shape)
+        self._planes = PlaneStore(self._axes, self._shape, reader=self._reader)
         self._channel_labels = tuple(self._reader.channel_labels)
 
-        if len(self._axes) != self._array.ndim:
-            raise ValueError(f"Image axes {self._axes!r} do not match shape {self._array.shape}.")
+        if len(self._axes) != len(self._shape):
+            raise ValueError(f"Image axes {self._axes!r} do not match shape {self._shape}.")
         
         if "Y" not in self._axes or "X" not in self._axes:
             raise ValueError(f"FITS image sessions require YX axes; got {self._axes!r}.")
         
-        expected_channels = self._array.shape[self._axes.index("C")] if "C" in self._axes else 1
+        expected_channels = self._shape[self._axes.index("C")] if "C" in self._axes else 1
         if len(self._channel_labels) != expected_channels:
             raise ValueError(f"Image has {expected_channels} channels but "
                             f"{len(self._channel_labels)} channel labels.")
@@ -50,7 +50,7 @@ class FitsImageSession:
 
     @property
     def shape(self) -> tuple[int, ...]:
-        return self._array.shape
+        return self._shape
 
     @property
     def channel_labels(self) -> tuple[str, ...]:
@@ -70,9 +70,10 @@ class FitsImageSession:
                       z_index: int = 0,
                       ) -> NDArray[Any]:
         """
-        Return one selected ``YX`` image plane as a view of the source array.
+        Read one selected ``YX`` plane through the bounded display cache.
         """
-        return self._select_plane(self._array, frame_index=frame_index, channel=channel, z_index=z_index)
+        self._plane_selection(frame_index, channel, z_index)
+        return self._planes.plane(frame_index, self._resolve_channel(channel), z_index)
 
     def _select_plane(self,
                       array: NDArray[Any],
@@ -102,7 +103,7 @@ class FitsImageSession:
         self._validate_axis_index("T", frame_index, "Frame")
         self._validate_axis_index("Z", z_index, "Z")
 
-        selection: list[int | slice] = [slice(None)] * self._array.ndim
+        selection: list[int | slice] = [slice(None)] * len(self._shape)
         if "T" in self._axes:
             selection[self._axes.index("T")] = frame_index
         if "C" in self._axes:
@@ -140,7 +141,7 @@ class FitsImageSession:
                 raise IndexError(f"An image without a {axis} axis only has index 0.")
             return
         
-        axis_size = self._array.shape[self._axes.index(axis)]
+        axis_size = self._shape[self._axes.index(axis)]
         if index < 0 or index >= axis_size:
             raise IndexError(f"{label} index {index} is outside 0..{axis_size - 1}.")
 
@@ -150,4 +151,7 @@ class FitsImageSession:
         """
         if axis not in self._axes:
             return 1
-        return self._array.shape[self._axes.index(axis)]
+        return self._shape[self._axes.index(axis)]
+
+    def close(self) -> None:
+        self._planes.close()

@@ -402,6 +402,8 @@ class ImageToolWindow(QMainWindow):
 
     def _close_session(self) -> None:
         self._clear_tools()
+        if self._image_session is not None:
+            self._image_session.close()
         self._image_session = None
         self._source_path = None
         self._displayed_channel = None

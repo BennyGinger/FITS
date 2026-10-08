@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import colorsys
 from collections.abc import Callable
+from functools import lru_cache
 from time import monotonic
 from typing import Any, Literal, cast
 
@@ -23,6 +24,16 @@ DrawingMode = Literal["replace", "edit"]
 DrawingTool = Literal["brush", "freehand", "line", "circle", "square", "triangle"]
 DrawingOperation = Literal["add", "erase"]
 DRAWING_REFRESH_SECONDS = 1 / 60
+
+
+@lru_cache(maxsize=8192)
+def _label_rgba(label: int) -> tuple[int, int, int, int]:
+    """Cache stable label colours without retaining rendered image planes."""
+    if label == 0:
+        return (0, 0, 0, 0)
+    hue = (label * 0.61803398875) % 1.0
+    red, green, blue = colorsys.hsv_to_rgb(hue, 0.75, 1.0)
+    return (int(red * 255), int(green * 255), int(blue * 255), 255)
 
 
 class ControlledViewBox(pg.ViewBox):  # type: ignore[misc]
@@ -114,7 +125,7 @@ class FitsImageViewer(QWidget):
         self.view_box.addItem(self.image_item)
         self.view_box.addItem(self.mask_item)
         self.view_box.addItem(self.drawing_item)
-        self.home_button = QToolButton(self.canvas)
+        self.home_button = QToolButton(cast(QWidget, self.canvas))
         self.home_button.setIcon(self._home_icon())
         self.home_button.setToolTip("Fit and center the image in the viewer.")
         self.home_button.setAutoRaise(True)
@@ -627,18 +638,16 @@ class FitsImageViewer(QWidget):
                      solid_color: tuple[int, int, int] | None = None,
                      ) -> NDArray[np.uint8]:
         labels = np.asarray(mask)
-        rgba = np.zeros((*labels.shape, 4), dtype=np.uint8)
         if solid_color is not None:
+            rgba = np.zeros((*labels.shape, 4), dtype=np.uint8)
             selected = labels != 0
             rgba[selected, :3] = solid_color
             rgba[selected, 3] = 255
             return rgba
-        for label in np.unique(labels):
-            if label == 0:
-                continue
-            hue = (int(label) * 0.61803398875) % 1.0
-            red, green, blue = colorsys.hsv_to_rgb(hue, 0.75, 1.0)
-            selected = labels == label
-            rgba[selected, :3] = np.asarray([red, green, blue]) * 255
-            rgba[selected, 3] = 255
-        return rgba
+        # Index a compact palette once instead of scanning the image per label.
+        # Compact indices also keep sparse or very large track IDs inexpensive.
+        present, inverse = np.unique(labels, return_inverse=True)
+        palette = np.asarray(
+            [_label_rgba(int(label)) for label in present], dtype=np.uint8,
+        ).reshape(-1, 4)
+        return palette[inverse.ravel()].reshape((*labels.shape, 4))

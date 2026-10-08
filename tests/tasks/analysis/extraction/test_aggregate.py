@@ -23,6 +23,10 @@ def _state_with_quantification(
         {
             "experiment_id": [experiment_name],
             "measurement": [value],
+            "object_name": ["tracking"],
+            "object_channel": ["iRed"],
+            "label": [1],
+            "frame": [1],
         }
     ).to_parquet(quantification_path, index=False)
 
@@ -58,6 +62,7 @@ def test_master_quantification_adds_nested_condition_levels(tmp_path: Path) -> N
     )
 
     assert master_path == tmp_path / "master_quantification.parquet"
+    assert master_path is not None
     master = pd.read_parquet(master_path)
     assert list(master.columns[:3]) == [
         "experiment_id",

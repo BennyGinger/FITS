@@ -727,6 +727,9 @@ def test_reference_tab_commits_raster_edits_and_persists_drawings(
         def clear_mask_plane(self, *, frame_index, channel, z_index) -> None:
             self.masks[frame_index, self._channel(channel)] = 0
 
+        def close(self):
+            pass
+
         def save(self, label: str, **kwargs):
             self.saved_mask = self.masks.copy()
             return self.source_path.with_name(f"fits_ref_{label}.tif")
@@ -811,6 +814,11 @@ def test_mask_window_uses_mask_sessions_for_navigation_threshold_and_save(
 
     class Reader:
         channel_labels = ("GFP", "RFP")
+        axes = "TCYX"
+        reader = SimpleNamespace(shape=data.shape)
+
+        def get_plane(self, frame_index=0, channel=0, z_index=0):
+            return SimpleNamespace(array=data[frame_index, channel], axes="YX")
 
         def get_array(self):
             return SimpleNamespace(array=data, axes="TCYX")
@@ -890,6 +898,16 @@ def test_mask_window_loads_sibling_masks_and_honours_selected_file(
                 channel_labels=(channel,),
                 metadata=SimpleNamespace(custom_metadata={"roi_mask_encoding": ROI_MASK_ENCODING}),
                 get_array=lambda mask=stored_mask: SimpleNamespace(array=mask, axes="TYX"))
+    for path, reader in readers.items():
+        loaded = reader.get_array()
+        reader.axes = loaded.axes
+        reader.reader = SimpleNamespace(shape=loaded.array.shape, dtype=loaded.array.dtype,
+                                        img_path=path)
+        def get_plane(frame_index=0, channel=0, z_index=0, loaded=loaded):
+            positions = {"T": frame_index, "C": channel, "Z": z_index}
+            indices = tuple(positions.get(axis, slice(None)) for axis in loaded.axes)
+            return SimpleNamespace(array=loaded.array[indices], axes="YX")
+        reader.get_plane = get_plane
     monkeypatch.setattr(
         "fits.interaction.image.FitsIO.from_path",
         lambda path: readers[Path(path)])

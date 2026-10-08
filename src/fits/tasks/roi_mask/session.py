@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 
 from fits.environment.constant import ARTI_ROI, DIST_FITS
 from fits.interaction import BinaryMaskSession
+from fits.interaction.planes import disk_copy
 from fits.tasks.reference_mask.artifact import validate_reference_label
 from fits.tasks.roi_mask.artifact import ROI_MASK_ENCODING, ROI_MASK_VALUE_TABLE, build_roi_path, load_roi_artifact, merge_roi_channels, saved_roi_channels
 
@@ -35,8 +36,12 @@ class RoiSession(BinaryMaskSession):
         if roi_path is not None:
             self._mask, self._roi_label, self._loaded_channels = load_roi_artifact(
                 roi_path, source_path=self.source_path,
-                source_axes=self._axes, source_shape=self._array.shape,
-                source_channels=self._channel_labels)
+                source_axes=self._axes, source_shape=self.shape,
+                source_channels=self._channel_labels, lazy=True)
+
+    def close(self) -> None:
+        self._edit_history.clear()
+        super().close()
 
     def display_mask_plane(self, frame_index: int = 0,
                            channel: int | str = 0,
@@ -65,7 +70,7 @@ class RoiSession(BinaryMaskSession):
             raise ValueError("The editable ROI canvas must contain only 0 and 1.")
         
         key = self._plane_key(frame_index, channel, z_index)
-        self._edit_history.setdefault(key, []).append(current.copy())
+        self._edit_history.setdefault(key, []).append(disk_copy(current))
         del self._edit_history[key][:-50]
         
         updated = current.copy()
@@ -201,7 +206,7 @@ class RoiSession(BinaryMaskSession):
         Record the current state of a plane in the edit history.
         """
         key = self._plane_key(frame_index, channel, z_index)
-        self._edit_history.setdefault(key, []).append(current.copy())
+        self._edit_history.setdefault(key, []).append(disk_copy(current))
         del self._edit_history[key][:-50]
 
     def interpolated_display_mask_plane(
@@ -213,7 +218,7 @@ class RoiSession(BinaryMaskSession):
         Return a binary display plane from interpolated manual corrections.
         """
         completed = self._complete_manual_corrections(
-            self._mask, self._axes, interpolation_axis,
+            self._mask.copy(), self._axes, interpolation_axis,
             extrapolate_start, extrapolate_end)
         plane = self._select_plane(
             completed, frame_index=frame_index,
@@ -316,8 +321,8 @@ class RoiSession(BinaryMaskSession):
         """
         Clear the thresholded mask for one plane, preserving manual edits.
         """
-        selection = self._plane_selection(frame_index, channel, z_index)
-        current = self._mask[selection]
+        self._plane_selection(frame_index, channel, z_index)
+        current = self._mask.writable_plane(frame_index, self._resolve_channel(channel), z_index)
         current[self._manually_added(current)] = self.MANUALLY_INCLUDED
         current[self._manually_excluded(current)] = self.MANUALLY_EXCLUDED
         current[current == self.THRESHOLD_INCLUDED] = self.THRESHOLD_EXCLUDED
@@ -363,8 +368,7 @@ class RoiSession(BinaryMaskSession):
         Clear the mask for one plane, removing all threshold and manual edits.
         """
         key = self._plane_key(frame_index, channel, z_index)
-        self._mask[self._plane_selection(frame_index, channel, z_index)] = (
-            0)
+        super().clear_mask_plane(frame_index=frame_index, channel=channel, z_index=z_index)
         self._threshold_ranges.pop(key, None)
         self._edit_history.pop(key, None)
 
@@ -381,8 +385,8 @@ class RoiSession(BinaryMaskSession):
         if not np.all(np.isin(array, (0, 1, 2, 3, 4, 5))):
             raise ValueError(
                 "ROI planes must contain ordered threshold/manual states 0 to 5.")
-        self._mask[self._plane_selection(frame_index, channel, z_index)] = (
-            array.astype(np.uint8, copy=False))
+        self._plane_selection(frame_index, channel, z_index)
+        self._mask.set_plane(self._plane_key(frame_index, channel, z_index), array)
 
     def _plane_key(self, frame_index: int, channel: int | str, z_index: int) -> tuple[int, int, int]:
         """
@@ -415,8 +419,9 @@ class RoiSession(BinaryMaskSession):
             output_path, output_mask, channel_axes=output_axes,
             source_axes=self._axes, channel_label=channel_label,
             overwrite=overwrite)
+        self._mask.preserve_source(output_path)
         return self._reader.save_array(
-            output_mask.astype(np.uint16, copy=False),
+            disk_copy(output_mask, dtype=np.uint16),
             channel_labels=self._channel_labels,
             export_channels=output_labels, artifact_kind=ARTI_ROI,
             created_by=DIST_FITS, output_path=output_path,

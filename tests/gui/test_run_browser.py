@@ -3,9 +3,10 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QItemSelectionModel
 from PySide6.QtWidgets import QApplication
 
-from fits.gui.main_window.run_browser import RunDirectoryBrowser
+from fits.gui.main_window.run_browser import DirectoryBrowser, RunDirectoryBrowser
 
 
 def _application() -> QApplication:
@@ -51,7 +52,7 @@ def test_clicking_selected_path_again_clears_selection(tmp_path: Path) -> None:
     app = _application()
     image_path = tmp_path / "image.tif"
     image_path.touch()
-    browser = RunDirectoryBrowser()
+    browser = DirectoryBrowser()
     browser.set_root(tmp_path)
     app.processEvents()
     image_index = browser.model.index(str(image_path))
@@ -63,6 +64,27 @@ def test_clicking_selected_path_again_clears_selection(tmp_path: Path) -> None:
     browser._on_clicked(image_index)
     assert browser.selected_path is None
     assert browser.tree.currentIndex().isValid() is False
+
+
+def test_run_browser_preserves_multiple_selected_rows(tmp_path: Path) -> None:
+    app = _application()
+    paths = [tmp_path / "first", tmp_path / "second"]
+    for path in paths:
+        path.mkdir()
+    browser = RunDirectoryBrowser()
+    browser.set_root(tmp_path)
+    app.processEvents()
+    selection = browser.tree.selectionModel()
+    flags = (QItemSelectionModel.SelectionFlag.Select
+             | QItemSelectionModel.SelectionFlag.Rows)
+    for path in paths:
+        index = browser.model.index(str(path))
+        selection.select(index, flags)
+        browser._on_clicked(index)
+    # Clicking the current row must not clear the extended selection.
+    browser._on_clicked(browser.model.index(str(paths[-1])))
+    assert {Path(browser.model.filePath(index))
+            for index in selection.selectedRows()} == set(paths)
 
 
 def test_browser_can_promote_a_folder_selection_to_its_artifact(tmp_path: Path) -> None:

@@ -71,7 +71,7 @@ class DistanceProfileManager(AnalysisManager):
         dataframe = profiler.calculate(bin_width=self.settings.bin_width,
                                     maximum_bins=self.settings.maximum_bins,
                                     workers=self.settings.frame_workers,)
-        dataframe.insert(0, "experiment_id", self.state.experiment_id)
+        dataframe.insert(0, "experiment_id", self.state.analysis_experiment_id)
         roi_channel_position = dataframe.columns.get_loc("roi_channel")
         if not isinstance(roi_channel_position, (int, np.integer)):
             raise ValueError("Distance profile output must have one roi_channel column")

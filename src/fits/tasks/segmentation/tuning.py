@@ -174,31 +174,26 @@ class SegmentationTuningSession(FitsImageSession):
         self._validate_axis_index("T", frame_index, "Frame")
         self._validate_axis_index("Z", z_index, "Z")
 
-        indices: list[int | slice] = [slice(None)] * self._array.ndim
-        removed_axes: set[str] = set()
-        if "T" in self._axes:
-            indices[self._axes.index("T")] = frame_index
-            removed_axes.add("T")
-        if "Z" in self._axes and not volume:
-            indices[self._axes.index("Z")] = z_index
-            removed_axes.add("Z")
-
-        selected = self._array[tuple(indices)]
-        selected_axes = "".join(axis for axis in self._axes
-                                if axis not in removed_axes)
-        if "C" not in selected_axes:
-            if list(channel_indices) != [0]:
-                raise ValueError(
-                    f"Cannot select channels {list(channel_indices)} from axes {selected_axes!r}.")
-            return selected, selected_axes
-
-        channel_axis = selected_axes.index("C")
+        if "C" not in self.axes and list(channel_indices) != [0]:
+            raise ValueError(f"Cannot select channels {list(channel_indices)} from axes {self.axes!r}.")
+        selected_axes = self.axes.replace("T", "")
+        if not volume:
+            selected_axes = selected_axes.replace("Z", "")
         if len(channel_indices) == 1:
-            channel_selection: list[int | slice] = [slice(None)] * selected.ndim
-            channel_selection[channel_axis] = channel_indices[0]
-            return (selected[tuple(channel_selection)],
-                    selected_axes.replace("C", "", 1),)
-        return np.take(selected, channel_indices, axis=channel_axis), selected_axes
+            selected_axes = selected_axes.replace("C", "")
+        if selected_axes == "YX":
+            return self.display_frame(frame_index, channel_indices[0], z_index), "YX"
+        shape = tuple(len(channel_indices) if axis == "C"
+                      else self.shape[self.axes.index(axis)] for axis in selected_axes)
+        first = self.display_frame(frame_index, channel_indices[0], z_index)
+        output = np.empty(shape, dtype=first.dtype)
+        z_values = range(self.plane_count) if volume else (z_index,)
+        for output_channel, channel in enumerate(channel_indices):
+            for z in z_values:
+                positions = {"C": output_channel, "Z": z}
+                selection = tuple(positions.get(axis, slice(None)) for axis in selected_axes)
+                output[selection] = self.display_frame(frame_index, channel, z)
+        return output, selected_axes
 
     def _preview_settings(self,
                           channel_label: str,
@@ -220,6 +215,7 @@ class SegmentationTuningSession(FitsImageSession):
             return
         self._closed = True
         self._cache.close()
+        super().close()
 
     def __enter__(self) -> Self:
         self._ensure_open()

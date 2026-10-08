@@ -69,6 +69,11 @@ work by phase and experiment. The GUI opens the latest report when a run
 finishes; **Full Report** and report files in the directory browser can reopen
 it later.
 
+Quantification includes portable experiment paths and cell identifiers for
+grouping measurements across intensity channels and time. See
+[analysis identifiers](docs/analysis_identifiers.md) for their format, segmentation
+behavior, and the deferred handling of independent Z planes.
+
 ## Development setup
 
 Clone the repository together with its submodules, then synchronize the uv
@@ -195,6 +200,39 @@ Opening an image also loads the first reference and ROI masks beside it, in
 filename order. Selecting a mask file opens its sibling image and that specific
 mask in the matching tab.
 The former `fits-viewer` command has been removed.
+
+Segmentation tuning, Reference/ROI, and tracking viewers read image and mask
+planes on demand through `fits_io`. Each plane cache holds at most eight planes
+and 64 MiB. Edited mask planes are stored separately in a private temporary
+directory and remain available when you move between frames. Save writes the
+usual mask artifacts; closing the session removes its temporary edits. Tracking
+saves assemble a disk-backed array plane by plane.
+Interpolation, existing mask-channel merging, and segmentation volume previews
+still use their existing stack/volume processing routines.
+
+Tracking centroids and trajectory drawings are prepared in the background, with
+progress and the current stage shown at the bottom right. Frame navigation reuses
+already-drawn, native-resolution trajectory overlays for every frame. These
+are prepared once in temporary disk-backed storage, so forward navigation and
+arbitrary frame jumps need no trajectory redraw. The temporary overlay stack
+uses four bytes per pixel per frame and is released when its drawing is replaced
+or the viewer closes.
+Edits and undo invalidate only affected centroid frames. Compressed
+`.fits/viewer_cache/<mask filename>.centroids-c*-z*.npz` files inside each
+experiment store centroid tables and all track lengths. They load automatically;
+changed source files invalidate them. Valid legacy hidden caches beside masks
+migrate to this folder on use. On read-only folders the viewer keeps its
+in-memory cache if it cannot write the persistent cache.
+Length filters use inclusive first-to-last frame spans, including gaps, matching
+quantification's `track_length`. Filter results reuse the cached lengths rather
+than rescanning observations. Recent trajectory drawings are reused for filters
+selecting the same tracks with the same style. This temporary drawing cache
+retains at most four entries and 2 GiB; a drawing larger than this limit remains
+usable as the active display but is not retained for later reuse. New selections
+still prepare their first drawing in the background. Edits clear stale drawings,
+and closing or switching experiments releases the temporary cache. Typed filter
+values apply on Enter or when leaving the field, avoiding redraws for each digit.
+Viewers initially select the image channel matching the first loaded mask channel.
 
 To open the collection panel in preview mode without running the pipeline:
 

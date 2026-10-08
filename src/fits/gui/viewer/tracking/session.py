@@ -20,8 +20,9 @@ from fits.environment.constant import (
     StepName,
 )
 from fits.gui.viewer.tracking.rendering import render_selected_tracking_display
-from fits.gui.viewer.tracking.trajectories import calculate_track_centroids
+from fits.gui.viewer.tracking.centroids import CentroidCache
 from fits.interaction import FitsImageSession
+from fits.interaction.planes import PlaneStore, disk_copy
 from fits.tasks.segmentation.local_seg import (
     AddEditBackend,
     AddEditProposal,
@@ -104,7 +105,7 @@ def _register_mask_translation(
         ecc_score, warp = cv2.findTransformECC(
             reference, moving, warp, cv2.MOTION_TRANSLATION,
             (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 1e-4),
-            None, 3)
+            np.empty((0, 0), dtype=np.uint8), 3)
         confidence = float(ecc_score)
     except cv2.error:
         confidence = float(phase_response)
@@ -120,7 +121,7 @@ def _register_mask_translation(
         mask.astype(np.uint8),
         np.asarray([[1.0, 0.0, shift_x], [0.0, 1.0, shift_y]], dtype=np.float32),
         (shape[1], shape[0]), flags=cv2.INTER_NEAREST,
-        borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        borderMode=cv2.BORDER_CONSTANT, borderValue=(0.0,))
     return np.asarray(translated, dtype=bool), (shift_y, shift_x), confidence
 
 
@@ -150,6 +151,7 @@ class TrackingViewerSession:
                  image_path: str | Path | None = None, *,
                  add_edit_backend: AddEditBackend = DEFAULT_MICROSAM_BACKEND) -> None:
         self._add_edit_backend = add_edit_backend
+        self._tracks: PlaneStore | NDArray[Any]
         self.source_path = Path(tracking_path).expanduser().resolve()
         tracking_names = {
             FITS_MASK_TRACK,
@@ -163,15 +165,16 @@ class TrackingViewerSession:
         if self.source_path.name == FITS_ARRAY_NAME:
             self.image_session = FitsImageSession(self.source_path)
             self._reader = self.image_session._reader
-            self._tracks = np.zeros(self.image_session.shape, dtype=np.uint32)
+            self._tracks = PlaneStore(self.image_session.axes, self.image_session.shape,
+                                      dtype=np.uint32)
             self._axes = self.image_session.axes
             self._channel_labels = self.image_session.channel_labels
             self._started_from_image = True
         else:
             self._reader = FitsIO.from_path(self.source_path)
-            result = self._reader.get_array()
-            self._tracks = np.asarray(result.array)
-            self._axes = result.axes
+            self._axes = self._reader.axes
+            self._tracks = PlaneStore(self._axes, tuple(self._reader.reader.shape),
+                                      reader=self._reader, dtype=self._reader.reader.dtype)
             self._channel_labels = tuple(self._reader.channel_labels)
             associated_image = (Path(image_path).expanduser().resolve()
                                 if image_path is not None
@@ -179,7 +182,7 @@ class TrackingViewerSession:
             self.image_session = (FitsImageSession(associated_image)
                                   if associated_image.is_file() else None)
             self._started_from_image = False
-        self._centroid_cache: dict[tuple[int, int], dict[int, NDArray[np.float64]]] = {}
+        self._centroid_state = CentroidCache()
         self._split_predictor = SplitPredictor()
         self._has_edits = False
         self._operations_used: set[str] = set()
@@ -258,6 +261,8 @@ class TrackingViewerSession:
         Return one selected ``YX`` plane from the tracking artifact.
 
         """
+        if isinstance(self._tracks, PlaneStore):
+            return self._tracks.plane(frame_index, self._resolve_channel(channel), z_index)
         selection: list[int | slice] = [slice(None)] * self._tracks.ndim
         for axis, value in (("T", frame_index),
                             ("C", self._resolve_channel(channel)),
@@ -274,22 +279,44 @@ class TrackingViewerSession:
             raise ValueError(f"A tracking plane must resolve to YX; got {remaining!r}.")
         return plane
 
+    def _editable_frame(self, frame: int, channel: int | str, z: int) -> NDArray:
+        if isinstance(self._tracks, PlaneStore):
+            return self._tracks.writable_plane(frame, self._resolve_channel(channel), z)
+        return self.tracked_frame(frame, channel, z)
+
+    def centroid_frame(self, frame_index: int, channel: int, z_index: int) -> NDArray:
+        """Scan pristine source planes without evicting or locking the display cache."""
+        if (isinstance(self._tracks, PlaneStore) and self._tracks.reader is not None
+                and not getattr(self, "_has_edits", False)):
+            return self._tracks.reader.get_plane(frame_index, channel, z_index).array
+        return self.tracked_frame(frame_index, channel, z_index)
+
     def track_centroids(self, channel: int | str = 0, z_index: int = 0,) -> dict[int, NDArray[np.float64]]:
         """
 
         Return cached centroid observations for every nonzero track.
 
         """
-        channel_index = self._resolve_channel(channel)
-        cache_key = (channel_index, z_index)
-        cached = self._centroid_cache.get(cache_key)
-        if cached is None:
-            cached = calculate_track_centroids(self.tracked_frame,
-                                                frame_count=self.frame_count,
-                                                channel_index=channel_index,
-                                                z_index=z_index,)
-            self._centroid_cache[cache_key] = cached
-        return cached
+        result = self.centroid_cache.calculate(
+            self.centroid_frame, count=self.frame_count,
+            channel=self._resolve_channel(channel), z=z_index, source=self.centroid_source)
+        if result is None:
+            raise RuntimeError("Tracking masks changed during centroid calculation.")
+        return result
+
+    @property
+    def centroid_source(self) -> Path | None:
+        if getattr(self, "_has_edits", False) or getattr(self, "_started_from_image", False):
+            return None
+        return getattr(self, "source_path", None)
+
+    @property
+    def centroid_cache(self) -> CentroidCache:
+        # Also supports lightweight sessions used by external callers/tests.
+        cache = getattr(self, "_centroid_state", None)
+        if cache is None:
+            cache = self._centroid_state = CentroidCache()
+        return cache
 
     def track_ids_matching(self,
                            channel: int | str,
@@ -298,28 +325,10 @@ class TrackingViewerSession:
                            value: int,
                            maximum: int | None = None,
                            ) -> frozenset[int]:
-        """Return track IDs whose number of observed frames matches a condition."""
-        lengths = {
-            track_id: len(points)
-            for track_id, points in self.track_centroids(channel, z_index).items()
-        }
-        comparisons = {
-            "lt": lambda length: length < value,
-            "le": lambda length: length <= value,
-            "eq": lambda length: length == value,
-            "ne": lambda length: length != value,
-            "ge": lambda length: length >= value,
-            "gt": lambda length: length > value,
-            "between": lambda length: maximum is not None and value <= length <= maximum,
-        }
-        try:
-            comparison = comparisons[operator]
-        except KeyError as error:
-            raise ValueError(f"Unknown track-length comparison: {operator!r}.") from error
-        if operator == "between" and (maximum is None or maximum < value):
-            raise ValueError("The maximum track length must be at least the minimum.")
-        return frozenset(track_id for track_id, length in lengths.items()
-                         if comparison(length))
+        """Return tracks matching their inclusive frame span, including gaps."""
+        self.track_centroids(channel, z_index)
+        return self.centroid_cache.matching(self._resolve_channel(channel), z_index,
+                                           operator, value, maximum)
 
     def filtered_tracked_frame(self,
                                frame_index: int,
@@ -413,7 +422,7 @@ class TrackingViewerSession:
         assigned_ids: list[int] = []
         keep_original = True
         for frame_index in changed_frames:
-            labels = self.tracked_frame(frame_index, channel, z_index)
+            labels = self._editable_frame(frame_index, channel, z_index)
             components = np.zeros(labels.shape, dtype=np.int32)
             label(labels == track_id, output=components)
             component_count = int(np.max(components))
@@ -435,7 +444,7 @@ class TrackingViewerSession:
             raise ValueError("The selected track has no masks in this channel and Z plane.")
         self._remember_undo(channel, z_index, changed_frames)
         for frame_index in changed_frames:
-            labels = self.tracked_frame(frame_index, channel, z_index)
+            labels = self._editable_frame(frame_index, channel, z_index)
             labels[labels == track_id] = 0
         self._invalidate_centroids(channel, z_index)
         self._has_edits = True
@@ -508,7 +517,7 @@ class TrackingViewerSession:
 
     def apply_split(self, preview: dict[str, Any]) -> int:
         """Commit a previously calculated split to its selected frame."""
-        labels = self.tracked_frame(
+        labels = self._editable_frame(
             preview["frame_index"], preview["channel"], preview["z_index"])
         regions = preview["regions"]
         track_id = preview["track_id"]
@@ -529,7 +538,7 @@ class TrackingViewerSession:
     def delete_mask(self, track_id: int, frame_index: int,
                     channel: int | str, z_index: int) -> None:
         """Delete one track mask from the current frame only."""
-        labels = self.tracked_frame(frame_index, channel, z_index)
+        labels = self._editable_frame(frame_index, channel, z_index)
         selected = labels == track_id
         if not np.any(selected):
             raise ValueError("The selected track has no mask in the current frame.")
@@ -666,7 +675,7 @@ class TrackingViewerSession:
 
     def apply_add_edit(self, preview: dict[str, Any]) -> None:
         """Insert a new mask or replace the selected mask in the current frame."""
-        labels = self.tracked_frame(
+        labels = self._editable_frame(
             preview["frame_index"], preview["mask_channel"], preview["z_index"])
         track_id = int(preview["track_id"])
         replace_existing = bool(preview.get("replace_existing", False))
@@ -768,12 +777,12 @@ class TrackingViewerSession:
             return None
         entry = history.pop()
         for frame, plane in zip(entry.frames, entry.planes, strict=True):
-            self.tracked_frame(frame, entry.channel, entry.z_index)[...] = plane
+            self._editable_frame(frame, entry.channel, entry.z_index)[...] = plane
         self._has_edits = entry.has_edits
         self._operations_used = set(entry.operations_used)
         self._edited_mask_channels = set(entry.edited_mask_channels)
         self._prediction_channels = [dict(pair) for pair in entry.prediction_channels]
-        self._invalidate_centroids(entry.channel, entry.z_index)
+        self._invalidate_centroids(entry.channel, entry.z_index, entry.frames)
         return min(entry.frames) if entry.frames else None
 
     def _remember_undo(self, channel: int | str, z_index: int,
@@ -787,8 +796,8 @@ class TrackingViewerSession:
             channel=channel_index,
             z_index=z_index,
             frames=unique_frames,
-            planes=tuple(self.tracked_frame(
-                frame, channel_index, z_index).copy() for frame in unique_frames),
+            planes=tuple(disk_copy(self.tracked_frame(
+                frame, channel_index, z_index)) for frame in unique_frames),
             has_edits=getattr(self, "_has_edits", False),
             operations_used=frozenset(getattr(self, "_operations_used", set())),
             edited_mask_channels=frozenset(
@@ -827,6 +836,10 @@ class TrackingViewerSession:
 
     def _frames_for(self, track_id: int, channel: int | str,
                     z_index: int) -> set[int]:
+        cached = self.centroid_cache.cached(self._resolve_channel(channel), z_index)
+        if cached is not None:
+            points = cached.get(track_id)
+            return set() if points is None else {int(frame) for frame in points[:, 0]}
         return {frame for frame in range(self.frame_count)
                 if np.any(self.tracked_frame(frame, channel, z_index) == track_id)}
 
@@ -837,17 +850,31 @@ class TrackingViewerSession:
             labels = self.tracked_frame(frame, channel, z_index)
             selected = labels == source
             if np.any(selected):
+                labels = self._editable_frame(frame, channel, z_index)
                 labels[selected] = target
                 changed = True
         return changed
 
-    def _invalidate_centroids(self, channel: int | str, z_index: int) -> None:
-        self._centroid_cache.pop((self._resolve_channel(channel), z_index), None)
+    def _invalidate_centroids(self, channel: int | str, z_index: int,
+                              frames: tuple[int, ...] | None = None) -> None:
+        channel_index = self._resolve_channel(channel)
+        if frames is None:
+            history = getattr(self, "_undo_history", [])
+            last = history[-1] if history else None
+            frames = (last.frames if last is not None
+                      and last.channel == channel_index and last.z_index == z_index
+                      else tuple(range(self.frame_count)))
+        assert frames is not None
+        self.centroid_cache.invalidate(channel_index, z_index, frames)
 
     def _next_track_id(self) -> int:
-        next_id = int(np.max(self._tracks, initial=0)) + 1
-        if np.issubdtype(self._tracks.dtype, np.integer):
-            if next_id > np.iinfo(self._tracks.dtype).max:
+        next_id = (max((int(np.max(self._tracks.plane(*key), initial=0))
+                        for key in self._tracks.keys()), default=0) + 1
+                   if isinstance(self._tracks, PlaneStore)
+                   else int(np.max(self._tracks, initial=0)) + 1)
+        dtype = self._tracks.dtype
+        if dtype is not None and np.issubdtype(dtype, np.integer):
+            if next_id > np.iinfo(dtype).max:
                 raise ValueError("No unused track IDs remain in this label data type.")
         return next_id
 
@@ -950,6 +977,8 @@ class TrackingViewerSession:
             created_by=DIST_FITS,
             custom_metadata=custom_metadata,
         ).with_fitsio(axes=self._axes)
+        if isinstance(self._tracks, PlaneStore):
+            self._tracks.preserve_source(output_path)
         saved = self._reader.save_array(
             output, metadata=payload, output_path=output_path)
         return saved, metadata
@@ -1020,3 +1049,12 @@ class TrackingViewerSession:
         if axis not in self._axes:
             return 1
         return self._tracks.shape[self._axes.index(axis)]
+
+    def close(self) -> None:
+        self.centroid_cache.clear()
+        self._undo_history.clear()
+        self._original_add_edit_masks.clear()
+        if isinstance(self._tracks, PlaneStore):
+            self._tracks.close()
+        if self.image_session is not None:
+            self.image_session.close()

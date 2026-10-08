@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal, overload
 
 import numpy as np
 from fits_io import FitsIO
 from numpy.typing import NDArray
 
 from fits.environment.constant import FITS_ROI_TEMPLATE
+from fits.interaction.planes import PlaneStore, aligned_mask_store
 from fits.tasks.reference_mask.artifact import merge_reference_channels, validate_reference_label
 
 ROI_MASK_ENCODING = "ordered-threshold-manual-v2"
@@ -35,10 +37,25 @@ def saved_roi_channels(path: Path) -> tuple[str, ...]:
     return tuple(FitsIO.from_path(path).channel_labels) if path.is_file() else ()
 
 
+@overload
+def load_roi_artifact(roi_path: str | Path, *, source_path: Path,
+                        source_axes: str, source_shape: tuple[int, ...],
+                        source_channels: tuple[str, ...], lazy: Literal[True],
+                        ) -> tuple[PlaneStore, str, tuple[str, ...]]: ...
+
+
+@overload
+def load_roi_artifact(roi_path: str | Path, *, source_path: Path,
+                        source_axes: str, source_shape: tuple[int, ...],
+                        source_channels: tuple[str, ...], lazy: Literal[False] = False,
+                        ) -> tuple[NDArray[np.uint8], str, tuple[str, ...]]: ...
+
+
 def load_roi_artifact(roi_path: str | Path, *, source_path: Path,
                       source_axes: str, source_shape: tuple[int, ...],
                       source_channels: tuple[str, ...],
-                      ) -> tuple[NDArray[np.uint8], str, tuple[str, ...]]:
+                      lazy: bool = False,
+                      ) -> tuple[NDArray[np.uint8] | PlaneStore, str, tuple[str, ...]]:
     """
     Load and align a validated ROI artifact with its source image.
     """
@@ -50,6 +67,15 @@ def load_roi_artifact(roi_path: str | Path, *, source_path: Path,
             f"ROI mask must be an existing {prefix}*{suffix} file beside the source image.")
     label = validate_reference_label(path.name[len(prefix):len(path.name) - len(suffix)])
     reader = FitsIO.from_path(path)
+    if lazy:
+        encoding = reader.metadata.custom_metadata.get("roi_mask_encoding")
+        if encoding != ROI_MASK_ENCODING:
+            raise ValueError(f"ROI mask encoding must be {ROI_MASK_ENCODING!r}; got {encoding!r}.")
+        store = aligned_mask_store(
+            reader, source_axes=source_axes, source_shape=source_shape,
+            source_channels=source_channels,
+            transform=lambda plane: _normalize_roi_encoding(plane, encoding=encoding))
+        return store, label, tuple(reader.channel_labels)
     loaded = reader.get_array()
     array = np.asarray(loaded.array)
     axes = loaded.axes

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QDir, QModelIndex, Signal, Slot
 from PySide6.QtGui import QStandardItemModel
-from PySide6.QtWidgets import QFileSystemModel, QHBoxLayout, QLabel, QTreeView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QFileSystemModel, QHBoxLayout, QLabel, QTreeView, QVBoxLayout, QWidget
 
 
 class DirectoryBrowser(QWidget):
@@ -52,7 +52,7 @@ class DirectoryBrowser(QWidget):
         self.selection_label = QLabel("")
         self.selection_label.setWordWrap(True)
         self.selection_label.setStyleSheet("color: #b8b8b8;")
-        selection_row.addWidget(self.selection_label, 1)
+        layout.addWidget(self.selection_label)
         layout.addLayout(selection_row)
         self.tree.setModel(self.empty_model)
         self.selection_label.hide()
@@ -118,7 +118,8 @@ class DirectoryBrowser(QWidget):
     @Slot(QModelIndex)
     def _on_clicked(self, index: QModelIndex) -> None:
         selected = Path(self.model.filePath(index)).resolve()
-        if selected == self._selected_path:
+        if (selected == self._selected_path
+                and self.tree.selectionMode() == QAbstractItemView.SelectionMode.SingleSelection):
             self.tree.clearSelection()
             self.tree.setCurrentIndex(QModelIndex())
             self._selected_path = None
@@ -152,3 +153,4 @@ class RunDirectoryBrowser(DirectoryBrowser):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("Run directory contents", parent=parent)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)

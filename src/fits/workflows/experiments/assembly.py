@@ -20,6 +20,7 @@ def assemble_experiment_states(run_dir: Path,
     """
     raw_states = [ExperimentState.init(raw_file.parent,
                                         raw_file,
+                                        run_dir=run_dir,
                                         fits_meta=FitsMeta.init(user_name=user_name),)
                     for raw_file in raw_files]
     

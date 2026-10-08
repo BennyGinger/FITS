@@ -23,6 +23,8 @@ class ExperimentState:
     completed_steps: tuple[str, ...] = ()
     updated_at: datetime | None = None
     metadata: FitsMeta = field(default_factory=FitsMeta)
+    # Runtime context is rebound on discovery, never saved as an absolute path.
+    run_dir: Path | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def init(cls,
@@ -30,12 +32,14 @@ class ExperimentState:
             original_image: Path,
             *,
             fits_meta: FitsMeta | None = None,
+            run_dir: Path | None = None,
             ) -> ExperimentState:
         """
         Create an initial state for a raw image.
         """
         artifacts: dict[ArtifactType, Path] = {ARTI_RAW: cls._to_relative(workdir, original_image)}
         return cls(workdir=workdir,
+                    run_dir=run_dir,
                     artifacts=artifacts,
                     updated_at=datetime.now(),
                     metadata=fits_meta if fits_meta is not None else FitsMeta(),)
@@ -105,6 +109,17 @@ class ExperimentState:
         Return the stable branch identifier derived from its work directory.
         """
         return self.workdir.as_posix()
+
+    @property
+    def analysis_experiment_id(self) -> str:
+        """Identify a branch by run folder name and its full relative subtree.
+
+        Standalone callers without a run directory use the work folder's name.
+        Supply ``run_dir`` when combining branches from nested folders.
+        """
+        root = (self.run_dir if self.run_dir is not None else self.workdir).resolve()
+        relative = self.workdir.resolve().relative_to(root)
+        return (Path(root.name) / relative).as_posix()
 
     @property
     def metadata_dump(self) -> dict[str, Any]:

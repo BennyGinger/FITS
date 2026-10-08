@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from time import monotonic
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QApplication, QStyleOptionGraphicsItem
 from skimage.draw import disk
@@ -29,6 +31,15 @@ from fits.workflows.metadata import FitsMeta
 
 def _app() -> QApplication:
     return QApplication.instance() or QApplication([])
+
+
+def _wait_trajectories(window: TrackingViewerWindow) -> None:
+    deadline = monotonic() + 5
+    while (window._trajectory_thread is not None
+           or window._trajectory_ready_key != window._trajectory_key()):
+        QApplication.processEvents()
+        QTest.qWait(5)
+        assert monotonic() < deadline, window.status_label.text()
 
 
 def test_batched_track_paths_do_not_fill_between_lines() -> None:
@@ -59,7 +70,6 @@ def _editing_session(tracks: np.ndarray) -> TrackingViewerSession:
     session._tracks = tracks
     session._axes = "TYX"
     session._channel_labels = ("Channel 1",)
-    session._centroid_cache = {}
     session._split_predictor = SplitPredictor()
     session._has_edits = False
     return session
@@ -90,14 +100,14 @@ def test_tracking_session_merge_link_and_stop_recalculate_tracks() -> None:
     conflict_data[:, 2, 2] = 60
     conflict = _editing_session(conflict_data)
     assert conflict.link_tracks((50, 60), 0, 0) == (61, True)
-    assert set(np.unique(conflict._tracks)) == {0, 61}
+    assert set(np.unique(conflict_data)) == {0, 61}
 
     stop_data = np.zeros((3, 3, 3), dtype=np.uint16)
     stop_data[:, 1, 1] = 70
     stop = _editing_session(stop_data)
     assert stop.stop_track(70, 0, 0, 0) == 71
     assert stop.tracked_frame(0)[1, 1] == 70
-    assert np.all(stop._tracks[1:, 1, 1] == 71)
+    assert np.all(stop_data[1:, 1, 1] == 71)
 
     unlink_data = np.zeros((3, 8, 8), dtype=np.uint16)
     unlink_data[:, 1:3, 1:3] = 80
@@ -107,9 +117,9 @@ def test_tracking_session_merge_link_and_stop_recalculate_tracks() -> None:
     assigned = unlink.unlink_track(80, 0, 0)
     assert len(assigned) == 4
     assert len(set(assigned)) == 4
-    assert np.array_equal(unlink._tracks != 0, geometry)
+    assert np.array_equal(unlink_data != 0, geometry)
     assert unlink.undo_last_edit() == 0
-    assert np.all(unlink._tracks[geometry] == 80)
+    assert np.all(unlink_data[geometry] == 80)
     assert merge._operations_used == {"merge"}
     assert link._operations_used == {"link"}
     assert stop._operations_used == {"stop"}
@@ -124,10 +134,10 @@ def test_delete_track_removes_all_masks_and_is_undoable() -> None:
 
     session.delete_track(7, 0, 0)
 
-    assert not np.any(session._tracks == 7)
-    assert np.any(session._tracks == 9)
+    assert not np.any(tracks == 7)
+    assert np.any(tracks == 9)
     assert session.undo_last_edit() == 0
-    assert np.count_nonzero(session._tracks == 7) == 8
+    assert np.count_nonzero(tracks == 7) == 8
 
 def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
     tmp_path: Path,
@@ -141,7 +151,6 @@ def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
     session._tracks = tracks
     session._axes = "TCYX"
     session._channel_labels = ("Blue mask", "Red mask")
-    session._centroid_cache = {}
     session._operations_used = {"delete", "add"}
     session._edited_mask_channels = {0}
     session._prediction_channels = [
@@ -464,6 +473,12 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
             build_payload=build_payload,
             save_array=save_tracking),
     }
+    for path, array in ((image_path, image), (track_path, tracks)):
+        reader = readers[path]
+        reader.axes = "TCYX"
+        reader.reader = SimpleNamespace(shape=array.shape, dtype=array.dtype, img_path=path)
+        reader.get_plane = lambda frame_index=0, channel=0, z_index=0, array=array: (
+            SimpleNamespace(array=array[frame_index, channel], axes="YX"))
     monkeypatch.setattr(
         "fits.interaction.image.FitsIO.from_path", lambda path: readers[Path(path)])
     monkeypatch.setattr(
@@ -474,7 +489,7 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert empty_session.started_from_image
     assert empty_session.axes == "TCYX"
     assert empty_session.track_channel_labels == ("GFP", "DAPI")
-    assert not np.any(empty_session._tracks)
+    assert not np.any(empty_session.tracked_frame())
     assert empty_session.next_track_id() == 1
 
     window = TrackingViewerWindow(tracking_path=track_path)
@@ -521,12 +536,17 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     window._toggle_track_selection(7)
     assert window.track_selection_label.text() == "Selected tracks: 7"
     assert "font-weight: bold" in window.track_selection_label.styleSheet()
+    _wait_trajectories(window)
     assert len(window._track_id_items) == 1
+    _wait_trajectories(window)
     assert window._track_id_items[0].toPlainText() == "7"
+    _wait_trajectories(window)
     assert window._track_id_items[0].pos().x() == 8
+    _wait_trajectories(window)
     assert window._track_id_items[0].pos().y() == -1
     window.track_id_display_mode.setCurrentIndex(
         window.track_id_display_mode.findData("none"))
+    _wait_trajectories(window)
     assert window._track_id_items == []
     window.track_id_display_mode.setCurrentIndex(
         window.track_id_display_mode.findData("selected"))
@@ -621,6 +641,7 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert not window.centroid_size.isEnabled()
     window.show_centroids.setChecked(True)
     assert window.centroid_size.isEnabled()
+    _wait_trajectories(window)
     assert len(window._track_path_items) == 1
     centroids = window._tracking_session.track_centroids("GFP", 0)
     assert window._tracking_session.track_centroids("GFP", 0) is centroids
@@ -633,9 +654,11 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert session.track_ids_matching("GFP", 0, "ge", 2) == {7}
     assert session.track_ids_matching("GFP", 0, "gt", 2) == set()
     assert session.track_ids_matching("GFP", 0, "between", 1, 2) == {7}
+    _wait_trajectories(window)
     x_values, _ = window._track_path_items[0].getData()
     assert len(x_values) == 1
     window.frame_slider.setValue(1)
+    _wait_trajectories(window)
     x_values, _ = window._track_path_items[0].getData()
     assert len(x_values) == 2
     assert not hasattr(window, "save_display_button")
@@ -644,6 +667,7 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert window.channel_combo.currentText() == "DAPI"
     assert window.mask_channel_combo.currentText() == "RFP"
     assert window.image_viewer.mask_item.image[1, 1, 3] == 255
+    _wait_trajectories(window)
     assert len(window._track_path_items) == 1
     window.raw_image_toggle.setChecked(False)
     assert not window.image_viewer.image_item.isVisible()
@@ -655,6 +679,7 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     window.filter_operator.setCurrentIndex(window.filter_operator.findData("gt"))
     window.filter_value.setValue(2)
     assert not np.any(window.image_viewer.mask_item.image[..., 3])
+    _wait_trajectories(window)
     assert window._track_path_items[0].getData()[0].size == 0
     window.filter_operator.setCurrentIndex(window.filter_operator.findData("ge"))
     assert np.any(window.image_viewer.mask_item.image[..., 3])
@@ -698,6 +723,7 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert view_only_window.save_display_button.isEnabled()
     view_only_window._select_single_track(7)
     assert view_only_window._selected_track_ids == [7]
+    _wait_trajectories(view_only_window)
     assert [item.toPlainText() for item in view_only_window._track_id_items] == ["7"]
     view_only_window._select_single_track(11)
     assert view_only_window._selected_track_ids == [11]

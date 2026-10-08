@@ -42,13 +42,14 @@ def save_experiment_state(state: ExperimentState) -> ExperimentState:
     return state
 
 
-def load_experiment_state(workdir: Path) -> ExperimentState:
+def load_experiment_state(workdir: Path, *, run_dir: Path | None = None) -> ExperimentState:
     """
     Load an experiment state using the supplied work directory as authoritative.
     """
     json_path = workdir / STATE_FILENAME
     raw = json.loads(json_path.read_text(encoding="utf-8"))
-    return ExperimentState(workdir=workdir, **deserialize_experiment_state(raw))
+    return ExperimentState(workdir=workdir, run_dir=run_dir,
+                           **deserialize_experiment_state(raw))
 
 
 def discover_saved_states(run_dir: Path) -> list[ExperimentState]:
@@ -58,7 +59,7 @@ def discover_saved_states(run_dir: Path) -> list[ExperimentState]:
     states: list[ExperimentState] = []
     for json_path in run_dir.rglob(STATE_FILENAME):
         try:
-            states.append(load_experiment_state(json_path.parent))
+            states.append(load_experiment_state(json_path.parent, run_dir=run_dir))
         except Exception as exc:
             logger.warning("Failed to load experiment state at %s: %s", json_path, exc)
     return states

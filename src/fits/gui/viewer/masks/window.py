@@ -197,14 +197,21 @@ class MaskDrawingWindow(ImageToolWindow):
             self._reference_session.axes, self._reference_session.shape)
         self.roi_panel.set_available_axes(
             self._roi_session.axes, self._roi_session.shape)
+        self.channel_combo.blockSignals(True)
         self.channel_combo.clear()
         self.channel_combo.addItems(self._image_session.channel_labels)
         active_session = self._active_binary_session()
+        if active_session is not None and not active_session.loaded_channels:
+            if self._reference_session.loaded_channels:
+                active_session = self._reference_session
+            elif self._roi_session.loaded_channels:
+                active_session = self._roi_session
         selected_channel = (active_session.loaded_channels[0]
                             if active_session is not None and active_session.loaded_channels
                             else None)
         channel_index = self.channel_combo.findText(str(selected_channel))
         self.channel_combo.setCurrentIndex(max(channel_index, 0))
+        self.channel_combo.blockSignals(False)
         self.frame_slider.setRange(0, self._image_session.frame_count - 1)
         self.z_slider.setRange(0, self._image_session.plane_count - 1)
         self.frame_slider.setValue(0)
@@ -240,6 +247,10 @@ class MaskDrawingWindow(ImageToolWindow):
                 self.roi_panel.set_threshold_range(*threshold_range)
 
     def _clear_tools(self) -> None:
+        if self._reference_session is not None:
+            self._reference_session.close()
+        if self._roi_session is not None:
+            self._roi_session.close()
         self._reference_session = None
         self._roi_session = None
         self._reference_path = None

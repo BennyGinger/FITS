@@ -16,6 +16,14 @@ Pipeline robustness and performance
     a performance limitation.
 [ ] Define realistic cancellation guarantees for each processing backend.
 
+Analysis identifiers: deferred Z-plane support
+----------------------------------------------
+[ ] If extraction gains independent per-Z-plane measurements, include the
+    explicit plane index in cell_id to distinguish labels reused across planes.
+    Current extraction max-projects Z and deliberately omits it from IDs.
+    Do not use a moving 3D object's centroid_z as an identity component.
+    See analysis_identifiers.md for the current experiment/cell ID convention.
+
 GUI settings validation before starting a run
 --------------------------------------------
 [x] Check critical settings for enabled steps before launching the pipeline.
@@ -23,6 +31,30 @@ GUI settings validation before starting a run
     segmentation channel, or tracking channel prevents leaving the affected
     step/phase and disables Run. Disabled steps do not require their unused
     settings, and the segmentation tuner may choose its initial channel.
+
+Batch channel-label renaming — proposal only
+-------------------------------------------
+[ ] Add a tool to inspect and rename channel labels in one or more selected
+    experiment folders, reusing fits_io's channel-label renaming functionality.
+    Keep inspection, validation, and rewriting outside the GUI so the same
+    logic is available through the CLI and the GUI's multiple-folder selection.
+[ ] Before writing, collect labels and channel mappings from every artifact
+    (images, segmentation/tracking masks, reference masks, and ROI masks).
+    Compare labels by source-channel identity: compact artifacts can legitimately
+    contain different subsets or channel orders. Report conflicting labels and
+    incompatible mappings with the affected folders and artifact filenames;
+    require ambiguities to be resolved before applying a batch rename.
+[ ] Preview the old-to-new label mapping and affected files. Change labels only:
+    preserve source_channel_indices, artifact_channel_indices, channel order,
+    pixel data, and object/track IDs. Reject duplicate or ambiguous target labels.
+[ ] Inspect associated parquet files and update channel-label values using the
+    same mapping, particularly intensity_channel and object_channel. Audit other
+    channel-bearing columns, table metadata, and settings references that may
+    retain old labels. Preserve table schemas and unrelated values; do not use
+    unrestricted text replacement. Flag references that cannot be mapped safely.
+[ ] Plan writes so artifacts and their tables remain consistent, and report
+    which files were updated or failed. This entry records future work only;
+    implementation is deferred.
 
 Mask label consistency across experiments — proposal only
 --------------------------------------------------------

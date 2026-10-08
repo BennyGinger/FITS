@@ -41,6 +41,8 @@ def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
     window = FitsMainWindow(adapter)
 
     assert window.step_tree.topLevelItemCount() == len(WORKFLOW_ORDER)
+    assert window.step_tree.indexOfTopLevelItem(window._step_items[StepName.EXTRACT]) < (
+        window.step_tree.indexOfTopLevelItem(window._step_items[StepName.DISTANCE_PROFILE]))
     assert set(window._editors) == set(StepName)
     assert window.runtime_editor is not None
     assert window.runtime_editor.widgets["execution"].isEnabled() is False
@@ -132,6 +134,69 @@ def test_phase_tabs_unlock_when_prepared_image_appears(tmp_path) -> None:
     assert window.settings_stack.currentWidget() is window._editors[StepName.SEGMENT]
     assert not window._step_items[StepName.SEGMENT].isHidden()
     assert window._step_items[StepName.CONVERT].isHidden()
+    window.close()
+
+
+@pytest.mark.parametrize("prepared_before,prepared_after", [
+    (False, False), (False, True), (True, True),
+])
+def test_settings_remain_editable_during_run(
+        tmp_path, prepared_before, prepared_after) -> None:
+    app = _application()
+    source = tmp_path / "fits_array.tif"
+    if prepared_before:
+        source.touch()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.user_name = "test"
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
+    for step in WORKFLOW_ORDER:
+        adapter.set_step_enabled(step, step == StepName.CONVERT)
+    window = FitsMainWindow(adapter)
+    app.processEvents()
+    saved_path = adapter.save_to_run_dir()
+    saved_settings = saved_path.read_bytes()
+    assert window.phase_tabs.isTabEnabled(1) == prepared_before
+
+    window._set_running(True)
+
+    assert all(window.phase_tabs.isTabEnabled(i) for i in range(4))
+    assert window.step_tree.isEnabled()
+    assert window.settings_stack.isEnabled()
+    assert window.segtune_button.isEnabled() == prepared_before
+    assert not window.tracking_viewer_button.isEnabled()
+    for button in (window.run_button, window.load_button, window.save_button,
+                   window.browse_button):
+        assert not button.isEnabled()
+    assert not window.run_dir_edit.isEnabled()
+    assert not window.user_name_edit.isEnabled()
+
+    window.phase_tabs.setCurrentIndex(1)
+    item = window._step_items[StepName.BG_SUB]
+    item.setCheckState(0, Qt.CheckState.Checked)
+    editor = window._editors[StepName.BG_SUB]
+    editor.widgets["sigma"].setValue(2.5)
+    window._refresh_phase_access()
+
+    assert window.settings_stack.currentWidget() is editor
+    assert editor.widgets["sigma"].isEnabled()
+    assert adapter.step_enabled(StepName.BG_SUB)
+    assert adapter.field_value(StepName.BG_SUB, "sigma") == 2.5
+    assert window.phase_tabs.currentIndex() == 1
+    assert window._phases_unlocked == prepared_before
+    assert not window.run_button.isEnabled()
+    assert window.run_button.text() == "Running…"
+    assert saved_path.read_bytes() == saved_settings
+
+    if prepared_after:
+        source.touch()
+    window._set_running(False)
+
+    assert window.phase_tabs.isTabEnabled(1) == prepared_after
+    assert window.segtune_button.isEnabled() == prepared_after
+    assert adapter.field_value(StepName.BG_SUB, "sigma") == 2.5
+    assert window.run_button.text() == (
+        "Run pipeline" if prepared_after else "Convert experiment(s)")
     window.close()
 
 
@@ -345,6 +410,59 @@ def test_loading_run_directory_settings_does_not_emit_navigation_warnings(
     window.close()
 
 
+def test_switching_folders_loads_own_settings_or_fresh_template(tmp_path) -> None:
+    app = _application()
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    empty = tmp_path / "empty"
+    for folder in (first, second, empty):
+        folder.mkdir()
+    for folder, labels, sigma in ((first, ["GFP"], 3.0),
+                                  (second, ["RFP", "BFP"], 7.0)):
+        saved = SettingsAdapter()
+        saved.run_dir = str(folder)
+        saved.user_name = folder.name
+        saved.set_field_value(StepName.CONVERT, "channel_labels", labels)
+        saved.set_field_value(StepName.BG_SUB, "sigma", sigma)
+        saved.set_runtime_value("unlock_all_tabs", True)
+        path = saved.save_to_run_dir()
+        # A copied settings file must not redirect the selected run folder.
+        saved.run_dir = "/some/old/folder"
+        path.write_text(saved.document.as_string(), encoding="utf-8")
+
+    window = FitsMainWindow(SettingsAdapter())
+    for folder, labels, sigma in ((first, ["GFP"], 3.0),
+                                  (second, ["RFP", "BFP"], 7.0)):
+        window._switch_run_dir(str(folder))
+        app.processEvents()
+        assert window.adapter.run_dir == str(folder)
+        assert window.run_browser.root_path == folder
+        assert window.adapter.user_name == folder.name
+        assert window.adapter.field_value(StepName.CONVERT, "channel_labels") == labels
+        assert window._editors[StepName.BG_SUB].widgets["sigma"].value() == sigma
+
+    window._switch_run_dir(str(empty))
+    app.processEvents()
+    fresh = FitsMainWindow(SettingsAdapter())
+    expected = fresh.adapter
+    expected.run_dir = str(empty)
+    assert window.adapter.document == expected.document
+    assert window.adapter.source_path is None
+    assert window.run_dir_edit.text() == str(empty)
+    assert window.user_name_edit.text() == expected.user_name
+    assert window._editors[StepName.CONVERT].widgets["channel_labels"].value() == []
+    assert window._editors[StepName.BG_SUB].widgets["sigma"].value() == (
+        expected.field_value(StepName.BG_SUB, "sigma"))
+    assert not window.phase_tabs.isTabEnabled(1)
+    assert not window.segtune_button.isEnabled()
+    fresh.close()
+
+    window._switch_run_dir(str(first))
+    app.processEvents()
+    assert window.adapter.field_value(StepName.CONVERT, "channel_labels") == ["GFP"]
+    window.close()
+
+
 def test_advanced_fields_start_collapsed_even_when_customized() -> None:
     _application()
 
@@ -456,6 +574,66 @@ def test_full_report_button_uses_latest_report_and_browser_activation(tmp_path, 
     window._open_selected_report(older)
 
     assert opened == [latest, older]
+    window.close()
+
+
+@pytest.mark.parametrize("status,error,opens_report", [
+    (StageStatus.COMPLETED, None, False),
+    (StageStatus.SKIPPED, None, False),
+    (StageStatus.PARTIAL, None, False),
+    (StageStatus.FAILED, "Segmentation failed", True),
+    (StageStatus.SKIPPED, "Task failed", True),
+])
+def test_completion_opens_report_only_for_run_errors(
+        tmp_path, monkeypatch, status, error, opens_report) -> None:
+    app = _application()
+    reports = tmp_path / ".fits" / "reports"
+    reports.mkdir(parents=True)
+    report = reports / "fits_report_20261008_120000.txt"
+    report.write_text("run report", encoding="utf-8")
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+    progress = RunProgress()
+    progress.add("experiment", WorkflowStage)
+    progress.update("experiment", WorkflowStage.PROCESS, status, error=error)
+    progress.update("experiment", WorkflowStage.ANALYSIS, StageStatus.SKIPPED)
+    window._run_progress = progress
+    opened = []
+    monkeypatch.setattr(window, "_show_report", opened.append)
+
+    window._pipeline_finished()
+    window._thread_finished()
+
+    assert opened == ([report] if opens_report else [])
+    assert window.report_button.isEnabled()
+    assert ("completed with errors" in window.console.toPlainText()) == opens_report
+    if not opens_report:
+        window._open_latest_report()
+        assert opened == [report]
+    window.close()
+
+
+def test_pipeline_failure_opens_available_run_report(tmp_path, monkeypatch) -> None:
+    app = _application()
+    reports = tmp_path / ".fits" / "reports"
+    reports.mkdir(parents=True)
+    report = reports / "fits_report_20261008_120000.txt"
+    report.write_text("failed run report", encoding="utf-8")
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+    window._run_progress = RunProgress()
+    window._run_progress.add("experiment", [WorkflowStage.PROCESS])
+    window._run_progress.update(
+        "experiment", WorkflowStage.PROCESS, StageStatus.FAILED, error="Failed")
+    opened = []
+    monkeypatch.setattr(window, "_show_report", opened.append)
+
+    window._pipeline_failed("Failed", "Failure traceback")
+
+    assert opened == [report]
+    assert "Failure traceback" in window.console.toPlainText()
     window.close()
 
 

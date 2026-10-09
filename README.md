@@ -137,12 +137,20 @@ tools directly:
 ```bash
 uv run fits-segtune
 uv run fits-drawmask
+uv run fits-regtune
 ```
 
 In `fits-gui`, each segmentation channel has its own settings section. Use
 **+** beside the target channel to add a section, or **−** to remove one.
 Each channel can use a different model, diameter, denoising option, and nuclear
 helper channel. Execution and overwrite controls apply to the whole step.
+
+The **Activity log** header always shows a step label, progress bar, and elapsed
+time. Batch runs mirror the current step's terminal counter; conveyor runs show
+the terminal **Pipeline** counter, including totals added by output branches.
+Conversion-only runs show **Convert**. Interactive runs show overall configured
+stage completion. The elapsed clock has no time-remaining estimate and freezes
+when work finishes; the blue activity indicator runs while the pipeline is active.
 
 Click **Tune segmentation…** to preview Cellpose with those settings.
 SegTune shows a selectable list of channel configurations below its controls.
@@ -160,6 +168,50 @@ stays disabled until the model is ready. Changing the built-in model, custom
 model path, or denoising option queues the latest model for initialization.
 Different initialized models remain cached in the Python process, so switching
 back reuses the model. Keeping multiple models also uses more CPU/GPU memory.
+
+Click **Tune registration…** in either registration settings section to open
+RegTune on its **Time registration** or **Channel registration** tab. Both tabs
+share the same image browser and navigation. **Run preview** fits the complete
+time sequence or the channels at the selected reference frame in a background
+worker; the button becomes **Cancel preview** while working. Z stacks use a
+maximum projection for fitting, and the resulting 2D transforms apply to all Z
+planes. OpenCV and pystackreg support translation, rigid-body, and affine;
+scikit supports translation. Excluded channels stay unchanged and are not fitted.
+
+Choose original, registered, or reference-overlay display. The overlay shows
+the selected image in green and its reference in magenta, each auto-scaled.
+For time registration, the comparison reference is frame 1 of the displayed
+channel. For channel registration, it is the reference channel at the displayed
+frame. **Preview channels after time registration** uses the Time tab first,
+matching pipeline order when time registration is enabled.
+
+**Save current settings** requires a matching completed preview. It updates the
+general settings in the main GUI and saves the accepted experiment's settings
+and matrices in `<experiment>/.fits/registration/time.npz` or `channel.npz`.
+Save settings or Run pipeline in the main GUI persists the general settings,
+as with SegTune. **Complete session** closes the tuner without saving additional
+changes. Preview arrays use temporary disk-backed storage under
+`<experiment>/.fits/viewer_cache/registration/` and are removed when the experiment
+changes or the viewer closes; the original `fits_array.tif` is not modified.
+
+Both pipeline registration tasks check accepted models before fitting. Tuned
+experiments keep their accepted settings when general settings change. Matching
+fitting pixels, channel labels, and image dimensions allow matrix reuse; changed
+input triggers fresh fitting with the accepted settings. This also checks that
+channel transforms tuned after time registration match the actual pipeline
+input. Reuse avoids fitting, while resampling and saving images still run.
+Delete the relevant tuning file to return an experiment to general settings.
+
+Standalone launch supports an initial image/folder, tab, and settings file:
+
+```bash
+uv run fits-regtune /path/to/experiment --mode channel --settings /path/to/fits_settings.toml
+```
+
+Standalone Save updates the supplied settings file, or the nearest saved FITS
+settings found within the browser root. Without one, it creates
+`<browser-root>/.fits/fits_settings.toml` from the template. The module launcher
+`python -m fits.gui.viewer.registration` accepts the same arguments.
 
 The main settings interface groups steps into **Convert**, **Preprocess**,
 **Process**, and **Analysis** tabs. The step list on the left shows only the
@@ -207,8 +259,53 @@ and 64 MiB. Edited mask planes are stored separately in a private temporary
 directory and remain available when you move between frames. Save writes the
 usual mask artifacts; closing the session removes its temporary edits. Tracking
 saves assemble a disk-backed array plane by plane.
-Interpolation, existing mask-channel merging, and segmentation volume previews
-still use their existing stack/volume processing routines.
+Reference/ROI live propagation previews prepare one selected-channel T or Z
+sequence in a background thread and cache its completed mask states in a private
+temporary directory under the experiment's `.fits/viewer_cache/`. Navigating
+within that sequence reads cached planes without repeating interpolation.
+The current plane and nearby planes are prepared first; moving the slider
+reprioritizes remaining work. Ready planes are immediately usable, while a
+missing preview has a translucent, fading loading overlay and a status/progress
+indicator. Edits, undo, channel/depth changes, and propagation settings select
+or invalidate the corresponding preview; stale background results are discarded.
+Each drawing session retains one completed sequence. Temporary previews are
+removed when replaced or the viewer closes, and read-only experiments fall back
+to the system temporary directory. Source masks and ROI threshold/manual states
+are preserved. Preview caches are session-local and do not reload unsaved work
+on a later launch.
+Saving with propagation reuses a matching cached sequence, calculating only
+uncached sequences. ROI caches retain threshold and manual-edit states as well
+as the information needed for display. Saving copies cached sequences directly to output storage and uses faster
+lossless zlib compression (level 1), trading slightly larger files for speed.
+Unsaved-work bookkeeping checks and copies only edited planes. Merging existing mask channels
+and segmentation volume previews use their existing stack/volume routines.
+Completing an unchanged drawing session checks channel revisions instead of
+reading and comparing the full mask stacks.
+Reference/ROI drawing offers **Brush** strokes and **Freehand polygon** fills.
+Shift-click selects the connected mask region under the cursor; drag it to move
+it, or use Shift-drag directly. Movement stays within the image and supports
+Ctrl+Z. ROI movement retains local threshold states through manual overrides.
+**Clear current** clears the displayed plane; **Clear all** clears every T/Z
+plane of the selected mask channel in the session. Existing saved masks stay
+unchanged unless you explicitly save a replacement. Clearing records empty
+planes without reading or rewriting their pixels; reference Undo retains the
+previous plane through storage references. Tracking deletion likewise defers
+label removal until display/save and updates cached centroids directly.
+Brush sizes up to 1001 pixels are available in REF/ROI and tracking.
+Both settings panels keep
+Undo, Clear current, and Clear all together in an untitled section below the
+title and description, with Ctrl+Z, Ctrl+D,
+and Ctrl+Shift+D shortcuts respectively. Every viewer Info button shows the
+shared searchable shortcut table, filtered to the current viewer, with function
+and mode/condition columns. GUI applicability stays hidden; read-only tracking
+shows selection controls only when selection is enabled. Tracking selection uses
+Ctrl+left-click in both editing and selection-only modes; Ctrl+left-drag pans
+without selecting a track, and Ctrl+scroll zooms.
+To inspect the complete shortcut catalog, including its GUI applicability, run
+`.venv/bin/python -m fits.gui.viewer.common.inspect_shortcuts` from the repository.
+Info dialogs size their wrapped columns and rows to the current screen. REF/ROI
+save preparation and tracking preparation/saving use the same white loading
+overlay, with a status message; it clears on completion or failure.
 
 Tracking centroids and trajectory drawings are prepared in the background, with
 progress and the current stage shown at the bottom right. Frame navigation reuses
@@ -250,6 +347,9 @@ experiment. **Next experiment** finishes the current experiment after any
 needed warnings, and remains unavailable until the next queued experiment is
 ready. **Complete session** ends collection normally; **Quit pipeline** is a
 separate cancellation action. Buttons explain their actions when hovered.
+Unsaved-change baselines retain lightweight plane references rather than copying
+both mask stacks when opening or switching experiments. Only edited planes need
+pixel comparisons, and saved channels update their references without stack copies.
 
 The experiment tree shows all received experiments, highlights the current one,
 and lists saved masks underneath each folder. Click a current experiment's mask

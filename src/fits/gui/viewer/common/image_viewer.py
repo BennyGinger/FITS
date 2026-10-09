@@ -9,13 +9,13 @@ from typing import Any, Literal, cast
 import numpy as np
 import pyqtgraph as pg
 from numpy.typing import NDArray
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QPropertyAnimation, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
-    QColorDialog, QDialog, QPushButton, QToolButton, QVBoxLayout, QWidget,
+    QColorDialog, QDialog, QGraphicsOpacityEffect, QLabel, QPushButton, QToolButton, QVBoxLayout, QWidget,
 )
+from scipy.ndimage import distance_transform_edt
 from skimage.draw import line as raster_line, polygon as raster_polygon
-from skimage.morphology import dilation, disk
 
 from fits_io.metadata.imageJ_meta import COLOR_MAP, LABEL_TO_COLOR
 
@@ -60,6 +60,11 @@ class MaskDrawingItem(pg.ImageItem):
         self.on_started: Callable[[float, float, DrawingOperation], None] | None = None
         self.on_moved: Callable[[float, float], None] | None = None
         self.on_finished: Callable[[float, float], None] | None = None
+        self.on_move_started: Callable[[float, float], None] | None = None
+        self.on_move_updated: Callable[[float, float], None] | None = None
+        self.on_move_finished: Callable[[float, float], None] | None = None
+        self.on_can_move: Callable[[float, float], bool] | None = None
+        self._moving_mask = False
         self.setZValue(100)
         self.setAcceptedMouseButtons(cast(Any, Qt.MouseButton.NoButton))
 
@@ -74,7 +79,22 @@ class MaskDrawingItem(pg.ImageItem):
             ev.ignore()
             return
         ev.accept()
-        position = ev.pos()
+        position = ev.buttonDownPos() if ev.isStart() else ev.pos()
+        if ev.isStart():
+            selected = (self.on_can_move is not None
+                        and self.on_can_move(position.x(), position.y()))
+            self._moving_mask = bool(
+                ev.button() == Qt.MouseButton.LeftButton
+                and (ev.modifiers() & Qt.KeyboardModifier.ShiftModifier or selected)
+                and self.on_move_started is not None)
+        if self._moving_mask:
+            callback = (self.on_move_started if ev.isStart() else
+                        self.on_move_finished if ev.isFinish() else self.on_move_updated)
+            if callback is not None:
+                callback(position.x(), position.y())
+            if ev.isFinish():
+                self._moving_mask = False
+            return
         if ev.isStart() and self.on_started is not None:
             operation: DrawingOperation = (
                 "erase" if ev.button() == Qt.MouseButton.RightButton else "add")
@@ -91,6 +111,15 @@ class MaskDrawingItem(pg.ImageItem):
             return
         ev.accept()
         position = ev.pos()
+        selected = (self.on_can_move is not None
+                    and self.on_can_move(position.x(), position.y()))
+        if (ev.button() == Qt.MouseButton.LeftButton
+                and (ev.modifiers() & Qt.KeyboardModifier.ShiftModifier or selected)
+                and self.on_move_started is not None):
+            self.on_move_started(position.x(), position.y())
+            if self.on_move_finished is not None:
+                self.on_move_finished(position.x(), position.y())
+            return
         if self.on_started is not None:
             operation: DrawingOperation = (
                 "erase" if ev.button() == Qt.MouseButton.RightButton else "add")
@@ -107,6 +136,7 @@ class FitsImageViewer(QWidget):
     drawing_finished = Signal(object)
     drawing_changed = Signal()
     drawing_started = Signal()
+    mask_moved = Signal(object, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -125,6 +155,11 @@ class FitsImageViewer(QWidget):
         self.view_box.addItem(self.image_item)
         self.view_box.addItem(self.mask_item)
         self.view_box.addItem(self.drawing_item)
+        self.move_selection_item = pg.ImageItem(axisOrder="row-major")
+        self.move_selection_item.setZValue(101)
+        self.move_selection_item.setOpacity(0.45)
+        self.move_selection_item.setAcceptedMouseButtons(cast(Any, Qt.MouseButton.NoButton))
+        self.view_box.addItem(self.move_selection_item)
         self.home_button = QToolButton(cast(QWidget, self.canvas))
         self.home_button.setIcon(self._home_icon())
         self.home_button.setToolTip("Fit and center the image in the viewer.")
@@ -138,6 +173,22 @@ class FitsImageViewer(QWidget):
         self.home_button.clicked.connect(self.reset_view)
         self.home_button.raise_()
         layout.addWidget(cast(QWidget, self.canvas))
+
+        self.loading_overlay = QLabel("Preparing preview…", cast(QWidget, self.canvas))
+        self.loading_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_overlay.setStyleSheet(
+            "background-color: rgba(255, 255, 255, 215); color: #333333; "
+            "font-size: 16px; font-weight: bold;")
+        self._loading_effect = QGraphicsOpacityEffect(self.loading_overlay)
+        self.loading_overlay.setGraphicsEffect(self._loading_effect)
+        self._loading_effect.setOpacity(0.0)
+        self.loading_overlay.hide()
+        self._loading_visible = False
+        self._loading_animation = QPropertyAnimation(self._loading_effect, b"opacity", self)
+        self._loading_animation.setDuration(160)
+        self._loading_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._loading_animation.finished.connect(self._loading_transition_finished)
+        cast(QWidget, self.canvas).installEventFilter(self)
 
         self.histogram = pg.HistogramLUTWidget(
             orientation="horizontal",
@@ -156,8 +207,14 @@ class FitsImageViewer(QWidget):
         self._drawing_mask: NDArray[np.uint8] | None = None
         self._gesture_base: NDArray[np.uint8] | None = None
         self._drawing_start: tuple[int, int] | None = None
+        self._move_start: tuple[int, int] | None = None
+        self._move_base: NDArray[np.uint8] | None = None
+        self._move_points: tuple[NDArray, NDArray] | None = None
+        self._selected_move_mask: NDArray[np.bool_] | None = None
+        self._move_has_started = False
         self._drawing_last: tuple[int, int] | None = None
         self._drawing_points: list[tuple[int, int]] = []
+        self._brush_rendered_points = 0
         self._last_drawing_render = 0.0
         self._last_drawing_selection: NDArray[np.bool_] | None = None
         self._last_drawing_base: NDArray[np.uint8] | None = None
@@ -175,6 +232,41 @@ class FitsImageViewer(QWidget):
         self.drawing_item.on_moved = self._continue_drawing
         self.drawing_item.on_finished = self._finish_drawing
         self.set_channel_lut("")
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.canvas and event.type() == QEvent.Type.Resize:
+            self.loading_overlay.setGeometry(cast(QWidget, self.canvas).rect())
+        return super().eventFilter(watched, event)
+
+    def set_preview_loading(self, loading: bool, message: str = "Preparing preview…",
+                            *, animate: bool = True) -> None:
+        """Dim only the image while its requested preview is unavailable."""
+        if loading:
+            self.loading_overlay.setText(message)
+        if loading == self._loading_visible and animate:
+            return
+        self._loading_visible = loading
+        self._loading_animation.stop()
+        if loading:
+            self.loading_overlay.setGeometry(cast(QWidget, self.canvas).rect())
+            self.loading_overlay.show()
+            self.loading_overlay.raise_()
+        else:
+            # Keep a fading overlay from intercepting drawing on a ready plane.
+            self.loading_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        if loading:
+            self.loading_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        if not animate:
+            self._loading_effect.setOpacity(1.0 if loading else 0.0)
+            self._loading_transition_finished()
+            return
+        self._loading_animation.setStartValue(self._loading_effect.opacity())
+        self._loading_animation.setEndValue(1.0 if loading else 0.0)
+        self._loading_animation.start()
+
+    def _loading_transition_finished(self) -> None:
+        if not self._loading_visible:
+            self.loading_overlay.hide()
 
     @staticmethod
     def _home_icon() -> QIcon:
@@ -351,12 +443,14 @@ class FitsImageViewer(QWidget):
             raise ValueError(f"The drawing mask must be 2D; got shape {array.shape}.")
         drawing_mask = (array != 0).astype(np.uint8)
         self._drawing_mask = drawing_mask
+        self._clear_move_selection()
         self._drawing_history.clear()
         self._render_drawing_mask()
 
     def clear_drawing_overlay(self) -> None:
         """Clear the working drawing without changing the normal mask overlay."""
         self._drawing_mask = None
+        self._clear_move_selection()
         self._drawing_history.clear()
         self.drawing_item.clear()
 
@@ -417,10 +511,87 @@ class FitsImageViewer(QWidget):
         self._drawing_mask.fill(0)
         self._render_drawing_mask()
 
+    def enable_mask_movement(self) -> None:
+        """Enable Shift-drag in drawing viewers without changing tracking gestures."""
+        self.drawing_item.on_move_started = self._start_mask_move
+        self.drawing_item.on_move_updated = self._continue_mask_move
+        self.drawing_item.on_move_finished = self._finish_mask_move
+        self.drawing_item.on_can_move = self._move_region_hit
+
+    def _clear_move_selection(self) -> None:
+        self._selected_move_mask = None
+        self.move_selection_item.clear()
+
+    def _move_region_hit(self, x: float, y: float) -> bool:
+        return (self._selected_move_mask is not None
+                and bool(self._selected_move_mask[self._drawing_point(x, y)]))
+
+    def _render_move_selection(self) -> None:
+        if self._selected_move_mask is not None:
+            self.move_selection_item.setImage(
+                self._colour_mask(self._selected_move_mask, (255, 255, 255)), autoLevels=False)
+
+    def _start_mask_move(self, x: float, y: float) -> None:
+        from scipy.ndimage import label
+        self._move_start = None
+        if self._drawing_mask is None:
+            return
+        point = self._drawing_point(x, y)
+        if not self._drawing_mask[point]:
+            self._clear_move_selection()
+            return
+        components, _ = cast(tuple[NDArray, int], label(
+            self._drawing_mask != 0, structure=np.ones((3, 3), dtype=np.uint8)))
+        base = self._drawing_mask.copy()
+        selected = np.asarray(components == components[point], dtype=bool)
+        self._selected_move_mask = selected
+        rows, columns = np.nonzero(selected)
+        self._move_points = rows, columns
+        self._move_start, self._move_base = point, base
+        self._move_has_started = False
+        self._drawing_active = True
+        self._render_move_selection()
+
+    def _continue_mask_move(self, x: float, y: float) -> None:
+        if self._move_start is None or self._move_base is None or self._move_points is None:
+            return
+        row, col = self._drawing_point(x, y)
+        rows, cols = self._move_points
+        dy = int(np.clip(row - self._move_start[0], -rows.min(),
+                         self._move_base.shape[0] - 1 - rows.max()))
+        dx = int(np.clip(col - self._move_start[1], -cols.min(),
+                         self._move_base.shape[1] - 1 - cols.max()))
+        if not self._move_has_started and (dy != 0 or dx != 0):
+            # Disabling preview may redraw anchors; preserve the clicked display.
+            self.drawing_started.emit()
+            self._drawing_mask = self._move_base.copy()
+            self._remember_drawing()
+            self._move_has_started = True
+        moved = self._move_base.copy()
+        moved[rows, cols] = 0
+        moved[rows + dy, cols + dx] = 1
+        self._drawing_mask = moved
+        self._selected_move_mask = np.zeros_like(moved, dtype=bool)
+        self._selected_move_mask[rows + dy, cols + dx] = True
+        self._render_drawing_mask()
+        self._render_move_selection()
+
+    def _finish_mask_move(self, x: float, y: float) -> None:
+        if self._move_start is None or self._move_base is None:
+            return
+        self._continue_mask_move(x, y)
+        before = self._move_base
+        self._move_start = self._move_base = self._move_points = None
+        self._drawing_active = False
+        if self._drawing_mask is not None and not np.array_equal(before, self._drawing_mask):
+            self.drawing_changed.emit()
+            self.mask_moved.emit(self.drawing_mask, before)
+
     def _start_drawing(self, x_position: float, y_position: float,
                        operation: DrawingOperation = "add") -> None:
         if self._drawing_mask is None:
             return
+        self._clear_move_selection()
         self.drawing_started.emit()
         self._drawing_operation = operation
         self._drawing_active = True
@@ -433,6 +604,7 @@ class FitsImageViewer(QWidget):
         self._drawing_start = point
         self._drawing_last = point
         self._drawing_points = [point]
+        self._brush_rendered_points = 0
         self._last_drawing_render = monotonic()
         self._last_drawing_selection = None
         self._apply_drawing(point)
@@ -475,10 +647,25 @@ class FitsImageViewer(QWidget):
         if self._drawing_tool in {"brush", "freehand"}:
             if point != self._drawing_points[-1]:
                 self._drawing_points.append(point)
+            if self._drawing_tool == "brush":
+                # Include the previous endpoint to join pending segments, including
+                # mouse events deferred by the display refresh throttle.
+                if self._brush_rendered_points == len(self._drawing_points):
+                    return
+                pending = self._drawing_points[max(self._brush_rendered_points - 1, 0):]
+                selected = self._brush_selection(pending)
+                self._brush_rendered_points = len(self._drawing_points)
+                if self._last_drawing_selection is None:
+                    self._last_drawing_selection = selected.copy()
+                else:
+                    self._last_drawing_selection |= selected
+                self._drawing_mask[selected] = (
+                    0 if self._drawing_operation == "erase" else 1)
+                self._drawing_last = point
+                self._render_drawing_mask()
+                return
             self._drawing_mask = self._gesture_base.copy()
-            selected = (self._brush_selection(self._drawing_points)
-                        if self._drawing_tool == "brush"
-                        else self._freehand_polygon_selection(self._drawing_points))
+            selected = self._freehand_polygon_selection(self._drawing_points)
             self._drawing_last = point
         elif self._drawing_tool == "line":
             self._drawing_mask = self._gesture_base.copy()
@@ -544,11 +731,25 @@ class FitsImageViewer(QWidget):
         return self._widen_selection(selected)
 
     def _widen_selection(self, selected: NDArray[np.bool_]) -> NDArray[np.bool_]:
-        """Apply brush width to an already-rasterized path in native code."""
+        """Dilate with an exact Euclidean disk, only around the affected area.
+
+        Distance transforms avoid scanning a large disk footprint at every
+        image pixel; their cost does not grow with the disk's area.
+        """
         radius = max((self._brush_size - 1) // 2, 0)
         if radius == 0:
             return selected
-        return dilation(selected, footprint=disk(radius))
+        rows, columns = np.nonzero(selected)
+        if not len(rows):
+            return selected
+        top = max(int(rows.min()) - radius, 0)
+        bottom = min(int(rows.max()) + radius + 1, selected.shape[0])
+        left = max(int(columns.min()) - radius, 0)
+        right = min(int(columns.max()) + radius + 1, selected.shape[1])
+        region = selected[top:bottom, left:right]
+        distances = cast(NDArray[np.float64], distance_transform_edt(~region))
+        region[:] = distances <= radius
+        return selected
 
     def _shape_selection(self,
                          start: tuple[int, int],

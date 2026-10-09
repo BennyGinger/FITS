@@ -5,6 +5,7 @@ from dataclasses import replace
 from threading import RLock
 
 from fits.workflows.runtime.progress.models import ExperimentProgress, StageProgress, StageStatus, WorkflowStage
+from fits.workflows.runtime.progress.display import DisplayProgress
 
 
 class RunProgress:
@@ -15,6 +16,7 @@ class RunProgress:
         self._experiments: dict[str, ExperimentProgress] = {}
         self._lock = RLock()
         self._on_change = on_change
+        self.display = DisplayProgress()
 
     def add(self, experiment_id: str, required: Iterable[WorkflowStage],) -> ExperimentProgress:
         """

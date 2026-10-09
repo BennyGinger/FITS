@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import numpy as np
 from numpy.typing import NDArray
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import QEventLoop, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QKeyEvent
-from PySide6.QtWidgets import QColorDialog, QHBoxLayout, QMessageBox, QPushButton, QTabWidget, QWidget
+from PySide6.QtWidgets import QApplication, QColorDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTabWidget, QWidget
 
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_REFERENCE_TEMPLATE, FITS_ROI_TEMPLATE
 from fits.gui.viewer.common.base_window import ImageToolWindow
+from fits.gui.viewer.common.information_dialog import MASK_HELP
 from fits.gui.viewer.masks.reference_panel import ReferenceMaskPanel
 from fits.gui.viewer.masks.roi_panel import RoiMaskPanel
+from fits.gui.viewer.masks.preview import MaskPreviewWorker
 from fits.tasks.reference_mask import ReferenceMaskSession
 from fits.tasks.roi_mask import RoiSession
 
@@ -38,9 +42,8 @@ class MaskDrawingWindow(ImageToolWindow):
 
     file_filters = (FITS_ARRAY_NAME, FITS_REFERENCE_TEMPLATE.format(label="*"),
                     FITS_ROI_TEMPLATE.format(label="*"))
-    tool_help = (
-        "S    Save the active mask\nCtrl + Z    Undo drawing\n"
-        "Left mouse button    Add to the mask\nRight mouse button    Erase from the mask\n")
+    help_gui = "REF / ROI"
+    tool_help = MASK_HELP
 
     def __init__(self, experiments_dir: str | Path | None = None,
                  parent: QWidget | None = None) -> None:
@@ -48,6 +51,10 @@ class MaskDrawingWindow(ImageToolWindow):
         self._roi_session: RoiSession | None = None
         self._reference_path: Path | None = None
         self._roi_path: Path | None = None
+        self._preview_thread: QThread | None = None
+        self._preview_worker: MaskPreviewWorker | None = None
+        self._preview_failed_key: tuple | None = None
+        self._threshold_image_key: tuple | None = None
         super().__init__(experiments_dir, parent)
         self.setWindowTitle("FITS Mask Drawing")
         self._refresh_mask_colour_controls()
@@ -71,6 +78,14 @@ class MaskDrawingWindow(ImageToolWindow):
         layout.addWidget(self.reference_mask_colour_button)
 
     def _tool_keypress(self, event: QKeyEvent) -> bool:
+        if event.key() == Qt.Key.Key_D:
+            if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                self._clear_reference_drawing()
+                return True
+            if event.modifiers() == (Qt.KeyboardModifier.ControlModifier
+                                     | Qt.KeyboardModifier.ShiftModifier):
+                self._clear_all_drawing()
+                return True
         if (event.modifiers() in (Qt.KeyboardModifier.NoModifier,
                                   Qt.KeyboardModifier.ShiftModifier)
                 and event.key() == Qt.Key.Key_S):
@@ -85,12 +100,16 @@ class MaskDrawingWindow(ImageToolWindow):
         self._undo_reference_drawing()
 
     def _connect_tools(self) -> None:
+        self.preview_status = QLabel()
+        self.preview_status.hide()
+        cast(QHBoxLayout, self.status_bar.layout()).insertWidget(1, self.preview_status)
         self.reference_panel.drawing_options_changed.connect(
             self._update_drawing_options)
         self.reference_panel.undo_requested.connect(
             self._undo_reference_drawing)
         self.reference_panel.clear_requested.connect(
             self._clear_reference_drawing)
+        self.reference_panel.clear_all_requested.connect(self._clear_all_drawing)
         self.reference_panel.save_requested.connect(
             self._save_reference_mask)
         self.reference_panel.mask_visibility_changed.connect(
@@ -100,11 +119,10 @@ class MaskDrawingWindow(ImageToolWindow):
         self.roi_panel.drawing_options_changed.connect(self._update_drawing_options)
         self.roi_panel.undo_requested.connect(self._undo_reference_drawing)
         self.roi_panel.clear_requested.connect(self._clear_reference_drawing)
+        self.roi_panel.clear_all_requested.connect(self._clear_all_drawing)
         self.roi_panel.save_requested.connect(self._save_roi_mask)
         self.roi_panel.automatic_current_requested.connect(self._apply_otsu_threshold)
         self.roi_panel.automatic_stack_requested.connect(self._apply_otsu_stack)
-        self.roi_panel.reset_current_requested.connect(self._reset_roi_current)
-        self.roi_panel.reset_stack_requested.connect(self._reset_roi_stack)
         self.roi_panel.threshold_changed.connect(self._apply_roi_threshold)
         self.roi_panel.manual_stack_requested.connect(self._apply_manual_roi_stack)
         self.roi_panel.fill_holes_requested.connect(self._fill_roi_holes)
@@ -120,6 +138,8 @@ class MaskDrawingWindow(ImageToolWindow):
             self._reference_drawing_changed)
         self.image_viewer.drawing_started.connect(
             self._disable_active_interpolation_preview)
+        self.image_viewer.enable_mask_movement()
+        self.image_viewer.mask_moved.connect(self._move_binary_mask)
         self.image_viewer.drawing_finished.connect(
             self._replace_reference_drawing)
         self.tool_tabs.currentChanged.connect(self._tool_changed)
@@ -240,13 +260,28 @@ class MaskDrawingWindow(ImageToolWindow):
         self.image_viewer.set_mask_visible(self.show_mask.isChecked())
         self.image_viewer.set_mask_opacity(self.mask_opacity.value() / 100.0)
         if self._roi_tool_active() and isinstance(session, RoiSession):
-            self.roi_panel.set_threshold_image(image)
+            image_key = id(self._image_session), frame, channel, z_index
+            if image_key != self._threshold_image_key:
+                self.roi_panel.set_threshold_image(image)
+                self._threshold_image_key = image_key
             threshold_range = session.threshold_range(
                 frame_index=frame, channel=channel, z_index=z_index)
             if threshold_range is not None:
                 self.roi_panel.set_threshold_range(*threshold_range)
 
     def _clear_tools(self) -> None:
+        if self._preview_thread is not None:
+            self._preview_thread.requestInterruption()
+            self._preview_thread.quit()
+            self._preview_thread.wait()
+            self._preview_thread.deleteLater()
+            self._preview_thread = None
+            self._preview_worker = None
+        self.image_viewer.set_preview_loading(False)
+        self.preview_status.hide()
+        self.progress.hide()
+        self._preview_failed_key = None
+        self._threshold_image_key = None
         if self._reference_session is not None:
             self._reference_session.close()
         if self._roi_session is not None:
@@ -262,6 +297,7 @@ class MaskDrawingWindow(ImageToolWindow):
 
     def _refresh_mask_colour_controls(self) -> None:
         self.image_viewer.set_mask_color(self.reference_mask_colour)
+        self.image_viewer.set_drawing_style(self.reference_mask_colour)
 
     def _reference_tool_active(self) -> bool:
         return self.tool_tabs.currentWidget() is self.reference_panel
@@ -289,8 +325,8 @@ class MaskDrawingWindow(ImageToolWindow):
         if panel is not None and panel.live_preview.isChecked():
             panel.live_preview.setChecked(False)
 
-    @staticmethod
     def _binary_display_mask(
+            self,
             session: ReferenceMaskSession | RoiSession,
             panel: ReferenceMaskPanel | RoiMaskPanel,
             frame_index: int, channel: str, z_index: int) -> NDArray[np.uint8]:
@@ -300,12 +336,105 @@ class MaskDrawingWindow(ImageToolWindow):
                 "frame_index": frame_index, "channel": channel, "z_index": z_index,
                 "extrapolate_start": panel.extrapolate_start.isChecked(),
                 "extrapolate_end": panel.extrapolate_end.isChecked()}
-            if isinstance(session, RoiSession):
-                return session.interpolated_display_mask_plane(axis, **options)
-            return session.interpolated_mask_plane(axis, **options)
+            key = session.preview_key(axis, **options)
+            cached = session.preview_cache.cached_plane(
+                key, frame_index if axis == "T" else z_index)
+            if cached is not None:
+                if isinstance(session, RoiSession):
+                    cached = session._included(cached)
+                if self._preview_thread is not None and self._preview_worker is not None:
+                    if self._preview_worker.key != key:
+                        self._preview_thread.requestInterruption()
+                    else:
+                        self._preview_worker.position = frame_index if axis == "T" else z_index
+                self.image_viewer.set_preview_loading(False)
+                if self._preview_thread is None:
+                    self.preview_status.hide()
+                    self.progress.hide()
+                return cached
+            self.image_viewer.set_preview_loading(key != self._preview_failed_key)
+            if self._preview_thread is not None:
+                if self._preview_worker is not None:
+                    if self._preview_worker.key != key:
+                        self._preview_thread.requestInterruption()
+                    else:
+                        self._preview_worker.position = frame_index if axis == "T" else z_index
+            elif key != self._preview_failed_key:
+                worker = MaskPreviewWorker(session, key, axis, options)
+                thread = QThread(self)
+                worker.moveToThread(thread)
+                thread.started.connect(worker.run)
+                worker.progress.connect(self._preview_progress)
+                worker.ready.connect(self._preview_ready)
+                worker.plane_ready.connect(self._preview_plane_ready)
+                worker.failed.connect(self._preview_failed)
+                worker.done.connect(thread.quit)
+                worker.done.connect(worker.deleteLater)
+                thread.finished.connect(self._preview_finished)
+                self._preview_thread, self._preview_worker = thread, worker
+                self.preview_status.setText("Preparing propagation preview…")
+                self.preview_status.show()
+                self.progress.setRange(0, 0)
+                self.progress.show()
+                thread.start()
+        else:
+            self.image_viewer.set_preview_loading(False)
+            if self._preview_thread is not None:
+                self._preview_thread.requestInterruption()
+            self.preview_status.hide()
+            self.progress.hide()
         if isinstance(session, RoiSession):
             return session.display_mask_plane(frame_index, channel, z_index)
         return session.mask_plane(frame_index, channel, z_index)
+
+    @Slot(object, int)
+    def _preview_plane_ready(self, key: tuple, index: int) -> None:
+        worker = self._preview_worker
+        if worker is None or self.sender() is not worker:
+            return
+        panel = self._active_binary_panel()
+        session = self._active_binary_session()
+        if (session is None or session is not worker.session or panel is None
+                or not panel.interpolation_preview_enabled or self.image_viewer._drawing_active):
+            return
+        current = self.frame_slider.value() if worker.axis == "T" else self.z_slider.value()
+        if current != index or session.preview_key(worker.axis, **worker.options) != key:
+            return
+        self._display_selection()
+
+    @Slot(str)
+    def _preview_progress(self, stage: str) -> None:
+        if self.sender() is self._preview_worker:
+            self.preview_status.setText(stage + "…")
+
+    @Slot(object)
+    def _preview_ready(self, _key: tuple) -> None:
+        if (self.sender() is self._preview_worker and self.image_viewer._loading_visible
+                and not self.image_viewer._drawing_active):
+            self._display_selection()
+
+    @Slot(str)
+    def _preview_failed(self, message: str) -> None:
+        if self._preview_worker is not None and self.sender() is self._preview_worker:
+            self._preview_failed_key = self._preview_worker.key
+            self.status_label.setText(f"Propagation preview failed: {message}")
+
+    @Slot()
+    def _preview_finished(self) -> None:
+        thread = self.sender()
+        if thread is not self._preview_thread:
+            return
+        self._preview_thread = None
+        self._preview_worker = None
+        self.preview_status.hide()
+        self.progress.hide()
+        if isinstance(thread, QThread):
+            thread.deleteLater()
+        panel = self._active_binary_panel()
+        if (self._active_binary_session() is not None and panel is not None
+                and panel.interpolation_preview_enabled and self.image_viewer._loading_visible
+                and not self.image_viewer._drawing_active):
+            self._display_selection()
 
     @Slot(int)
     def _tool_changed(self, _: int) -> None:
@@ -331,7 +460,7 @@ class MaskDrawingWindow(ImageToolWindow):
         self.reference_mask_colour = selected
         self._set_reference_mask_colour_button()
         if self._binary_tool_active():
-            self.image_viewer.set_mask_color(selected)
+            self._refresh_mask_colour_controls()
 
     @Slot()
     def _update_drawing_options(self) -> None:
@@ -382,6 +511,20 @@ class MaskDrawingWindow(ImageToolWindow):
             return
         self.status_label.setText("Binary-mask drawing updated in the current session.")
 
+    @Slot(object, object)
+    def _move_binary_mask(self, moved: object, previous: object) -> None:
+        session = self._active_binary_session()
+        if session is None:
+            return
+        session.apply_display_edit(
+            np.asarray(moved), comparison_mask=np.asarray(previous),
+            frame_index=self.frame_slider.value(), channel=self.channel_combo.currentText(),
+            z_index=self.z_slider.value())
+        panel = self._active_binary_panel()
+        if panel is not None:
+            panel.set_undo_available(True)
+        self.status_label.setText("Moved the selected mask region. Ctrl+Z to undo.")
+
     @Slot()
     def _undo_reference_drawing(self) -> None:
         session = self._active_binary_session()
@@ -420,17 +563,39 @@ class MaskDrawingWindow(ImageToolWindow):
         self.status_label.setText("Binary mask cleared from the current plane.")
 
     @Slot()
+    def _clear_all_drawing(self) -> None:
+        session = self._active_binary_session()
+        if session is None:
+            return
+        self._disable_active_interpolation_preview()
+        channel = self.channel_combo.currentText()
+        session.clear_stack(channel=channel)
+        self._display_selection()
+        self.status_label.setText(
+            f"Cleared all frames and Z planes of {channel} in this session. "
+            "The saved mask is unchanged until you save.")
+
+    @contextmanager
+    def _saving_overlay(self) -> Iterator[None]:
+        viewer = self.image_viewer
+        viewer.set_preview_loading(True, "Preparation of saving…", animate=False)
+        # Paint before entering the synchronous save. Ignore user input while
+        # queued preview completion and paint events are drained.
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        viewer.set_preview_loading(True, "Preparation of saving…", animate=False)
+        viewer.loading_overlay.repaint()
+        try:
+            yield
+        finally:
+            viewer.set_preview_loading(False, animate=False)
+
+    @Slot()
     def _save_reference_mask(self) -> None:
         if self._reference_session is None:
             return
         label = self.reference_panel.reference_label
         channel = self.channel_combo.currentText()
         try:
-            self._reference_session.set_mask_plane(
-                self.image_viewer.drawing_mask,
-                frame_index=self.frame_slider.value(),
-                channel=channel,
-                z_index=self.z_slider.value(),)
             saved_channels = self._reference_session.saved_channels(label)
             if saved_channels and channel not in saved_channels:
                 QMessageBox.information(
@@ -439,12 +604,13 @@ class MaskDrawingWindow(ImageToolWindow):
                     f"{FITS_REFERENCE_TEMPLATE.format(label=label)} already "
                     f"contains {', '.join(saved_channels)}. The {channel} "
                     "reference channel will be added to the same file.")
-            path = self._reference_session.save(
-                label,
-                channel=channel,
-                interpolation_axis=self.reference_panel.selected_interpolation_axis,
-                extrapolate_start=self.reference_panel.extrapolate_start.isChecked(),
-                extrapolate_end=self.reference_panel.extrapolate_end.isChecked(),)
+            with self._saving_overlay():
+                path = self._reference_session.save(
+                    label,
+                    channel=channel,
+                    interpolation_axis=self.reference_panel.selected_interpolation_axis,
+                    extrapolate_start=self.reference_panel.extrapolate_start.isChecked(),
+                    extrapolate_end=self.reference_panel.extrapolate_end.isChecked(),)
         except FileExistsError as error:
             answer = QMessageBox.question(
                 self,
@@ -454,13 +620,14 @@ class MaskDrawingWindow(ImageToolWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 return
             try:
-                path = self._reference_session.save(
-                    label,
-                    channel=channel,
-                    interpolation_axis=self.reference_panel.selected_interpolation_axis,
-                    extrapolate_start=self.reference_panel.extrapolate_start.isChecked(),
-                    extrapolate_end=self.reference_panel.extrapolate_end.isChecked(),
-                    overwrite=True,)
+                with self._saving_overlay():
+                    path = self._reference_session.save(
+                        label,
+                        channel=channel,
+                        interpolation_axis=self.reference_panel.selected_interpolation_axis,
+                        extrapolate_start=self.reference_panel.extrapolate_start.isChecked(),
+                        extrapolate_end=self.reference_panel.extrapolate_end.isChecked(),
+                        overwrite=True,)
             except Exception as overwrite_error:
                 self.status_label.setText(
                     f"Could not save reference mask: {overwrite_error}")
@@ -523,20 +690,6 @@ class MaskDrawingWindow(ImageToolWindow):
         except Exception as error:
             self.status_label.setText(f"Could not threshold ROI stack: {error}")
 
-    @Slot()
-    def _reset_roi_current(self) -> None:
-        if self._roi_session is None:
-            return
-        self._disable_active_interpolation_preview()
-        self._roi_session.clear_mask_plane(
-            frame_index=self.frame_slider.value(), channel=self.channel_combo.currentText(),
-            z_index=self.z_slider.value())
-        self.image_viewer.set_drawing_mask(
-            self._roi_session.display_mask_plane(
-                self.frame_slider.value(), self.channel_combo.currentText(),
-                self.z_slider.value()))
-        self.status_label.setText("Removed the ROI mask from the current plane.")
-
     @Slot(float, float)
     def _apply_manual_roi_stack(self, minimum: float, maximum: float) -> None:
         if self._roi_session is None or not self._roi_tool_active():
@@ -552,16 +705,6 @@ class MaskDrawingWindow(ImageToolWindow):
                 f"to the complete {self.channel_combo.currentText()} stack.")
         except Exception as error:
             self.status_label.setText(f"Could not apply ROI range to stack: {error}")
-
-    @Slot()
-    def _reset_roi_stack(self) -> None:
-        if self._roi_session is None:
-            return
-        self._disable_active_interpolation_preview()
-        self._roi_session.clear_stack(channel=self.channel_combo.currentText())
-        self._display_selection()
-        self.status_label.setText(
-            f"Removed ROI masks from the complete {self.channel_combo.currentText()} stack.")
 
     @Slot()
     def _fill_roi_holes(self) -> None:
@@ -639,11 +782,12 @@ class MaskDrawingWindow(ImageToolWindow):
                     f"{FITS_ROI_TEMPLATE.format(label=label)} already contains "
                     f"{', '.join(saved_channels)}. The {channel} ROI channel "
                     "will be added to the same file.")
-            path = self._roi_session.save(
-                label, channel=channel,
-                interpolation_axis=self.roi_panel.selected_interpolation_axis,
-                extrapolate_start=self.roi_panel.extrapolate_start.isChecked(),
-                extrapolate_end=self.roi_panel.extrapolate_end.isChecked())
+            with self._saving_overlay():
+                path = self._roi_session.save(
+                    label, channel=channel,
+                    interpolation_axis=self.roi_panel.selected_interpolation_axis,
+                    extrapolate_start=self.roi_panel.extrapolate_start.isChecked(),
+                    extrapolate_end=self.roi_panel.extrapolate_end.isChecked())
         except FileExistsError as error:
             answer = QMessageBox.question(
                 self, "Replace ROI mask?", f"{error}\n\nReplace the existing file?",
@@ -651,12 +795,13 @@ class MaskDrawingWindow(ImageToolWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 return
             try:
-                path = self._roi_session.save(
-                    label, channel=channel,
-                    interpolation_axis=self.roi_panel.selected_interpolation_axis,
-                    extrapolate_start=self.roi_panel.extrapolate_start.isChecked(),
-                    extrapolate_end=self.roi_panel.extrapolate_end.isChecked(),
-                    overwrite=True)
+                with self._saving_overlay():
+                    path = self._roi_session.save(
+                        label, channel=channel,
+                        interpolation_axis=self.roi_panel.selected_interpolation_axis,
+                        extrapolate_start=self.roi_panel.extrapolate_start.isChecked(),
+                        extrapolate_end=self.roi_panel.extrapolate_end.isChecked(),
+                        overwrite=True)
             except Exception as overwrite_error:
                 self.status_label.setText(f"Could not save ROI mask: {overwrite_error}")
                 return

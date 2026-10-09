@@ -8,6 +8,7 @@ from progress_bar.api import ProgressBar
 from fits.workflows.experiments import ExperimentState
 from fits.workflows.definitions.models import item_runner_for
 from fits.workflows.runtime.progress.reporting import WorkflowReporter
+from fits.workflows.runtime.progress.display import DisplayProgress
 from fits.workflows.runtime.scheduler.planning import RuntimeStep
 
 
@@ -94,7 +95,8 @@ def process_completed_tasks(*,
                             runtime_steps: list[RuntimeStep],
                             cpu_ready: deque[Task], gpu_ready: deque[Task],
                             final_states: list[ExperimentState],
-                            progress: ProgressBar
+                            progress: ProgressBar,
+                            display: DisplayProgress | None = None,
                             ) -> int:
     """
     Collect finished tasks and queue their output states for the next step.
@@ -108,6 +110,8 @@ def process_completed_tasks(*,
         runtime_step = runtime_steps[task.step_index]
         produced_states = future.result()
         progress.advance()
+        if display is not None:
+            display.advance()
         logger.debug("Completed %s for %s; produced %d state(s)",
                     runtime_step.spec.profile.step_name, task.state.experiment_id,
                     len(produced_states))

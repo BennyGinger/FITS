@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 from typing import cast
 
 import numpy as np
@@ -209,21 +210,45 @@ class RoiSession(BinaryMaskSession):
         self._edit_history.setdefault(key, []).append(disk_copy(current))
         del self._edit_history[key][:-50]
 
+    def _prepare_preview_sequence(self, anchors: NDArray[np.uint8],
+                                  extrapolate_start: bool, extrapolate_end: bool
+                                  ) -> Callable[[int], NDArray]:
+        from mask_interpolation import SequenceInterpolator
+        additions = SequenceInterpolator(self._manually_added(anchors).astype(np.uint8),
+                                         extrapolate_start=extrapolate_start,
+                                         extrapolate_end=extrapolate_end)
+        exclusions = SequenceInterpolator(self._manually_excluded(anchors).astype(np.uint8),
+                                          extrapolate_start=extrapolate_start,
+                                          extrapolate_end=extrapolate_end)
+        def plane(index: int) -> NDArray[np.uint8]:
+            threshold = self._threshold_included(anchors[index])
+            add, exclude = additions(index).astype(bool), exclusions(index).astype(bool)
+            completed = np.where(threshold, self.THRESHOLD_INCLUDED,
+                                 self.THRESHOLD_EXCLUDED).astype(np.uint8)
+            completed[add & ~threshold] = self.MANUALLY_INCLUDED
+            completed[add & threshold] = self.THRESHOLD_INCLUDED_MANUALLY_INCLUDED
+            completed[exclude & ~threshold] = self.MANUALLY_EXCLUDED
+            completed[exclude & threshold] = self.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED
+            return completed
+        return plane
+
     def interpolated_display_mask_plane(
             self, interpolation_axis: str, *, frame_index: int = 0,
             channel: int | str = 0, z_index: int = 0,
             extrapolate_start: bool = True,
-            extrapolate_end: bool = True) -> NDArray[np.uint8]:
+            extrapolate_end: bool = True,
+            cancelled: Callable[[], bool] | None = None,
+            progress: Callable[[str], None] | None = None) -> NDArray[np.uint8]:
         """
         Return a binary display plane from interpolated manual corrections.
         """
-        completed = self._complete_manual_corrections(
-            self._mask.copy(), self._axes, interpolation_axis,
-            extrapolate_start, extrapolate_end)
-        plane = self._select_plane(
-            completed, frame_index=frame_index,
-            channel=channel, z_index=z_index)
-        return self._included(plane)
+        completed = self._preview_plane(
+            interpolation_axis, frame_index=frame_index, channel=channel, z_index=z_index,
+            extrapolate_start=extrapolate_start, extrapolate_end=extrapolate_end,
+            complete=lambda anchors: self._complete_manual_corrections(
+                anchors, interpolation_axis + "YX", interpolation_axis,
+                extrapolate_start, extrapolate_end), cancelled=cancelled, progress=progress)
+        return self._included(completed)
 
     @property
     def roi_label(self) -> str | None:
@@ -342,15 +367,6 @@ class RoiSession(BinaryMaskSession):
                     empty_planes += 1
         return empty_planes
 
-    def clear_stack(self, *, channel: int | str = 0) -> None:
-        """
-        Clear every T/Z plane for one source channel.
-        """
-        for frame_index in range(self.frame_count):
-            for z_index in range(self.plane_count):
-                self.clear_mask_plane(
-                    frame_index=frame_index, channel=channel, z_index=z_index)
-
     def threshold_stack_range(self, minimum: float, maximum: float, *, channel: int | str = 0) -> None:
         """
         Apply one explicit intensity range to every T/Z plane of a channel.
@@ -407,14 +423,15 @@ class RoiSession(BinaryMaskSession):
         channel_index = self._resolve_channel(channel)
         channel_label = self._channel_labels[channel_index]
         output_path = build_roi_path(self.source_path, normalized)
-        output_mask = self._channel_mask(channel_index)
+        output_mask = (self._channel_mask(channel_index) if interpolation_axis is None else
+                       self._completed_channel(
+                           channel_index, interpolation_axis, extrapolate_start, extrapolate_end,
+                           lambda sequence: self._complete_manual_corrections(
+                               sequence, interpolation_axis + "YX", interpolation_axis,
+                               extrapolate_start, extrapolate_end)))
         if not np.any(self._included(output_mask)):
             raise ValueError(f"Cannot save ROI channel {channel_label!r} without selected pixels.")
         output_axes = self._axes.replace("C", "")
-        if interpolation_axis is not None:
-            output_mask = self._complete_manual_corrections(
-                output_mask, output_axes, interpolation_axis,
-                extrapolate_start, extrapolate_end)
         output_mask, output_labels = merge_roi_channels(
             output_path, output_mask, channel_axes=output_axes,
             source_axes=self._axes, channel_label=channel_label,
@@ -427,6 +444,7 @@ class RoiSession(BinaryMaskSession):
             created_by=DIST_FITS, output_path=output_path,
             custom_metadata={"roi_mask_encoding": ROI_MASK_ENCODING,
                             "roi_mask_value_table": ROI_MASK_VALUE_TABLE,},
+            compressionargs={"level": 1} if compression in {"zlib", "deflate"} else None,
             compression=compression)
 
     def saved_channels(self, label: str) -> tuple[str, ...]:

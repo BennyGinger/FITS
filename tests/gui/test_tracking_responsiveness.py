@@ -114,20 +114,22 @@ def test_image_navigation_and_progress_while_centroids_are_busy(
         assert started.wait(2)
         assert not window.trajectory_progress.isHidden()
         assert "centroid" in window.trajectory_status.text()
-        assert window.image_viewer.view_box.opacity() == 0.0
+        assert window.image_viewer._loading_visible
         window.show()
         application.processEvents()
         assert window.image_viewer.view_box.geometry().width() > 0
+        QTest.qWait(180)
         display = window.image_viewer.canvas.grab().toImage()
-        assert display.pixelColor(display.width() // 2, display.height() // 2) == QColor("black")
+        assert display.pixelColor(display.width() // 2, display.height() // 2).lightness() > 150
         window.frame_slider.setValue(2)
         assert window.frame_slider.value() == 2
         assert window.image_viewer.mask_item.image is not None
-        assert window.image_viewer.view_box.opacity() == 0.0
+        assert window.image_viewer._loading_visible
         release.set()
         wait_ready(window)
         assert window.trajectory_progress.isHidden()
         assert window.image_viewer.view_box.isVisible()
+        assert not window.image_viewer._loading_visible
         assert window.image_viewer.view_box.opacity() == 1.0
         assert window.image_viewer.view_box.geometry().width() > 0
         # Visible alone is insufficient: ensure the loaded mask actually paints.
@@ -166,6 +168,7 @@ def test_failed_loading_restores_display(tmp_path: Path, monkeypatch: pytest.Mon
             assert monotonic() < deadline
         assert "centroid read failed" in window.status_label.text()
         assert window.trajectory_progress.isHidden()
+        assert not window.image_viewer._loading_visible
         assert window.image_viewer.view_box.opacity() == 1.0
         assert window.image_viewer.view_box.geometry().width() > 0
         canvas = window.image_viewer.canvas
@@ -318,6 +321,7 @@ def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
         window.filter_tracks.setChecked(True)
         assert window._track_path_items[0]._prepared is filtered
         assert window._trajectory_thread is None
+        assert not window.image_viewer._loading_visible
         assert window.image_viewer.view_box.opacity() == 1.0
         # Returning to a cached filter must reveal it even during another drawing.
         started = Event()
@@ -331,9 +335,10 @@ def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
         monkeypatch.setattr(tracking_window, "prepare_paths", delayed)
         window.filter_value.setValue(5)
         assert started.wait(2)
-        assert window.image_viewer.view_box.opacity() == 0.0
+        assert window.image_viewer._loading_visible
         window.filter_value.setValue(3)
         assert window._track_path_items[0]._prepared is filtered
+        assert not window.image_viewer._loading_visible
         assert window.image_viewer.view_box.opacity() == 1.0
         wait_ready(window)
         # Edited masks must discard drawings prepared from the previous revision.
@@ -362,6 +367,7 @@ def test_large_drawings_are_displayed_without_retaining_over_budget_cache(
         wait_ready(window)
         assert not window._trajectory_cache
         assert window._track_path_items[0]._prepared is not None
+        assert not window.image_viewer._loading_visible
         assert window.image_viewer.view_box.opacity() == 1.0
     finally:
         window.close()
@@ -430,6 +436,7 @@ def test_switching_experiment_cancels_old_drawing_worker(
         assert window.channel_combo.currentText() == "GFP"
         assert window._trajectory_failed_key is None
         assert set(window._visible_centroids) == {7}
+        assert not window.image_viewer._loading_visible
         assert window.image_viewer.view_box.opacity() == 1.0
     finally:
         window.close()

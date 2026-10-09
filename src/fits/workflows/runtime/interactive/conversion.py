@@ -33,34 +33,37 @@ def run_conversion_only(config: Mapping[str, Any],
     progress = progress or RunProgress()
     
     final_states: list[ExperimentState] = []
-    for state in states:
-        experiment_id = input_progress_id(state)
-        progress.add(experiment_id, {WorkflowStage.CONVERT})
-        progress.update(experiment_id, WorkflowStage.CONVERT, StageStatus.ACTIVE)
-        try:
-            produced = [state]
-            for step in conversion:
-                item_runner = item_runner_for(step.spec)
-                next_states = []
-                for current in produced:
-                    next_states.extend(
-                        item_runner(
-                            step.settings, current, step.spec.profile))
-                produced = next_states
-            progress.update(experiment_id, WorkflowStage.CONVERT, StageStatus.COMPLETED)
-            progress.replace_experiment(experiment_id,
-                                        (converted.experiment_id for converted in produced))
-            final_states.extend(produced)
-            if step_delay_seconds:
-                from time import sleep
-                sleep(step_delay_seconds)
+    with progress.display.task("Convert", len(states)):
+        for state in states:
+            experiment_id = input_progress_id(state)
+            progress.add(experiment_id, {WorkflowStage.CONVERT})
+            progress.update(experiment_id, WorkflowStage.CONVERT, StageStatus.ACTIVE)
+            try:
+                produced = [state]
+                for step in conversion:
+                    item_runner = item_runner_for(step.spec)
+                    next_states = []
+                    for current in produced:
+                        next_states.extend(
+                            item_runner(
+                                step.settings, current, step.spec.profile))
+                    produced = next_states
+                progress.update(experiment_id, WorkflowStage.CONVERT, StageStatus.COMPLETED)
+                progress.replace_experiment(experiment_id,
+                                            (converted.experiment_id for converted in produced))
+                final_states.extend(produced)
+                if step_delay_seconds:
+                    from time import sleep
+                    sleep(step_delay_seconds)
         
-        except Exception as error:
-            progress.update(experiment_id, WorkflowStage.CONVERT, StageStatus.FAILED,
-                            error=str(error))
-            logger.error("Experiment failed during conversion and will be omitted; "
-                        "remaining experiments will continue: %s | experiment=%s",
-                        error, experiment_id, exc_info=True)
+            except Exception as error:
+                progress.update(experiment_id, WorkflowStage.CONVERT, StageStatus.FAILED,
+                                error=str(error))
+                logger.error("Experiment failed during conversion and will be omitted; "
+                            "remaining experiments will continue: %s | experiment=%s",
+                            error, experiment_id, exc_info=True)
+            finally:
+                progress.display.advance()
     if states and not final_states:
         raise AllExperimentsFailed('All experiments failed during conversion.')
     return final_states

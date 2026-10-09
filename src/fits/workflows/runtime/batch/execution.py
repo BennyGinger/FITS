@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Callable
 from functools import partial
+from contextlib import nullcontext
 from typing import Any, cast
 
 from progress_bar import pbar
@@ -49,9 +50,12 @@ def execute_batch_step(spec: StepSpec[Any],
 
     output_states: list[ExperimentState] = []
     first_error: Exception | None = None
-    with pbar(total=len(exp_states),
+    display = reporter.progress.display if reporter is not None else None
+    with (display.task(profile.step_name.capitalize(), len(exp_states))
+          if display is not None else nullcontext(),
+          pbar(total=len(exp_states),
             desc=profile.step_name.capitalize(),
-            logs="buffered",) as progress:
+            logs="buffered",) as progress):
         for produced_states in execute_items(exp_states,
                                             batch_worker,
                                             mode=settings.execution,
@@ -65,11 +69,15 @@ def execute_batch_step(spec: StepSpec[Any],
                         raise error
                     first_error = first_error or error
                     progress.advance()
+                    if display is not None:
+                        display.advance()
                     continue
                 reporter.completed(profile.step_name, source, outputs)
                 produced_states = outputs
             output_states.extend(cast(list[ExperimentState], produced_states))
             progress.advance()
+            if display is not None:
+                display.advance()
 
     if first_error is not None:
         raise first_error

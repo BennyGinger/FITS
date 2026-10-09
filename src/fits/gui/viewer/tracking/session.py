@@ -22,7 +22,7 @@ from fits.environment.constant import (
 from fits.gui.viewer.tracking.rendering import render_selected_tracking_display
 from fits.gui.viewer.tracking.centroids import CentroidCache
 from fits.interaction import FitsImageSession
-from fits.interaction.planes import PlaneStore, disk_copy
+from fits.interaction.planes import PlaneState, PlaneStore, disk_copy
 from fits.tasks.segmentation.local_seg import (
     AddEditBackend,
     AddEditProposal,
@@ -131,7 +131,7 @@ class _TrackingUndo:
     channel: int
     z_index: int
     frames: tuple[int, ...]
-    planes: tuple[NDArray[Any], ...]
+    planes: tuple[NDArray[Any] | PlaneState, ...]
     has_edits: bool
     operations_used: frozenset[str]
     edited_mask_channels: frozenset[int]
@@ -442,11 +442,16 @@ class TrackingViewerSession:
         changed_frames = sorted(self._frames_for(track_id, channel, z_index))
         if not changed_frames:
             raise ValueError("The selected track has no masks in this channel and Z plane.")
-        self._remember_undo(channel, z_index, changed_frames)
+        self._remember_undo(channel, z_index, changed_frames, lazy=True)
         for frame_index in changed_frames:
-            labels = self._editable_frame(frame_index, channel, z_index)
-            labels[labels == track_id] = 0
-        self._invalidate_centroids(channel, z_index)
+            if isinstance(self._tracks, PlaneStore):
+                self._tracks.hide_label(
+                    (frame_index, self._resolve_channel(channel), z_index), track_id)
+            else:
+                labels = self._editable_frame(frame_index, channel, z_index)
+                labels[labels == track_id] = 0
+        self.centroid_cache.remove_label(
+            self._resolve_channel(channel), z_index, track_id, changed_frames)
         self._has_edits = True
         self._record_edit("delete-track", channel)
 
@@ -538,13 +543,19 @@ class TrackingViewerSession:
     def delete_mask(self, track_id: int, frame_index: int,
                     channel: int | str, z_index: int) -> None:
         """Delete one track mask from the current frame only."""
-        labels = self._editable_frame(frame_index, channel, z_index)
+        labels = self.tracked_frame(frame_index, channel, z_index)
         selected = labels == track_id
         if not np.any(selected):
             raise ValueError("The selected track has no mask in the current frame.")
-        self._remember_undo(channel, z_index, [frame_index])
-        labels[selected] = 0
-        self._invalidate_after_mask_edit(channel, z_index)
+        self._remember_undo(channel, z_index, [frame_index], lazy=True)
+        if isinstance(self._tracks, PlaneStore):
+            self._tracks.hide_label(
+                (frame_index, self._resolve_channel(channel), z_index), track_id)
+        else:
+            labels[selected] = 0
+        self.centroid_cache.remove_label(
+            self._resolve_channel(channel), z_index, track_id, [frame_index])
+        self._has_edits = True
         self._record_edit("delete", channel)
 
     def preview_add_edit(
@@ -777,7 +788,11 @@ class TrackingViewerSession:
             return None
         entry = history.pop()
         for frame, plane in zip(entry.frames, entry.planes, strict=True):
-            self._editable_frame(frame, entry.channel, entry.z_index)[...] = plane
+            if isinstance(plane, PlaneState):
+                assert isinstance(self._tracks, PlaneStore)
+                self._tracks.restore_plane((frame, entry.channel, entry.z_index), plane)
+            else:
+                self._editable_frame(frame, entry.channel, entry.z_index)[...] = plane
         self._has_edits = entry.has_edits
         self._operations_used = set(entry.operations_used)
         self._edited_mask_channels = set(entry.edited_mask_channels)
@@ -786,7 +801,7 @@ class TrackingViewerSession:
         return min(entry.frames) if entry.frames else None
 
     def _remember_undo(self, channel: int | str, z_index: int,
-                       frames: list[int]) -> None:
+                       frames: list[int], *, lazy: bool = False) -> None:
         """Store only affected 2D planes, avoiding copies of the complete movie."""
         unique_frames = tuple(sorted(set(frames)))
         if not unique_frames:
@@ -796,8 +811,11 @@ class TrackingViewerSession:
             channel=channel_index,
             z_index=z_index,
             frames=unique_frames,
-            planes=tuple(disk_copy(self.tracked_frame(
-                frame, channel_index, z_index)) for frame in unique_frames),
+            planes=tuple(
+                self._tracks.snapshot_plane((frame, channel_index, z_index))
+                if lazy and isinstance(self._tracks, PlaneStore)
+                else disk_copy(self.tracked_frame(frame, channel_index, z_index))
+                for frame in unique_frames),
             has_edits=getattr(self, "_has_edits", False),
             operations_used=frozenset(getattr(self, "_operations_used", set())),
             edited_mask_channels=frozenset(

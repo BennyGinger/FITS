@@ -139,6 +139,33 @@ class CentroidCache:
         with self.lock:
             return self.tracks.get((channel, z))
 
+    def remove_label(self, channel: int, z: int, label: int,
+                     frames: Iterable[int]) -> None:
+        """Update known coordinates after deletion without scanning mask pixels."""
+        removed_frames = frozenset(frames)
+        with self.lock:
+            self.revision += 1
+            for frame in removed_frames:
+                key = frame, channel, z
+                if key in self.planes:
+                    self.planes[key] = {
+                        track: points for track, points in self.planes[key].items()
+                        if track != label}
+            key = channel, z
+            if key in self.tracks:
+                tracks = dict(self.tracks[key])
+                points = tracks.get(label)
+                if points is not None:
+                    remaining = points[~np.isin(points[:, 0], tuple(removed_frames))]
+                    if len(remaining):
+                        tracks[label] = remaining
+                    else:
+                        tracks.pop(label)
+                self.tracks[key] = tracks
+                self.lengths[key] = _track_lengths(tracks)
+            self.matches = OrderedDict((key, value) for key, value in self.matches.items()
+                                       if key[:2] != (channel, z))
+
     def matching(self, channel: int, z: int, operator: str, value: int,
                  maximum: int | None = None) -> frozenset[int]:
         """Reuse lengths and recent filter results without rescanning observations."""

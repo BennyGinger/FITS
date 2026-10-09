@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from fits.environment.constant import FITS_ARRAY_NAME
 from fits.gui.settings import SettingsAdapter
 from fits.gui.viewer.common.base_window import ImageToolWindow
+from fits.gui.viewer.common.information_dialog import SEGMENTATION_HELP
 from fits.gui.viewer.segmentation.settings_panel import CellposeSettingsPanel
 from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
 from fits.gui.viewer.segmentation.worker import (
@@ -36,7 +37,8 @@ class SegmentationTunerWindow(ImageToolWindow):
 
     settings_applied = Signal(object)
     file_filters = (FITS_ARRAY_NAME,)
-    tool_help = "R    Run preview\nS    Apply segmentation settings\n"
+    help_gui = "SegTune"
+    tool_help = SEGMENTATION_HELP
 
     def __init__(self, experiments_dir: str | Path | None = None,
                  segment_settings: SegmentSettings | Mapping[str, Any] | None = None,
@@ -83,7 +85,9 @@ class SegmentationTunerWindow(ImageToolWindow):
         self.settings_panel.overlay_widget.hide()
         layout = self.settings_panel.layout()
         assert isinstance(layout, QVBoxLayout)
-        controls_layout = self.settings_panel.controls_scroll.widget().layout()
+        controls = self.settings_panel.controls_scroll.widget()
+        assert controls is not None
+        controls_layout = controls.layout()
         assert isinstance(controls_layout, QVBoxLayout)
         controls_layout.removeWidget(self.settings_panel.run_button)
 

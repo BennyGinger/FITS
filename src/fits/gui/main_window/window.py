@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, QTimer, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QPalette
-from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QStackedWidget, QTabBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter, QStackedWidget, QTabBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from fits.environment import constant as cst
 from fits.environment.paths import reports_dir
@@ -16,6 +16,7 @@ from fits.gui.main_window.report_dialog import ReportDialog
 from fits.gui.main_window.run_browser import RunDirectoryBrowser
 from fits.gui.main_window.logging import LogEmitter, QtLogHandler
 from fits.gui.main_window.pipeline_worker import PipelineWorker
+from fits.gui.main_window.progress_display import PipelineProgressWidget
 from fits.settings.models import SegmentSettings
 from fits.settings.loader import run_settings_path
 
@@ -54,6 +55,8 @@ class FitsMainWindow(QMainWindow):
         self._editors: dict[cst.StepName, StepSettingsEditor] = {}
         self.runtime_editor: RuntimeSettingsEditor | None = None
         self._segmentation_tuner = None
+        self._registration_tuner = None
+        self._registration_tune_buttons: dict[cst.StepName, QPushButton] = {}
         self._tracking_viewer = None
         self._prepared_available = False
         self._phases_unlocked = False
@@ -173,7 +176,14 @@ class FitsMainWindow(QMainWindow):
         console_container = QWidget()
         console_layout = QVBoxLayout(console_container)
         console_layout.setContentsMargins(0, 0, 0, 0)
-        console_layout.addWidget(QLabel("Console / activity log"))
+        activity_header = QHBoxLayout()
+        activity_label = QLabel("Activity log")
+        activity_label.setFixedWidth(230)
+        activity_header.addWidget(activity_label)
+        self.pipeline_progress = PipelineProgressWidget()
+        self.pipeline_progress.setMinimumHeight(44)
+        activity_header.addWidget(self.pipeline_progress, 1)
+        console_layout.addLayout(activity_header)
         self.console = QPlainTextEdit()
         self.console.setReadOnly(True)
         self.console.setMaximumBlockCount(2_000)
@@ -194,6 +204,17 @@ class FitsMainWindow(QMainWindow):
         buttons.addWidget(self.load_button)
         buttons.addWidget(self.save_button)
         buttons.addStretch()
+        self.activity_indicator = QProgressBar()
+        self.activity_indicator.setFixedSize(160, 10)
+        self.activity_indicator.setTextVisible(False)
+        self.activity_indicator.setToolTip("Pipeline active — this is an activity indicator, not measured progress.")
+        self.activity_indicator.setStyleSheet(
+            "QProgressBar { background: #233040; border: 1px solid #405773; border-radius: 3px; }"
+            "QProgressBar::chunk { background: #399df2; border-radius: 2px; }")
+        self.activity_indicator.setRange(0, 1)
+        self.activity_indicator.setValue(0)
+        self.activity_indicator.hide()
+        buttons.addWidget(self.activity_indicator, 0, Qt.AlignmentFlag.AlignVCenter)
         buttons.addWidget(self.run_button)
         outer.addLayout(buttons)
 
@@ -240,6 +261,19 @@ class FitsMainWindow(QMainWindow):
 
             editor = StepSettingsEditor(self.adapter, step)
             editor.value_changed.connect(self._update_run_button_text)
+            if step in (cst.StepName.REGISTER_TIME, cst.StepName.REGISTER_CHANNEL):
+                tune_row = QWidget()
+                tune_layout = QHBoxLayout(tune_row)
+                tune_layout.setContentsMargins(0, 0, 0, 0)
+                description = QLabel("Preview registration and save settings with this experiment's transforms.")
+                description.setWordWrap(True)
+                tune_layout.addWidget(description, 1)
+                tune_button = QPushButton("Tune registration…")
+                mode = "time" if step == cst.StepName.REGISTER_TIME else "channel"
+                tune_button.clicked.connect(lambda checked=False, selected=mode: self._open_registration_tuner(selected))
+                tune_layout.addWidget(tune_button)
+                self._registration_tune_buttons[step] = tune_button
+                editor.outer_layout.insertWidget(1, tune_row)
             if step == cst.StepName.SEGMENT:
                 tune_row = QWidget()
                 tune_layout = QHBoxLayout(tune_row)
@@ -309,6 +343,44 @@ class FitsMainWindow(QMainWindow):
         tuner.destroyed.connect(lambda: setattr(self, "_segmentation_tuner", None))
         self._segmentation_tuner = tuner
         tuner.show()
+
+    def _open_registration_tuner(self, mode: str) -> None:
+        from fits.gui.viewer.registration import RegistrationTunerWindow
+        from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
+        if self._registration_tuner is not None:
+            self._registration_tuner.tabs.setCurrentIndex(0 if mode == "time" else 1)
+            self._registration_tuner.show()
+            self._registration_tuner.raise_()
+            return
+        self._sync_identity()
+        for step in (cst.StepName.REGISTER_TIME, cst.StepName.REGISTER_CHANNEL):
+            self._editors[step].sync_to_adapter()
+        try:
+            mapping = self.adapter.as_mapping()
+            time_settings = RegisterTimeSettings.model_validate(mapping["register_time"]["params"])
+            channel_settings = RegisterChannelSettings.model_validate(mapping["register_channel"]["params"])
+        except ValueError as error:
+            QMessageBox.critical(self, "Cannot open registration tuner", str(error))
+            return
+        tuner = RegistrationTunerWindow(
+            self.adapter.run_dir or None, mode="time" if mode == "time" else "channel",
+            time_settings=time_settings, channel_settings=channel_settings,
+            time_enabled=self.adapter.step_enabled(cst.StepName.REGISTER_TIME), parent=self)
+        tuner.setWindowModality(Qt.WindowModality.WindowModal)
+        tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        tuner.settings_applied.connect(self._apply_registration_settings)
+        tuner.destroyed.connect(lambda: setattr(self, "_registration_tuner", None))
+        self._registration_tuner = tuner
+        tuner.show()
+
+    @Slot(str, object)
+    def _apply_registration_settings(self, mode: str, settings) -> None:
+        step = cst.StepName.REGISTER_TIME if mode == "time" else cst.StepName.REGISTER_CHANNEL
+        for key, value in {**settings.to_payload_dict(), "overwrite": settings.overwrite}.items():
+            self.adapter.set_field_value(step, key, "None" if value is None else value)
+        self._populate_from_adapter()
+        self.step_tree.setCurrentItem(self._step_items[step])
+        self._append_log(f"Applied {mode} registration settings from the tuner.")
 
     @Slot(object)
     def _apply_segmentation_settings(self, settings: SegmentSettings) -> None:
@@ -441,6 +513,8 @@ class FitsMainWindow(QMainWindow):
         self._show_phase_steps(self.phase_tabs.currentIndex())
         if hasattr(self, "segtune_button"):
             self.segtune_button.setEnabled(prepared)
+        for button in self._registration_tune_buttons.values():
+            button.setEnabled(prepared and not self._running)
         self._refresh_tracking_viewer_button()
         self._update_run_button_text()
         current = self.step_tree.currentItem()
@@ -699,12 +773,14 @@ class FitsMainWindow(QMainWindow):
 
     @Slot()
     def _pipeline_cancelled(self) -> None:
+        self._set_activity_active(False)
         self._close_mask_collection()
         self._close_tracking_editor()
         self._append_log("Pipeline cancelled. Completed work has been kept.")
 
     @Slot()
     def _pipeline_finished(self) -> None:
+        self._set_activity_active(False)
         self._close_mask_collection()
         self._close_tracking_editor()
         had_errors = self._run_progress is not None and any(
@@ -725,6 +801,7 @@ class FitsMainWindow(QMainWindow):
 
     @Slot(str, str)
     def _pipeline_failed(self, message: str, details: str) -> None:
+        self._set_activity_active(False)
         self._close_mask_collection()
         self._close_tracking_editor()
         self._append_log(details)
@@ -757,6 +834,11 @@ class FitsMainWindow(QMainWindow):
 
     def _set_running(self, running: bool) -> None:
         self._running = running
+        if running:
+            self.pipeline_progress.begin(self._run_progress)
+        else:
+            self.pipeline_progress.finish()
+        self._set_activity_active(running)
         self.run_button.setEnabled(not running)
         self.load_button.setEnabled(not running)
         self.save_button.setEnabled(not running)
@@ -769,6 +851,14 @@ class FitsMainWindow(QMainWindow):
             self._update_run_button_text()
         self.report_button.setEnabled(not running and self._latest_report() is not None)
         self._refresh_phase_access()
+
+    def _set_activity_active(self, active: bool) -> None:
+        if not active:
+            self.pipeline_progress.finish()
+        self.activity_indicator.setRange(0, 0 if active else 1)
+        if not active:
+            self.activity_indicator.setValue(0)
+        self.activity_indicator.setVisible(active)
 
     def _update_run_button_text(self) -> None:
         if self._running or self._thread is not None:

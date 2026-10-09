@@ -18,6 +18,29 @@ def segtune() -> None:
     _launch(SegmentationTunerWindow, "FITS Segmentation Tuner", qt_arguments)
 
 
+def regtune() -> None:
+    parser = argparse.ArgumentParser(description="Tune FITS time and channel registration.")
+    parser.add_argument("image", nargs="?", type=Path,
+                        help="A fits_array.tif or an experiment folder to open.")
+    parser.add_argument("--mode", choices=("time", "channel"), default="time",
+                        help="Registration tab to select initially.")
+    parser.add_argument("--experiments-dir", type=Path, help="Folder containing prepared experiments.")
+    parser.add_argument("--settings", type=Path, help="General FITS settings to load and update when saving.")
+    arguments, qt_arguments = parser.parse_known_args()
+    from fits.gui.viewer.registration import RegistrationTunerWindow
+
+    def create_window():
+        root = arguments.experiments_dir
+        if root is None and arguments.image is not None:
+            root = arguments.image if arguments.image.is_dir() else arguments.image.parent
+        window = RegistrationTunerWindow(root, mode=arguments.mode, settings_path=arguments.settings)
+        if arguments.image is not None:
+            window._path_selected(arguments.image)
+        return window
+
+    _launch(create_window, "FITS Registration Tuner", qt_arguments)
+
+
 def trackedit() -> None:
     parser = argparse.ArgumentParser(description="View and edit FITS tracking labels.")
     parser.add_argument("tracking", nargs="?", type=Path,

@@ -26,6 +26,7 @@ class ReferenceMaskPanel(QWidget):
     drawing_options_changed = Signal()
     undo_requested = Signal()
     clear_requested = Signal()
+    clear_all_requested = Signal()
     save_requested = Signal()
     mask_visibility_changed = Signal(bool)
     mask_opacity_changed = Signal(float)
@@ -71,7 +72,11 @@ class ReferenceMaskPanel(QWidget):
         drawing_row.addWidget(QLabel("Drawing tool"))
         self.tool_combo = FocusWheelComboBox()
         self.tool_combo.setFixedWidth(self.CONTROL_WIDTH)
-        self.tool_combo.addItem("Free-hand", "freehand")
+        self.tool_combo.addItem("Freehand polygon", "freehand")
+        self.tool_combo.addItem("Brush", "brush")
+        self.tool_combo.setToolTip(
+            "Brush paints a stroke; Freehand polygon fills the enclosed region. "
+            "Shift-drag a mask region to move it.")
         self.tool_combo.addItem("Open line", "line")
         self.tool_combo.addItem("Circle", "circle")
         self.tool_combo.addItem("Square", "square")
@@ -81,7 +86,7 @@ class ReferenceMaskPanel(QWidget):
         drawing_row.addWidget(QLabel("Brush size"))
         self.brush_size = FocusWheelSpinBox()
         self.brush_size.setFixedWidth(90)
-        self.brush_size.setRange(1, 101)
+        self.brush_size.setRange(1, 1001)
         self.brush_size.setSingleStep(2)
         self.brush_size.setValue(5)
         self.brush_size.setSuffix(" px")
@@ -89,18 +94,31 @@ class ReferenceMaskPanel(QWidget):
         drawing_row.addStretch(1)
         drawing_layout.addLayout(drawing_row)
 
-        drawing_actions = QHBoxLayout()
+        self.action_section, action_layout = self._section(None)
+        self.action_row = QWidget()
+        drawing_actions = QHBoxLayout(self.action_row)
+        drawing_actions.setContentsMargins(0, 0, 0, 0)
+        drawing_actions.addStretch(1)
         self.undo_button = QPushButton("Undo")
         self.undo_button.setEnabled(False)
         self.undo_button.setFixedWidth(self.BUTTON_WIDTH)
+        self.undo_button.setToolTip("Undo the latest edit on this plane (Ctrl+Z).")
         self.undo_button.clicked.connect(self.undo_requested)
-        self.clear_button = QPushButton("Clear this plane")
+        self.clear_button = QPushButton("Clear current")
         self.clear_button.setFixedWidth(self.BUTTON_WIDTH)
+        self.clear_button.setToolTip("Clear the current plane in this session (Ctrl+D).")
         self.clear_button.clicked.connect(self.clear_requested)
         drawing_actions.addWidget(self.undo_button)
         drawing_actions.addWidget(self.clear_button)
-        drawing_actions.addStretch(1)
-        drawing_layout.addLayout(drawing_actions)
+        self.clear_all_button = QPushButton("Clear all")
+        self.clear_all_button.setFixedWidth(self.BUTTON_WIDTH)
+        self.clear_all_button.setToolTip(
+            "Clear every frame and Z plane of the selected mask channel in this session. "
+            "The saved file stays unchanged until you save. Shortcut: Ctrl+Shift+D.")
+        self.clear_all_button.clicked.connect(self.clear_all_requested)
+        drawing_actions.addWidget(self.clear_all_button)
+        action_layout.addWidget(self.action_row)
+        self.controls_layout.addWidget(self.action_section)
         self.controls_layout.addWidget(self.drawing_section)
 
         self.propagation_section, propagation_layout = self._section("Propagation")
@@ -197,7 +215,7 @@ class ReferenceMaskPanel(QWidget):
         self._refresh_interpolation_controls()
 
     @staticmethod
-    def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
+    def _section(title: str | None) -> tuple[QFrame, QVBoxLayout]:
         frame = QFrame()
         frame.setObjectName("settingsSection")
         frame.setStyleSheet(
@@ -206,11 +224,12 @@ class ReferenceMaskPanel(QWidget):
         section_layout = QVBoxLayout(frame)
         section_layout.setContentsMargins(9, 7, 9, 9)
         section_layout.setSpacing(6)
-        heading = QLabel(title)
-        heading.setObjectName("sectionTitle")
-        heading.setStyleSheet(
-            "font-weight: bold; border: none; background: transparent;")
-        section_layout.addWidget(heading)
+        if title is not None:
+            heading = QLabel(title)
+            heading.setObjectName("sectionTitle")
+            heading.setStyleSheet(
+                "font-weight: bold; border: none; background: transparent;")
+            section_layout.addWidget(heading)
         return frame, section_layout
 
     @property

@@ -23,6 +23,7 @@ from fits.environment.constant import (
     FITS_MASK_TRACK_EDITED_FILTERED,
 )
 from fits.gui.viewer.common.base_window import ImageToolWindow
+from fits.gui.viewer.common.information_dialog import TRACKING_HELP
 from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
 from fits.gui.viewer.tracking.session import TrackingViewerSession
 from fits.gui.viewer.tracking.path_item import (
@@ -251,19 +252,8 @@ class TrackingViewerWindow(ImageToolWindow):
     tracking_finalized = Signal(object)
 
     file_filters = (FITS_MASK_TRACK, FITS_ARRAY_NAME)
-    tool_help = (
-        "\nTracking editor\n"
-        "Ctrl + click mask or centroid    Select track\n"
-        "Ctrl + click selected track    Unselect track\n"
-        "Ctrl + Z    Undo the latest drawing, preview, or accepted edit\n"
-        "Ctrl + D    Delete the selected mask in the current frame\n"
-        "Ctrl + Shift + D    Delete the selected track and all its masks\n"
-        "S    Accept current Split or Add/Edit preview\n"
-        "Split Mask: Ctrl + click a cell, then click where the division should "
-        "pass or drag along the proposed split line. Stroke pixels outside the "
-        "selected mask are ignored.\n"
-        "Add/Edit: left click predicts/adds; right click predicts/removes; "
-        "dragging uses the literal brush.\n")
+    help_gui = "Tracking"
+    tool_help = TRACKING_HELP
 
     def __init__(self, experiments_dir: str | Path | None = None,
                  tracking_path: str | Path | None = None,
@@ -523,7 +513,7 @@ class TrackingViewerWindow(ImageToolWindow):
         brush_row = QHBoxLayout()
         brush_row.addWidget(QLabel("Brush size"))
         self.local_brush_size = QSpinBox()
-        self.local_brush_size.setRange(1, 101)
+        self.local_brush_size.setRange(1, 1001)
         self.local_brush_size.setSingleStep(2)
         self.local_brush_size.setValue(5)
         self.local_brush_size.setSuffix(" px")
@@ -914,6 +904,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _display_track_paths(self) -> None:
+        if self._save_thread is not None or self._tracking_save_thread is not None:
+            self.image_viewer.set_preview_loading(True, "Preparation of saving…")
+            return
         key = self._trajectory_key()
         session = self._tracking_session
         if key is None or session is None or key == self._trajectory_failed_key:
@@ -942,6 +935,7 @@ class TrackingViewerWindow(ImageToolWindow):
             for item in self._track_id_items:
                 item.hide()
             if self._trajectory_thread is not None:
+                self.image_viewer.set_preview_loading(True, self.trajectory_status.text())
                 if self._trajectory_worker is not None and key != self._trajectory_worker.key:
                     self._trajectory_thread.requestInterruption()
                 return
@@ -965,9 +959,9 @@ class TrackingViewerWindow(ImageToolWindow):
         if (self._trajectory_thread is not None and self._trajectory_worker is not None
                 and self._trajectory_worker.key != key):
             self._trajectory_thread.requestInterruption()
-        if self.image_viewer.view_box.opacity() == 0.0:
+        if self.image_viewer._loading_visible:
             self._id_frame = None
-        self.image_viewer.view_box.setOpacity(1.0)
+        self.image_viewer.set_preview_loading(False)
         self.trajectory_status.hide()
         self.trajectory_progress.hide()
         frame = self.frame_slider.value()
@@ -989,9 +983,7 @@ class TrackingViewerWindow(ImageToolWindow):
         worker.done.connect(worker.deleteLater)
         thread.finished.connect(self._trajectory_finished)
         self._trajectory_thread, self._trajectory_worker = thread, worker
-        # Hiding a ViewBox collapses its GraphicsLayout geometry to zero, which
-        # may persist after show(). Transparency keeps the display area intact.
-        self.image_viewer.view_box.setOpacity(0.0)
+        self.image_viewer.set_preview_loading(True, f"{stage}…")
         self.trajectory_status.setText(f"{stage}…")
         self.trajectory_progress.setRange(0, total)
         self.trajectory_progress.setValue(0)
@@ -1004,6 +996,8 @@ class TrackingViewerWindow(ImageToolWindow):
         if self.sender() is not self._trajectory_worker:
             return
         self.trajectory_status.setText(f"{stage}: {value}/{total}")
+        if self._save_thread is None and self._tracking_save_thread is None:
+            self.image_viewer.set_preview_loading(True, f"{stage}: {value}/{total}")
         self.trajectory_progress.setRange(0, max(1, total))
         self.trajectory_progress.setValue(value)
 
@@ -1043,14 +1037,14 @@ class TrackingViewerWindow(ImageToolWindow):
                 self._track_path_items.append(item)
             self._track_path_items[0].set_prepared(prepared)
         self._display_selection()
-        self.image_viewer.view_box.setOpacity(1.0)
 
     @Slot(str)
     def _trajectories_failed(self, message: str) -> None:
         if self._trajectory_worker is not None and self.sender() is self._trajectory_worker:
             self._trajectory_failed_key = self._trajectory_worker.key
             if self._trajectory_failed_key == self._trajectory_key():
-                self.image_viewer.view_box.setOpacity(1.0)
+                if self._save_thread is None and self._tracking_save_thread is None:
+                    self.image_viewer.set_preview_loading(False)
             self.status_label.setText(f"Trajectory preparation failed: {message}")
 
     @Slot()
@@ -1114,7 +1108,7 @@ class TrackingViewerWindow(ImageToolWindow):
         if ((not self.editing_enabled and not self.selection_enabled)
                 or self._tracking_session is None
                 or not self.image_viewer.view_box.isVisible()
-                or self.image_viewer.view_box.opacity() == 0.0
+                or self.image_viewer._loading_visible
                 or self._save_thread is not None
                 or not hasattr(event, "button")):
             return
@@ -1125,7 +1119,7 @@ class TrackingViewerWindow(ImageToolWindow):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         control = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-        if self.editing_enabled and not control:
+        if not control:
             return
         track_id = self._track_at_position(position.x(), position.y())
         if track_id is not None:
@@ -1834,16 +1828,13 @@ class TrackingViewerWindow(ImageToolWindow):
 
     def _apply_mask_edit_colors(self) -> None:
         self._update_mask_edit_colors_button()
-        drawing = (self.image_viewer.drawing_mask
-                   if self._collect_local_prompts else None)
         drawing_color = (
             self._other_mask_color if self.preview_split_button.isChecked()
             else self._active_mask_color)
         self.image_viewer.set_drawing_style(drawing_color, 0.65)
-        self._display_selection()
-        if drawing is not None:
-            self.image_viewer.set_drawing_mask(drawing)
-            self.image_viewer.set_drawing_enabled(True)
+        if self._tracking_session is not None:
+            self._display_overlay(None, self.frame_slider.value(),
+                                  self.channel_combo.currentText(), self.z_slider.value())
 
     def _update_mask_edit_colors_button(self) -> None:
         self.mask_edit_colors_button.setStyleSheet(
@@ -2095,6 +2086,7 @@ class TrackingViewerWindow(ImageToolWindow):
         thread.finished.connect(self._save_thread_finished)
         self._save_thread = thread
         self._save_worker = worker
+        self.image_viewer.set_preview_loading(True, "Preparation of saving…")
         self._update_edit_buttons()
         thread.start()
 
@@ -2181,6 +2173,7 @@ class TrackingViewerWindow(ImageToolWindow):
         self._tracking_save_worker = worker
         self._pending_tracking_save = None
         self._update_edit_buttons()
+        self.image_viewer.set_preview_loading(True, "Preparation of saving…")
         thread.start()
 
     @Slot(object)
@@ -2201,6 +2194,7 @@ class TrackingViewerWindow(ImageToolWindow):
         thread = self._tracking_save_thread
         self._tracking_save_worker = None
         self._tracking_save_thread = None
+        self.image_viewer.set_preview_loading(False)
         result = self._pending_tracking_save
         self._pending_tracking_save = None
         self.progress.hide()
@@ -2220,6 +2214,7 @@ class TrackingViewerWindow(ImageToolWindow):
             self.save_tracking_button.setEnabled(self._tracking_session is not None)
             self.use_original_button.setEnabled(True)
         self._update_edit_buttons()
+        self._display_track_paths()
         if thread is not None:
             thread.deleteLater()
 
@@ -2246,9 +2241,11 @@ class TrackingViewerWindow(ImageToolWindow):
         thread = self._save_thread
         self._save_worker = None
         self._save_thread = None
+        self.image_viewer.set_preview_loading(False)
         self.progress.hide()
         self.save_display_button.setEnabled(self._tracking_session is not None)
         self._update_edit_buttons()
+        self._display_track_paths()
         if thread is not None:
             thread.deleteLater()
 
@@ -2262,7 +2259,7 @@ class TrackingViewerWindow(ImageToolWindow):
             self._trajectory_worker = None
         self.trajectory_progress.hide()
         self.trajectory_status.hide()
-        self.image_viewer.view_box.setOpacity(1.0)
+        self.image_viewer.set_preview_loading(False)
         self.diameter_reference.hide()
         self.local_cell_diameter.setEnabled(False)
         if (self._local_segmentation_thread is not None

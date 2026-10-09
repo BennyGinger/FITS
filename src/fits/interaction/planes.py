@@ -2,6 +2,7 @@
 
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
 from shutil import copy2
@@ -14,11 +15,15 @@ from fits_io import FitsIO
 from numpy.typing import NDArray
 
 
+def disk_empty(shape: tuple[int, ...], dtype: Any) -> NDArray:
+    """Allocate temporary mapped storage without an intermediate stack copy."""
+    with TemporaryFile() as file:
+        return np.memmap(file, dtype=dtype, mode="w+", shape=shape)
+
+
 def disk_copy(array: NDArray, dtype: Any = None) -> NDArray:
     """Copy a plane or stack to temporary mapped storage in YX-sized chunks."""
-    with TemporaryFile() as file:
-        output = np.memmap(file, dtype=array.dtype if dtype is None else dtype,
-                           mode="w+", shape=array.shape)
+    output = disk_empty(array.shape, array.dtype if dtype is None else dtype)
     for index in np.ndindex(array.shape[:-2]):
         output[index] = array[index]
     return output
@@ -48,6 +53,15 @@ def aligned_mask_store(reader: FitsIO, *, source_axes: str,
                       channel_map=mapping, transform=transform)
 
 
+@dataclass(frozen=True)
+class PlaneState:
+    """An immutable reference to a plane before a session edit."""
+
+    path: Path | None
+    cleared: bool
+    hidden_labels: frozenset[int]
+
+
 class PlaneStore:
     """Read immutable source planes on demand; keep edited planes on disk."""
 
@@ -71,8 +85,14 @@ class PlaneStore:
         self._cache: OrderedDict[tuple[int, int, int], NDArray] = OrderedDict()
         self._cache_size = 0
         self._edits: dict[tuple[int, int, int], Path] = {}
+        self._cleared: set[tuple[int, int, int]] = set()
+        self._hidden_labels: dict[tuple[int, int, int], frozenset[int]] = {}
+        self._shared_paths: set[Path] = set()
         self._temporary: TemporaryDirectory | None = None
         self._lock = RLock()
+        self.revision = 0
+        self.channel_revisions = [0] * self.axis_size("C")
+        self.plane_revisions: dict[tuple[int, int, int], int] = {}
 
     def axis_size(self, axis: str) -> int:
         return self.shape[self.axes.index(axis)] if axis in self.axes else 1
@@ -93,20 +113,12 @@ class PlaneStore:
         self.selection(key)
         with self._lock:
             if key in self._edits:
-                return np.load(self._edits[key], mmap_mode="r")
+                return self._hide_labels(key, np.load(self._edits[key], mmap_mode="r"))
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return self._cache[key]
-            source_channel = channel if self.channel_map is None else self.channel_map[channel]
-            if self.reader is None or source_channel is None:
-                array = np.zeros((self.axis_size("Y"), self.axis_size("X")),
-                                 dtype=self.dtype)
-            else:
-                array = np.asarray(self.reader.get_plane(frame, source_channel, z).array)
-                if self.transform is not None:
-                    array = self.transform(array)
-                if self.dtype is not None:
-                    array = array.astype(self.dtype, copy=False)
+            array = self._source_plane(key, cleared=key in self._cleared)
+            array = self._hide_labels(key, array)
             if array.shape != (self.axis_size("Y"), self.axis_size("X")):
                 raise ValueError("Loaded plane does not match the artifact's YX shape.")
             array.setflags(write=False)
@@ -119,6 +131,86 @@ class PlaneStore:
                     self._cache_size -= removed.nbytes
             return array
 
+    def _source_plane(self, key: tuple[int, int, int], *, cleared: bool) -> NDArray:
+        frame, channel, z = key
+        source_channel = channel if self.channel_map is None else self.channel_map[channel]
+        if cleared or self.reader is None or source_channel is None:
+            return np.zeros((self.axis_size("Y"), self.axis_size("X")), dtype=self.dtype)
+        array = np.asarray(self.reader.get_plane(frame, source_channel, z).array)
+        if self.transform is not None:
+            array = self.transform(array)
+        if self.dtype is not None:
+            array = array.astype(self.dtype, copy=False)
+        return array
+
+    def read_snapshot(self, key: tuple[int, int, int], state: PlaneState) -> NDArray:
+        """Read a retained plane for comparison without changing session state."""
+        self.selection(key)
+        with self._lock:
+            array = (np.load(state.path, mmap_mode="r") if state.path is not None
+                     else self._source_plane(key, cleared=state.cleared))
+            if state.hidden_labels:
+                array = array.copy()
+                array[np.isin(array, tuple(state.hidden_labels))] = 0
+            array.setflags(write=False)
+            return array
+
+    def _hide_labels(self, key: tuple[int, int, int], array: NDArray) -> NDArray:
+        labels = self._hidden_labels.get(key)
+        if labels:
+            array = array.copy()
+            array[np.isin(array, tuple(labels))] = 0
+            array.setflags(write=False)
+        return array
+
+    def _changed(self, key: tuple[int, int, int]) -> None:
+        self.revision += 1
+        self.channel_revisions[key[1]] += 1
+        self.plane_revisions[key] = self.revision
+        cached = self._cache.pop(key, None)
+        if cached is not None:
+            self._cache_size -= cached.nbytes
+
+    def snapshot_plane(self, key: tuple[int, int, int]) -> PlaneState:
+        """Retain source/edit references for Undo without reading any pixels."""
+        self.selection(key)
+        with self._lock:
+            path = self._edits.get(key)
+            if path is not None:
+                self._shared_paths.add(path)
+            return PlaneState(path, key in self._cleared,
+                              self._hidden_labels.get(key, frozenset()))
+
+    def restore_plane(self, key: tuple[int, int, int], state: PlaneState) -> None:
+        self.selection(key)
+        with self._lock:
+            self._edits.pop(key, None)
+            if state.path is not None:
+                self._edits[key] = state.path
+            self._cleared.discard(key)
+            if state.cleared:
+                self._cleared.add(key)
+            self._hidden_labels.pop(key, None)
+            if state.hidden_labels:
+                self._hidden_labels[key] = state.hidden_labels
+            self._changed(key)
+
+    def clear_plane(self, key: tuple[int, int, int]) -> None:
+        """Replace a plane with implicit zeros; leave source files untouched."""
+        self.selection(key)
+        with self._lock:
+            self._edits.pop(key, None)
+            self._hidden_labels.pop(key, None)
+            self._cleared.add(key)
+            self._changed(key)
+
+    def hide_label(self, key: tuple[int, int, int], label: int) -> None:
+        """Defer removing a tracking label until its plane is displayed/saved."""
+        self.selection(key)
+        with self._lock:
+            self._hidden_labels[key] = self._hidden_labels.get(key, frozenset()) | {label}
+            self._changed(key)
+
     def _temporary_path(self, name: str) -> Path:
         if self._temporary is None:
             self._temporary = TemporaryDirectory(prefix="fits-viewer-")
@@ -126,15 +218,17 @@ class PlaneStore:
 
     def writable_plane(self, frame: int = 0, channel: int = 0, z: int = 0) -> NDArray:
         key = frame, channel, z
+        self.selection(key)
         with self._lock:
-            if key not in self._edits:
+            if (key not in self._edits or self._edits[key] in self._shared_paths
+                    or key in self._hidden_labels):
                 current = self.plane(*key)
-                path = self._temporary_path(f"{frame}-{channel}-{z}.npy")
+                path = self._temporary_path(f"{frame}-{channel}-{z}-{self.revision + 1}.npy")
                 np.save(path, current)
                 self._edits[key] = path
-                cached = self._cache.pop(key, None)
-                if cached is not None:
-                    self._cache_size -= cached.nbytes
+            self._hidden_labels.pop(key, None)
+            self._cleared.discard(key)
+            self._changed(key)
             return np.load(self._edits[key], mmap_mode="r+")
 
     def set_plane(self, key: tuple[int, int, int], array: NDArray) -> None:
@@ -172,3 +266,6 @@ class PlaneStore:
                 self._temporary.cleanup()
                 self._temporary = None
             self._edits.clear()
+            self._cleared.clear()
+            self._hidden_labels.clear()
+            self._shared_paths.clear()

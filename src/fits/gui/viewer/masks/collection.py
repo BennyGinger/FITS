@@ -11,6 +11,7 @@ from PySide6.QtGui import QCloseEvent, QColor, QKeyEvent, QPalette
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem, QStyle, QMessageBox, QPushButton, QStackedWidget, QToolButton, QVBoxLayout, QWidget
 
 from fits.gui.viewer.masks.window import MaskDrawingWindow
+from fits.interaction.planes import PlaneState
 from fits.workflows.runtime.interactive.messages import (
     MaskCollectionOutcome, MaskCollectionRequest)
 from fits.settings.models import DistanceProfileSettings, ExtractSettings
@@ -47,8 +48,10 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self._ended = False
         self._completed = 0
         self._expected_experiments: int | None = None
-        self._baseline: dict[str, NDArray[np.uint8]] = {}
+        self._baseline: dict[str, dict[tuple[int, int, int], PlaneState]] = {}
         self._baseline_labels: dict[str, str] = {}
+        self._baseline_revisions: dict[str, tuple[int, ...]] = {}
+        self._baseline_plane_revisions: dict[str, dict[tuple[int, int, int], int]] = {}
         self._label_suggestions = {"reference": "", "roi": ""}
         self._canvas_dirty: set[str] = set()
         self._saved: dict[str, set[Path]] = {"reference": set(), "roi": set()}
@@ -124,6 +127,12 @@ class MaskCollectionWindow(MaskDrawingWindow):
         layout.addLayout(finish_mode_row)
         layout.addWidget(self.switch_button)
         self.finish_button = QPushButton("Complete session")
+        self.finish_button.setStyleSheet(
+            "QPushButton { background-color: #278342; color: white; font-weight: bold; "
+            "border-radius: 4px; padding: 7px 12px; }"
+            "QPushButton:hover { background-color: #319d51; }"
+            "QPushButton:pressed { background-color: #1e6834; }"
+            "QPushButton:disabled { background-color: #72987c; color: #e0e0e0; }")
         self.finish_button.clicked.connect(self._finish_drawing)
 
         self.quit_button = QPushButton("Quit pipeline")
@@ -230,7 +239,10 @@ class MaskCollectionWindow(MaskDrawingWindow):
     def _remember(self, kind) -> None:
         session, panel = self._session_panel(kind)
         if session is not None:
-            self._baseline[kind] = session.mask_array
+            self._baseline[kind] = {
+                key: session._mask.snapshot_plane(key) for key in session._mask.keys()}
+            self._baseline_revisions[kind] = tuple(session._mask.channel_revisions)
+            self._baseline_plane_revisions[kind] = session._mask.plane_revisions.copy()
             self._baseline_labels[kind] = panel.label_edit.text()
         self._canvas_dirty.discard(kind)
 
@@ -240,12 +252,21 @@ class MaskCollectionWindow(MaskDrawingWindow):
 
     def _dirty(self, kind) -> bool:
         session, panel = self._session_panel(kind)
+        if session is None:
+            return False
         baseline = self._baseline.get(kind)
-        return session is not None and (
-            kind in self._canvas_dirty
-            or baseline is None
-            or not np.array_equal(session.mask_array, baseline)
-            or panel.label_edit.text() != self._baseline_labels.get(kind, ""))
+        if (kind in self._canvas_dirty or baseline is None
+                or panel.label_edit.text() != self._baseline_labels.get(kind, "")):
+            return True
+        if tuple(session._mask.channel_revisions) == self._baseline_revisions.get(kind):
+            return False
+        remembered = self._baseline_plane_revisions[kind]
+        for key, revision in session._mask.plane_revisions.items():
+            if revision != remembered.get(key, 0):
+                if not np.array_equal(session._mask.plane(*key),
+                                      session._mask.read_snapshot(key, baseline[key])):
+                    return True
+        return False
 
     def _confirm(self, title: str, message: str) -> bool:
         return QMessageBox.warning(self, title, message,
@@ -295,14 +316,16 @@ class MaskCollectionWindow(MaskDrawingWindow):
         session, panel = self._session_panel(kind)
         if session is None:
             return
-        current = session.mask_array
+        channel = session.channel_labels.index(self.channel_combo.currentText())
         baseline = self._baseline[kind]
-        if "C" in session.axes:
-            selection: list[slice | int] = [slice(None)] * current.ndim
-            selection[session.axes.index("C")] = session.channel_labels.index(self.channel_combo.currentText())
-            baseline[tuple(selection)] = current[tuple(selection)]
-        else:
-            baseline[...] = current
+        remembered = self._baseline_plane_revisions[kind]
+        for key, revision in session._mask.plane_revisions.items():
+            if key[1] == channel and revision != remembered.get(key, 0):
+                baseline[key] = session._mask.snapshot_plane(key)
+                remembered[key] = revision
+        revisions = list(self._baseline_revisions[kind])
+        revisions[channel] = session._mask.channel_revisions[channel]
+        self._baseline_revisions[kind] = tuple(revisions)
         self._baseline_labels[kind] = panel.label_edit.text()
         self._canvas_dirty.discard(kind)
         self._finished_modes.discard(kind)
@@ -340,8 +363,8 @@ class MaskCollectionWindow(MaskDrawingWindow):
         buttons = QVBoxLayout()
         buttons.setSpacing(12)
         for button in (self.finish_button, self.quit_button):
-            button.setMinimumWidth(165)
-            button.setMinimumHeight(34)
+            button.ensurePolished()
+            button.setMinimumSize(button.sizeHint().expandedTo(button.minimumSizeHint()))
         buttons.addWidget(self.finish_button)
         buttons.addWidget(self.quit_button)
         layout.addLayout(buttons)

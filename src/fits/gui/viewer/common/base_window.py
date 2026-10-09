@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QSlider,
@@ -25,6 +24,7 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 
+from fits.gui.viewer.common.information_dialog import HelpRow, ViewerInformationDialog
 from fits.environment.constant import FITS_ARRAY_NAME
 from fits.gui.main_window.run_browser import DirectoryBrowser
 from fits.gui.settings.wheel_widgets import FocusWheelSlider
@@ -37,7 +37,8 @@ class ImageToolWindow(QMainWindow):
 
     source_panel_sizes = (230, 750)
     file_filters: tuple[str, ...]
-    tool_help: str
+    help_gui: str
+    tool_help: tuple[HelpRow, ...]
     tool_panel: QWidget
 
     def __init__(self, experiments_dir: str | Path | None = None,
@@ -233,18 +234,11 @@ class ImageToolWindow(QMainWindow):
 
     @Slot()
     def _show_information(self) -> None:
-        text = (
-            "Browse normalized FITS experiments and adjust image contrast.\n\n"
-            "Keyboard shortcuts\n"
-            "X    Toggle mask overlay\n"
-            "← / → or A / D    Previous / next frame\n"
-            "↑ / ↓    Previous / next Z plane\n"
-            "W / Z    Next / previous Z plane\n"
-            "C    Next channel\n"
-            "Ctrl + mouse drag    Pan image\n"
-            "Ctrl + mouse wheel    Zoom image\n"
-            + self.tool_help + f"\nFITS {self._package_version('fits')}")
-        QMessageBox.information(self, f"About {self.windowTitle()}", text)
+        dialog = ViewerInformationDialog(
+            self, title=self.windowTitle(), version=self._package_version("fits"),
+            gui=self.help_gui, editing_enabled=getattr(self, "editing_enabled", True),
+            selection_enabled=getattr(self, "selection_enabled", False))
+        dialog.exec()
 
     @staticmethod
     def _package_version(distribution: str) -> str:

@@ -203,7 +203,7 @@ def test_hidden_tab_shortcut_cannot_bypass_switch_buttons(window, tmp_path):
     window.enqueue_experiment(request(tmp_path))
     window.show()
     window.activateWindow()
-    _APP.processEvents()
+    QApplication.processEvents()
     window.image_viewer.setFocus()
     QTest.keyClick(window.image_viewer, Qt.Key.Key_Tab, Qt.KeyboardModifier.ControlModifier)
     assert window._kind() == 'reference'
@@ -331,7 +331,7 @@ def test_control_buttons_have_tooltips_and_switch_label_follows_mode(window, tmp
     assert window.switch_button.text() == 'Go to ref'
     assert window.finish_mode_button.text() == 'Complete ROI masks'
     window.show()
-    _APP.processEvents()
+    QApplication.processEvents()
     assert window.finish_mode_button.y() == window.next_button.y()
     assert window.finish_button.text() == 'Complete session'
     assert window.finish_button.y() < window.quit_button.y()
@@ -501,3 +501,70 @@ def test_expected_count_controls_preserve_drawings_and_required_reference(window
     assert session.mask_array.any()
     assert window.reference_panel.label_edit.text() == 'unfinished'
     assert 'skipped' not in window.count_label.text()
+
+
+def test_saved_session_dirty_check_avoids_full_stack_copy(window, tmp_path, monkeypatch):
+    window.enqueue_experiment(request(tmp_path))
+    session = window._reference_session
+    session.set_mask_plane(np.ones((8, 8), dtype=np.uint8))
+    window.reference_panel.label_edit.setText('ref')
+    window._saved_mask('reference', tmp_path / 'fits_ref_ref.tif')
+    def unexpected(*args, **kwargs):
+        pytest.fail('unchanged-session check assembled the full mask stack')
+    monkeypatch.setattr(session._mask, 'copy', unexpected)
+    assert not window._dirty('reference')
+    assert 'background-color: #278342' in window.finish_button.styleSheet()
+
+
+def test_next_experiment_does_not_copy_stacks_or_read_later_frames(window, tmp_path, monkeypatch):
+    from fits.interaction.planes import PlaneStore
+
+    first, second = request(tmp_path), request(tmp_path, 'b')
+    window.enqueue_experiment(first)
+    window.enqueue_experiment(second)
+    monkeypatch.setattr(window, '_confirm', lambda *args: True)
+
+    def unexpected_copy(*args, **kwargs):
+        pytest.fail('Next experiment copied a whole stack')
+
+    original_plane = PlaneStore.plane
+    def current_plane(self, frame=0, channel=0, z=0):
+        assert frame == 0, 'Next experiment eagerly read a later frame'
+        return original_plane(self, frame, channel, z)
+
+    monkeypatch.setattr(PlaneStore, 'copy', unexpected_copy)
+    monkeypatch.setattr(PlaneStore, 'plane', current_plane)
+    assert window._finish_experiment()
+    assert window._active == second
+    assert not window._dirty('reference')
+    assert not window._dirty('roi')
+
+
+@pytest.mark.parametrize('kind', ['reference', 'roi'])
+def test_saved_baseline_survives_edits_and_restoring_pixels(window, tmp_path, kind):
+    window.enqueue_experiment(request(tmp_path))
+    session, panel = window._session_panel(kind)
+    mask = np.ones((8, 8), dtype=np.uint8)
+    session.set_mask_plane(mask)
+    panel.label_edit.setText('test')
+    window._saved_mask(kind, tmp_path / f'fits_{kind}_test.tif')
+    session.set_mask_plane(np.zeros_like(mask))
+    assert window._dirty(kind)
+    session.set_mask_plane(mask)
+    assert not window._dirty(kind)
+
+
+def test_saving_one_channel_keeps_other_channel_dirty(window, tmp_path):
+    folder = tmp_path / 'multi'
+    folder.mkdir()
+    source = folder / 'fits_array.tif'
+    tifffile.imwrite(source, np.zeros((2, 2, 8, 8), dtype=np.uint16),
+                     imagej=True, metadata={'axes': 'TCYX'})
+    window.enqueue_experiment(MaskCollectionRequest('multi', source))
+    session = window._reference_session
+    mask = np.ones((8, 8), dtype=np.uint8)
+    session.set_mask_plane(mask, channel=0)
+    session.set_mask_plane(mask, channel=1)
+    window.channel_combo.setCurrentIndex(0)
+    window._saved_mask('reference', folder / 'fits_ref_ref.tif')
+    assert window._dirty('reference')

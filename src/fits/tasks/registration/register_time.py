@@ -10,6 +10,7 @@ from fits.tasks.common.artifact_results import save_step_result
 from fits.tasks.common.preparation import load_input_reader, resolve_step_run
 from fits.workflows.definitions.models import StepProfile
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
+from fits.tasks.registration.tuned import load_tuning, reusable_model
 from fits.workflows.runtime.errors import StepExecutionError
 
 
@@ -36,6 +37,11 @@ def register_time(settings: RegisterTimeSettings,
         run = resolve_step_run(exp_state, step_profile, settings.overwrite)
         if run.is_complete:
             return [exp_state]
+
+        source = exp_state.artifact(step_profile.input_artifact)
+        tuned = load_tuning(source, "time") if source is not None else None
+        if tuned is not None:
+            settings = settings.model_copy(update=tuned.settings.to_payload_dict())
 
         plan = resolve_registration_plan(settings.context, 
                                          backend=settings.backend, 
@@ -67,12 +73,16 @@ def register_time(settings: RegisterTimeSettings,
                      input_array.shape,
                      input_axes,)
 
-        register = RegisterModel(backend=plan.backend)
-        register.fit_time(array=input_array, 
-                          axes=input_axes, 
-                          method=plan.method, 
-                          reference_strategy=settings.reference_strategy, 
-                          fit_channel=fit_channel)
+        register = reusable_model(tuned, array=input_array, axes=input_axes,
+                                  labels=tuple(reader.channel_labels or ()), settings=settings,
+                                  fit_channel=fit_channel)
+        if register is None:
+            register = RegisterModel(backend=plan.backend)
+            register.fit_time(array=input_array,
+                              axes=input_axes,
+                              method=plan.method,
+                              reference_strategy=settings.reference_strategy,
+                              fit_channel=fit_channel)
         
         registered_array = register.apply(array=input_array, 
                                           axes=input_axes)

@@ -5,6 +5,7 @@ import os
 from collections import deque
 from collections.abc import Mapping
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import nullcontext
 from typing import Any
 
 from progress_bar import pbar
@@ -52,7 +53,9 @@ def run_workflow_scheduler(effective_cfg: Mapping[str, Any],
 
     cpu_workers = os.cpu_count() or 1
     final_states: list[ExperimentState] = []
-    with (ThreadPoolExecutor(max_workers=cpu_workers) as cpu_executor,
+    display = run_progress.display if run_progress is not None else None
+    with (display.task("Pipeline", len(exp_states)) if display is not None else nullcontext(),
+          ThreadPoolExecutor(max_workers=cpu_workers) as cpu_executor,
           ThreadPoolExecutor(max_workers=1) as gpu_executor,
           pbar(total=len(exp_states), desc="Pipeline", logs="off") as progress,):
         cpu_running: RunningTasks = {}
@@ -91,10 +94,13 @@ def run_workflow_scheduler(effective_cfg: Mapping[str, Any],
                                                    cpu_ready=cpu_ready,
                                                    gpu_ready=gpu_ready, 
                                                    final_states=final_states,
-                                                   progress=progress)
+                                                   progress=progress,
+                                                   display=display)
             if queued_count:
                 total_tasks += queued_count
                 progress.update(total=total_tasks)
+                if display is not None:
+                    display.set_total(total_tasks)
 
     logger.info("Scheduler completed with %d terminal states", len(final_states))
     return final_states

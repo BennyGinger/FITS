@@ -43,6 +43,7 @@ cuda129 = [
 fits = "fits.cli.main:main"
 fits-gui = "fits.gui.main:main"
 fits-segtune = "fits.gui.viewer.main:segtune"
+fits-regtune = "fits.gui.viewer.main:regtune"
 fits-trackedit = "fits.gui.viewer.main:trackedit"
 fits-drawmask = "fits.gui.viewer.main:drawmask"
 

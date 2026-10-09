@@ -64,6 +64,31 @@ def test_disk_edits_survive_eviction_and_do_not_change_source(tmp_path):
     assert not temporary.exists()
 
 
+def test_read_snapshot_preserves_source_edits_and_deferred_operations(tmp_path):
+    source = tmp_path / 'masks.tif'
+    original = np.full((2, 8, 9), 10, dtype=np.uint16)
+    tifffile.imwrite(source, original, photometric='minisblack', metadata={'axes': 'TYX'})
+    store = PlaneStore('TYX', original.shape, reader=FitsIO.from_path(source), dtype=np.uint16)
+    key = (0, 0, 0)
+    source_state = store.snapshot_plane(key)
+    store.writable_plane()[2, 3] = 20
+    edited_state = store.snapshot_plane(key)
+    store.hide_label(key, 10)
+    hidden_state = store.snapshot_plane(key)
+    store.clear_plane(key)
+    cleared_state = store.snapshot_plane(key)
+    store.writable_plane()[1, 1] = 30
+    revision = store.revision
+    np.testing.assert_array_equal(store.read_snapshot(key, source_state), original[0])
+    assert store.read_snapshot(key, edited_state)[2, 3] == 20
+    hidden = store.read_snapshot(key, hidden_state)
+    assert hidden.sum() == 20
+    assert not store.read_snapshot(key, cleared_state).any()
+    assert store.revision == revision
+    assert store.plane()[1, 1] == 30
+    store.close()
+
+
 @pytest.mark.parametrize("kind", ["reference", "roi"])
 def test_loaded_mask_navigation_is_lazy_and_save_keeps_session_anchors(
         tmp_path, monkeypatch, kind):
@@ -153,3 +178,76 @@ def test_tracking_movie_edits_match_eager_results(tmp_path, operation):
     lazy.undo_last_edit()
     np.testing.assert_array_equal(np.stack([lazy.tracked_frame(frame) for frame in range(4)]), masks)
     lazy.close()
+
+
+@pytest.mark.parametrize("kind", ["reference", "roi"])
+def test_clear_current_and_stack_do_not_read_or_write_pixels(tmp_path, monkeypatch, kind):
+    source = tmp_path / FITS_ARRAY_NAME
+    image = np.ones((12, 2, 8, 9), dtype=np.uint16)
+    tifffile.imwrite(source, image, photometric="minisblack", metadata={"axes": "TCYX"})
+    artifact = tmp_path / f"fits_{'ref' if kind == 'reference' else 'roi'}_test.tif"
+    labels = FitsIO.from_path(source).channel_labels
+    masks = np.ones_like(image) * (1 if kind == "reference" else 3)
+    FitsIO.from_path(source).save_array(
+        masks, output_path=artifact, channel_labels=labels, export_channels=labels,
+        custom_metadata={"roi_mask_encoding": ROI_MASK_ENCODING} if kind == "roi" else {})
+    session = (ReferenceMaskSession(source, reference_path=artifact)
+               if kind == "reference" else RoiSession(source, roi_path=artifact))
+    with monkeypatch.context() as patch:
+        patch.setattr(FitsIO, "get_plane", lambda *a, **k: pytest.fail("Clear read source pixels"))
+        patch.setattr(np, "save", lambda *a, **k: pytest.fail("Clear wrote pixel data"))
+        session.clear_mask_plane(frame_index=3, channel=0)
+        session.clear_stack(channel=0)
+    assert session._mask._temporary is None
+    assert not session.mask_plane(3, 0).any()
+    assert session.mask_plane(3, 1).any()
+    if kind == "reference":
+        session.undo_display_edit(frame_index=4, channel=0)
+        np.testing.assert_array_equal(session.mask_plane(4, 0), masks[4, 0])
+    edited = np.zeros((8, 9), dtype=np.uint8)
+    edited[2, 2] = 1
+    session.set_mask_plane(edited, frame_index=3, channel=0)
+    np.testing.assert_array_equal(session.mask_plane(3, 0), edited)
+    assert not session.mask_plane(2, 0).any()
+    np.testing.assert_array_equal(FitsIO.from_path(artifact).get_plane(3, 0).array, masks[3, 0])
+    session.close()
+
+
+def test_lazy_tracking_deletion_reuses_centroids_and_undo(tmp_path, monkeypatch):
+    tracking = tmp_path / FITS_MASK_TRACK
+    masks = np.zeros((8, 20, 20), dtype=np.uint16)
+    masks[:, 2:5, 2:5] = 10
+    masks[:, 10:12, 10:12] = 20
+    tifffile.imwrite(tracking, masks, photometric="minisblack", metadata={"axes": "TYX"})
+    session = TrackingViewerSession(tracking)
+    session.track_centroids()
+    with monkeypatch.context() as patch:
+        patch.setattr(FitsIO, "get_plane", lambda *a, **k: pytest.fail("Deletion rescanned source"))
+        patch.setattr(np, "save", lambda *a, **k: pytest.fail("Deletion wrote plane data"))
+        session.delete_track(10, 0, 0)
+        assert set(session.track_centroids()) == {20}
+    expected = masks.copy()
+    expected[expected == 10] = 0
+    np.testing.assert_array_equal(session._tracks.copy(), expected)
+    session.undo_last_edit()
+    np.testing.assert_array_equal(session._tracks.copy(), masks)
+    session.delete_mask(10, 3, 0, 0)
+    assert len(session.track_centroids()[10]) == 7
+    assert session.centroid_cache.lengths[0, 0][10] == 8  # internal gap counts
+    session.undo_last_edit()
+    np.testing.assert_array_equal(session._tracks.copy(), masks)
+    session.close()
+
+
+def test_plane_snapshot_survives_later_edits_and_repeated_clearing():
+    store = PlaneStore("TYX", (3, 8, 9), dtype=np.uint8)
+    store.writable_plane(1)[:] = 4
+    snapshot = store.snapshot_plane((1, 0, 0))
+    store.writable_plane(1)[:] = 7
+    store.clear_plane((1, 0, 0))
+    store.restore_plane((1, 0, 0), snapshot)
+    assert np.all(store.plane(1) == 4)
+    store.writable_plane(1)[:] = 9
+    store.restore_plane((1, 0, 0), snapshot)
+    assert np.all(store.plane(1) == 4)
+    store.close()

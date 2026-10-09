@@ -262,63 +262,35 @@ mask unchanged.
 
 Optional processing tuners
 -------------------------
-Goal: let users quickly check representative experiments and choose settings
-before running a batch, minimizing hands-on time. Early previews on the
-original input are acceptable approximations of the final pipeline result;
-do not require users to run preceding steps before tuning.
-Status: proposed design; implementation pending.
+Goal: check representative experiments before a batch, choose general settings,
+and retain accepted transforms for experiments that were tuned individually.
+Status: registration tuner implemented; background-subtraction tuner pending.
 
-User interface and launch
-[ ] Provide distinct time-registration, channel-registration, and background-
-    subtraction tuners, launched explicitly from their respective GUI sections.
-    Each should look and behave as its own tool, rather than requiring users
-    to navigate a combined processing workflow.
-[ ] Offer manual standalone CLI launch commands for each tuner (names TBD).
-    Keep the normal pipeline CLI fully usable without opening any tuner.
-[ ] Reuse the run-directory browser to choose a representative experiment.
-[ ] Provide original/preview comparison, frame navigation, relevant settings,
-    Preview, and Apply and close. Applying transfers settings to the matching
-    main-GUI section; closing without applying leaves those settings unchanged.
-[ ] Keep previews optional and separate from saved experiment artifacts.
+[x] Launch one shared Time/Channels registration tuner from either main-GUI
+    settings section, initially selecting the corresponding tab.
+[x] Offer standalone fits-regtune with an optional image, --mode,
+    --experiments-dir, and --settings. The pipeline CLI needs no tuner.
+[x] Reuse the classic experiment browser, navigation, Info dialog, and loading
+    overlay, with one Run preview, Save current settings, and Complete session.
+[x] Support original/registered comparison and a per-frame reference composite.
+[x] Transfer accepted settings to the general main-GUI settings; standalone Save
+    updates the supplied/nearest settings file or creates a template-based one.
+[x] Save accepted per-experiment matrices and settings outside image artifacts.
+    Registration tasks validate fitting pixels before reusing transforms.
+[x] Keep original input virtual, project only fitting channels/frames across Z,
+    and prepare replaceable disk-backed previews in a cancellable worker.
+[x] Release previews when switching experiments or closing. Repeated identical
+    previews reuse results; parameter changes cannot save a stale preview.
+[x] Fit full time sequences for first/previous/mean strategies so accepted
+    matrices cover every frame. Channel previews can include time registration
+    first to reproduce pipeline order and validate reuse correctly.
+[x] Validate backend restoration, pixel equivalence, saved-model reuse, stale
+    input rejection, settings transfer, cancellation, and GUI/CLI launch.
+[ ] Consider preparing nearby preview frames first after fitting, then filling
+    the remaining disk cache progressively for especially large experiments.
+[ ] Add an optional background-subtraction tuner with frame/channel previews,
+    general settings transfer, and independent GUI/CLI launch.
 [ ] Consider separate executable shortcuts/icons for the tools later.
-
-Input and preview lifetime
-[ ] Load one original input array for the active tool; do not load duplicate
-    full stacks for inactive tools. Resolve support for raw files versus
-    converted, unprocessed FITS arrays when implementing the input loader.
-[ ] When switching tools, release the previous tool's input and preview,
-    then reload the selected experiment for the newly opened tool.
-[ ] When switching experiments, release the previous input and preview before
-    loading the new experiment. Do not accumulate results across experiments.
-[ ] Reuse the loaded original input for repeated previews within a tool.
-    Replace the previous preview; never process the previous preview again.
-[ ] Run preview work off the GUI thread with progress and cancellation.
-    Finish or cancel active work before releasing its input buffers.
-
-Preview scope
-[x] Initialize and cache SegTune's selected Cellpose model in the background
-    without running an automatic preview. Keep tuning controls editable while
-    loading, disable Run preview until ready, and initialize the latest model
-    selection when it changes during an existing load.
-[ ] Channel registration: preview one time frame at a time using a composite
-    display with channel colours, visibility controls, and original/result
-    comparison. Build the composite only for the displayed frame.
-[ ] Time registration with previous-frame reference: process the full sequence
-    for a faithful preview of accumulated transforms.
-[ ] Time registration with first-frame reference: preview individual frames
-    against the fixed first frame.
-[ ] Time registration with mean reference: compute and reuse the full-stack
-    mean reference, then preview individual frames against it. Computing the
-    reference still requires reading the stack.
-[ ] Background subtraction: preview individual frames/channels directly from
-    the original input, without requiring registration first.
-[ ] Follow the same early-check principle for segmentation tuning; preceding
-    processing steps are not a prerequisite for optional tuning.
-[ ] Document that early previews guide parameter choice rather than reproduce
-    every upstream effect. Registration may resample intensities and alter
-    borders, so numerical equivalence is not assumed.
-[ ] Validate settings transfer, original-input reuse, preview replacement,
-    cancellation, and independent GUI/CLI launch behavior.
 
 
 Large-file handling in viewers

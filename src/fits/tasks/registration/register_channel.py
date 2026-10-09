@@ -10,6 +10,7 @@ from fits.tasks.common.artifact_results import save_step_result
 from fits.tasks.common.preparation import load_input_reader, resolve_step_run
 from fits.workflows.definitions.models import StepProfile
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
+from fits.tasks.registration.tuned import load_tuning, reusable_model
 from fits.workflows.runtime.errors import StepExecutionError
 
 
@@ -36,6 +37,11 @@ def register_channel(settings: RegisterChannelSettings,
         run = resolve_step_run(exp_state, step_profile, settings.overwrite)
         if run.is_complete:
             return [exp_state]
+
+        source = exp_state.artifact(step_profile.input_artifact)
+        tuned = load_tuning(source, "channel") if source is not None else None
+        if tuned is not None:
+            settings = settings.model_copy(update=tuned.settings.to_payload_dict())
         
         plan = resolve_registration_plan(settings.context,
                                          backend=settings.backend,
@@ -63,12 +69,19 @@ def register_channel(settings: RegisterChannelSettings,
                      input_array.shape,
                      input_axes,)
            
-        register = RegisterModel(backend=plan.backend)
-        register.fit_channel(array=input_array,
-                             axes=input_axes,
-                             method=plan.method,
-                             reference_channel=ref_channel,
-                             reference_frame=settings.reference_frame)
+        register = reusable_model(tuned, array=input_array, axes=input_axes,
+                                  labels=tuple(reader.channel_labels or ()), settings=settings,
+                                  reference_channel=ref_channel)
+        if register is None:
+            register = RegisterModel(backend=plan.backend)
+            excluded = ([reader.resolve_channel_positions(label)[0] for label in settings.exclude_channel]
+                        if settings.exclude_channel else None)
+            register.fit_channel(array=input_array,
+                                 axes=input_axes,
+                                 method=plan.method,
+                                 reference_channel=ref_channel,
+                                 reference_frame=settings.reference_frame,
+                                 exclude_channels=excluded)
         
         registered_array = register.apply(array=input_array, axes=input_axes)
         

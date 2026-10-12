@@ -76,12 +76,10 @@ class _TrajectoryWorker(QObject):
                     self.options["value"], self.options["maximum"])
                 centroids = {track: points for track, points in centroids.items()
                              if track in accepted}
-            selected = self.options["selected"]
             single = self.options["single"]
             color = self.options["color"]
             def color_for(track: int) -> QColor:
-                return (QColor("white") if track in selected else
-                        QColor(color) if single else QColor(*track_rgb(track)))
+                return QColor(color) if single else QColor(*track_rgb(track))
             prepared = None
             if self.options["paths"]:
                 prepared = prepare_paths(
@@ -267,8 +265,11 @@ class TrackingViewerWindow(ImageToolWindow):
         self._pipeline_resolved = False
         if not editing_enabled:
             self.file_filters = (FITS_MASK_TRACK,)
+        self._active_track_filter: tuple[str, int, int] | None = None
         self._tracking_session: TrackingViewerSession | None = None
         self._track_path_items: list[TrackPathsItem] = []
+        self._selected_path_items: list[pg.PlotDataItem] = []
+        self._selected_path_key: tuple | None = None
         self._track_id_items: list[pg.TextItem] = []
         self._id_pool: dict[int, pg.TextItem] = {}
         self._trajectory_thread: QThread | None = None
@@ -386,10 +387,6 @@ class TrackingViewerWindow(ImageToolWindow):
         layout.addWidget(display_section)
 
         filter_section, filters = self._section("Track filtering")
-        self.filter_tracks = QCheckBox("Filter by track length")
-        self.filter_tracks.setToolTip(
-            "Track length is the last frame minus the first frame plus one, including gaps.")
-        filters.addWidget(self.filter_tracks)
         filter_row = QHBoxLayout()
         self.filter_operator = QComboBox()
         for label, value in (("Lower than", "lt"), ("Lower or equal", "le"),
@@ -413,6 +410,16 @@ class TrackingViewerWindow(ImageToolWindow):
         self.filter_maximum.hide()
         filter_row.addWidget(self.filter_maximum)
         filters.addLayout(filter_row)
+        filter_buttons = QHBoxLayout()
+        filter_buttons.addStretch(1)
+        self.filter_button = QPushButton("Filter")
+        self.filter_button.setToolTip(
+            "Apply the selected track length condition. Length includes gaps between frames.")
+        self.clear_filter_button = QPushButton("Clear filter")
+        self.clear_filter_button.setToolTip("Remove the track length filter and show all tracks.")
+        filter_buttons.addWidget(self.filter_button)
+        filter_buttons.addWidget(self.clear_filter_button)
+        filters.addLayout(filter_buttons)
         layout.addWidget(filter_section)
 
         track_section, track_editing = self._section("Track operations")
@@ -638,10 +645,10 @@ class TrackingViewerWindow(ImageToolWindow):
         self.show_centroids.toggled.connect(self._display_track_paths)
         self.show_centroids.toggled.connect(self.centroid_size.setEnabled)
         self.centroid_size.valueChanged.connect(self._display_track_paths)
-        self.filter_tracks.toggled.connect(self._filter_changed)
+        self.filter_button.clicked.connect(self._apply_track_filter)
+        self.clear_filter_button.clicked.connect(self._clear_track_filter)
         self.filter_operator.currentIndexChanged.connect(self._filter_changed)
         self.filter_value.valueChanged.connect(self._filter_value_changed)
-        self.filter_maximum.valueChanged.connect(self._display_selection)
         self.path_color_button.clicked.connect(self._choose_path_color)
         self.mask_edit_colors_button.clicked.connect(self._choose_mask_edit_colors)
         if not self.editing_enabled:
@@ -672,7 +679,6 @@ class TrackingViewerWindow(ImageToolWindow):
     @Slot()
     def _filter_value_changed(self) -> None:
         self.filter_maximum.setMinimum(self.filter_value.value())
-        self._display_selection()
 
     def _tool_keypress(self, event: QKeyEvent) -> bool:
         if (event.key() == Qt.Key.Key_D
@@ -857,24 +863,31 @@ class TrackingViewerWindow(ImageToolWindow):
 
     def _accepted_track_ids(self) -> frozenset[int] | None:
         session = self._tracking_session
-        if (session is None or not self.filter_tracks.isChecked()
+        if (session is None or self._active_track_filter is None
                 or self.mask_channel_combo.currentIndex() < 0):
             return None
         channel = session._resolve_channel(self.mask_channel_combo.currentText())
         z = self.z_slider.value()
         if session.centroid_cache.cached(channel, z) is None:
             return frozenset()
-        return session.track_ids_matching(channel, z, str(self.filter_operator.currentData()),
-                                         self.filter_value.value(), self.filter_maximum.value())
+        operator, value, maximum = self._active_track_filter
+        return session.track_ids_matching(channel, z, operator, value, maximum)
 
     @Slot()
     def _filter_changed(self) -> None:
         between = self.filter_operator.currentData() == "between"
         self.filter_maximum.setVisible(between)
-        enabled = self.filter_tracks.isChecked()
-        self.filter_operator.setEnabled(enabled)
-        self.filter_value.setEnabled(enabled)
-        self.filter_maximum.setEnabled(enabled)
+
+    @Slot()
+    def _apply_track_filter(self) -> None:
+        self._active_track_filter = (
+            str(self.filter_operator.currentData()),
+            self.filter_value.value(), self.filter_maximum.value())
+        self._display_selection()
+
+    @Slot()
+    def _clear_track_filter(self) -> None:
+        self._active_track_filter = None
         self._display_selection()
 
     @Slot()
@@ -890,14 +903,15 @@ class TrackingViewerWindow(ImageToolWindow):
         self._display_track_paths()
 
     def _trajectory_key(self) -> tuple | None:
+        """Identify the base drawing; selection highlights are a separate layer."""
         session = self._tracking_session
         if session is None or self.mask_channel_combo.currentIndex() < 0:
             return None
         return (id(session), session.centroid_cache.revision,
                 self.mask_channel_combo.currentText(), self.z_slider.value(),
-                self.filter_tracks.isChecked(), str(self.filter_operator.currentData()),
-                self.filter_value.value(), self.filter_maximum.value(),
-                tuple(self._selected_track_ids), self.path_color_mode.currentData(),
+                self._active_track_filter is not None,
+                *(self._active_track_filter or ("ge", 0, 0)),
+                self.path_color_mode.currentData(),
                 self._path_color.name(), self.path_thickness.value(),
                 self.show_centroids.isChecked(), self.centroid_size.value(),
                 self.show_track_paths.isChecked())
@@ -934,16 +948,17 @@ class TrackingViewerWindow(ImageToolWindow):
                 item.hide()
             for item in self._track_id_items:
                 item.hide()
+            for item in self._selected_path_items:
+                item.hide()
+            self._selected_path_key = None
             if self._trajectory_thread is not None:
                 self.image_viewer.set_preview_loading(True, self.trajectory_status.text())
                 if self._trajectory_worker is not None and key != self._trajectory_worker.key:
                     self._trajectory_thread.requestInterruption()
                 return
             options = {
-                "filter": self.filter_tracks.isChecked(),
-                "operator": str(self.filter_operator.currentData()),
-                "value": self.filter_value.value(), "maximum": self.filter_maximum.value(),
-                "selected": tuple(self._selected_track_ids),
+                "filter": key[4], "operator": key[5],
+                "value": key[6], "maximum": key[7],
                 "single": self.path_color_mode.currentData() == "single",
                 "color": self._path_color.name(), "thickness": self.path_thickness.value(),
                 "markers": self.show_centroids.isChecked(), "size": self.centroid_size.value(),
@@ -967,6 +982,7 @@ class TrackingViewerWindow(ImageToolWindow):
         frame = self.frame_slider.value()
         full = self.path_extent.currentData() == "full"
         self._display_track_ids(self._visible_centroids, frame)
+        self._display_selected_paths(frame, full=full)
         for item in self._track_path_items:
             item.set_frame(frame, full=full)
             item.setVisible(self.show_track_paths.isChecked())
@@ -1063,7 +1079,8 @@ class TrackingViewerWindow(ImageToolWindow):
 
     def _display_track_ids(self, centroids: dict[int, np.ndarray], current_frame: int) -> None:
         mode = self.track_id_display_mode.currentData()
-        frame_key = (self._trajectory_ready_key, current_frame, mode)
+        frame_key = (self._trajectory_ready_key, current_frame, mode,
+                     tuple(self._selected_track_ids))
         if self._id_frame == frame_key:
             return
         self._id_frame = frame_key
@@ -1091,6 +1108,40 @@ class TrackingViewerWindow(ImageToolWindow):
             item.setPos(float(x_position) + 4.0, float(y_position) - 4.0)
             item.show()
             self._track_id_items.append(item)
+
+    def _display_selected_paths(self, frame: int, *, full: bool) -> None:
+        """Highlight only the selected tracks using already-cached coordinates."""
+        key = (self._trajectory_ready_key, tuple(self._selected_track_ids),
+               None if full else frame)
+        if key == self._selected_path_key:
+            return
+        self._selected_path_key = key
+        for item in self._selected_path_items:
+            item.hide()
+        if not self.show_track_paths.isChecked():
+            return
+        for index, track_id in enumerate(self._selected_track_ids):
+            points = self._visible_centroids.get(track_id)
+            if points is None:
+                continue
+            if not full:
+                end = int(np.searchsorted(points[:, 0], frame, side="right"))
+                points = points[:end]
+            if not len(points):
+                continue
+            while index >= len(self._selected_path_items):
+                item = pg.PlotDataItem()
+                item.setZValue(55)
+                self.image_viewer.view_box.addItem(item, ignoreBounds=True)
+                self._selected_path_items.append(item)
+            item = self._selected_path_items[index]
+            item.setData(
+                points[:, 1], points[:, 2],
+                pen=pg.mkPen("white", width=self.path_thickness.value(), cosmetic=False),
+                symbol="o" if self.show_centroids.isChecked() else None,
+                symbolSize=self.centroid_size.value(), symbolBrush="white",
+                symbolPen=None, pxMode=False, antialias=True)
+            item.show()
 
     def _track_color(self, track_id: int) -> QColor:
         if track_id in self._selected_track_ids:
@@ -1985,6 +2036,10 @@ class TrackingViewerWindow(ImageToolWindow):
         for item in self._track_path_items:
             self.image_viewer.view_box.removeItem(item)
         self._track_path_items.clear()
+        for item in self._selected_path_items:
+            self.image_viewer.view_box.removeItem(item)
+        self._selected_path_items.clear()
+        self._selected_path_key = None
         for item in self._id_pool.values():
             self.image_viewer.view_box.removeItem(item)
         self._id_pool.clear()
@@ -2020,7 +2075,7 @@ class TrackingViewerWindow(ImageToolWindow):
         if session is None or self.mask_channel_combo.currentIndex() < 0:
             return
         label = self.display_label_edit.text().strip()
-        filtered = self.filter_tracks.isChecked()
+        filtered = self._active_track_filter is not None
         name_parts = ["fits_track"]
         if filtered:
             name_parts.append("filtered")
@@ -2091,7 +2146,9 @@ class TrackingViewerWindow(ImageToolWindow):
         thread.start()
 
     def _filter_metadata(self) -> dict[str, object]:
-        operator = str(self.filter_operator.currentData())
+        if self._active_track_filter is None:
+            return {}
+        operator, value, maximum = self._active_track_filter
         symbols = {"lt": "<", "le": "<=", "eq": "==", "ne": "!=",
                    "ge": ">=", "gt": ">"}
         metadata: dict[str, object] = {
@@ -2099,34 +2156,35 @@ class TrackingViewerWindow(ImageToolWindow):
         }
         if operator == "between":
             metadata["operator"] = "between"
-            metadata["minimum"] = self.filter_value.value()
-            metadata["maximum"] = self.filter_maximum.value()
+            metadata["minimum"] = value
+            metadata["maximum"] = maximum
             metadata["bounds_inclusive"] = True
             metadata["expression"] = (
-                f"{self.filter_value.value()} <= track_length_frames <= "
-                f"{self.filter_maximum.value()}")
+                f"{value} <= track_length_frames <= "
+                f"{maximum}")
         else:
             metadata["operator"] = symbols[operator]
-            metadata["value"] = self.filter_value.value()
+            metadata["value"] = value
             metadata["expression"] = (
-                f"track_length_frames {symbols[operator]} {self.filter_value.value()}")
+                f"track_length_frames {symbols[operator]} {value}")
         accepted = self._accepted_track_ids() or frozenset()
         metadata["retained_track_count"] = len(accepted)
         return metadata
 
     def _filter_spec(self) -> dict[str, object] | None:
-        if not self.filter_tracks.isChecked():
+        if self._active_track_filter is None:
             return None
+        operator, value, maximum = self._active_track_filter
         spec: dict[str, object] = {
-            "operator": str(self.filter_operator.currentData()),
-            "value": self.filter_value.value(),
+            "operator": operator,
+            "value": value,
         }
         if spec["operator"] == "between":
-            spec["maximum"] = self.filter_maximum.value()
+            spec["maximum"] = maximum
         return spec
 
     def _edited_filter_metadata(self) -> dict[str, object] | None:
-        if not self.filter_tracks.isChecked():
+        if self._active_track_filter is None:
             return None
         metadata = self._filter_metadata()
         metadata.pop("retained_track_count", None)
@@ -2139,7 +2197,7 @@ class TrackingViewerWindow(ImageToolWindow):
         request = self._pipeline_request
         if session is None or request is None or self._tracking_save_thread is not None:
             return
-        filtered = self.filter_tracks.isChecked()
+        filtered = self._active_track_filter is not None
         output_name = (FITS_MASK_TRACK_EDITED_FILTERED if filtered
                        else FITS_MASK_TRACK_EDITED)
         output_path = session.source_path.with_name(output_name)

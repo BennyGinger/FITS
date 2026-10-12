@@ -140,6 +140,16 @@ uv run fits-drawmask
 uv run fits-regtune
 ```
 
+On Ubuntu, install an Applications-menu launcher with the FITS logo:
+
+```bash
+python3 scripts/install_linux_launcher.py
+```
+
+Search for **FITS** in Applications, then pin it to your favourites if desired.
+The launcher uses this checkout's `.venv` directly, without opening a terminal
+or syncing dependencies. Rerun the installer if you move the repository.
+
 In `fits-gui`, each segmentation channel has its own settings section. Use
 **+** beside the target channel to add a section, or **−** to remove one.
 Each channel can use a different model, diameter, denoising option, and nuclear

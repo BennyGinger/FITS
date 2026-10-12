@@ -36,6 +36,29 @@ def _label_rgba(label: int) -> tuple[int, int, int, int]:
     return (int(red * 255), int(green * 255), int(blue * 255), 255)
 
 
+@lru_cache(maxsize=4)
+def _label_palette(size: int) -> NDArray[np.uint8]:
+    """Build a bounded lookup table with the same colours as ``_label_rgba``."""
+    hue = (np.arange(size, dtype=np.float64) * 0.61803398875) % 1.0
+    sector = (hue * 6).astype(np.intp)
+    fraction = hue * 6 - sector
+    low = np.full(size, 0.25)
+    high = np.ones(size)
+    falling = 1 - 0.75 * fraction
+    rising = 1 - 0.75 * (1 - fraction)
+    rgb = np.stack([
+        np.choose(sector, [high, falling, low, low, rising, high]),
+        np.choose(sector, [rising, high, high, falling, low, low]),
+        np.choose(sector, [low, low, rising, high, high, falling]),
+    ], axis=-1)
+    palette = np.empty((size, 4), dtype=np.uint8)
+    palette[:, :3] = rgb * 255
+    palette[:, 3] = 255
+    palette[0] = 0
+    palette.flags.writeable = False
+    return palette
+
+
 class ControlledViewBox(pg.ViewBox):  # type: ignore[misc]
     """Allow image navigation only while the Control key is held."""
 
@@ -845,8 +868,19 @@ class FitsImageViewer(QWidget):
             rgba[selected, :3] = solid_color
             rgba[selected, 3] = 255
             return rgba
-        # Index a compact palette once instead of scanning the image per label.
-        # Compact indices also keep sparse or very large track IDs inexpensive.
+        # Ordinary label planes need only a linear lookup, without sorting every
+        # pixel. Bound the table to 4 MiB even for sparse or very large IDs.
+        if labels.size and labels.dtype.kind in "bui" and labels.min() >= 0:
+            largest = int(labels.max())
+            if largest < 1 << 20:
+                size = 1 << max(8, largest.bit_length())
+                indices = labels
+                if labels.dtype.kind == "b" or labels.dtype == np.uint64:
+                    indices = labels.astype(np.intp)
+                # Bounds were checked above. Clip mode lets NumPy gather whole
+                # RGBA entries without advanced-indexing overhead or buffering.
+                return np.take(_label_palette(size), indices, axis=0, mode="clip")
+        # Unusual label types and huge IDs retain the compact palette fallback.
         present, inverse = np.unique(labels, return_inverse=True)
         palette = np.asarray(
             [_label_rgba(int(label)) for label in present], dtype=np.uint8,

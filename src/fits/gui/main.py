@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sys
 import argparse
+from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from fits.gui.theme import apply_dark_theme
@@ -20,6 +22,10 @@ def main() -> None:
     if not isinstance(app, QApplication):
         app = QApplication([sys.argv[0], *qt_arguments])
     app.setApplicationName("FITS")
+    app.setDesktopFileName("fits")
+    icon = Path(__file__).resolve().parents[3] / "assets" / "fits_logo.png"
+    if icon.is_file():
+        app.setWindowIcon(QIcon(str(icon)))
     apply_dark_theme(app)
     window = FitsMainWindow(demo_step_delay=arguments.demo_step_delay)
     window.show()

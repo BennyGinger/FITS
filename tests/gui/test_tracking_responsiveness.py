@@ -287,6 +287,104 @@ def test_unwritable_centroid_cache_keeps_memory_filters_working(
     assert not list((tmp_path / ".fits" / "viewer_cache").glob("*.tmp"))
 
 
+@pytest.mark.parametrize("editing", [True, False])
+def test_selection_reuses_paths_and_shows_id_without_loading(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, editing: bool) -> None:
+    import fits.gui.viewer.tracking.window as tracking_window
+
+    app()
+    source = experiment(tmp_path)
+    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    window = TrackingViewerWindow(tracking_path=tracking, editing_enabled=editing,
+                                  selection_enabled=True)
+    try:
+        wait_ready(window)
+        window.track_id_display_mode.setCurrentIndex(
+            window.track_id_display_mode.findData("selected"))
+        base_key = window._trajectory_key()
+        prepared = window._track_path_items[0]._prepared
+        assert not window._track_id_items
+
+        def forbidden(*_args, **_kwargs):
+            pytest.fail("Selecting a track must not prepare trajectories")
+
+        monkeypatch.setattr(tracking_window, "prepare_paths", forbidden)
+        monkeypatch.setattr(window, "_start_trajectory_worker", forbidden)
+        select = window._toggle_track_selection if editing else window._select_single_track
+        select(7)
+        assert window._trajectory_key() == base_key
+        assert window._track_path_items[0]._prepared is prepared
+        assert window._trajectory_thread is None
+        assert not window.image_viewer._loading_visible
+        assert len(window._track_id_items) == 1
+        assert window._track_id_items[0].isVisible()
+        highlight = window._selected_path_items[0]
+        assert highlight.isVisible()
+        for frame in (1, 3, 2):
+            window.frame_slider.setValue(frame)
+            assert not window.image_viewer._loading_visible
+            assert window._trajectory_thread is None
+            assert window._track_id_items[0].isVisible()
+            assert len(highlight.getData()[0]) == frame + 1
+        window.path_extent.setCurrentIndex(window.path_extent.findData("full"))
+        assert len(highlight.getData()[0]) == 4
+        window._clear_track_selection()
+        assert not highlight.isVisible()
+        assert not window._track_id_items
+        assert window._track_path_items[0]._prepared is prepared
+    finally:
+        window.close()
+
+
+def test_filter_controls_apply_only_on_button_click(tmp_path: Path) -> None:
+    app()
+    source = experiment(tmp_path)
+    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    window = TrackingViewerWindow(tracking_path=tracking)
+    try:
+        wait_ready(window)
+        initial_key = window._trajectory_key()
+        window.filter_operator.setCurrentIndex(window.filter_operator.findData("between"))
+        window.filter_value.setValue(2)
+        window.filter_maximum.setValue(4)
+        assert not window.filter_maximum.isHidden()
+        assert window._trajectory_key() == initial_key
+        assert window._filter_spec() is None
+        assert window._accepted_track_ids() is None
+
+        window.filter_button.click()
+        wait_ready(window)
+        applied_key = window._trajectory_key()
+        assert window._accepted_track_ids() == {7}
+        assert window._filter_spec() == {"operator": "between", "value": 2, "maximum": 4}
+
+        # Pending edits must not leak into navigation, drawing caches or saving.
+        window.filter_operator.setCurrentIndex(window.filter_operator.findData("gt"))
+        window.filter_value.setValue(5)
+        window.filter_maximum.setValue(10)
+        assert window._trajectory_key() == applied_key
+        window.frame_slider.setValue(2)
+        wait_ready(window)
+        assert window._accepted_track_ids() == {7}
+        assert window._filter_metadata()["expression"] == "2 <= track_length_frames <= 4"
+        assert window._filter_spec() == {"operator": "between", "value": 2, "maximum": 4}
+
+        window.filter_button.click()
+        wait_ready(window)
+        assert window._accepted_track_ids() == frozenset()
+        assert not np.any(window.image_viewer.mask_item.image[..., 3])
+        window.clear_filter_button.click()
+        wait_ready(window)
+        assert window._accepted_track_ids() is None
+        assert window._filter_spec() is None
+        assert window._edited_filter_metadata() is None
+        assert np.any(window.image_viewer.mask_item.image[..., 3])
+        assert window.filter_value.value() == 5
+        assert window.filter_operator.isEnabled()
+    finally:
+        window.close()
+
+
 def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import fits.gui.viewer.tracking.window as tracking_window
@@ -303,7 +401,7 @@ def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
         wait_ready(window)
         all_tracks = window._track_path_items[0]._prepared
         window.filter_value.setValue(3)
-        window.filter_tracks.setChecked(True)
+        window.filter_button.click()
         wait_ready(window)
         filtered = window._track_path_items[0]._prepared
         assert filtered is not None and set(filtered.tracks) == {7}
@@ -313,12 +411,13 @@ def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
         monkeypatch.setattr(tracking_window, "prepare_paths", forbidden)
         for minimum in (4, 3):
             window.filter_value.setValue(minimum)
+            window.filter_button.click()
             assert window._track_path_items[0]._prepared is filtered
             assert window._trajectory_thread is None
-        window.filter_tracks.setChecked(False)
+        window.clear_filter_button.click()
         assert window._track_path_items[0]._prepared is all_tracks
         assert window._trajectory_thread is None
-        window.filter_tracks.setChecked(True)
+        window.filter_button.click()
         assert window._track_path_items[0]._prepared is filtered
         assert window._trajectory_thread is None
         assert not window.image_viewer._loading_visible
@@ -334,9 +433,11 @@ def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
             return None
         monkeypatch.setattr(tracking_window, "prepare_paths", delayed)
         window.filter_value.setValue(5)
+        window.filter_button.click()
         assert started.wait(2)
         assert window.image_viewer._loading_visible
         window.filter_value.setValue(3)
+        window.filter_button.click()
         assert window._track_path_items[0]._prepared is filtered
         assert not window.image_viewer._loading_visible
         assert window.image_viewer.view_box.opacity() == 1.0

@@ -673,15 +673,15 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert not window.image_viewer.image_item.isVisible()
     assert window.image_viewer.mask_item.isVisible()
     window.raw_image_toggle.setChecked(True)
-    assert not window.filter_operator.isEnabled()
-    window.filter_tracks.setChecked(True)
     assert window.filter_operator.isEnabled()
     window.filter_operator.setCurrentIndex(window.filter_operator.findData("gt"))
     window.filter_value.setValue(2)
+    window.filter_button.click()
     assert not np.any(window.image_viewer.mask_item.image[..., 3])
     _wait_trajectories(window)
     assert window._track_path_items[0].getData()[0].size == 0
     window.filter_operator.setCurrentIndex(window.filter_operator.findData("ge"))
+    window.filter_button.click()
     assert np.any(window.image_viewer.mask_item.image[..., 3])
     window.close()
 

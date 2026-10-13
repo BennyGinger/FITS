@@ -127,7 +127,8 @@ class FitsMainWindow(QMainWindow):
         self.tracking_viewer_button = QPushButton("Open tracking viewer…")
         self.tracking_viewer_button.setEnabled(False)
         self.tracking_viewer_button.setToolTip(
-            f"Open a selected {cst.FITS_MASK_TRACK}, or the first one in the run directory.")
+            "Open tracking for the selected experiment folder or tracking file, "
+            "or the first tracking result in the run directory when nothing is selected.")
         self.tracking_viewer_button.setStyleSheet(
             "QPushButton { background-color: #d97706; color: white; font-weight: bold; } "
             "QPushButton:disabled { background-color: #6b4b2a; color: #aaa; }")
@@ -881,10 +882,11 @@ class FitsMainWindow(QMainWindow):
         self.report_button.setEnabled(
             self._thread is None and self._latest_report() is not None)
 
-    def _tracking_artifacts(self) -> list[Path]:
-        if not self.adapter.run_dir:
-            return []
-        root = Path(self.adapter.run_dir)
+    def _tracking_artifacts(self, root: Path | None = None) -> list[Path]:
+        if root is None:
+            if not self.adapter.run_dir:
+                return []
+            root = Path(self.adapter.run_dir)
         if not root.is_dir():
             return []
         try:
@@ -908,14 +910,26 @@ class FitsMainWindow(QMainWindow):
                           cst.FITS_MASK_TRACK_EDITED_FILTERED,}
         if (selected is None or selected.name not in tracking_names
                 or not selected.is_file()):
-            artifacts = self._tracking_artifacts()
+            root = selected if selected is not None and selected.is_dir() else None
+            artifacts = self._tracking_artifacts(root)
             selected = artifacts[0] if artifacts else None
         if selected is None:
             return
+        viewer = self._tracking_viewer
+        if viewer is not None and viewer.isVisible():
+            if viewer._source_path == selected:
+                if viewer.isMinimized():
+                    viewer.showNormal()
+                viewer.raise_()
+                viewer.activateWindow()
+                return
+            viewer.close()
         self._tracking_viewer = TrackingViewerWindow(
-            experiments_dir=self.adapter.run_dir, tracking_path=selected, parent=self,
+            experiments_dir=self.adapter.run_dir, tracking_path=selected,
             editing_enabled=False, selection_enabled=True)
         self._tracking_viewer.show()
+        self._tracking_viewer.raise_()
+        self._tracking_viewer.activateWindow()
 
     @Slot()
     def _open_latest_report(self) -> None:
@@ -951,4 +965,6 @@ class FitsMainWindow(QMainWindow):
                                     "Wait for the pipeline to finish before closing FITS.",)
             event.ignore()
             return
+        if self._tracking_viewer is not None:
+            self._tracking_viewer.close()
         super().closeEvent(event)

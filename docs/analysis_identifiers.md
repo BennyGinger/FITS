@@ -49,6 +49,52 @@ Master aggregation also recalculates them from the available experiment tables.
 Rerun extraction after editing masks to replace measurements from older masks;
 aggregation alone cannot discover edits absent from the saved measurements.
 
+Tracking extraction also adds motion measurements from the measured 2D centroids:
+
+| Column | Meaning |
+| --- | --- |
+| `step_dist_pixel` | Straight-line distance from the previous observed centroid; first observation is 0. |
+| `step_speed_pixel_per_s` | Step distance divided by elapsed seconds since the previous observation; first observation is null. |
+| `track_total_dist_pixel` | Sum of observed step distances over the entire track. |
+| `track_displacement_pixel` | Straight-line distance from the first observed centroid (S) to the last (E). |
+| `track_mean_speed_pixel_per_s` | Total travelled distance divided by `last time_sec - first time_sec`. |
+| `track_start_ref_dist_pixel` | Existing `dist_pixel` at S, for this reference name/channel. |
+| `track_end_ref_dist_pixel` | Existing `dist_pixel` at E, for this reference name/channel. |
+| `Dp` | Path straightness: `track_displacement_pixel / track_total_dist_pixel`. |
+| `Dw` | Reference approach: `(track_start_ref_dist_pixel - track_end_ref_dist_pixel) / track_total_dist_pixel`. |
+
+Each distance/speed column has a calibrated counterpart replacing `_pixel` with
+`_um`, including `_um_per_s` speeds. Physical values require valid isotropic XY
+pixel calibration. Speeds additionally require positive elapsed time. Missing
+metadata leaves the corresponding values null. For a stationary track with
+known positive duration, mean speed is 0; zero-duration tracks have null mean
+speed. `Dp` and `Dw` are null when total travelled distance is 0.
+
+Steps connect consecutive observed positions, even across missing frames. A
+missing frame creates no measurement row; the next observation measures from
+the last known centroid, and its speed uses the full elapsed time. Unknown
+detours within a gap are not reconstructed, and no gap-count column is added.
+Total duration measures intervals between endpoints: 271 consecutive frames
+span 270 frame intervals, independently of the inclusive `track_length`.
+
+`Dw` reuses distances to the nearest reference-mask pixel, rather than its
+centroid. Each endpoint uses the reference mask from its respective frame, so
+reference movement or shape changes affect `Dw` as well as cell movement.
+Positive values mean approach, negative values mean retreat, and 0 means no
+net change in reference distance. Values are not clipped; changing reference
+masks can produce values outside the fixed-reference range. A missing reference
+distance at an endpoint leaves that endpoint distance and `Dw` null.
+Without a reference mask, all reference-dependent motion columns remain null.
+
+FITS calculates each cell/frame once, then attaches step values and whole-track
+summaries to the original intensity/reference rows. Whole-track values repeat
+across those rows; `Dw` and endpoint-reference distances are specific to each
+reference name/channel. Segmentation rows have null motion values. These
+calculations use extracted measurements and do not depend on GUI caches.
+Master aggregation preserves the new columns. Rerun extraction with overwrite
+to add them to existing experiment tables; aggregation does not backfill motion
+measurements into legacy outputs.
+
 Z-plane identity is deferred. Extraction currently maximum-projects Z before
 quantification, so each measurement describes a 2D projected object. If extraction
 later supports independent Z-plane objects, include an explicit plane index in

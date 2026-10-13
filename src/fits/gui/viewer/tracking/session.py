@@ -19,7 +19,6 @@ from fits.environment.constant import (
     FITS_MASK_TRACK_EDITED_FILTERED,
     StepName,
 )
-from fits.gui.viewer.tracking.rendering import render_selected_tracking_display
 from fits.gui.viewer.tracking.centroids import CentroidCache
 from fits.interaction import FitsImageSession
 from fits.interaction.planes import PlaneState, PlaneStore, disk_copy
@@ -896,58 +895,65 @@ class TrackingViewerSession:
                 raise ValueError("No unused track IDs remain in this label data type.")
         return next_id
 
-    def save_rendered_display(self,
-                              *,
-                              label: str,
-                              channel: int | str,
-                              z_index: int,
-                              show_paths: bool,
-                              path_extent: str,
-                              thickness: int,
-                              show_centroids: bool,
-                              marker_size: int,
-                              path_color_mode: str,
-                              path_color: str,
-                              mask_visible: bool,
-                              mask_opacity: float,
-                              track_ids: frozenset[int] | None,
-                              filtered: bool,
-                              display_metadata: dict[str, Any],
-                              ) -> Path:
-        """
+    def overlay_output_path(self, label: str, filtered: bool, *, cropped: bool = False) -> Path:
+        """Keep display exports separate from raw images and tracking artifacts."""
+        suffix = f"_{self._validate_output_label(label)}" if label.strip() else ""
+        qualifier = "_filtered" if filtered else ""
+        crop_suffix = "_cropped" if cropped else ""
+        return self.source_path.with_name(f"fits_track_overlay{qualifier}{suffix}{crop_suffix}.tif")
 
-        Render and save an RGB tracking visualization.
+    def save_overlay_display(self,
+                             *, label: str, channel: int | str, z_index: int,
+                             show_paths: bool, path_extent: str, thickness: int,
+                             show_centroids: bool, marker_size: int,
+                             path_color_mode: str, path_color: str,
+                             mask_visible: bool, mask_opacity: float,
+                             track_ids: frozenset[int] | None,
+                             filtered: bool, display_metadata: dict[str, Any],
+                             path_track_ids: frozenset[int] | None = None,
+                             selected_track_ids: frozenset[int] = frozenset(),
+                             track_id_mode: str = "none",
+                             crop_xy: tuple[int, int, int, int] | None = None,
+                             ) -> Path:
+        """Save all raw channels with an embedded, channel-independent overlay."""
+        from fits.gui.viewer.tracking.imagej_overlay import build_tracking_overlays
 
-        """
-        normalized_label = self._validate_output_label(label)
-        qualifier = "filtered_" if filtered else ""
-        output_path = self.source_path.with_name(
-            f"fits_track_{qualifier}{normalized_label}.tif")
+        output_path = self.overlay_output_path(label, filtered, cropped=crop_xy is not None)
+        image_session = self.image_session
+        if image_session is None:
+            raise ValueError(f"Overlay export requires the sibling {FITS_ARRAY_NAME} raw image.")
+        if (image_session.frame_count != self.frame_count
+                or image_session.shape[-2:] != self.shape[-2:]
+                or not 0 <= z_index < image_session.plane_count):
+            raise ValueError("Raw image and tracking dimensions do not match for overlay export.")
         selected_channel = self._resolve_channel(channel)
-        output = render_selected_tracking_display(
-                                        frame_count=self.frame_count,
-                                        selected_channel=selected_channel,
-                                        selected_z=z_index,
-                                        tracked_frame=self.tracked_frame,
-                                        centroids=self.track_centroids(selected_channel, z_index),
-                                        show_paths=show_paths,
-                                        path_extent=path_extent,
-                                        thickness=thickness,
-                                        show_centroids=show_centroids,
-                                        marker_size=marker_size,
-                                        path_color_mode=path_color_mode,
-                                        path_color=path_color,
-                                        mask_visible=mask_visible,
-                                        mask_opacity=mask_opacity,
-                                        track_ids=track_ids,)
-        metadata = {"tracking_viewer_display": display_metadata}
-        payload = self._reader.build_payload(export_channels=self._channel_labels,
-                                            artifact_type="tracking_visualization",
-                                            created_by=DIST_FITS,
-                                            custom_metadata=metadata,
-                                            ).with_fitsio(
-                                                axes="TYXS" if self.frame_count > 1 else "YXS")
-        return self._reader.save_array(output, metadata=payload, output_path=output_path)
+        overlays = build_tracking_overlays(
+            frame_count=self.frame_count, channel=selected_channel, z_index=z_index,
+            tracked_frame=self.tracked_frame,
+            centroids=self.track_centroids(selected_channel, z_index),
+            show_paths=show_paths, path_extent=path_extent, thickness=thickness,
+            show_centroids=show_centroids, marker_size=marker_size,
+            path_color_mode=path_color_mode, path_color=path_color,
+            mask_visible=mask_visible, mask_opacity=mask_opacity,
+            track_ids=track_ids, path_track_ids=path_track_ids,
+            selected_track_ids=selected_track_ids, track_id_mode=track_id_mode,
+            crop_xy=crop_xy)
+        reader = image_session._reader
+        raw = reader.get_array().array
+        display_settings = dict(display_metadata)
+        display_settings.update(output_mode="imagej_overlay", raw_image_exported=True,
+                                overlay_channel_scope="all raw channels",
+                                overlay_z_index=z_index)
+        if crop_xy is not None:
+            display_settings["crop_xy"] = list(crop_xy)
+        payload = reader.build_payload(
+            export_channels="all", artifact_type="tracking_visualization", created_by=DIST_FITS,
+            array_shape=raw.shape,
+            custom_metadata={"tracking_viewer_display": display_settings})
+        # ImageJ's native opener drops overlays on compressed multi-IFD stacks.
+        # Its uncompressed hyperstack path restores the embedded annotations.
+        return reader.save_array(raw, metadata=payload, output_path=output_path,
+                                 compression="none", imagej_overlays=overlays, crop_xy=crop_xy)
 
     def save_edited_tracking(self,
                              *,

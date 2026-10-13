@@ -465,7 +465,7 @@ wheels = [
 
 [[package]]
 name = "fits"
-version = "3.0.0"
+version = "3.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "bg-sub" },
@@ -479,6 +479,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyqtgraph" },
     { name = "pyside6" },
+    { name = "roifile" },
     { name = "stackalign" },
     { name = "tomlkit" },
     { name = "tracklink" },
@@ -511,6 +512,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyqtgraph", specifier = ">=0.14.0" },
     { name = "pyside6", specifier = ">=6.10.2" },
+    { name = "roifile", specifier = ">=2026.2.10" },
     { name = "stackalign", editable = "stackalign" },
     { name = "tomlkit", specifier = ">=0.15.1" },
     { name = "tracklink", editable = "tracklink" },

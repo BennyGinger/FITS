@@ -264,7 +264,7 @@ mask in the matching tab.
 The former `fits-viewer` command has been removed.
 
 Segmentation tuning, Reference/ROI, and tracking viewers read image and mask
-planes on demand through `fits_io`. Each plane cache holds at most eight planes
+planes on demand through `fits_io`, as does registration tuning. Each plane cache holds at most eight planes
 and 64 MiB. Edited mask planes are stored separately in a private temporary
 directory and remain available when you move between frames. Save writes the
 usual mask artifacts; closing the session removes its temporary edits. Tracking
@@ -307,10 +307,16 @@ Undo, Clear current, and Clear all together in an untitled section below the
 title and description, with Ctrl+Z, Ctrl+D,
 and Ctrl+Shift+D shortcuts respectively. Every viewer Info button shows the
 shared searchable shortcut table, filtered to the current viewer, with function
-and mode/condition columns. GUI applicability stays hidden; read-only tracking
-shows selection controls only when selection is enabled. Tracking selection uses
-Ctrl+left-click in both editing and selection-only modes; Ctrl+left-drag pans
-without selecting a track, and Ctrl+scroll zooms.
+and mode/condition columns. GUI applicability stays hidden. Both tracking modes
+have a Selection panel above Display settings, with the selected IDs, Clear
+selection, and cell-ID entry. The viewer accepts comma-separated IDs and an
+unlimited number of selected cells; Ctrl+click and text entry stay synchronised.
+The tracking editor keeps its single-ID input and maximum of two selected tracks.
+Press Enter or Select to apply IDs; unavailable or filtered-out IDs leave the
+current selection unchanged. In the tracking viewer, Ctrl+left-click toggles a
+cell, while Ctrl+left-drag selects all current-frame centroids inside a
+temporary rectangle. In the editor, Ctrl+left-click selects a cell and
+Ctrl+left-drag pans. Ctrl+scroll zooms in both.
 To inspect the complete shortcut catalog, including its GUI applicability, run
 `.venv/bin/python -m fits.gui.viewer.common.inspect_shortcuts` from the repository.
 Info dialogs size their wrapped columns and rows to the current screen. REF/ROI
@@ -320,10 +326,55 @@ overlay, with a status message; it clears on completion or failure.
 Tracking centroids and trajectory drawings are prepared in the background, with
 progress and the current stage shown at the bottom right. Frame navigation reuses
 already-drawn, native-resolution trajectory overlays for every frame. These
-are prepared once in temporary disk-backed storage, so forward navigation and
-arbitrary frame jumps need no trajectory redraw. The temporary overlay stack
-uses four bytes per pixel per frame and is released when its drawing is replaced
-or the viewer closes.
+are prepared once in disk-backed storage, so forward navigation and arbitrary
+frame jumps need no trajectory redraw. Both the tracking viewer and editor keep
+completed drawings in `.fits/viewer_cache/tracking_paths/` and load them on
+reopening, without scanning mask pixels or drawing the paths again. Cache keys
+include the source file stamp, channel/Z, actual centroid coordinates (including
+filters and unsaved edits), and drawing style. Changed inputs therefore get a
+new drawing; cancelled or incomplete drawings are never reused. Selection IDs
+and white highlights use cached coordinates in a separate lightweight layer
+and do not rebuild the base drawing.
+
+In the read-only tracking viewer, **Save current display** writes a new
+`fits_track_overlay[_filtered][_label].tif`: all channels, Z planes, and frames
+from `fits_array.tif`, with their original pixel values, plus an embedded ImageJ
+overlay. The current mask channel, Z plane, filtering, path/ID selection,
+colours, and mask opacity determine the annotations across time. Annotations
+appear over any raw channel at the selected Z plane. The source files remain
+untouched; the raw image is required even when its display is switched off.
+This export is uncompressed because ImageJ's native compressed-stack opener
+can omit embedded overlays, so it may be considerably larger than the source.
+Open it in ImageJ/Fiji with **File → Open** and toggle annotations with
+**Image → Overlay → Hide Overlay / Show Overlay**. **To ROI Manager** exposes
+the separately named masks, paths, centroid markers, and IDs. Save as TIFF to
+retain the overlay.
+
+The viewer's **Crop** panel sits below Track filtering. Turn on **Enable crop**
+and click **Crop** to fit a rectangle around every selected cell's complete
+masks across the recording, with 5% padding on each side. Fitting runs in the
+background. You can also draw a rectangle with a left drag, with or without
+Ctrl; cells whose current-frame centroids are inside it become selected. The
+rectangle stays until you change or disable crop mode. Drag inside it to move
+it, or drag an edge/corner to resize it. Clicking Crop again fits the rectangle
+around the selected cells across time. Width and Height are
+editable pixel dimensions. Manual rectangles and adjustments receive no added
+padding. The rectangle colour is only a display aid.
+**Preview** zooms to the rectangle; unchecking Preview or pressing Home shows
+the full image. **Save current display** uses the current rectangle whenever
+crop mode is enabled, in either view, and adds `_cropped` to the filename.
+Turning crop mode off saves the full image. All raw channels, frames, and Z
+planes use the same XY crop, with the embedded overlay clipped and shifted to
+match. `fits_io` preserves metadata/calibration and records the source shape,
+pixel bounds, and offsets in `spatial_crops` metadata.
+
+The viewer's cached trajectory overlays use four bytes per pixel per frame and are mapped from disk;
+they are not loaded into RAM in full. The persistent cache retains up to four
+recent drawings within 2 GiB, always keeping the latest complete drawing even
+when that drawing alone exceeds the limit. Older drawings are removed as needed.
+Read-only experiments use temporary drawings instead. The first preparation,
+changed settings, and drawings evicted from the cache still require work;
+reopening a matching cached drawing only loads metadata and maps its pixels.
 Edits and undo invalidate only affected centroid frames. Compressed
 `.fits/viewer_cache/<mask filename>.centroids-c*-z*.npz` files inside each
 experiment store centroid tables and all track lengths. They load automatically;
@@ -333,12 +384,14 @@ in-memory cache if it cannot write the persistent cache.
 Length filters use inclusive first-to-last frame spans, including gaps, matching
 quantification's `track_length`. Filter results reuse the cached lengths rather
 than rescanning observations. Recent trajectory drawings are reused for filters
-selecting the same tracks with the same style. This temporary drawing cache
+selecting the same tracks with the same style. This in-memory drawing lookup
 retains at most four entries and 2 GiB; a drawing larger than this limit remains
-usable as the active display but is not retained for later reuse. New selections
-still prepare their first drawing in the background. Edits clear stale drawings,
-and closing or switching experiments releases the temporary cache. Typed filter
-values apply on Enter or when leaving the field, avoiding redraws for each digit.
+usable as the active display but is not retained in the in-memory lookup for later
+reuse; its completed disk cache remains available. New filter results prepare
+their first drawing in the background. Edits clear stale drawings, and closing
+or switching experiments releases the in-memory lookup. Filter controls remain
+editable and only apply when **Filter** is pressed; **Clear filter** restores
+all tracks without resetting the entered values.
 Viewers initially select the image channel matching the first loaded mask channel.
 
 To open the collection panel in preview mode without running the pipeline:

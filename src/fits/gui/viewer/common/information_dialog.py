@@ -96,6 +96,10 @@ class ViewerInformationDialog(QDialog):
                     if (editing_enabled or (not row[3].startswith("Edit")
                                             and row[0] not in {"S", "Ctrl+Z"}))
                     or (row[0] == "Ctrl+left click mask or centroid" and selection_enabled)]
+            if not editing_enabled:
+                rows = [(shortcut, "Select cells in rectangle" if shortcut == "Ctrl+left click (hold), drag"
+                         else function, scope, mode)
+                        for shortcut, function, scope, mode in rows]
         conditions = HELP_CONDITIONS.get(gui or "", {})
         rows = [(shortcut, function, scope, conditions.get(shortcut, mode))
                 for shortcut, function, scope, mode in rows]

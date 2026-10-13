@@ -171,5 +171,49 @@ def test_extraction_saves_portable_ids_with_real_quantification(
         assert table["track_length"].tolist() == [4, 4]
         assert table["track_start_frame"].tolist() == [1, 1]
         assert table["track_end_frame"].tolist() == [4, 4]
+        assert table["step_dist_pixel"].tolist() == [0, 0]
+        assert table["track_total_dist_pixel"].tolist() == [0, 0]
+        assert table[["Dp", "Dw", "track_mean_speed_pixel_per_s"]].isna().to_numpy().all()
     else:
         assert table[["track_length", "track_start_frame", "track_end_frame"]].isna().to_numpy().all()
+        assert table[["step_dist_pixel", "track_total_dist_pixel", "Dp", "Dw"]].isna().to_numpy().all()
+
+
+def test_extraction_and_master_save_calibrated_motion_and_reference_progress(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workdir = tmp_path / "condition" / "sample_s1"
+    workdir.mkdir(parents=True)
+    image_path = workdir / "fits_array.tif"
+    image_path.touch()
+    state = ExperimentState.init(workdir, workdir.parent / "sample.nd2", run_dir=tmp_path)
+    state = state.with_complete_step(
+        step_name=StepName.CONVERT, artifact_kind=ARTI_IMG, artifact_path=image_path)
+    extractor = ExtractData(interval=2, pixel_size=0.5)
+    extractor.add_intensity(np.ones((3, 2, 10, 10)), "TCYX", channel_labels=["GFP", "RFP"])
+    labels = np.zeros((3, 10, 10), dtype=np.uint16)
+    labels[0, 0, 0] = labels[1, 4, 3] = labels[2, 0, 3] = 24
+    extractor.add_labels(labels, "TYX", name=ARTI_TRACK, channel_labels=["iRed"])
+    reference = np.zeros((10, 10), dtype=np.uint8)
+    reference[0, 9] = 1
+    extractor.add_ref(reference, "YX", name="wound", channel_labels=["iRed"])
+    monkeypatch.setattr(ExtractionManager, "prepare_quantification", lambda self: extractor)
+    profile = StepProfile(
+        step_name=StepName.EXTRACT, distribution=DIST_EXTRACT,
+        input_artifact=ARTI_IMG, output_artifact=ARTI_QUANTI, output_name=FITS_QUANTI_NAME)
+    updated = extract(ExtractSettings(), state, profile)[0]
+    path = updated.artifact(ARTI_QUANTI)
+    assert path is not None
+    table = pd.read_parquet(path)
+    assert len(table) == 6
+    steps = table.drop_duplicates("frame").sort_values("frame")
+    np.testing.assert_allclose(steps["step_dist_pixel"], [0, 5, 4])
+    np.testing.assert_allclose(steps["step_speed_um_per_s"], [np.nan, 1.25, 1])
+    np.testing.assert_allclose(table["track_total_dist_um"], 4.5)
+    np.testing.assert_allclose(table["track_mean_speed_um_per_s"], 1.125)
+    np.testing.assert_allclose(table["Dp"], 1 / 3)
+    np.testing.assert_allclose(table["Dw"], 1 / 3)
+    master_path = _save_master_quantification([updated], tmp_path)
+    assert master_path is not None
+    master = pd.read_parquet(master_path)
+    np.testing.assert_allclose(master["track_total_dist_pixel"], 9)
+    np.testing.assert_allclose(master["Dw"], 1 / 3)

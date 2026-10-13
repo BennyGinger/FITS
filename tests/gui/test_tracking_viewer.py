@@ -8,6 +8,8 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+import tifffile
+from fits_io import FitsIO
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtGui import QColor, QImage, QPainter
@@ -717,18 +719,19 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert view_only_window.track_edit_section.isHidden()
     assert view_only_window.mask_edit_section.isHidden()
     assert view_only_window.local_cell_diameter.isHidden()
-    assert view_only_window.file_filters == (FITS_MASK_TRACK,)
+    assert view_only_window.file_filters == (
+        FITS_MASK_TRACK, "fits_track_edited.tif", "fits_track_edited_filtered.tif")
     assert view_only_window.display_label_edit.placeholderText() == "Optional"
     assert view_only_window.save_display_button.text() == "Save current display"
     assert view_only_window.save_display_button.isEnabled()
-    view_only_window._select_single_track(7)
+    view_only_window._toggle_track_selection(7)
     assert view_only_window._selected_track_ids == [7]
     _wait_trajectories(view_only_window)
     assert [item.toPlainText() for item in view_only_window._track_id_items] == ["7"]
-    view_only_window._select_single_track(11)
-    assert view_only_window._selected_track_ids == [11]
-    view_only_window._select_single_track(11)
-    assert view_only_window._selected_track_ids == []
+    view_only_window._toggle_track_selection(11)
+    assert view_only_window._selected_track_ids == [7, 11]
+    view_only_window._toggle_track_selection(11)
+    assert view_only_window._selected_track_ids == [7]
     view_only_window.close()
 
     request = TrackEditRequest(
@@ -776,3 +779,104 @@ def test_main_window_tracking_button_and_double_click_launch(
     window._open_selected_report(track_path)
     assert launched == [track_path]
     window.close()
+
+
+def test_main_window_tracking_viewer_loads_selected_experiment(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    _app()
+    first = tmp_path / "a_experiment"
+    selected = tmp_path / "z_experiment"
+    empty = tmp_path / "empty_experiment"
+    for directory in (first, selected, empty):
+        directory.mkdir()
+    for directory in (first, selected):
+        (directory / FITS_MASK_TRACK).touch()
+    edited = selected / "fits_track_edited.tif"
+    edited.touch()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
+    window = FitsMainWindow(adapter)
+    launches = []
+    class FakeViewer:
+        def __init__(self, **options):
+            launches.append(options)
+            self._source_path = options["tracking_path"]
+            self.visible = False
+            self.activations = 0
+
+        def isVisible(self):
+            return self.visible
+
+        def isMinimized(self):
+            return False
+
+        def show(self):
+            self.visible = True
+
+        def showNormal(self):
+            self.visible = True
+
+        def raise_(self):
+            pass
+
+        def activateWindow(self):
+            self.activations += 1
+
+        def close(self):
+            self.visible = False
+
+    monkeypatch.setattr(
+        "fits.gui.viewer.tracking.TrackingViewerWindow", FakeViewer)
+    try:
+        assert window.run_browser.select_path(selected)
+        window.tracking_viewer_button.click()
+        assert launches[-1]["tracking_path"] == edited
+        assert launches[-1]["editing_enabled"] is False
+        opened = window._tracking_viewer
+        window.tracking_viewer_button.click()
+        assert len(launches) == 1
+        assert window._tracking_viewer is opened
+        assert opened.activations == 2
+        window._open_tracking_viewer(selected / FITS_MASK_TRACK)
+        assert launches[-1]["tracking_path"] == selected / FITS_MASK_TRACK
+        assert not opened.visible
+        assert window.run_browser.select_path(empty)
+        window.tracking_viewer_button.click()
+        assert len(launches) == 2
+        assert window.run_browser.select_path(tmp_path)
+        window.tracking_viewer_button.click()
+        assert launches[-1]["tracking_path"] == edited
+    finally:
+        window.close()
+
+
+def test_main_window_viewer_stays_visible_and_reuses_its_window(tmp_path: Path) -> None:
+    app = _app()
+    raw = np.zeros((2, 32, 32), dtype=np.uint16)
+    masks = np.zeros_like(raw)
+    masks[:, 8:12, 8:12] = 7
+    input_path = tmp_path / "input.tif"
+    tifffile.imwrite(input_path, raw, imagej=True, metadata={"axes": "TYX"})
+    source = FitsIO.from_path(input_path).save_array(raw, output_path=tmp_path / FITS_ARRAY_NAME)
+    tracking = FitsIO.from_path(source).save_array(
+        masks, output_path=tmp_path / FITS_MASK_TRACK)
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    main = FitsMainWindow(adapter)
+    try:
+        main.show()
+        main._open_tracking_viewer(tracking)
+        viewer = main._tracking_viewer
+        QTest.qWait(750)
+        assert viewer.isVisible() and viewer.isWindow()
+        assert viewer.parent() is None
+        assert viewer.isActiveWindow()
+        main._open_tracking_viewer(tracking)
+        app.processEvents()
+        assert main._tracking_viewer is viewer
+        assert viewer.isVisible() and viewer.isActiveWindow()
+    finally:
+        main.close()
+    assert not viewer.isVisible()

@@ -8,10 +8,11 @@ import numpy as np
 import pytest
 import tifffile
 from fits_io import FitsIO
-from PySide6.QtCore import QPointF, QThread
+from PySide6.QtCore import QPointF, QThread, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QStyleOptionGraphicsItem
+from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox, QStyleOptionGraphicsItem
+from roifile import ImagejRoi
 
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK
 from fits.gui.viewer.masks.window import MaskDrawingWindow
@@ -58,6 +59,118 @@ def mask(source: Path, name: str, channels: tuple[str, ...], value: int = 7) -> 
         channel_labels=("GFP", "DAPI", "iRed"), export_channels=channels,
         output_path=source.with_name(name),
         custom_metadata={"roi_mask_encoding": ROI_MASK_ENCODING} if "roi" in name else {})
+
+
+@pytest.mark.parametrize("editing_enabled", [False, True])
+@pytest.mark.parametrize("tracking_name", [
+    FITS_MASK_TRACK, "fits_track_edited.tif", "fits_track_edited_filtered.tif"])
+def test_tracking_browser_reveals_loaded_file(
+        tmp_path: Path, editing_enabled: bool, tracking_name: str) -> None:
+    app()
+    experiment_dir = tmp_path / "group" / "experiment"
+    experiment_dir.mkdir(parents=True)
+    source = experiment(experiment_dir)
+    tracking = mask(source, tracking_name, ("iRed",))
+    window = TrackingViewerWindow(
+        experiments_dir=tmp_path, tracking_path=tracking, editing_enabled=editing_enabled)
+    try:
+        window.show()
+        wait_ready(window)
+        QTest.qWait(50)
+        browser = window.directory_browser
+        assert window._source_path == tracking
+        assert browser.selected_path == tracking
+        index = browser.model.index(str(tracking))
+        assert browser.tree.currentIndex() == index
+        assert browser.tree.selectionModel().isSelected(index)
+        assert browser.tree.isExpanded(index.parent())
+        assert browser.tree.isExpanded(index.parent().parent())
+        assert not browser.tree.visualRect(index).isEmpty()
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize("editing_enabled", [False, True])
+def test_selected_path_display_updates_without_rebuilding_trajectories(
+        tmp_path: Path, editing_enabled: bool) -> None:
+    app()
+    source = experiment(tmp_path)
+    labels = np.zeros((4, 24, 25), dtype=np.uint16)
+    for frame in range(4):
+        labels[frame, 4:7, 5 + frame:8 + frame] = 7
+        labels[frame, 14:17, 15 + frame:18 + frame] = 11
+    tracking = FitsIO.from_path(source).save_array(
+        labels, channel_labels=("GFP", "DAPI", "iRed"), export_channels=("iRed",),
+        output_path=source.with_name(FITS_MASK_TRACK))
+    window = TrackingViewerWindow(
+        tracking_path=tracking, editing_enabled=editing_enabled, selection_enabled=True)
+    try:
+        wait_ready(window)
+        window.frame_slider.setValue(3)
+        assert window.track_path_display_mode.currentData() == "all"
+        assert all(item.isVisible() for item in window._track_path_items)
+        ready_key = window._trajectory_ready_key
+        window.track_path_display_mode.setCurrentIndex(
+            window.track_path_display_mode.findData("selected"))
+        assert not any(item.isVisible() for item in window._track_path_items)
+        assert not any(item.isVisible() for item in window._selected_path_items)
+        window._toggle_track_selection(7)
+        assert window._selected_path_items[0].isVisible()
+        np.testing.assert_array_equal(window._selected_path_items[0].xData, [6, 7, 8, 9])
+        if editing_enabled:
+            window._toggle_track_selection(11)
+            assert sum(item.isVisible() for item in window._selected_path_items) == 2
+        window.show_track_paths.setChecked(False)
+        wait_ready(window)
+        assert not any(item.isVisible() for item in window._selected_path_items)
+        window.show_track_paths.setChecked(True)
+        wait_ready(window)
+        window._clear_track_selection()
+        assert not any(item.isVisible() for item in window._selected_path_items)
+        window.track_path_display_mode.setCurrentIndex(
+            window.track_path_display_mode.findData("all"))
+        assert all(item.isVisible() for item in window._track_path_items)
+        assert window._trajectory_ready_key == ready_key
+        assert window._trajectory_thread is None
+    finally:
+        window.close()
+
+
+def test_save_current_display_button_exports_raw_channels_and_overlay(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app()
+    source = experiment(tmp_path)
+    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    errors = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: errors.append(args[-1]))
+    window = TrackingViewerWindow(tracking_path=tracking, editing_enabled=False)
+    try:
+        wait_ready(window)
+        window._toggle_track_selection(7)
+        window.display_label_edit.setText("review")
+        window.save_display_button.click()
+        assert not window.save_display_button.isEnabled()
+        window.show_mask.setChecked(False)  # Export retains the settings from the click.
+        deadline = monotonic() + 5
+        while window._save_thread is not None:
+            app().processEvents()
+            QTest.qWait(5)
+            assert monotonic() < deadline
+        assert errors == []
+        assert window.save_display_button.isEnabled()
+        output = tmp_path / "fits_track_overlay_review.tif"
+        np.testing.assert_array_equal(tifffile.imread(output), tifffile.imread(source))
+        with tifffile.TiffFile(output) as tif:
+            rois = [ImagejRoi.frombytes(data) for data in tif.imagej_metadata["Overlays"]]
+        assert {roi.name for roi in rois} == {"Mask 7", "Path 7", "Centroids 7", "ID 7"}
+        assert not (tmp_path / "fits_track_review.tif").exists()
+        saved_bytes = output.read_bytes()
+        monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
+        window.save_display_button.click()
+        assert window._save_thread is None
+        assert output.read_bytes() == saved_bytes
+    finally:
+        window.close()
 
 
 @pytest.mark.parametrize("channels", [("iRed",), ("iRed", "GFP")])
@@ -196,7 +309,7 @@ def test_centroid_cache_recomputes_only_edited_frame_and_undo(
         session.delete_mask(7, 1, 0, 0)
         calls.clear()
         assert session.track_centroids()[7][:, 0].tolist() == [0, 2, 3]
-        assert calls == [1]
+        assert calls == []  # Removing a known label updates the cache directly.
         session.undo_last_edit()
         calls.clear()
         assert session.track_centroids()[7][:, 0].tolist() == [0, 1, 2, 3]
@@ -288,6 +401,64 @@ def test_unwritable_centroid_cache_keeps_memory_filters_working(
 
 
 @pytest.mark.parametrize("editing", [True, False])
+def test_numeric_selection_and_reopening_reuse_preparation(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, editing: bool) -> None:
+    import fits.gui.viewer.tracking.window as tracking_window
+
+    app()
+    source = experiment(tmp_path)
+    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    window = TrackingViewerWindow(tracking_path=tracking, editing_enabled=editing)
+    try:
+        wait_ready(window)
+        assert list((tmp_path / ".fits/viewer_cache/tracking_paths").glob("*.json"))
+        if isinstance(window.track_id_input, QLineEdit):
+            window.track_id_input.setText("7")
+        else:
+            window.track_id_input.setValue(7)
+        window.select_track_button.click()
+        assert window._selected_track_ids == [7]
+        assert window.track_selection_label.text() == "Selected tracks: 7"
+        assert window._track_id_items[0].isVisible()
+        assert window._selected_path_items[0].isVisible()
+        window.select_track_button.click()
+        assert window._selected_track_ids == [7]
+        if isinstance(window.track_id_input, QLineEdit):
+            window.track_id_input.setText("999")
+        else:
+            window.track_id_input.setValue(999)
+        window.select_track_button.click()
+        assert window._selected_track_ids == [7]
+        assert "999" in window.status_label.text()
+        window._clear_track_selection()
+        editor = (window.track_id_input if isinstance(window.track_id_input, QLineEdit)
+                  else window.track_id_input.lineEdit())
+        assert editor is not None
+        editor.selectAll()
+        QTest.keyClicks(editor, "7")
+        QTest.keyClick(editor, Qt.Key.Key_Return)
+        assert window._selected_track_ids == [7]
+    finally:
+        window.close()
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Reopening a cached experiment must not scan masks or redraw paths")
+
+    monkeypatch.setattr(TrackingViewerSession, "centroid_frame", forbidden)
+    monkeypatch.setattr(tracking_window, "prepare_paths", forbidden)
+    window = TrackingViewerWindow(tracking_path=tracking, editing_enabled=not editing)
+    try:
+        wait_ready(window)
+        assert set(window._visible_centroids) == {7}
+        assert window._trajectory_failed_key is None
+        assert not window.image_viewer._loading_visible
+        window.frame_slider.setValue(3)
+        assert window._trajectory_thread is None
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize("editing", [True, False])
 def test_selection_reuses_paths_and_shows_id_without_loading(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, editing: bool) -> None:
     import fits.gui.viewer.tracking.window as tracking_window
@@ -310,7 +481,7 @@ def test_selection_reuses_paths_and_shows_id_without_loading(
 
         monkeypatch.setattr(tracking_window, "prepare_paths", forbidden)
         monkeypatch.setattr(window, "_start_trajectory_worker", forbidden)
-        select = window._toggle_track_selection if editing else window._select_single_track
+        select = window._toggle_track_selection
         select(7)
         assert window._trajectory_key() == base_key
         assert window._track_path_items[0]._prepared is prepared

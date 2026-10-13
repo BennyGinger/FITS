@@ -1,8 +1,7 @@
-"""Selection clicks and panning drags must remain distinct in both viewer modes."""
+"""Tracking editor preserves Ctrl-click selection and Ctrl-drag panning."""
 from typing import cast
 
 import numpy as np
-import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
@@ -13,15 +12,13 @@ from fits.gui.viewer.tracking.window import TrackingViewerWindow
 _APP: QApplication | None = None
 
 
-@pytest.mark.parametrize("editing", [False, True])
-def test_ctrl_left_click_selects_but_drag_only_pans(monkeypatch, editing):
+def test_editor_ctrl_left_click_selects_but_drag_only_pans(monkeypatch):
     global _APP
     _APP = cast(QApplication, QApplication.instance() or QApplication([]))
-    window = TrackingViewerWindow(editing_enabled=editing, selection_enabled=True)
+    window = TrackingViewerWindow(editing_enabled=True, selection_enabled=True)
     selected = []
     monkeypatch.setattr(window, "_tracking_session", object())
     monkeypatch.setattr(window, "_track_at_position", lambda *args: 7)
-    monkeypatch.setattr(window, "_select_single_track", selected.append)
     monkeypatch.setattr(window, "_toggle_track_selection", selected.append)
     window.image_viewer.set_image(np.zeros((100, 100)))
     window.show()

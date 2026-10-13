@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from tempfile import TemporaryFile
 import errno
 import os
@@ -45,10 +46,10 @@ def _draw(image: QImage, picture: QPicture, bounds: QRectF) -> None:
     painter.end()
 
 
-def _frame_storage(count: int, bounds: QRectF) -> NDArray[np.uint8]:
+def _frame_storage(count: int, bounds: QRectF, path: Path | None = None) -> NDArray[np.uint8]:
     shape = count, max(1, int(bounds.height())), max(1, int(bounds.width())), 4
     size = int(np.prod(shape, dtype=np.int64))
-    with TemporaryFile() as file:
+    with TemporaryFile() if path is None else path.open("w+b") as file:
         # Reserve space before mapping, so a full temporary disk raises an error
         # here rather than causing a memory-map fault during drawing.
         if hasattr(os, "posix_fallocate"):
@@ -67,7 +68,8 @@ def prepare_paths(tracks: dict[int, NDArray[np.float64]], *,
                   color_for: Callable[[int], QColor], thickness: int,
                   show_markers: bool, marker_size: int,
                   progress: Callable[[int, int], None] | None = None,
-                  cancelled: Callable[[], bool] | None = None) -> PreparedPaths | None:
+                  cancelled: Callable[[], bool] | None = None,
+                  frame_path: Path | None = None) -> PreparedPaths | None:
     """Draw every frame once into temporary mapped storage off the GUI thread."""
     pictures: dict[int, QPicture] = {}
     painters: dict[int, QPainter] = {}
@@ -106,7 +108,7 @@ def prepare_paths(tracks: dict[int, NDArray[np.float64]], *,
         bounds = bounds.united(QRectF(picture.boundingRect()))
     bounds = bounds.adjusted(-1, -1, 1, 1).toAlignedRect().toRectF()
     image = _blank(bounds)
-    frames = _frame_storage(frame_count, bounds) if frame_count else None
+    frames = _frame_storage(frame_count, bounds, frame_path) if frame_count else None
     for frame in range(frame_count):
         if cancelled is not None and cancelled():
             return None

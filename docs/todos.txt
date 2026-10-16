@@ -16,6 +16,73 @@ Pipeline robustness and performance
     a performance limitation.
 [ ] Define realistic cancellation guarantees for each processing backend.
 
+Intermediate artifacts and experiment archiving — agreed design, not implemented
+-------------------------------------------------------------------------------
+Goal: keep independent preprocessing outputs while working on an experiment,
+then recover disk space by archiving only its final usable image and object
+mask. Avoid applying preprocessing repeatedly to already processed pixels.
+
+Preprocessing artifacts and reruns
+[ ] Convert produces fits_array_raw.tif, preserving the original acquisition
+    file as the source for future rebuilding.
+[ ] Execute channel registration before time registration; leave the main-GUI
+    settings layout/order unchanged. Give each registration step its own
+    artifact so either can be rerun from its predecessor. Proposed channel
+    output: fits_array_reg_channel.tif; time output: fits_array_reg.tif.
+[ ] Background subtraction produces fits_array_bgsub.tif, containing the
+    preceding enabled registration results. Each step reads the latest valid
+    preceding enabled stage, falling back to converted raw when appropriate.
+[ ] Overwriting a step reads its predecessor, never its own previous output.
+    Rerun later enabled dependent steps, including background subtraction after
+    registration changes. Handle newly enabled preprocessing steps consistently.
+    Adapt pipeline, viewers, tuners, and artifact discovery to explicit inputs.
+
+Artifact validity through existing provenance timestamps
+[ ] Use step execution timestamps stored in artifact metadata, not filesystem
+    modification times and not a separate validity/tracking list. Each successful
+    execution gets a distinct timestamp; ordinary file/metadata edits preserve
+    it. Derived artifacts retain the execution timestamps of their upstream
+    steps and add their own step timestamp.
+[ ] Compare upstream execution timestamps across artifacts to establish lineage.
+    Example: registration R1 -> background subtraction retaining R1 and adding
+    B1. Overwriting registration produces R2; the old background artifact still
+    records R1 and is therefore stale, even if its file remains on disk.
+    Check the full required upstream lineage, not simply the newest timestamp.
+[ ] Use this provenance check for reuse and archive selection when later steps
+    are disabled, fail, or are interrupted. Select the furthest valid completed
+    artifact in workflow order. Define handling for missing/legacy timestamps;
+    do not silently assume that ambiguous lineage is valid.
+
+Mask artifacts
+[ ] Segmentation produces fits_masks_seg.tif; tracking produces
+    fits_masks_track.tif. Keep reference and ROI artifact behavior unchanged.
+[ ] Archive keeps the final authoritative object mask: valid active tracking
+    (including its edited/filtered final result when applicable), otherwise
+    segmentation. Remove superseded segmentation when tracking is retained.
+    Preserve metadata identifying segmentation labels versus track IDs.
+
+Archive operation and artifact paths
+[ ] Preview the exact files to retain, rename, and remove before applying
+    cleanup. Keep the final valid image as fits_array.tif and the final valid
+    object mask as fits_masks.tif, removing their stage suffixes.
+[ ] Preserve original acquisition files, reference/ROI masks, analysis tables,
+    settings, and processing provenance. Remove superseded intermediate images,
+    object masks, and disposable preview caches; define other retained outputs
+    explicitly before implementing cleanup.
+[ ] Add authoritative archived image/mask artifact paths and archived state.
+    Readers resolve those paths for archived experiments, where intermediate
+    paths are expected to be absent. Preserve historical step paths/provenance
+    rather than rewriting every stage path to the same archived file.
+[ ] Update saved experiment state and embedded metadata once during archiving
+    so archived paths agree. Preserve step execution timestamps and history.
+    Verify retained outputs and path updates before deleting intermediates.
+[ ] Reprocessing an archived experiment rebuilds missing prerequisites from
+    the original source. If the source is unavailable, report the missing
+    prerequisite instead of reprocessing the final archived pixels as raw.
+[ ] Validate stage-specific reruns, disabled steps, interrupted/failed reruns,
+    mismatched upstream timestamps, archive selection, final-mask precedence,
+    archived reader paths, and rebuilding after archive.
+
 Analysis identifiers: deferred Z-plane support
 ----------------------------------------------
 [ ] If extraction gains independent per-Z-plane measurements, include the
@@ -32,29 +99,14 @@ GUI settings validation before starting a run
     step/phase and disables Run. Disabled steps do not require their unused
     settings, and the segmentation tuner may choose its initial channel.
 
-Batch channel-label renaming — proposal only
--------------------------------------------
-[ ] Add a tool to inspect and rename channel labels in one or more selected
-    experiment folders, reusing fits_io's channel-label renaming functionality.
-    Keep inspection, validation, and rewriting outside the GUI so the same
-    logic is available through the CLI and the GUI's multiple-folder selection.
-[ ] Before writing, collect labels and channel mappings from every artifact
-    (images, segmentation/tracking masks, reference masks, and ROI masks).
-    Compare labels by source-channel identity: compact artifacts can legitimately
-    contain different subsets or channel orders. Report conflicting labels and
-    incompatible mappings with the affected folders and artifact filenames;
-    require ambiguities to be resolved before applying a batch rename.
-[ ] Preview the old-to-new label mapping and affected files. Change labels only:
-    preserve source_channel_indices, artifact_channel_indices, channel order,
-    pixel data, and object/track IDs. Reject duplicate or ambiguous target labels.
-[ ] Inspect associated parquet files and update channel-label values using the
-    same mapping, particularly intensity_channel and object_channel. Audit other
-    channel-bearing columns, table metadata, and settings references that may
-    retain old labels. Preserve table schemas and unrelated values; do not use
-    unrestricted text replacement. Flag references that cannot be mapped safely.
-[ ] Plan writes so artifacts and their tables remain consistent, and report
-    which files were updated or failed. This entry records future work only;
-    implementation is deferred.
+Run-wide channel-label renaming — implemented
+--------------------------------------------
+[x] Inspect FITS artifacts across the whole run, validate labels by source
+    index, preview affected files, and rename through GUI or CLI.
+[x] Update known channel-bearing TIFF, Parquet, experiment-state, and saved
+    settings fields while retaining pixels, lineage indices, and overlays.
+[x] Guard concurrent pipeline writes, reject stale previews, and restore
+    earlier files if a later update fails.
 
 Mask label consistency across experiments — proposal only
 --------------------------------------------------------

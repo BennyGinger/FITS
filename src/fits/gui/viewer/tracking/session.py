@@ -17,6 +17,7 @@ from fits.environment.constant import (
     FITS_MASK_TRACK,
     FITS_MASK_TRACK_EDITED,
     FITS_MASK_TRACK_EDITED_FILTERED,
+    FITS_TRACK_OVERLAY_PREFIX,
     StepName,
 )
 from fits.gui.viewer.tracking.centroids import CentroidCache
@@ -900,7 +901,8 @@ class TrackingViewerSession:
         suffix = f"_{self._validate_output_label(label)}" if label.strip() else ""
         qualifier = "_filtered" if filtered else ""
         crop_suffix = "_cropped" if cropped else ""
-        return self.source_path.with_name(f"fits_track_overlay{qualifier}{suffix}{crop_suffix}.tif")
+        return self.source_path.with_name(
+            f"{FITS_TRACK_OVERLAY_PREFIX}{qualifier}{suffix}{crop_suffix}.tif")
 
     def save_overlay_display(self,
                              *, label: str, channel: int | str, z_index: int,

@@ -106,16 +106,20 @@ def test_tuner_styles_actions_and_preview_restores_overlay():
     assert viewer.width() >= 1500
     assert viewer.height() >= 950
     panel_layout = viewer.settings_panel.layout()
-    run_button_index = panel_layout.indexOf(viewer.settings_panel.run_button)
-    apply_button_index = panel_layout.indexOf(viewer.settings_panel.apply_button)
     channel_list_index = panel_layout.indexOf(viewer.channel_settings_list)
-    add_button_index = panel_layout.indexOf(viewer.add_channel_button)
-
-    assert channel_list_index < run_button_index
-    assert run_button_index + 1 == add_button_index
-    assert add_button_index + 1 == apply_button_index
+    assert channel_list_index == panel_layout.count() - 1
+    assert viewer.channel_settings_list.maximumHeight() == 300
+    actions_layout = viewer.preview_actions.layout()
+    assert [actions_layout.itemAt(i).widget() for i in range(3)] == [
+        viewer.settings_panel.run_button,
+        viewer.add_channel_button,
+        viewer.settings_panel.apply_button,
+    ]
     viewer.show()
     QApplication.processEvents()
+    assert viewer.preview_actions.mapToGlobal(
+        viewer.preview_actions.rect().topLeft()).x() > viewer.lut_controls.mapToGlobal(
+            viewer.lut_controls.rect().topRight()).x()
     assert viewer.settings_panel.run_button.width() == viewer.add_channel_button.width()
     assert viewer.settings_panel.run_button.width() == viewer.settings_panel.apply_button.width()
     assert "#d97706" in viewer.settings_panel.run_button.styleSheet()

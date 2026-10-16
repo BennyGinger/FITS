@@ -36,13 +36,15 @@ class SegmentationTunerWindow(ImageToolWindow):
     """Preview segmentation and apply validated settings back to FITS."""
 
     settings_applied = Signal(object)
+    auto_open_first_image = True
     file_filters = (FITS_ARRAY_NAME,)
     help_gui = "SegTune"
     tool_help = SEGMENTATION_HELP
 
     def __init__(self, experiments_dir: str | Path | None = None,
                  segment_settings: SegmentSettings | Mapping[str, Any] | None = None,
-                 parent: QWidget | None = None, close_on_apply: bool = False) -> None:
+                 parent: QWidget | None = None, close_on_apply: bool = False, *,
+                 initial_path: str | Path | None = None) -> None:
         self._provided_settings = (SegmentSettings.model_validate(segment_settings)
                                    if segment_settings is not None else None)
         self._close_on_apply = close_on_apply
@@ -55,7 +57,7 @@ class SegmentationTunerWindow(ImageToolWindow):
         self._active_request: PreviewRequest | None = None
         self._active_operation: str | None = None
         self._pending_model_settings: SegmentChannelSettings | None = None
-        super().__init__(experiments_dir, parent)
+        super().__init__(None, parent)
         self._model_change_timer = QTimer(self)
         self._model_change_timer.setSingleShot(True)
         self._model_change_timer.setInterval(300)
@@ -79,6 +81,8 @@ class SegmentationTunerWindow(ImageToolWindow):
             "font-weight: bold; padding: 7px 12px; border-radius: 4px; } "
             "QPushButton:hover { background-color: #1c9848; } "
             "QPushButton:pressed { background-color: #11652f; }")
+        if experiments_dir is not None:
+            self._set_experiments_directory(experiments_dir, initial_path=initial_path)
 
     def _build_tools(self) -> QWidget:
         self.settings_panel = CellposeSettingsPanel()
@@ -90,24 +94,39 @@ class SegmentationTunerWindow(ImageToolWindow):
         controls_layout = controls.layout()
         assert isinstance(controls_layout, QVBoxLayout)
         controls_layout.removeWidget(self.settings_panel.run_button)
+        layout.removeWidget(self.settings_panel.apply_button)
 
         self.channel_settings_list = QListWidget()
-        self.channel_settings_list.setMaximumHeight(150)
+        self.channel_settings_list.setMinimumHeight(180)
+        self.channel_settings_list.setMaximumHeight(300)
         self.channel_settings_list.currentRowChanged.connect(self._select_entry)
-        layout.insertWidget(layout.count() - 1, QLabel("Channel settings"))
-        layout.insertWidget(layout.count() - 1, self.channel_settings_list)
+        layout.addWidget(QLabel("Channel settings"))
+        layout.addWidget(self.channel_settings_list, 1)
+        layout.setStretchFactor(self.settings_panel.controls_scroll, 3)
         self.add_channel_button = QPushButton("Apply and add another channel")
         self.add_channel_button.setStyleSheet(
             "QPushButton { background-color: #4f8f5b; color: white; "
             "padding: 6px 12px; border-radius: 4px; } "
             "QPushButton:hover { background-color: #5ca568; } "
             "QPushButton:pressed { background-color: #3f7449; }")
-        layout.insertWidget(layout.count() - 1, self.settings_panel.run_button)
         self.add_channel_button.setEnabled(False)
         self.add_channel_button.clicked.connect(self._add_channel)
-        layout.insertWidget(layout.count() - 1, self.add_channel_button)
         self.tool_panel = self.settings_panel
         return self.tool_panel
+
+    def _build_viewer_actions(self, layout: QHBoxLayout) -> None:
+        self.preview_actions = QWidget()
+        actions_layout = QVBoxLayout(self.preview_actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.addWidget(self.settings_panel.run_button)
+        actions_layout.addWidget(self.add_channel_button)
+        actions_layout.addWidget(self.settings_panel.apply_button)
+        layout.addStretch(1)
+        layout.addWidget(self.preview_actions)
+
+    def _set_source_controls_enabled(self, enabled: bool) -> None:
+        super()._set_source_controls_enabled(enabled)
+        self.preview_actions.setEnabled(enabled)
 
     def _build_overlay_controls(self, layout: QHBoxLayout) -> None:
         self.segmentation_mask_colours = QLabel("Label palette")

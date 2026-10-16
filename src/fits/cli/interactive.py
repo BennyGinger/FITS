@@ -13,6 +13,7 @@ from fits.gui.theme import apply_dark_theme
 from fits.gui.viewer.masks import MaskCollectionWindow
 from fits.workflows.runtime.progress import RunProgress
 from fits.pipeline import start_pipeline
+from fits.channel_labels.lock import run_write_guard
 from fits.settings.loader import load_settings
 from fits.workflows.runtime.interactive import PipelineCancelled, PipelineInteraction
 
@@ -126,8 +127,9 @@ def run_pipeline_cli(settings_path: Path) -> None:
 
     def work() -> None:
         try:
-            start_pipeline(settings_path=config_path, interaction=interaction,
-                           run_progress=progress)
+            with run_write_guard(run_dir):
+                start_pipeline(settings_path=config_path, interaction=interaction,
+                               run_progress=progress)
         except PipelineCancelled:
             signals.stopped.emit(None)
         except BaseException as error:

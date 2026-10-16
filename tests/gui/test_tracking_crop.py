@@ -21,12 +21,14 @@ _APP: QApplication | None = None
 
 
 def app() -> QApplication:
+    """Return the shared offscreen Qt application."""
     global _APP
     _APP = cast(QApplication, QApplication.instance() or QApplication([]))
     return _APP
 
 
 def wait_until(condition, window) -> None:
+    """Process Qt events until the condition is met or the test times out."""
     deadline = monotonic() + 5
     while not condition():
         app().processEvents()
@@ -36,6 +38,7 @@ def wait_until(condition, window) -> None:
 
 @pytest.fixture
 def tracking(tmp_path):
+    """Create a multichannel source and tracked masks for crop interaction tests."""
     raw = np.arange(4 * 2 * 100 * 120, dtype=np.float32).reshape(4, 2, 100, 120)
     input_path = tmp_path / "input.tif"
     tifffile.imwrite(input_path, raw, imagej=True, metadata={"axes": "TCYX"})
@@ -54,6 +57,7 @@ def tracking(tmp_path):
 
 @pytest.fixture
 def window(tracking):
+    """Open a viewer fixture and close it after the test."""
     app()
     window = TrackingViewerWindow(tracking_path=tracking[0], editing_enabled=False,
                                    selection_enabled=True)
@@ -67,11 +71,13 @@ def window(tracking):
 
 
 def image_point(window, x, y) -> QPoint:
+    """Map image coordinates to a viewport mouse position."""
     scene = window.image_viewer.view_box.mapViewToScene(QPointF(x, y))
     return cast(QPoint, window.image_viewer.canvas.mapFromScene(scene))
 
 
 def drag(window, start, end, modifiers=Qt.KeyboardModifier.NoModifier):
+    """Send a drag with explicit held-button and modifier state."""
     viewport = cast(QWidget, window.image_viewer.canvas.viewport())
     first, last = image_point(window, *start), image_point(window, *end)
     QTest.mousePress(viewport, Qt.MouseButton.LeftButton, modifiers, first)
@@ -84,6 +90,7 @@ def drag(window, start, end, modifiers=Qt.KeyboardModifier.NoModifier):
 
 
 def test_viewer_selection_is_unlimited_and_synced_with_ctrl_clicks(window):
+    """Verify viewer selection is unlimited and synced with ctrl clicks."""
     assert window.diameter_reference is None
     assert isinstance(window.track_id_input, QLineEdit)
     window.track_id_input.setText("7, 11, 23, 7")
@@ -112,6 +119,7 @@ def test_viewer_selection_is_unlimited_and_synced_with_ctrl_clicks(window):
 
 
 def test_ctrl_drag_selects_current_frame_centroids_and_drops_rectangle(window):
+    """Verify ctrl drag selects current frame centroids and drops rectangle."""
     panel = window.crop_panel
     control = Qt.KeyboardModifier.ControlModifier
     viewport = cast(QWidget, window.image_viewer.canvas.viewport())
@@ -133,6 +141,7 @@ def test_ctrl_drag_selects_current_frame_centroids_and_drops_rectangle(window):
 
 
 def test_crop_rectangle_selects_cells_and_crop_refits_selected_tracks(window):
+    """Verify crop rectangle selects cells and crop refits selected tracks."""
     panel = window.crop_panel
     panel.enabled.setChecked(True)
     drag(window, (5, 15), (70, 65))
@@ -150,6 +159,7 @@ def test_crop_rectangle_selects_cells_and_crop_refits_selected_tracks(window):
 
 
 def test_editor_retains_two_cell_limit_and_has_no_crop_panel(tracking):
+    """Verify editor retains two cell limit and has no crop panel."""
     app()
     editor = TrackingViewerWindow(tracking_path=tracking[0])
     try:
@@ -164,6 +174,7 @@ def test_editor_retains_two_cell_limit_and_has_no_crop_panel(tracking):
 
 
 def test_automatic_crop_uses_all_selected_cells_and_preview_only_changes_zoom(window):
+    """Verify automatic crop uses all selected cells and preview only changes zoom."""
     panel = window.crop_panel
     window.track_id_input.setText("7, 11, 23")
     window.select_track_button.click()
@@ -194,6 +205,7 @@ def test_automatic_crop_uses_all_selected_cells_and_preview_only_changes_zoom(wi
 
 
 def test_rectangle_draw_move_edge_corner_resize_and_numeric_sizes(window, monkeypatch):
+    """Verify rectangle draw move edge corner resize and numeric sizes."""
     panel = window.crop_panel
     panel.enabled.setChecked(True)
     drag(window, (10.25, 12.25), (70.75, 62.75))
@@ -208,7 +220,7 @@ def test_rectangle_draw_move_edge_corner_resize_and_numeric_sizes(window, monkey
     panel.width_input.setValue(60)
     panel.height_input.setValue(40)
     assert panel.bounds == (20, 21, 80, 61)
-    monkeypatch.setattr("fits.gui.viewer.tracking.crop.QColorDialog.getColor",
+    monkeypatch.setattr("fits.gui.viewer.common.crop.QColorDialog.getColor",
                         lambda *args: QColor("cyan"))
     panel.color_button.click()
     assert panel.rectangle.pen().color() == QColor("cyan")
@@ -217,6 +229,7 @@ def test_rectangle_draw_move_edge_corner_resize_and_numeric_sizes(window, monkey
 
 
 def test_empty_selection_guidance_and_manual_rectangle_has_no_padding(window, monkeypatch):
+    """Verify empty selection guidance and manual rectangle has no padding."""
     messages = []
     monkeypatch.setattr(QMessageBox, "information", lambda *args: messages.append(args[-1]))
     panel = window.crop_panel
@@ -235,6 +248,7 @@ def test_empty_selection_guidance_and_manual_rectangle_has_no_padding(window, mo
 
 
 def test_saving_crops_in_home_and_preview_but_not_when_mode_is_off(window, tracking, tmp_path, monkeypatch):
+    """Verify saving crops in home and preview but not when mode is off."""
     errors = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: errors.append(args[-1]))
     panel = window.crop_panel
@@ -256,10 +270,12 @@ def test_saving_crops_in_home_and_preview_but_not_when_mode_is_off(window, track
 
 
 def test_automatic_fitting_keeps_navigation_responsive_and_discards_stale_selection(window, monkeypatch):
+    """Verify automatic fitting keeps navigation responsive and discards stale selection."""
     started, release = Event(), Event()
     original = window._tracking_session.tracked_frame
 
     def slow_read(*args):
+        """Verify slow read."""
         if QThread.currentThread() != app().thread() and not started.is_set():
             started.set()
             assert release.wait(5)

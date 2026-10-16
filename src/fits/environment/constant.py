@@ -48,6 +48,7 @@ FITS_MASK_SEG = "fits_mask.tif"
 FITS_MASK_TRACK = "fits_track.tif"
 FITS_MASK_TRACK_EDITED = "fits_track_edited.tif"
 FITS_MASK_TRACK_EDITED_FILTERED = "fits_track_edited_filtered.tif"
+FITS_TRACK_OVERLAY_PREFIX = "fits_track_overlay"
 FITS_DISTANCE_PROFILE_NAME = "fits_distance_profile.parquet"
 FITS_QUANTI_NAME = "fits_quantification.parquet"
 FITS_FILES: set[FitsName] = {FITS_ARRAY_NAME, FITS_MASK_SEG, FITS_MASK_TRACK, FITS_MASK_TRACK_EDITED, FITS_MASK_TRACK_EDITED_FILTERED, FITS_DISTANCE_PROFILE_NAME, FITS_QUANTI_NAME, }

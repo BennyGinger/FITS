@@ -23,6 +23,8 @@ dependencies = [
     "tomlkit>=0.15.1",
     "mask-interpolation",
     "bioimagequant",
+    "filelock>=3.20",
+    "pyarrow>=20",
     "roifile>=2026.2.10",
 ]
 
@@ -47,6 +49,8 @@ fits-segtune = "fits.gui.viewer.main:segtune"
 fits-regtune = "fits.gui.viewer.main:regtune"
 fits-trackedit = "fits.gui.viewer.main:trackedit"
 fits-drawmask = "fits.gui.viewer.main:drawmask"
+fits-trackviewer = "fits.gui.viewer.main:trackviewer"
+fits-channel-labels = "fits.gui.channel_labels.main:main"
 
 [build-system]
 requires = ["uv_build>=0.8.4,<0.9.0"]

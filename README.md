@@ -138,6 +138,23 @@ tools directly:
 uv run fits-segtune
 uv run fits-drawmask
 uv run fits-regtune
+uv run fits-trackviewer --experiments-dir /path/to/run
+uv run fits-channel-labels /path/to/run
+```
+
+In the main GUI, **Channel Labels** sits between **Tracking Viewer** and
+**Full Report**. It inspects every FITS artifact in the run directory, then
+lets you rename labels by original source channel index. It maps channel
+references in FITS TIFFs, measurement Parquets, experiment states, and saved
+run settings, then writes only files that reference a changed label while
+preserving image pixels and ImageJ overlays. A conflicting index-to-label
+mapping stops the rename and names the affected files. The button is disabled
+while the pipeline runs. The command line can inspect or preview the same run:
+
+```bash
+uv run fits channel-labels /path/to/run
+uv run fits channel-labels /path/to/run --set 0=Green --set 1=Red
+uv run fits channel-labels /path/to/run --set 0=Green --set 1=Red --apply
 ```
 
 On Ubuntu, install an Applications-menu launcher with the FITS logo:
@@ -163,6 +180,10 @@ stage completion. The elapsed clock has no time-remaining estimate and freezes
 when work finishes; the blue activity indicator runs while the pipeline is active.
 
 Click **Tune segmentation…** to preview Cellpose with those settings.
+SegTune and RegTune open the experiment selected in the main GUI, or the first
+available `fits_array.tif` when the run folder or no experiment is selected.
+The opened file is highlighted in the tuner's browser. Choosing an experiments
+directory in a standalone tuner also opens its first available image.
 SegTune shows a selectable list of channel configurations below its controls.
 **Apply and add another channel** retains the current settings and selects
 the next unused image channel. Click a row to revisit its settings, or its
@@ -188,7 +209,20 @@ maximum projection for fitting, and the resulting 2D transforms apply to all Z
 planes. OpenCV and pystackreg support translation, rigid-body, and affine;
 scikit supports translation. Excluded channels stay unchanged and are not fitted.
 
-Choose original, registered, or reference-overlay display. The overlay shows
+Each tab has an **Enable crop** toggle, off by default. Enable it to draw, move
+or resize a fitting rectangle; **Preview** zooms to the rectangle so you can
+check it while navigating frames. There is no automatic Crop action. Disabling
+the tool hides the rectangle, returns to the full view and uses the full image
+for fitting, even if a rectangle remains stored. The crop limits fitting only:
+transforms are converted to full-image coordinates and never trim the output.
+
+After fitting, both tabs apply transforms only to the frame, channel and Z plane
+being displayed. Visited registered planes are cached, up to eight planes or
+64 MiB per preview. Moving to another frame does not repeat fitting. Channel
+fitting uses only its reference frame; full-stack application happens in the
+pipeline, rather than delaying the interactive preview.
+
+Choose Original image, Registered image, or Composite overlay. The overlay shows
 the selected image in green and its reference in magenta, each auto-scaled.
 For time registration, the comparison reference is frame 1 of the displayed
 channel. For channel registration, it is the reference channel at the displayed
@@ -199,10 +233,14 @@ matching pipeline order when time registration is enabled.
 general settings in the main GUI and saves the accepted experiment's settings
 and matrices in `<experiment>/.fits/registration/time.npz` or `channel.npz`.
 Save settings or Run pipeline in the main GUI persists the general settings,
-as with SegTune. **Complete session** closes the tuner without saving additional
-changes. Preview arrays use temporary disk-backed storage under
-`<experiment>/.fits/viewer_cache/registration/` and are removed when the experiment
-changes or the viewer closes; the original `fits_array.tif` is not modified.
+as with SegTune. **Save current settings** saves only the selected tab and keeps
+the viewer open for further time or channel tuning. **Complete session** saves
+both tabs with completed previews matching their current settings, then closes
+the tuner. Tabs without a matching preview are skipped; a save failure keeps the
+viewer open. Accepted models include their fitting rectangle. Saving settings
+and transforms does not apply the whole stack. Preview caches are released when
+the experiment changes or the viewer closes; the original `fits_array.tif` is
+not modified.
 
 Both pipeline registration tasks check accepted models before fitting. Tuned
 experiments keep their accepted settings when general settings change. Matching

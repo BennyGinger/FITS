@@ -7,6 +7,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot
 
 from fits.pipeline import start_pipeline
+from fits.channel_labels.lock import run_write_guard
+from fits.settings.loader import load_settings
 from fits.workflows.runtime.errors import StepExecutionError
 from fits.workflows.runtime.interactive import PipelineCancelled, PipelineInteraction
 from fits.workflows.runtime.progress import RunProgress
@@ -54,12 +56,14 @@ class PipelineWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            start_pipeline(settings_path=self.settings_path,
-                           console_handler=self.log_handler,
-                           interaction=self.interaction,
-                           demo_step_delay=self.demo_step_delay,
-                           run_progress=self.progress,
-                           convert_only=self.convert_only,)
+            root = Path(load_settings(self.settings_path)["run_dir"]).expanduser().resolve()
+            with run_write_guard(root):
+                start_pipeline(settings_path=self.settings_path,
+                               console_handler=self.log_handler,
+                               interaction=self.interaction,
+                               demo_step_delay=self.demo_step_delay,
+                               run_progress=self.progress,
+                               convert_only=self.convert_only,)
         except PipelineCancelled:
             self.cancelled.emit()
         except Exception as error:

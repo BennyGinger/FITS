@@ -6,7 +6,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
 from fits.environment.constant import StepName, WORKFLOW_ORDER
@@ -165,6 +166,7 @@ def test_settings_remain_editable_during_run(
     assert window.settings_stack.isEnabled()
     assert window.segtune_button.isEnabled() == prepared_before
     assert not window.tracking_viewer_button.isEnabled()
+    assert not window.channel_labels_button.isEnabled()
     for button in (window.run_button, window.load_button, window.save_button,
                    window.browse_button):
         assert not button.isEnabled()
@@ -193,6 +195,7 @@ def test_settings_remain_editable_during_run(
     window._set_running(False)
 
     assert window.phase_tabs.isTabEnabled(1) == prepared_after
+    assert window.channel_labels_button.isEnabled()
     assert window.segtune_button.isEnabled() == prepared_after
     assert adapter.field_value(StepName.BG_SUB, "sigma") == 2.5
     assert window.run_button.text() == (
@@ -318,7 +321,7 @@ def test_custom_log_directory_in_advanced_runtime_settings(tmp_path: Path) -> No
     window.close()
 
 
-@pytest.mark.parametrize("selection", ["browse", "enter"])
+@pytest.mark.parametrize("selection", ["browse", "enter", "drop", "drop_on_field"])
 def test_browsing_run_directory_loads_existing_settings(
     tmp_path: Path,
     monkeypatch,
@@ -346,6 +349,18 @@ def test_browsing_run_directory_loads_existing_settings(
 
     if selection == "browse":
         window._browse_run_dir()
+    elif selection.startswith("drop"):
+        mime_data = QMimeData()
+        mime_data.setUrls([QUrl.fromLocalFile(str(copied_dir))])
+        target = window.run_dir_edit if selection == "drop_on_field" else window
+        enter = QDragEnterEvent(QPoint(5, 5), Qt.DropAction.CopyAction, mime_data,
+                                Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        app.sendEvent(target, enter)
+        assert enter.isAccepted()
+        drop = QDropEvent(QPointF(5, 5), Qt.DropAction.CopyAction, mime_data,
+                          Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        app.sendEvent(target, drop)
+        assert drop.isAccepted()
     else:
         window.run_dir_edit.setText(str(copied_dir))
         window.run_dir_edit.returnPressed.emit()
@@ -360,6 +375,43 @@ def test_browsing_run_directory_loads_existing_settings(
     reloaded = SettingsAdapter()
     reloaded.load(saved_path)
     assert reloaded.run_dir == str(copied_dir.resolve())
+    window.close()
+
+
+@pytest.mark.parametrize("payload", ["file", "missing", "remote", "multiple", "text", "running"])
+def test_folder_drop_rejects_invalid_payloads_and_active_run(tmp_path, payload) -> None:
+    app = _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+    folder = tmp_path / "new folder"
+    folder.mkdir()
+    file = tmp_path / "image.tif"
+    file.touch()
+    mime_data = QMimeData()
+    if payload == "text":
+        mime_data.setText(str(folder))
+    elif payload == "remote":
+        mime_data.setUrls([QUrl("https://example.com/folder")])
+    else:
+        paths = {"file": [file], "missing": [tmp_path / "missing"],
+                 "multiple": [folder, tmp_path], "running": [folder]}[payload]
+        mime_data.setUrls([QUrl.fromLocalFile(str(path)) for path in paths])
+    if payload == "running":
+        window._set_running(True)
+    enter = QDragEnterEvent(QPoint(5, 5), Qt.DropAction.CopyAction, mime_data,
+                            Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    app.sendEvent(window, enter)
+    assert not enter.isAccepted()
+    # Revalidate at drop time as well, in case a run started during the drag.
+    drop = QDropEvent(QPointF(5, 5), Qt.DropAction.CopyAction, mime_data,
+                      Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    window.dropEvent(drop)
+    assert not drop.isAccepted()
+    assert window.adapter is adapter
+    assert window.run_browser.root_path == tmp_path.resolve()
+    if payload == "running":
+        window._set_running(False)
     window.close()
 
 

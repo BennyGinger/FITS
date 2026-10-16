@@ -33,9 +33,8 @@ def regtune() -> None:
         root = arguments.experiments_dir
         if root is None and arguments.image is not None:
             root = arguments.image if arguments.image.is_dir() else arguments.image.parent
-        window = RegistrationTunerWindow(root, mode=arguments.mode, settings_path=arguments.settings)
-        if arguments.image is not None:
-            window._path_selected(arguments.image)
+        window = RegistrationTunerWindow(root, mode=arguments.mode, settings_path=arguments.settings,
+                                         initial_path=arguments.image)
         return window
 
     _launch(create_window, "FITS Registration Tuner", qt_arguments)
@@ -51,6 +50,19 @@ def trackedit() -> None:
     _launch(lambda: TrackingViewerWindow(
         tracking_path=arguments.tracking, editing_enabled=True),
             "FITS Tracking Viewer / Editor", qt_arguments)
+
+
+def trackviewer() -> None:
+    parser = argparse.ArgumentParser(description="View FITS tracking labels.")
+    parser.add_argument("tracking", nargs="?", type=Path, help="Tracking TIFF to open.")
+    parser.add_argument("--experiments-dir", type=Path, help="FITS run directory.")
+    arguments, qt_arguments = parser.parse_known_args()
+    from fits.gui.viewer.tracking import TrackingViewerWindow
+
+    _launch(lambda: TrackingViewerWindow(
+        experiments_dir=arguments.experiments_dir, tracking_path=arguments.tracking,
+        editing_enabled=False, selection_enabled=True),
+        "FITS Tracking Viewer", qt_arguments)
 
 
 def drawmask() -> None:

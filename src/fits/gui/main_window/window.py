@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer, Slot
-from PySide6.QtGui import QColor, QCloseEvent, QPalette
+from PySide6.QtCore import QMimeData, Qt, QThread, QTimer, Slot
+from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QPalette
 from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter, QStackedWidget, QTabBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from fits.environment import constant as cst
@@ -58,12 +58,14 @@ class FitsMainWindow(QMainWindow):
         self._registration_tuner = None
         self._registration_tune_buttons: dict[cst.StepName, QPushButton] = {}
         self._tracking_viewer = None
+        self._channel_labels_window = None
         self._prepared_available = False
         self._phases_unlocked = False
         self._populating_settings = False
         self._settings_population_generation = 0
 
         self.setWindowTitle("FITS")
+        self.setAcceptDrops(True)
         self.resize(1200, 850)
         self._build_ui()
         self._populate_from_adapter()
@@ -91,8 +93,11 @@ class FitsMainWindow(QMainWindow):
         run_dir_layout = QHBoxLayout(run_dir_row)
         run_dir_layout.setContentsMargins(0, 0, 0, 0)
         self.run_dir_edit = QLineEdit()
+        self.run_dir_edit.setAcceptDrops(False)
+        self.run_dir_edit.setPlaceholderText("Browse or drop a folder here…")
         run_dir_tooltip = (
-            "Folder containing this FITS run. FITS reads or saves its settings in "
+            "Choose or drag and drop a folder containing this FITS run. "
+            "FITS reads or saves its settings in "
             ".fits and writes run outputs here."
         )
         self.run_dir_edit.setToolTip(run_dir_tooltip)
@@ -124,7 +129,7 @@ class FitsMainWindow(QMainWindow):
 
         self.run_browser = RunDirectoryBrowser()
         self.run_browser.path_activated.connect(self._open_selected_report)
-        self.tracking_viewer_button = QPushButton("Open tracking viewer…")
+        self.tracking_viewer_button = QPushButton("Tracking Viewer")
         self.tracking_viewer_button.setEnabled(False)
         self.tracking_viewer_button.setToolTip(
             "Open tracking for the selected experiment folder or tracking file, "
@@ -135,15 +140,19 @@ class FitsMainWindow(QMainWindow):
         self.tracking_viewer_button.clicked.connect(
             lambda: self._open_tracking_viewer())
         self.run_browser.selection_layout.addWidget(self.tracking_viewer_button)
-        self.run_browser.selection_layout.addStretch()
+        self.channel_labels_button = QPushButton("Channel Labels")
+        self.channel_labels_button.setToolTip(
+            "Inspect and rename channel labels throughout this run directory.")
+        self.channel_labels_button.clicked.connect(self._open_channel_labels)
+        self.run_browser.selection_layout.addWidget(self.channel_labels_button)
         self.report_button = QPushButton("Full Report")
         self.report_button.setEnabled(False)
         self.report_button.clicked.connect(self._open_latest_report)
         self.run_browser.selection_layout.addWidget(self.report_button)
         top_splitter.addWidget(self.run_browser)
-        top_splitter.setStretchFactor(0, 2)
-        top_splitter.setStretchFactor(1, 1)
-        top_splitter.setSizes([800, 360])
+        top_splitter.setStretchFactor(0, 1)
+        top_splitter.setStretchFactor(1, 2)
+        top_splitter.setSizes([470, 690])
         outer.addWidget(top_splitter)
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -337,6 +346,7 @@ class FitsMainWindow(QMainWindow):
         tuner = SegmentationTunerWindow(experiments_dir=self.adapter.run_dir or None,
                                         segment_settings=settings,
                                         parent=self,
+                                        initial_path=self.run_browser.selected_path,
                                         close_on_apply=True,)
         tuner.setWindowModality(Qt.WindowModality.WindowModal)
         tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -366,7 +376,8 @@ class FitsMainWindow(QMainWindow):
         tuner = RegistrationTunerWindow(
             self.adapter.run_dir or None, mode="time" if mode == "time" else "channel",
             time_settings=time_settings, channel_settings=channel_settings,
-            time_enabled=self.adapter.step_enabled(cst.StepName.REGISTER_TIME), parent=self)
+            time_enabled=self.adapter.step_enabled(cst.StepName.REGISTER_TIME),
+            initial_path=self.run_browser.selected_path, parent=self)
         tuner.setWindowModality(Qt.WindowModality.WindowModal)
         tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         tuner.settings_applied.connect(self._apply_registration_settings)
@@ -517,6 +528,9 @@ class FitsMainWindow(QMainWindow):
         for button in self._registration_tune_buttons.values():
             button.setEnabled(prepared and not self._running)
         self._refresh_tracking_viewer_button()
+        self.channel_labels_button.setEnabled(
+            not self._running and bool(self.run_dir_edit.text().strip())
+            and Path(self.run_dir_edit.text().strip()).expanduser().is_dir())
         self._update_run_button_text()
         current = self.step_tree.currentItem()
         if current is not None and self._step_from_item(current) != cst.StepName.CONVERT and not settings_available:
@@ -542,6 +556,35 @@ class FitsMainWindow(QMainWindow):
         if directory:
             self._switch_run_dir(directory)
 
+    def _dropped_run_dir(self, mime_data: QMimeData) -> Path | None:
+        if self._running:
+            return None
+        urls = mime_data.urls()
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            return None
+        directory = Path(urls[0].toLocalFile())
+        return directory if directory.is_dir() else None
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._dropped_run_dir(event.mimeData()) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if self._dropped_run_dir(event.mimeData()) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        directory = self._dropped_run_dir(event.mimeData())
+        if directory is None:
+            event.ignore()
+            return
+        self._switch_run_dir(str(directory))
+        event.acceptProposedAction()
+
     @Slot()
     def _run_dir_entered(self) -> None:
         self._switch_run_dir(self.run_dir_edit.text())
@@ -549,6 +592,8 @@ class FitsMainWindow(QMainWindow):
     @Slot(str)
     def _run_dir_text_changed(self, value: str) -> None:
         if value.strip():
+            self.channel_labels_button.setEnabled(
+                not self._running and Path(value.strip()).expanduser().is_dir())
             return
         self.adapter.run_dir = ""
         self.run_browser.set_root("")
@@ -643,6 +688,10 @@ class FitsMainWindow(QMainWindow):
 
     @Slot()
     def _run_pipeline(self) -> None:
+        label_window = self._channel_labels_window
+        if (label_window is not None and label_window._job is not None
+                and label_window._job.isRunning()):
+            return
         self._sync_identity()
         errors = self.adapter.validate_for_run()
         if not self._prepared_available and not self.adapter.step_enabled(cst.StepName.CONVERT):
@@ -835,6 +884,8 @@ class FitsMainWindow(QMainWindow):
 
     def _set_running(self, running: bool) -> None:
         self._running = running
+        if self._channel_labels_window is not None:
+            self._channel_labels_window.setEnabled(not running)
         if running:
             self.pipeline_progress.begin(self._run_progress)
         else:
@@ -867,7 +918,10 @@ class FitsMainWindow(QMainWindow):
         self.run_button.setText(
             "Run pipeline" if self._phases_unlocked else "Convert experiment(s)")
         missing = self.adapter.missing_user_fields()
-        self.run_button.setEnabled(not missing)
+        label_job = (self._channel_labels_window is not None
+                     and self._channel_labels_window._job is not None
+                     and self._channel_labels_window._job.isRunning())
+        self.run_button.setEnabled(not missing and not label_job)
         self.run_button.setToolTip("\n".join(missing))
 
     def _latest_report(self) -> Path | None:
@@ -899,6 +953,50 @@ class FitsMainWindow(QMainWindow):
 
     def _refresh_tracking_viewer_button(self) -> None:
         self.tracking_viewer_button.setEnabled(bool(self._tracking_artifacts()))
+
+    @Slot()
+    def _open_channel_labels(self) -> None:
+        run_dir = self.run_dir_edit.text().strip()
+        if self._running or not run_dir or not Path(run_dir).expanduser().is_dir():
+            return
+        if Path(run_dir).expanduser().resolve() != Path(self.adapter.run_dir).expanduser().resolve():
+            self._switch_run_dir(run_dir)
+        from fits.gui.channel_labels import ChannelLabelsWindow
+
+        window = self._channel_labels_window
+        if window is not None and window.root != Path(self.adapter.run_dir).resolve():
+            if window._job is not None and window._job.isRunning():
+                window.showNormal()
+                window.raise_()
+                window.activateWindow()
+                return
+            window.close()
+            window = None
+        if window is not None and window.isVisible():
+            if window.isMinimized():
+                window.showNormal()
+            window.raise_()
+            window.activateWindow()
+            return
+        window = ChannelLabelsWindow(self.adapter.run_dir)
+        window.labels_saved.connect(self._channel_labels_saved)
+        window.busy_changed.connect(self._update_run_button_text)
+        self._channel_labels_window = window
+        self._update_run_button_text()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    @Slot(object)
+    def _channel_labels_saved(self, new_labels: dict[int, str]) -> None:
+        from fits.channel_labels import rename_settings_document
+
+        window = self._channel_labels_window
+        old_labels = window.plan.labels if window is not None and window.plan is not None else ()
+        mapping = {old: new_labels[index] for index, old in old_labels}
+        self._sync_identity()
+        rename_settings_document(self.adapter.document, mapping)
+        self._populate_from_adapter()
 
     @Slot()
     def _open_tracking_viewer(self, path: Path | None = None) -> None:
@@ -965,6 +1063,13 @@ class FitsMainWindow(QMainWindow):
                                     "Wait for the pipeline to finish before closing FITS.",)
             event.ignore()
             return
+        label_window = self._channel_labels_window
+        if (label_window is not None and label_window._job is not None
+                and label_window._job.isRunning()):
+            event.ignore()
+            return
         if self._tracking_viewer is not None:
             self._tracking_viewer.close()
+        if self._channel_labels_window is not None:
+            self._channel_labels_window.close()
         super().closeEvent(event)

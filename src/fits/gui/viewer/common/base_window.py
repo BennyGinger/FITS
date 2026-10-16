@@ -4,7 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import cast
 
-from PySide6.QtCore import QEvent, QObject, QTimer, Qt, Slot
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTimer, Qt, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -36,6 +36,7 @@ class ImageToolWindow(QMainWindow):
     """Shared image browsing, display and navigation for focused tools."""
 
     source_panel_sizes = (230, 750)
+    auto_open_first_image = False
     file_filters: tuple[str, ...]
     help_gui: str
     tool_help: tuple[HelpRow, ...]
@@ -343,7 +344,8 @@ class ImageToolWindow(QMainWindow):
         if selected:
             self._set_experiments_directory(selected)
 
-    def _set_experiments_directory(self, path: str | Path) -> None:
+    def _set_experiments_directory(self, path: str | Path, *,
+                                   initial_path: str | Path | None = None) -> None:
         raw_path = str(path).strip()
         resolved = Path(raw_path).expanduser().resolve() if raw_path else None
         if resolved is None or not resolved.is_dir():
@@ -354,7 +356,30 @@ class ImageToolWindow(QMainWindow):
             return
         self.directory_edit.setText(str(resolved))
         self.status_label.setText("Select an experiment folder or its fits_array.tif file.")
-        self.directory_browser.set_root(resolved)
+        if self.auto_open_first_image:
+            with QSignalBlocker(self.directory_browser):
+                self.directory_browser.set_root(resolved)
+            self._open_initial_image(initial_path)
+        else:
+            self.directory_browser.set_root(resolved)
+
+    def _open_initial_image(self, initial_path: str | Path | None = None) -> None:
+        """Open and reveal the selected experiment, or the first prepared image."""
+        root = self.directory_browser.root_path
+        if root is None:
+            return
+        selected = Path(initial_path).expanduser().resolve() if initial_path is not None else root
+        if selected.is_dir():
+            source = selected / FITS_ARRAY_NAME
+            if not source.is_file():
+                source = next(iter(sorted(selected.rglob(FITS_ARRAY_NAME))), None)
+        else:
+            source = selected.parent / FITS_ARRAY_NAME
+        if source is None or not source.is_file():
+            self.status_label.setText(f"No {FITS_ARRAY_NAME} found in {selected}.")
+            return
+        if not self.directory_browser.select_path(source):
+            self._path_selected(source)
 
     @Slot()
     def _display_selection(self) -> None:

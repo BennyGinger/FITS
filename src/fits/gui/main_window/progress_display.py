@@ -57,7 +57,7 @@ class PipelineProgressWidget(QWidget):
     def refresh(self) -> None:
         snapshot = self._progress.display.snapshot() if self._progress is not None else None
         if snapshot is not None:
-            name = snapshot.name
+            name = "Pipeline steps" if snapshot.name == "Pipeline" else snapshot.name
             completed, total, elapsed = snapshot.completed, snapshot.total, snapshot.elapsed
         else:
             # Interactive execution has no Rich bar. Its configured stages
@@ -69,7 +69,7 @@ class PipelineProgressWidget(QWidget):
             completed = sum(stage.status in terminal for stage in stages)
             total = len(stages)
             elapsed = monotonic() - self._started
-            name = "Pipeline" if stages else "Preparing…"
+            name = "Pipeline steps" if stages else "Preparing…"
         self.step_label.setText(name)
         if total:
             self.bar.setRange(0, total)

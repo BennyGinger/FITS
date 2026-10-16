@@ -19,7 +19,10 @@ import numpy as np
 from numpy.typing import NDArray
 from stackalign import RegisterModel, TransformModel
 from stackalign.preparation import FitPreparation
+from stackalign.planes import fit_planes
+from stackalign.constants import Method
 
+from fits.interaction.crop import CropBounds, validate_crop
 from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
 
@@ -30,16 +33,20 @@ FORMAT_VERSION = 1
 
 
 def tuning_path(source: Path, mode: Mode) -> Path:
+    """Locate accepted settings and transforms for one registration mode."""
     return source.parent / ".fits" / "registration" / f"{mode}.npz"
 
 
 def fitting_signature(fitting: NDArray, shape: tuple[int, ...], axes: str,
-                      labels: tuple[str, ...], settings: RegistrationSettings) -> str:
+                      labels: tuple[str, ...], settings: RegistrationSettings,
+                      crop: CropBounds | None = None) -> str:
     """Hash only the projected planes used by fitting, one plane at a time."""
     canonical_axes = "".join(axis for axis in "TCZYX" if axis in axes)
     canonical_shape = tuple(shape[axes.index(axis)] for axis in canonical_axes)
     digest = sha256(json.dumps({"shape": canonical_shape, "axes": canonical_axes, "labels": labels,
                                "settings": settings.to_payload_dict()}, sort_keys=True).encode())
+    if crop is not None:
+        digest.update(json.dumps({"crop": crop}).encode())
     for plane in fitting:
         digest.update(np.ascontiguousarray(plane, dtype=np.float32).tobytes())
     return digest.hexdigest()
@@ -50,9 +57,23 @@ class TunedRegistration:
     settings: RegistrationSettings
     signature: str
     register: RegisterModel
+    crop: CropBounds | None = None
+
+
+def full_image_model(matrices: NDArray, *, backend: str, mode: Mode, method: Method,
+                     reference_channel: int | None, crop: CropBounds | None) -> RegisterModel:
+    """Lift crop-local transforms to full-image coordinates for every backend."""
+    if crop is not None:
+        origin = np.eye(3)
+        origin[:2, 2] = crop[:2]
+        inverse = np.eye(3)
+        inverse[:2, 2] = -np.asarray(crop[:2])
+        matrices = origin @ matrices @ inverse
+    return RegisterModel(backend).set_model(TransformModel(mode, method, matrices, reference_channel))
 
 
 def load_tuning(source: Path, mode: Mode) -> TunedRegistration | None:
+    """Read accepted settings, optional fitting crop and full-image transforms."""
     path = tuning_path(source, mode)
     if not path.is_file():
         return None
@@ -68,19 +89,27 @@ def load_tuning(source: Path, mode: Mode) -> TunedRegistration | None:
                 raise ValueError("Registration model and settings disagree.")
             model = TransformModel(mode, plan.method, stored["transform"], metadata["reference_channel"])
             register = RegisterModel(plan.backend).set_model(model)
-            return TunedRegistration(settings, metadata["signature"], register)
+            crop = metadata.get("crop")
+            if crop is not None:
+                if not isinstance(crop, list) or len(crop) != 4:
+                    raise ValueError("Invalid saved fitting crop.")
+                crop = (crop[0], crop[1], crop[2], crop[3])
+                validate_crop(crop, crop[2], crop[3])
+            return TunedRegistration(settings, metadata["signature"], register, crop)
     except (OSError, ValueError, KeyError, TypeError, EOFError, BadZipFile) as error:
         logger.warning("Ignoring unreadable registration tuning %s: %s", path, error)
         return None
 
 
 def save_tuning(source: Path, result: TunedRegistration) -> Path:
+    """Atomically persist accepted fitting settings and full-image transforms."""
     model = result.register.model
     path = tuning_path(source, model.mode)
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata = {"version": FORMAT_VERSION, "mode": model.mode,
                 "backend": result.register.backend, "reference_channel": model.reference_channel,
-                "settings": result.settings.to_payload_dict(), "signature": result.signature}
+                "settings": result.settings.to_payload_dict(), "signature": result.signature,
+                "crop": result.crop}
     temporary_path = None
     try:
         with NamedTemporaryFile(dir=path.parent, suffix=".npz", delete=False) as temporary:
@@ -98,19 +127,38 @@ def reusable_model(tuned: TunedRegistration | None, *, array: NDArray, axes: str
                    labels: tuple[str, ...], settings: RegistrationSettings,
                    fit_channel: int | None = None,
                    reference_channel: int | None = None) -> RegisterModel | None:
+    """Reuse matching transforms, or refit the accepted crop if its input changed."""
     if tuned is None:
         return None
+    fitting_source = array
+    if tuned.crop is not None:
+        validate_crop(tuned.crop, array.shape[axes.index("X")], array.shape[axes.index("Y")])
+        x0, y0, x1, y1 = tuned.crop
+        selection = [slice(None)] * array.ndim
+        selection[axes.index("X")] = slice(x0, x1)
+        selection[axes.index("Y")] = slice(y0, y1)
+        fitting_source = array[tuple(selection)]
     if isinstance(settings, RegisterTimeSettings):
-        preparation = FitPreparation.for_time(array, axes, fit_channel)
+        preparation = FitPreparation.for_time(fitting_source, axes, fit_channel)
     else:
-        preparation = FitPreparation.for_channel(array, axes, reference_channel, settings.reference_frame)
+        preparation = FitPreparation.for_channel(fitting_source, axes, reference_channel, settings.reference_frame)
     assert preparation.fit_array is not None
-    if len(tuned.register.model.transform) != len(preparation.fit_array):
+    if len(tuned.register.model.transform) != len(preparation.fit_array) and tuned.crop is None:
         logger.warning("Saved registration transform count does not match the input; fitting again.")
         return None
-    signature = fitting_signature(preparation.fit_array, array.shape, axes, labels, settings)
+    signature = fitting_signature(preparation.fit_array, array.shape, axes, labels, settings, tuned.crop)
     if signature != tuned.signature:
         logger.info("Registration tuning input changed; fitting fresh transforms for %s.", tuned.register.model.mode)
-        return None
+        if tuned.crop is None:
+            return None
+        plan = resolve_registration_plan(settings.context, settings.backend, settings.method)
+        reference = settings.reference_strategy if isinstance(settings, RegisterTimeSettings) else reference_channel
+        if reference is None:
+            raise ValueError("Choose a reference channel.")
+        excluded = [labels.index(label) for label in (settings.exclude_channel or ())] if isinstance(settings, RegisterChannelSettings) else []
+        matrices = fit_planes(preparation.fit_array, backend=plan.backend, method=plan.method,
+                              reference=reference, excluded=excluded)
+        return full_image_model(matrices, backend=plan.backend, mode=plan.mode, method=plan.method,
+                                reference_channel=reference_channel, crop=tuned.crop)
     logger.info("Reusing tuned %s registration transforms.", tuned.register.model.mode)
     return tuned.register

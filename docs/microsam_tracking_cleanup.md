@@ -27,6 +27,13 @@ GUI prompts
 
 ## Registration and static-only protection
 
+Implementation status: OpenCV registration of the previous mask and centroid
+is implemented in `TrackingViewerSession._registered_temporal_mask_prior()`.
+The registration and temporal decisions still live in the tracking session and
+window, rather than a dedicated policy. Static/moving/uncertain classification,
+static-only edit-delta propagation, and configurable static-only shrinkage
+protection remain proposals below; they are not current Add/Edit behavior.
+
 OpenCV local registration transports the previous mask and centroid to the next
 frame. µSAM then refines that prompt using the current image. Registration is
 coarse positioning, not final segmentation.
@@ -99,7 +106,7 @@ revision. If the change is accepted and released, FITS can depend on the
 official release. Before distributing FITS to other users, move the runtime
 dependencies out of `dev` and verify how MobileSAM will be installed.
 
-## Proposed cleanup order
+## Cleanup progress
 
 1. **Done:** preserve the experiment with integration tests and a commit.
 2. **Done:** define a small injectable Add/Edit backend interface.
@@ -110,6 +117,9 @@ dependencies out of `dev` and verify how MobileSAM will be installed.
    model inference.
 6. **Done:** remove the legacy Add/Edit classifier/random-walker path while
    retaining `SplitPredictor`.
+
+Remaining work:
+
 7. Extract registration and temporal decisions into a dedicated policy.
 8. Add static/moving/uncertain classification.
 9. Add static-only edit-delta propagation.

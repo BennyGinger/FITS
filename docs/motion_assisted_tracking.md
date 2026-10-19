@@ -148,8 +148,11 @@ existing 2D intensity or shape measurements can separate their contributions.
 - Represent observed, missing/predicted, repaired, and manually corrected
   observations distinctly. A stable-label movie alone is insufficient to retain
   gap status, competing identities, or overlapping projected objects.
-- The proposed manual viewer supplies review, corrections, and reference
-  annotations. It should eventually display uncertain encounters and Z evidence.
+- The existing manual tracking editor supplies label review, track/mask
+  corrections, and edited tracking exports, including sessions started from an
+  image. Explicit point-observation annotations, encounter uncertainty, and
+  depth-assisted identity review remain proposed extensions; ordinary Z-plane
+  navigation is already available.
 
 Bridging an identity gap does **not** require synthesizing a mask in the missing
 frames. The static-cell shape rejection and interpolation stage discussed
@@ -208,9 +211,10 @@ Annotate identities and difficult events; add reference masks for a smaller
 subset to assess boundary corrections. Explicitly mark cases a human cannot
 resolve. Reserve separate experiments for evaluation after tuning.
 
-Deliverable: a small reproducible benchmark, supported by the manual editor when
-available. Annotations initially serve evaluation and parameter tuning rather
-than neural-network training.
+Deliverable: a small reproducible benchmark. The existing manual editor can
+provide corrected label movies; the event/uncertainty annotation workflow and
+benchmark collection remain pending. Annotations initially serve evaluation and
+parameter tuning rather than neural-network training.
 
 ### 3. Evaluate the Baxter port against Trackastra
 

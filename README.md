@@ -51,8 +51,11 @@ Each experiment has an `experiment_state.json` file containing its artifacts,
 completed steps, metadata, and provenance. Artifact paths, rather than a second
 workflow manifest, are the durable evidence used to resume work. Conversion can
 split a raw file into several experiment branches. Re-running an unchanged step
-reuses valid output; enabling overwrite rebuilds that step and invalidates the
-appropriate downstream work.
+reuses completed output; enabling overwrite rebuilds that step and requests
+overwrite for later enabled steps. Conversion and preprocessing currently share
+`fits_array.tif`: overwriting preprocessing does not automatically reconvert
+the original source. Separate intermediate artifacts and provenance-based
+archive selection remain planned in [the TODO list](docs/todos.txt).
 
 The default conveyor execution lets prepared experiments advance while other
 experiments are still upstream. In the interactive conveyor, reference/ROI
@@ -64,8 +67,9 @@ analysis input can produce a partial result. If every experiment fails, the
 pipeline stops with an error.
 
 Interactive-mask and conversion-only GUI runs write a timestamped log and full
-text report under `logs/`. Reports list completed, partial, skipped, and failed
-work by phase and experiment. The GUI opens the latest report when a run
+text report under `.fits/logs/` and `.fits/reports/`, respectively. Reports list
+completed, partial, skipped, and failed work by phase and experiment. The GUI
+opens the latest report when a run
 finishes; **Full Report** and report files in the directory browser can reopen
 it later.
 
@@ -89,11 +93,13 @@ uv sync
 
 Plain `uv sync` and `uv run` select the development defaults automatically:
 
-- Windows x64 uses PyTorch 2.10.0 and torchvision 0.25.0 with CUDA 12.6,
-  verified on the GTX 1080 with NVIDIA driver 576.52.
-- Linux keeps its existing PyTorch package source and locked versions. GPU
-  support there depends on the Linux machine's GPU and driver; it has not been
-  tested from this Windows machine.
+- Windows x64 is configured for PyTorch 2.8.0+cu129 and torchvision
+  0.23.0+cu129 from the CUDA 12.9 package index.
+- Linux constrains PyTorch to 2.10.0 and torchvision to 0.25.0 and uses its
+  existing package source. The Windows accelerator group does not apply there.
+
+These describe the current dependency configuration, not a hardware validation.
+Check GPU availability on the machine where FITS will run.
 
 No extra flags are needed for everyday development:
 
@@ -103,24 +109,18 @@ uv run fits-segtune
 uv run cellpose
 ```
 
-The shared default is `[tool.uv].default-groups = ["dev", "cuda126"]` in
-`pyproject.toml`. The accelerator groups only affect Windows x64. The `cpu`
-and `cuda128` groups remain available for future machines; to temporarily
-select one, disable the default accelerator group:
+The shared default is `[tool.uv].default-groups = ["dev", "cuda129"]` in
+`pyproject.toml`. To omit the Windows accelerator group:
 
 ```bash
-uv sync --no-group cuda126 --group cpu
-uv run --no-group cuda126 --group cpu fits-gui
+uv sync --no-group cuda129
+uv run --no-group cuda129 fits-gui
 ```
 
-Replace `cpu` with `cuda128` for CUDA 12.8 on compatible hardware. A later
-plain `uv sync` or `uv run` restores the shared default. These groups are
-mutually exclusive, so do not use `--all-groups`. The former `--extra` GPU
-profiles have been replaced by dependency groups.
-
-CUDA 12.6 retains support for the GTX 1080 (Pascal); the CUDA 12.8 build does
-not. See [PyTorch's architecture compatibility notice](https://github.com/pytorch/pytorch/issues/157517).
-A separate CUDA toolkit installation is not needed.
+A later plain `uv sync` or `uv run` restores the shared default. The former
+`cpu`, `cuda126`, and `cuda128` groups are not defined in the current project.
+Omitting `cuda129` removes that group selection; it does not select a dedicated
+CPU profile.
 
 Check GPU availability from the FITS directory:
 
@@ -139,6 +139,7 @@ uv run fits-segtune
 uv run fits-drawmask
 uv run fits-regtune
 uv run fits-trackviewer --experiments-dir /path/to/run
+uv run fits-trackedit /path/to/experiment/fits_track.tif
 uv run fits-channel-labels /path/to/run
 ```
 
@@ -172,12 +173,19 @@ In `fits-gui`, each segmentation channel has its own settings section. Use
 Each channel can use a different model, diameter, denoising option, and nuclear
 helper channel. Execution and overwrite controls apply to the whole step.
 
+Select a run directory with Browse, enter a path and press Enter, or drag one
+local folder onto the main window or Run directory field. Folder selection loads
+that run's saved settings, or fresh template settings if none exist. Folder
+changes are blocked while the pipeline runs.
+
 The **Activity log** header always shows a step label, progress bar, and elapsed
 time. Batch runs mirror the current step's terminal counter; conveyor runs show
-the terminal **Pipeline** counter, including totals added by output branches.
+**Pipeline steps**, using the terminal Pipeline counter, including totals added
+by output branches.
 Conversion-only runs show **Convert**. Interactive runs show overall configured
-stage completion. The elapsed clock has no time-remaining estimate and freezes
-when work finishes; the blue activity indicator runs while the pipeline is active.
+stage completion as **Pipeline steps**. The elapsed clock has no time-remaining
+estimate and freezes when work finishes; the blue activity indicator runs while
+the pipeline is active.
 
 Click **Tune segmentation…** to preview Cellpose with those settings.
 SegTune and RegTune open the experiment selected in the main GUI, or the first
@@ -320,6 +328,18 @@ artifact. The original `fits_track.tif` remains in place. **Use original
 tracking** completes the optional step without replacing it. Quantification
 then consumes only the active tracking artifact. Enable overwrite to reopen a
 previously completed edit.
+
+Standalone `fits-trackedit /path/to/experiment/fits_array.tif` starts an empty
+tracking session without an existing tracking mask. Add/Edit uses headless
+micro-SAM with positive/negative prompts and an expected cell diameter defining
+the local crop. Predict, inspect or brush-correct the proposal, then accept it;
+accepted masks determine the centroids used for trajectories. Manual brush and
+enclosed-fill operations remain separate from inference, as does the Split
+predictor. The editor supports track merge/link, stopping or unlinking a track,
+mask/track deletion, and undo. Saves use the edited-tracking filenames above
+and record compact edit provenance. Redo, a replayable per-edit log, and the
+static-only temporal policy remain pending; see the
+[tracking TODOs](docs/todos.txt) and [micro-SAM cleanup plan](docs/microsam_tracking_cleanup.md).
 
 `fits-drawmask` opens a dedicated mask editor with **Reference** and **ROI**
 tabs sharing the same experiment and image controls. `fits-segtune` opens its

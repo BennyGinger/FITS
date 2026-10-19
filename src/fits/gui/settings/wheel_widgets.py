@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from PySide6.QtWidgets import (
-    QAbstractScrollArea, QComboBox, QDoubleSpinBox, QSlider, QSpinBox, QWidget,
-)
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractScrollArea, QComboBox, QDoubleSpinBox, QSlider, QSpinBox, QWidget
 
 # Give the type checker a QWidget base without adding it at runtime (avoids MRO conflicts).
 _MixinBase = QWidget if TYPE_CHECKING else object
@@ -13,19 +12,14 @@ _MixinBase = QWidget if TYPE_CHECKING else object
 class _FocusWheelMixin(_MixinBase):
     """Let a parent scroll area handle the wheel until this editor has focus."""
 
-    _wheel_armed = False
-
-
-    def mousePressEvent(self, event: Any) -> None:
-        self._wheel_armed = True
-        super().mousePressEvent(event)
-
-    def focusOutEvent(self, event: Any) -> None:
-        self._wheel_armed = False
-        super().focusOutEvent(event)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Allow click and keyboard focus without letting the wheel acquire focus."""
+        super().__init__(*args, **kwargs)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def wheelEvent(self, event: Any) -> None:
-        if not self._wheel_armed:
+        """Change a focused value or scroll the containing settings panel."""
+        if not self.hasFocus():
             parent = self.parentWidget()
             while parent is not None and not isinstance(parent, QAbstractScrollArea):
                 parent = parent.parentWidget()
@@ -41,16 +35,16 @@ class _FocusWheelMixin(_MixinBase):
 
 
 class FocusWheelSpinBox(_FocusWheelMixin, QSpinBox):
-    pass
+    """Require focus before mouse-wheel changes to the value."""
 
 
 class FocusWheelDoubleSpinBox(_FocusWheelMixin, QDoubleSpinBox):
-    pass
+    """Require focus before mouse-wheel changes to the value."""
 
 
 class FocusWheelComboBox(_FocusWheelMixin, QComboBox):
-    pass
+    """Require focus before mouse-wheel changes to the value."""
 
 
 class FocusWheelSlider(_FocusWheelMixin, QSlider):
-    pass
+    """Require focus before mouse-wheel changes to the value."""

@@ -6,8 +6,9 @@ from typing import cast
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPen
 from PySide6.QtWidgets import QApplication, QCheckBox, QColorDialog, QGraphicsRectItem, QGraphicsView
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from fits.gui.settings.wheel_widgets import FocusWheelSpinBox
 from fits.gui.viewer.common.image_viewer import FitsImageViewer
 from fits.interaction.crop import CropBounds
 
@@ -52,8 +53,8 @@ class CropPanel(QWidget):
             "Transforms still apply to the full image. Disable to use the full image again.")
         layout.addWidget(self.enabled)
         sizes = QHBoxLayout()
-        self.width_input = QSpinBox()
-        self.height_input = QSpinBox()
+        self.width_input = FocusWheelSpinBox()
+        self.height_input = FocusWheelSpinBox()
         for name, field in (("Width", self.width_input), ("Height", self.height_input)):
             field.setRange(1, 1)
             field.setSuffix(" px")

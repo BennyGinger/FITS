@@ -134,6 +134,7 @@ def test_lazy_preview_cache_is_bounded_and_does_not_apply_unvisited_planes(sourc
     session = RegistrationTuningSession(source)
     preview = session.run_preview('time', time_settings())
     calls = []
+    assert preview.result.register is not None
     real_apply = preview.result.register.apply_plane
 
     def apply(array, **kwargs):
@@ -153,6 +154,31 @@ def test_lazy_preview_cache_is_bounded_and_does_not_apply_unvisited_planes(sourc
     session.close()
     assert not session._previews
     assert not (source.parent / '.fits' / 'viewer_cache' / 'registration').exists()
+
+
+@pytest.mark.parametrize('mode', ['time', 'channel'])
+@pytest.mark.parametrize('cropped', [False, True])
+def test_settings_only_save_is_fitted_by_pipeline(source, tmp_path, mode, cropped):
+    """Pipeline fitting honors unpreviewed per-experiment settings and optional crops."""
+    settings = time_settings() if mode == 'time' else channel_settings()
+    crop = (4, 3, 26, 25) if cropped else None
+    session = RegistrationTuningSession(source)
+    session.save_settings(settings, crop=crop)
+    saved = load_tuning(source, mode)
+    assert saved is not None and saved.register is None
+    expected = materialize_preview(session, session.run_preview(mode, settings, crop=crop))
+    session.close()
+    raw = tmp_path / 'raw.nd2'
+    raw.write_bytes(b'raw')
+    state = ExperimentState.init(tmp_path, raw).with_complete_step(
+        step_name=StepName.CONVERT, artifact_kind='image', artifact_path=source)
+    if mode == 'time':
+        register_time(RegisterTimeSettings(context='complex_drift'), state,
+                      REGISTRY[StepName.REGISTER_TIME].profile)
+    else:
+        register_channel(RegisterChannelSettings(reference_channel=1), state,
+                         REGISTRY[StepName.REGISTER_CHANNEL].profile)
+    np.testing.assert_array_equal(FitsIO.from_path(source).get_array().array, expected)
 
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])

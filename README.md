@@ -202,14 +202,40 @@ back reuses the model. Keeping multiple models also uses more CPU/GPU memory.
 
 Click **Tune registration…** in either registration settings section to open
 RegTune on its **Time registration** or **Channel registration** tab. Both tabs
-share the same image browser and navigation. **Run preview** fits the complete
+share the same image browser and navigation. When launched from the main GUI,
+its current settings take priority over saved experiment tuning. Explicit channel
+changes in the top toolbar update the active tab's fitting/reference channel. **Run preview** fits the complete
 time sequence or the channels at the selected reference frame in a background
 worker; the button becomes **Cancel preview** while working. Z stacks use a
 maximum projection for fitting, and the resulting 2D transforms apply to all Z
 planes. OpenCV and pystackreg support translation, rigid-body, and affine;
 scikit supports translation. Excluded channels stay unchanged and are not fitted.
 
-Each tab has an **Enable crop** toggle, off by default. Enable it to draw, move
+Selecting a **Context** preset fills in its actual backend and method. They are
+grouped under **Backend and method**, labelled **Set by context**. Editing either
+selects the matching named context when one exists, otherwise **Custom** and
+**Manual settings**. Returning to a preset's backend/method restores its context;
+choosing a preset also restores its values. Custom is a viewer label only: saved settings
+retain the last named context and explicit backend/method values, with no CLI
+schema change. Changing a registration context in the main settings panel also
+updates its backend and method.
+
+Both tabs use three separate panels in the SegTune style: **Registration settings**,
+**Fitting crop**, and **Resolved registration**. The first retains the registration
+fields and backend/method group. Registration and crop settings scroll, while
+the resolved panel stays fixed at the bottom of each tab. It shows the effective plan, for
+example `pystackreg / translation / previous / full image` or `... / from crop`.
+Channel registration shows its reference channel and frame instead of a time
+reference strategy. The summary follows settings and enabled crop changes.
+
+When SegTune or RegTune is opened from the main GUI, its run-directory field and
+Browse button are disabled. Experiments within that run remain selectable.
+Standalone tuners retain directory browsing.
+
+Each tab has a **Fitting crop** subpanel explaining that a smaller region can
+focus on stable features when full-image fitting is difficult and speed up
+live-preview fitting, while registration still applies to the full
+image with unchanged output size. Its **Enable crop** toggle is off by default. Enable it to draw, move
 or resize a fitting rectangle; **Preview** zooms to the rectangle so you can
 check it while navigating frames. There is no automatic Crop action. Disabling
 the tool hides the rectangle, returns to the full view and uses the full image
@@ -222,23 +248,27 @@ being displayed. Visited registered planes are cached, up to eight planes or
 fitting uses only its reference frame; full-stack application happens in the
 pipeline, rather than delaying the interactive preview.
 
-Choose Original image, Registered image, or Composite overlay. The overlay shows
-the selected image in green and its reference in magenta, each auto-scaled.
-For time registration, the comparison reference is frame 1 of the displayed
-channel. For channel registration, it is the reference channel at the displayed
-frame. **Preview channels after time registration** uses the Time tab first,
-matching pipeline order when time registration is enabled.
+Choose Original image, Registered image, or Composite overlay. The overlay
+compares the original and registered images at the same frame, channel and Z
+plane. The original is grayscale and the registered image uses the selected
+channel LUT. When the registered image is grayscale, the original is magenta
+instead. Both are auto-scaled separately and blended to show registration's
+displacement. The canvas dimensions stay unchanged; transforms can leave empty
+borders or move content outside the frame. Each tab previews its registration
+directly on the source image; the Channel tab does not run time registration first.
 
-**Save current settings** requires a matching completed preview. It updates the
-general settings in the main GUI and saves the accepted experiment's settings
-and matrices in `<experiment>/.fits/registration/time.npz` or `channel.npz`.
+**Save current settings** works with or without a preview. It updates the
+general settings in the main GUI and saves the accepted experiment's settings,
+crop and any matching fitted matrices in `<experiment>/.fits/registration/time.npz` or `channel.npz`.
+Accepting tuner settings checks **Advanced settings** in the main panel so the
+effective backend and method remain visible.
 Save settings or Run pipeline in the main GUI persists the general settings,
 as with SegTune. **Save current settings** saves only the selected tab and keeps
 the viewer open for further time or channel tuning. **Complete session** saves
-both tabs with completed previews matching their current settings, then closes
-the tuner. Tabs without a matching preview are skipped; a save failure keeps the
-viewer open. Accepted models include their fitting rectangle. Saving settings
-and transforms does not apply the whole stack. Preview caches are released when
+both tabs, then closes the tuner; a save failure keeps the viewer open.
+Without a matching preview, saving stores settings and the fitting rectangle
+without matrices, replacing any older accepted transforms. The pipeline fits
+those settings later. Saving never applies the whole stack. Preview caches are released when
 the experiment changes or the viewer closes; the original `fits_array.tif` is
 not modified.
 

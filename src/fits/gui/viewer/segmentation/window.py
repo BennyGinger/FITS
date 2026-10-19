@@ -44,7 +44,8 @@ class SegmentationTunerWindow(ImageToolWindow):
     def __init__(self, experiments_dir: str | Path | None = None,
                  segment_settings: SegmentSettings | Mapping[str, Any] | None = None,
                  parent: QWidget | None = None, close_on_apply: bool = False, *,
-                 initial_path: str | Path | None = None) -> None:
+                 initial_path: str | Path | None = None,
+                 directory_locked: bool = False) -> None:
         self._provided_settings = (SegmentSettings.model_validate(segment_settings)
                                    if segment_settings is not None else None)
         self._close_on_apply = close_on_apply
@@ -57,7 +58,7 @@ class SegmentationTunerWindow(ImageToolWindow):
         self._active_request: PreviewRequest | None = None
         self._active_operation: str | None = None
         self._pending_model_settings: SegmentChannelSettings | None = None
-        super().__init__(None, parent)
+        super().__init__(None, parent, directory_locked=directory_locked)
         self._model_change_timer = QTimer(self)
         self._model_change_timer.setSingleShot(True)
         self._model_change_timer.setInterval(300)
@@ -528,8 +529,7 @@ class SegmentationTunerWindow(ImageToolWindow):
             self.settings_panel.run_button.setEnabled(not running)
             return
         self.settings_panel.set_running(running)
-        self.directory_edit.setEnabled(not running)
-        self.browse_button.setEnabled(not running)
+        self._set_directory_controls_enabled(not running)
         self.directory_browser.setEnabled(not running)
         self.frame_slider.setEnabled(not running)
         self.channel_combo.setEnabled(not running)

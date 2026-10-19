@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import tifffile
 from fits_io import FitsIO
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog
 
 from fits.gui.main_window import FitsMainWindow
 from fits.gui.settings import SettingsAdapter
@@ -65,10 +65,14 @@ def test_tuner_opens_and_reveals_initial_image(tuner_class, selection, images, t
 
 
 @pytest.mark.parametrize("tuner_class", [SegmentationTunerWindow, RegistrationTunerWindow])
-def test_choosing_a_directory_opens_first_image(tuner_class, images, tmp_path):
+def test_choosing_a_directory_opens_first_image(tuner_class, images, tmp_path, monkeypatch):
+    """Standalone tuners retain working run-directory browsing."""
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(tmp_path))
     tuner = tuner_class()
     try:
-        tuner._set_experiments_directory(tmp_path)
+        assert tuner.directory_edit.isEnabled()
+        assert tuner.browse_button.isEnabled()
+        tuner._browse()
         assert tuner._source_path == images[0], tuner.status_label.text()
     finally:
         tuner.close()
@@ -99,7 +103,13 @@ def test_selected_empty_experiment_does_not_open_another(tuner_class, images, tm
 
 @pytest.mark.parametrize("kind", ["segmentation", "registration"])
 @pytest.mark.parametrize("select_experiment", [False, True])
-def test_main_gui_passes_selected_experiment(kind, select_experiment, images, tmp_path):
+def test_main_gui_passes_selected_experiment(kind, select_experiment, images, tmp_path, monkeypatch):
+    """GUI launches retain experiment navigation but lock the run directory."""
+    def unexpected_browse(*args):
+        """Fail if a locked tuner opens the directory chooser."""
+        pytest.fail("GUI-launched tuner opened the directory chooser")
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", unexpected_browse)
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_segment_channels([{"channel": "GFP"}])
@@ -114,10 +124,26 @@ def test_main_gui_passes_selected_experiment(kind, select_experiment, images, tm
         else:
             main._open_registration_tuner("channel")
             tuner = main._registration_tuner
+            assert tuner is not None
             assert tuner.mode() == "channel"
+        assert tuner is not None
         expected = images[1] if select_experiment else images[0]
         assert tuner._source_path == expected, tuner.status_label.text()
         assert tuner.directory_browser.selected_path == expected
+        assert not tuner.directory_edit.isEnabled()
+        assert not tuner.browse_button.isEnabled()
+        tuner._browse()
+        if isinstance(tuner, SegmentationTunerWindow):
+            tuner._set_running(True)
+            tuner._set_running(False)
+        else:
+            tuner._thread_finished()
+        assert not tuner.directory_edit.isEnabled()
+        assert not tuner.browse_button.isEnabled()
+        assert tuner.directory_browser.isEnabled()
+        assert tuner.directory_browser.select_path(images[0] if select_experiment else images[1])
+        assert tuner._source_path == (images[0] if select_experiment else images[1])
+        assert tuner.directory_browser.root_path == tmp_path
     finally:
         if tuner is not None:
             tuner.close()

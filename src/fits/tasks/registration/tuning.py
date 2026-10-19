@@ -116,7 +116,7 @@ class RegistrationTuningSession(FitsImageSession):
             fitting[index] = projected
         signature = fitting_signature(fitting, self.shape, self.axes, self.channel_labels, settings, crop)
         accepted = load_tuning(self.source_path, mode)
-        if (accepted is not None and accepted.signature == signature
+        if (accepted is not None and accepted.register is not None and accepted.signature == signature
                 and len(accepted.register.model.transform) == len(fitting)):
             register = accepted.register
             update(f"Reusing tuned {mode} transforms", 1, 1)
@@ -151,6 +151,7 @@ class RegistrationTuningSession(FitsImageSession):
                 return preview.planes[key]
             source = (self.preview_frame(preview.upstream, *key) if preview.upstream is not None
                       else self.display_frame(*key))
+            assert preview.result.register is not None
             output = preview.result.register.apply_plane(source, frame=key[0], channel=key[1])
             output.setflags(write=False)
             if output.nbytes <= 64 * 1024**2:
@@ -158,6 +159,15 @@ class RegistrationTuningSession(FitsImageSession):
                 while len(preview.planes) > 8 or sum(plane.nbytes for plane in preview.planes.values()) > 64 * 1024**2:
                     preview.planes.popitem(last=False)
             return output
+
+    def save_settings(self, settings: RegistrationSettings, *, crop: CropBounds | None = None) -> Path:
+        """Accept settings and a crop without fitting or retaining stale matrices."""
+        stat = self.source_path.stat()
+        if (stat.st_size, stat.st_mtime_ns) != self._source_stamp:
+            raise ValueError("The source changed. Reopen the experiment before saving.")
+        if crop is not None:
+            validate_crop(crop, self._axis_size("X"), self._axis_size("Y"))
+        return save_tuning(self.source_path, TunedRegistration(settings.model_copy(deep=True), "", None, crop))
 
     def save_preview(self, preview: RegistrationPreview) -> Path:
         """Save accepted settings, fitting crop and transforms without processing the stack."""

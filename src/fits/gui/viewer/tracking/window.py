@@ -12,11 +12,12 @@ from scipy.ndimage import distance_transform_edt
 from PySide6.QtCore import QObject, QPointF, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import (
-    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFrame,
+    QCheckBox, QColorDialog, QDialog, QDialogButtonBox, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QProgressBar, QSpinBox, QVBoxLayout, QWidget,
+    QProgressBar, QVBoxLayout, QWidget,
 )
 
+from fits.gui.settings.wheel_widgets import FocusWheelComboBox, FocusWheelSpinBox
 from fits.environment.constant import (
     FITS_ARRAY_NAME,
     FITS_MASK_TRACK,
@@ -365,7 +366,7 @@ class TrackingViewerWindow(ImageToolWindow):
         select_row = QHBoxLayout()
         select_row.addWidget(QLabel("Cell ID" if self.editing_enabled else "Cell IDs"))
         if self.editing_enabled:
-            self.track_id_input = QSpinBox()
+            self.track_id_input = FocusWheelSpinBox()
             self.track_id_input.setRange(1, 2**31 - 1)
             self.track_id_input.setKeyboardTracking(False)
             self.track_id_input.setToolTip("Enter a track ID, then press Enter or Select.")
@@ -380,7 +381,7 @@ class TrackingViewerWindow(ImageToolWindow):
         selection.addLayout(select_row)
         track_id_row = QHBoxLayout()
         track_id_row.addWidget(QLabel("Track IDs"))
-        self.track_id_display_mode = QComboBox()
+        self.track_id_display_mode = FocusWheelComboBox()
         self.track_id_display_mode.addItem("None", "none")
         self.track_id_display_mode.addItem("Selected", "selected")
         self.track_id_display_mode.addItem("All", "all")
@@ -396,7 +397,7 @@ class TrackingViewerWindow(ImageToolWindow):
         self.show_track_paths.setChecked(True)
         tracks_row.addWidget(self.show_track_paths)
         tracks_row.addStretch(1)
-        self.track_path_display_mode = QComboBox()
+        self.track_path_display_mode = FocusWheelComboBox()
         self.track_path_display_mode.addItem("all", "all")
         self.track_path_display_mode.addItem("selected", "selected")
         self.track_path_display_mode.setToolTip(
@@ -404,7 +405,7 @@ class TrackingViewerWindow(ImageToolWindow):
         tracks_row.addWidget(self.track_path_display_mode)
         tracks_row.addStretch(1)
         tracks_row.addWidget(QLabel("Thickness"))
-        self.path_thickness = QSpinBox()
+        self.path_thickness = FocusWheelSpinBox()
         self.path_thickness.setRange(1, 12)
         self.path_thickness.setValue(2)
         self.path_thickness.setSuffix(" px")
@@ -414,7 +415,7 @@ class TrackingViewerWindow(ImageToolWindow):
 
         history_row = QHBoxLayout()
         history_row.addWidget(QLabel("Path extent"))
-        self.path_extent = QComboBox()
+        self.path_extent = FocusWheelComboBox()
         self.path_extent.addItem("Build to current frame", "built")
         self.path_extent.addItem("Show full path", "full")
         history_row.addWidget(self.path_extent, 1)
@@ -427,7 +428,7 @@ class TrackingViewerWindow(ImageToolWindow):
         centroid_row.addWidget(self.show_centroids)
         centroid_row.addStretch(1)
         centroid_row.addWidget(QLabel("Size"))
-        self.centroid_size = QSpinBox()
+        self.centroid_size = FocusWheelSpinBox()
         self.centroid_size.setRange(1, 30)
         self.centroid_size.setValue(5)
         self.centroid_size.setSuffix(" px")
@@ -436,7 +437,7 @@ class TrackingViewerWindow(ImageToolWindow):
 
         color_row = QHBoxLayout()
         color_row.addWidget(QLabel("Colors"))
-        self.path_color_mode = QComboBox()
+        self.path_color_mode = FocusWheelComboBox()
         self.path_color_mode.addItem("Match track palette", "track")
         self.path_color_mode.addItem("Single color", "single")
         color_row.addWidget(self.path_color_mode, 1)
@@ -451,7 +452,7 @@ class TrackingViewerWindow(ImageToolWindow):
 
         filter_section, filters = self._section("Track filtering")
         filter_row = QHBoxLayout()
-        self.filter_operator = QComboBox()
+        self.filter_operator = FocusWheelComboBox()
         for label, value in (("Lower than", "lt"), ("Lower or equal", "le"),
                              ("Equal", "eq"), ("Not equal", "ne"),
                              ("Greater or equal", "ge"), ("Greater than", "gt"),
@@ -459,13 +460,13 @@ class TrackingViewerWindow(ImageToolWindow):
             self.filter_operator.addItem(label, value)
         self.filter_operator.setCurrentIndex(self.filter_operator.findData("ge"))
         filter_row.addWidget(self.filter_operator, 1)
-        self.filter_value = QSpinBox()
+        self.filter_value = FocusWheelSpinBox()
         self.filter_value.setRange(1, 1_000_000)
         self.filter_value.setValue(100)
         self.filter_value.setSuffix(" frames")
         self.filter_value.setKeyboardTracking(False)
         filter_row.addWidget(self.filter_value)
-        self.filter_maximum = QSpinBox()
+        self.filter_maximum = FocusWheelSpinBox()
         self.filter_maximum.setRange(1, 1_000_000)
         self.filter_maximum.setValue(200)
         self.filter_maximum.setSuffix(" frames")
@@ -577,7 +578,7 @@ class TrackingViewerWindow(ImageToolWindow):
         mask_editing.addSpacing(8)
         brush_row = QHBoxLayout()
         brush_row.addWidget(QLabel("Brush size"))
-        self.local_brush_size = QSpinBox()
+        self.local_brush_size = FocusWheelSpinBox()
         self.local_brush_size.setRange(1, 1001)
         self.local_brush_size.setSingleStep(2)
         self.local_brush_size.setValue(5)
@@ -590,7 +591,7 @@ class TrackingViewerWindow(ImageToolWindow):
         brush_row.addStretch(1)
         brush_row.addWidget(self.mask_edit_colors_button)
         mask_editing.addLayout(brush_row)
-        self.local_cell_diameter = QSpinBox()
+        self.local_cell_diameter = FocusWheelSpinBox()
         self.local_cell_diameter.setRange(4, 1000)
         self.local_cell_diameter.setValue(40)
         self.local_cell_diameter.setPrefix("Ø ")
@@ -667,7 +668,7 @@ class TrackingViewerWindow(ImageToolWindow):
         layout.addWidget(self.track_palette_label)
         layout.addSpacing(12)
         layout.addWidget(QLabel("Mask channel"))
-        self.mask_channel_combo = QComboBox()
+        self.mask_channel_combo = FocusWheelComboBox()
         self.mask_channel_combo.setToolTip(
             "Choose the tracked-label channel independently from the raw image channel.")
         layout.addWidget(self.mask_channel_combo)

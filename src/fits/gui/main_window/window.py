@@ -347,7 +347,7 @@ class FitsMainWindow(QMainWindow):
                                         segment_settings=settings,
                                         parent=self,
                                         initial_path=self.run_browser.selected_path,
-                                        close_on_apply=True,)
+                                        close_on_apply=True, directory_locked=True,)
         tuner.setWindowModality(Qt.WindowModality.WindowModal)
         tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         tuner.settings_applied.connect(self._apply_segmentation_settings)
@@ -376,8 +376,7 @@ class FitsMainWindow(QMainWindow):
         tuner = RegistrationTunerWindow(
             self.adapter.run_dir or None, mode="time" if mode == "time" else "channel",
             time_settings=time_settings, channel_settings=channel_settings,
-            time_enabled=self.adapter.step_enabled(cst.StepName.REGISTER_TIME),
-            initial_path=self.run_browser.selected_path, parent=self)
+            initial_path=self.run_browser.selected_path, parent=self, directory_locked=True)
         tuner.setWindowModality(Qt.WindowModality.WindowModal)
         tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         tuner.settings_applied.connect(self._apply_registration_settings)
@@ -387,10 +386,14 @@ class FitsMainWindow(QMainWindow):
 
     @Slot(str, object)
     def _apply_registration_settings(self, mode: str, settings) -> None:
+        """Apply accepted tuner settings and expose their advanced controls."""
         step = cst.StepName.REGISTER_TIME if mode == "time" else cst.StepName.REGISTER_CHANNEL
+        expanded = {name for name, editor in self._editors.items() if editor.advanced_settings_visible}
         for key, value in {**settings.to_payload_dict(), "overwrite": settings.overwrite}.items():
             self.adapter.set_field_value(step, key, "None" if value is None else value)
         self._populate_from_adapter()
+        for name in expanded | {step}:
+            self._editors[name].show_advanced_settings()
         self.step_tree.setCurrentItem(self._step_items[step])
         self._append_log(f"Applied {mode} registration settings from the tuner.")
 

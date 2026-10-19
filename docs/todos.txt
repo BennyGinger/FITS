@@ -316,30 +316,48 @@ Optional processing tuners
 -------------------------
 Goal: check representative experiments before a batch, choose general settings,
 and retain accepted transforms for experiments that were tuned individually.
-Status: registration tuner implemented; background-subtraction tuner pending.
+Status: registration tuner complete and ready; background-subtraction tuner pending.
 
 [x] Launch one shared Time/Channels registration tuner from either main-GUI
-    settings section, initially selecting the corresponding tab.
+    settings section, initially selecting the corresponding tab. Load the GUI's
+    current settings and selected experiment; lock run-directory browsing while
+    retaining experiment selection within that run.
 [x] Offer standalone fits-regtune with an optional image, --mode,
-    --experiments-dir, and --settings. The pipeline CLI needs no tuner.
+    --experiments-dir, and --settings. Keep standalone directory browsing.
+    The pipeline CLI needs no tuner.
 [x] Reuse the classic experiment browser, navigation, Info dialog, and loading
-    overlay, with one Run preview, Save current settings, and Complete session.
-[x] Support original/registered comparison and a per-frame reference composite.
-[x] Transfer accepted settings to the general main-GUI settings; standalone Save
-    updates the supplied/nearest settings file or creates a template-based one.
-[x] Save accepted per-experiment matrices and settings outside image artifacts.
-    Registration tasks validate fitting pixels before reusing transforms.
+    overlay, with Run preview, Save current settings, and Complete session to
+    the right of the LUT. Parameter wheel changes require focus.
+[x] Support original/registered comparison and Composite overlay of the same
+    frame/channel/Z plane: original grayscale, registered in its channel LUT;
+    use magenta for the original when the registered image is grayscale.
+[x] Transfer accepted settings to the general main-GUI settings and expose
+    Advanced settings; standalone Save updates the supplied/nearest settings
+    file or creates a template-based one. Presets set backend/method; manual
+    choices restore a matching preset or select Custom. Top channel changes
+    update the active tab's fitting/reference channel.
+[x] Save accepted per-experiment settings, optional crop and matching matrices
+    outside image artifacts. Save current affects only the selected tab;
+    Complete saves both tabs and closes without changing step-enabled states.
+    Allow saving without preview: store settings/crop without stale matrices,
+    and fit later in the pipeline. Validate fitting pixels before model reuse.
 [x] Keep original input virtual, project only fitting channels/frames across Z,
-    and prepare replaceable disk-backed previews in a cancellable worker.
+    and fit in a cancellable worker. Apply transforms only to requested preview
+    planes, with a bounded cache instead of preparing a full output stack.
 [x] Release previews when switching experiments or closing. Repeated identical
-    previews reuse results; parameter changes cannot save a stale preview.
+    previews reuse results; parameter changes cannot save stale transforms.
 [x] Fit full time sequences for first/previous/mean strategies so accepted
-    matrices cover every frame. Channel previews can include time registration
-    first to reproduce pipeline order and validate reuse correctly.
+    matrices cover every frame. Preview each tab independently on source data.
+    Both tabs offer an opt-in manual fitting crop with zoom preview; disabling
+    it restores full-image fitting. Lift crop transforms to full-image
+    coordinates and retain unchanged output dimensions. Pin Resolved below
+    scrolling settings and keep its size aligned across tabs.
 [x] Validate backend restoration, pixel equivalence, saved-model reuse, stale
-    input rejection, settings transfer, cancellation, and GUI/CLI launch.
-[ ] Consider preparing nearby preview frames first after fitting, then filling
-    the remaining disk cache progressively for especially large experiments.
+    input rejection, settings transfer, cancellation, GUI/CLI launch, context
+    matching, GUI settings priority and settings-only pipeline fitting.
+[x] Avoid waiting for all preview frames after fitting: display the requested
+    frame/channel/Z plane on demand and cache only visited planes. Background
+    preparation of a complete disk cache is unnecessary for this tuner.
 [ ] Add an optional background-subtraction tuner with frame/channel previews,
     general settings transfer, and independent GUI/CLI launch.
 [ ] Consider separate executable shortcuts/icons for the tools later.

@@ -1,7 +1,8 @@
 from __future__ import annotations
 from copy import deepcopy
+from typing import cast
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -13,7 +14,9 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-from fits.environment.constant import StepName
+from fits.environment.constant import RegistrationContext, StepName
+from fits.tasks.registration.registration_resolver import resolve_registration_plan
+from fits.gui.settings.field_widgets import ChoiceWidget
 from fits.gui.settings.field_widgets import (
     ChannelSelectionWidget, ExportChannelsWidget, IntWidget, TextWidget,
     ValueWidget, create_field_widget,)
@@ -67,7 +70,7 @@ class StepSettingsEditor(QWidget):
         super().__init__(parent)
         self.adapter = adapter
         self.step = step
-        self.widgets: dict[str, ValueWidget] = {}
+        self.widgets: dict[str, ValueWidget | ChannelSelectionWidget | ExportChannelsWidget] = {}
         self._editable = True
 
         layout_spec = STEP_LAYOUTS[step]
@@ -241,11 +244,29 @@ class StepSettingsEditor(QWidget):
             self.value_changed.emit()
 
     def _store_value(self, path: str, value: object) -> None:
+        """Store an edited value and refresh dependent preset and runtime fields."""
         self.adapter.set_field_value(self.step, path, value)
+        if path == "context" and self.step in (StepName.REGISTER_TIME, StepName.REGISTER_CHANNEL):
+            plan = resolve_registration_plan(cast(RegistrationContext, value))
+            for name, resolved in (("backend", plan.backend), ("method", plan.method)):
+                self.adapter.set_field_value(self.step, name, resolved)
+                widget = self.widgets.get(name)
+                if isinstance(widget, ChoiceWidget):
+                    with QSignalBlocker(widget):
+                        widget.setCurrentText(resolved)
         self._update_worker_state()
         self._update_mask_request_state()
         self._update_track_postprocess_state()
         self.value_changed.emit()
+
+    def show_advanced_settings(self) -> None:
+        """Reveal the effective manual settings after accepting a tuner result."""
+        self._advanced_group.setChecked(True)
+
+    @property
+    def advanced_settings_visible(self) -> bool:
+        """Report whether advanced controls should stay expanded after a rebuild."""
+        return self._advanced_group.isChecked()
 
     def sync_to_adapter(self) -> None:
         for path, widget in self.widgets.items():
@@ -282,7 +303,7 @@ class StepSettingsEditor(QWidget):
             toggle = self.widgets.get(toggle_path)
             count = self.widgets.get(count_path)
             if count is not None:
-                count.setEnabled(self._editable and (toggle is None or toggle.value()))
+                count.setEnabled(self._editable and (toggle is None or bool(toggle.value())))
 
     def _update_track_postprocess_state(self) -> None:
         toggle = self.widgets.get("postprocess.enabled")

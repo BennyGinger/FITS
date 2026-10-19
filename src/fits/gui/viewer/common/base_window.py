@@ -21,13 +21,12 @@ from PySide6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
-    QComboBox,
 )
 
 from fits.gui.viewer.common.information_dialog import HelpRow, ViewerInformationDialog
 from fits.environment.constant import FITS_ARRAY_NAME
 from fits.gui.main_window.run_browser import DirectoryBrowser
-from fits.gui.settings.wheel_widgets import FocusWheelSlider
+from fits.gui.settings.wheel_widgets import FocusWheelComboBox, FocusWheelSlider
 from fits.gui.viewer.common.image_viewer import FitsImageViewer
 from fits.interaction import FitsImageSession
 
@@ -43,8 +42,10 @@ class ImageToolWindow(QMainWindow):
     tool_panel: QWidget
 
     def __init__(self, experiments_dir: str | Path | None = None,
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None, *,
+                 directory_locked: bool = False) -> None:
         super().__init__(parent)
+        self._directory_locked = directory_locked
         self.resize(1700, 1150)
         self._image_session: FitsImageSession | None = None
         self._source_path: Path | None = None
@@ -98,7 +99,7 @@ class ImageToolWindow(QMainWindow):
         left_controls = QHBoxLayout()
         self.left_display_controls = left_controls
         left_controls.addWidget(QLabel("Channel"))
-        self.channel_combo = QComboBox()
+        self.channel_combo = FocusWheelComboBox()
         left_controls.addWidget(self.channel_combo)
         self.grayscale_lut_button = QPushButton("Grayscale")
         self.grayscale_lut_button.setCheckable(True)
@@ -204,6 +205,11 @@ class ImageToolWindow(QMainWindow):
         self.directory_edit.setPlaceholderText("Choose a directory containing experiments")
         directory_row.addWidget(self.directory_edit, 1)
         self.browse_button = QPushButton("Browse")
+        self._set_directory_controls_enabled(True)
+        if self._directory_locked:
+            message = "Run directory is fixed by the main GUI. Select an experiment below."
+            self.directory_edit.setToolTip(message)
+            self.browse_button.setToolTip(message)
         directory_row.addWidget(self.browse_button)
         layout.addLayout(directory_row)
 
@@ -327,7 +333,7 @@ class ImageToolWindow(QMainWindow):
                             layout: QHBoxLayout,
                             ) -> tuple[QSlider, QLabel]:
         layout.addWidget(QLabel(label))
-        slider = QSlider(Qt.Orientation.Horizontal)
+        slider = FocusWheelSlider(Qt.Orientation.Horizontal)
         slider.setRange(0, 0)
         layout.addWidget(slider, 1)
         value = QLabel("1 / 1")
@@ -335,8 +341,16 @@ class ImageToolWindow(QMainWindow):
         layout.addWidget(value)
         return slider, value
 
+    def _set_directory_controls_enabled(self, enabled: bool) -> None:
+        """Enable run-directory browsing only when the launching GUI allows it."""
+        self.directory_edit.setEnabled(enabled and not self._directory_locked)
+        self.browse_button.setEnabled(enabled and not self._directory_locked)
+
     @Slot()
     def _browse(self) -> None:
+        """Choose a run directory in standalone viewers."""
+        if self._directory_locked:
+            return
         selected = QFileDialog.getExistingDirectory(
             self,
             "Choose experiments directory",

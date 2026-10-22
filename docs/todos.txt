@@ -336,7 +336,7 @@ Optional processing tuners
 -------------------------
 Goal: check representative experiments before a batch, choose general settings,
 and retain accepted transforms for experiments that were tuned individually.
-Status: registration tuner complete and ready; background-subtraction tuner pending.
+Status: registration tuner complete and ready; initial on-demand background tuner implemented.
 
 [x] Launch one shared Time/Channels registration tuner from either main-GUI
     settings section, initially selecting the corresponding tab. Load the GUI's
@@ -378,8 +378,11 @@ Status: registration tuner complete and ready; background-subtraction tuner pend
 [x] Avoid waiting for all preview frames after fitting: display the requested
     frame/channel/Z plane on demand and cache only visited planes. Background
     preparation of a complete disk cache is unnecessary for this tuner.
-[ ] Add an optional background-subtraction tuner with frame/channel previews,
-    general settings transfer, and independent GUI/CLI launch.
+[x] Add an optional background-subtraction tuner with requested frame/channel/Z
+    previews, reusable SMO, bounded result caching, general settings transfer,
+    and independent GUI/CLI launch. Keep two actions (Run preview; Save and
+    close), V for original/processed comparison, and an opt-in measurement box
+    reporting both means. No background frame propagation in the initial version.
 [ ] Consider separate executable shortcuts/icons for the tools later.
 
 

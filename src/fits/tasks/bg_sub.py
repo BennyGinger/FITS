@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
+
 from bg_sub import bg_sub
 
 from fits.workflows.experiments import ExperimentState
@@ -48,7 +50,7 @@ def remove_bg(settings: BGSubSettings,
                            execution=settings.bg_execution,
                            max_workers=settings.bg_workers,)
         
-        corrected_array = selection.rebuild(processed)
+        corrected_array = selection.rebuild(processed, dtype=np.float32)
 
         exporter_channel = selection.processed_indices if settings.exclude_channel is not None else 'all'
         updated_state = exp_state.with_metadata(step_name=step_profile.step_name,

@@ -78,7 +78,51 @@ grouping measurements across intensity channels and time. See
 [analysis identifiers](docs/analysis_identifiers.md) for their format, segmentation
 behavior, and the deferred handling of independent Z planes.
 
-## Development setup
+## Installation
+
+Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/),
+then clone FITS into a folder writable by your normal user:
+
+```bash
+git clone https://github.com/BennyGinger/FITS.git fits
+cd fits
+```
+
+On Linux, run `bash install_linux.sh`. On Windows, open `install_win.bat`
+(or run it in a terminal). No globally installed Python or GPU is required:
+uv obtains Python 3.12 and creates this checkout's single `.venv`.
+
+The installer initializes the recorded submodules, runs ordinary `uv sync`,
+checks GUI/backend imports and model-cache write access, and creates a per-user
+Applications-menu entry on Linux or Start-menu shortcut on Windows. It does
+not run the pipeline or request model weights. Model downloads happen on first
+use. GPU availability is reported without making it an installation requirement.
+Run as your normal user, rather than as administrator or with `sudo`.
+
+Progress and subprocess errors are saved to `installation/logs/install.log`. If a
+step fails, correct the reported problem and rerun the installer. Submodules
+with local edits or commits differing from FITS's recorded versions cause the
+installer to stop before changing their checkouts. No pull, reset, cleanup, or
+automatic dependency upgrade is performed. If `uv sync` changes the lockfile,
+the installer reports it for review.
+
+Use `bash install_linux.sh --no-shortcut` or `install_win.bat --no-shortcut`
+to omit the shortcut. If an existing FITS shortcut points to another checkout,
+the installer asks before replacing it, after the new installation passes its
+checks. The old folder is left untouched. Rerunning in the same location
+refreshes that user's shortcut. Separate OS users should use their own writable
+checkouts and environments.
+
+Deleting a development checkout removes its code and `.venv`; save local work
+and data first, including changes inside submodules. Per-user model/uv caches
+and the shortcut remain. A fresh clone and installation recreate the environment
+and can repoint the shortcut. If moving a checkout, recreate its `.venv` at the
+new location and rerun the installer; virtual environments are not portable.
+
+Automatic updates and startup repair are not included yet. Shortcuts currently
+open the installed GUI directly.
+
+### Manual development setup
 
 Clone the repository together with its submodules, then synchronize the uv
 workspace:
@@ -161,7 +205,7 @@ uv run fits channel-labels /path/to/run --set 0=Green --set 1=Red --apply
 On Ubuntu, install an Applications-menu launcher with the FITS logo:
 
 ```bash
-python3 scripts/install_linux_launcher.py
+.venv/bin/python scripts/install_linux_launcher.py
 ```
 
 Search for **FITS** in Applications, then pin it to your favourites if desired.
@@ -207,6 +251,46 @@ stays disabled until the model is ready. Changing the built-in model, custom
 model path, or denoising option queues the latest model for initialization.
 Different initialized models remain cached in the Python process, so switching
 back reuses the model. Keeping multiple models also uses more CPU/GPU memory.
+
+Click **Tune background subtraction…** in the background-subtraction settings
+section to open BGTune. It loads the GUI's current settings and selected
+experiment, with run-directory browsing locked. Standalone `fits-bgtune` keeps
+browsing and accepts an initial experiment/image, `--experiments-dir`, and
+`--settings`, for example:
+
+```bash
+uv run fits-bgtune /path/to/experiment --settings /path/to/fits_settings.toml
+```
+
+The two actions sit to the right of the LUT: orange **Run preview** and dark
+green **Save and close**. Run preview computes only the selected frame, channel
+and Z plane in a worker. Navigating afterward computes only requested planes;
+no neighboring frames or full stacks are prepared in the background. SMO's
+configured processor is reused across same-sized planes with the same sigma
+and window size. Window size must be at least 2 pixels (usually 3 or larger);
+the SMO probability threshold is between 0 and 1. Visited results use an 8-plane/64 MiB cache (one oversized
+current plane can remain displayable). Changing settings requires Run preview
+again. Excluded channels pass through unchanged.
+
+Choose **Original image** or **Background-subtracted image**, or press **V** to
+switch rapidly with the same LUT and intensity limits. **Enable measurement
+box** enables drawing, moving and resizing a rectangle. Its pinned results
+show original and processed means and their difference, from the same raw pixel
+coordinates. Measurements follow frame/channel/Z changes and ignore display
+contrast. The rectangle only measures; processing always uses the full plane.
+Background-subtracted arrays and preview caches retain signed `float32` values,
+including negative and fractional residuals. Pipeline TIFF output also uses
+`float32`; excluded channels keep their values in that dtype. Viewers show
+negative pixels as zero in a separate display array. Box means and downstream
+analysis use the signed values, not that display copy.
+
+**Save and close** accepts settings even without a preview. It transfers them
+to the main GUI and reveals Advanced settings without changing whether the
+background-subtraction step is enabled. Standalone saving updates the supplied
+or nearest general settings file, or creates one at the selected run root.
+Images are never overwritten by the tuner; the measurement box and preview
+pixels are not saved. The status bar reports each plane's processing time.
+Press **R** to preview or **S** to save and close; **Info** lists the shortcuts.
 
 Click **Tune registration…** in either registration settings section to open
 RegTune on its **Time registration** or **Channel registration** tab. Both tabs

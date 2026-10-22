@@ -411,11 +411,13 @@ class FitsImageViewer(QWidget):
 
     def set_image(self, image: NDArray[Any]) -> None:
         """
-        Display a 2D image while preserving the current pan and zoom.
+        Display a 2D image with negatives shown as zero; preserve source pixels and view.
         """
         array = np.asarray(image)
         if array.ndim != 2:
             raise ValueError(f"The image viewer requires a 2D array; got shape {array.shape}.")
+        if np.any(array < 0):
+            array = np.maximum(array, 0)
         fit_new_source = self.image_item.image is None
         self.image_item.setImage(array, autoLevels=not self._has_image)
         self.drawing_item.setImage(

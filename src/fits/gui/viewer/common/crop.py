@@ -263,7 +263,13 @@ class CropPanel(QWidget):
                 or self._viewer._loading_visible or not isinstance(event, QMouseEvent)):
             return False
         crop_active = self.enabled.isChecked()
-        control = self._automatic and bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        control = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        if control and not self._automatic:
+            self._gesture = ""
+            self.selection_rectangle.hide()
+            self._viewport.unsetCursor()
+            return False
+        control = self._automatic and control
         scene = self._canvas.mapToScene(event.position().toPoint())
         point = self._viewer.view_box.mapSceneToView(scene)
         if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:

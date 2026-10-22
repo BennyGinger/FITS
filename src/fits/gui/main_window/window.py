@@ -55,6 +55,7 @@ class FitsMainWindow(QMainWindow):
         self._editors: dict[cst.StepName, StepSettingsEditor] = {}
         self.runtime_editor: RuntimeSettingsEditor | None = None
         self._segmentation_tuner = None
+        self._background_tuner = None
         self._registration_tuner = None
         self._registration_tune_buttons: dict[cst.StepName, QPushButton] = {}
         self._tracking_viewer = None
@@ -284,6 +285,11 @@ class FitsMainWindow(QMainWindow):
                 tune_layout.addWidget(tune_button)
                 self._registration_tune_buttons[step] = tune_button
                 editor.outer_layout.insertWidget(1, tune_row)
+            if step == cst.StepName.BG_SUB:
+                self.bgtune_button = QPushButton("Tune background subtraction…")
+                self.bgtune_button.setToolTip("Preview selected image planes and compare intensities before a batch run.")
+                self.bgtune_button.clicked.connect(self._open_background_tuner)
+                editor.outer_layout.insertWidget(1, self.bgtune_button)
             if step == cst.StepName.SEGMENT:
                 tune_row = QWidget()
                 tune_layout = QHBoxLayout(tune_row)
@@ -331,6 +337,45 @@ class FitsMainWindow(QMainWindow):
     def _finish_populating_settings(self, generation: int) -> None:
         if generation == self._settings_population_generation:
             self._populating_settings = False
+
+    @Slot()
+    def _open_background_tuner(self) -> None:
+        """Open background tuning with GUI settings and a fixed run directory."""
+        from fits.gui.viewer.background import BackgroundTunerWindow
+        from fits.settings.models import BGSubSettings
+
+        if self._background_tuner is not None:
+            self._background_tuner.show()
+            self._background_tuner.raise_()
+            return
+        self._sync_identity()
+        self._editors[cst.StepName.BG_SUB].sync_to_adapter()
+        try:
+            settings = BGSubSettings.model_validate(self.adapter.as_mapping()["bg_sub"]["params"])
+        except ValueError as error:
+            QMessageBox.critical(self, "Cannot open background tuner", str(error))
+            return
+        tuner = BackgroundTunerWindow(
+            self.adapter.run_dir or None, settings=settings, directory_locked=True,
+            initial_path=self.run_browser.selected_path, parent=self)
+        tuner.setWindowModality(Qt.WindowModality.WindowModal)
+        tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        tuner.settings_applied.connect(self._apply_background_settings)
+        tuner.destroyed.connect(lambda: setattr(self, "_background_tuner", None))
+        self._background_tuner = tuner
+        tuner.show()
+
+    @Slot(object)
+    def _apply_background_settings(self, settings) -> None:
+        """Transfer tuning parameters while preserving step-enabled and runtime states."""
+        expanded = {name for name, editor in self._editors.items() if editor.advanced_settings_visible}
+        for key, value in {**settings.to_payload_dict(), "overwrite": settings.overwrite}.items():
+            self.adapter.set_field_value(cst.StepName.BG_SUB, key, "None" if value is None else value)
+        self._populate_from_adapter()
+        for name in expanded | {cst.StepName.BG_SUB}:
+            self._editors[name].show_advanced_settings()
+        self.step_tree.setCurrentItem(self._step_items[cst.StepName.BG_SUB])
+        self._append_log("Applied background-subtraction settings from the tuner.")
 
     @Slot()
     def _open_segmentation_tuner(self) -> None:
@@ -526,6 +571,8 @@ class FitsMainWindow(QMainWindow):
         self._phases_unlocked = unlocked
         self._refresh_phase_markers()
         self._show_phase_steps(self.phase_tabs.currentIndex())
+        if hasattr(self, "bgtune_button"):
+            self.bgtune_button.setEnabled(prepared and not self._running)
         if hasattr(self, "segtune_button"):
             self.segtune_button.setEnabled(prepared)
         for button in self._registration_tune_buttons.values():

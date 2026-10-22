@@ -40,6 +40,25 @@ def regtune() -> None:
     _launch(create_window, "FITS Registration Tuner", qt_arguments)
 
 
+def bgtune() -> None:
+    """Launch on-demand background tuning with optional image and settings paths."""
+    parser = argparse.ArgumentParser(description="Tune FITS background subtraction on selected image planes.")
+    parser.add_argument("image", nargs="?", type=Path, help="A fits_array.tif or experiment folder to open.")
+    parser.add_argument("--experiments-dir", type=Path, help="Folder containing prepared experiments.")
+    parser.add_argument("--settings", type=Path, help="FITS settings to load and update on Save and close.")
+    arguments, qt_arguments = parser.parse_known_args()
+    from fits.gui.viewer.background import BackgroundTunerWindow
+
+    def create_window():
+        """Resolve the standalone root while honoring an explicitly selected image."""
+        root = arguments.experiments_dir
+        if root is None and arguments.image is not None:
+            root = arguments.image if arguments.image.is_dir() else arguments.image.parent
+        return BackgroundTunerWindow(root, settings_path=arguments.settings, initial_path=arguments.image)
+
+    _launch(create_window, "FITS Background Subtraction Tuner", qt_arguments)
+
+
 def trackedit() -> None:
     parser = argparse.ArgumentParser(description="View and edit FITS tracking labels.")
     parser.add_argument("tracking", nargs="?", type=Path,

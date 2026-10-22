@@ -465,7 +465,7 @@ wheels = [
 
 [[package]]
 name = "fits"
-version = "3.2.0"
+version = "3.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "bg-sub" },
@@ -476,6 +476,8 @@ dependencies = [
     { name = "fits-io" },
     { name = "ipython" },
     { name = "mask-interpolation" },
+    { name = "micro-sam" },
+    { name = "mobile-sam" },
     { name = "progress-bar" },
     { name = "pyarrow" },
     { name = "pydantic" },
@@ -496,8 +498,6 @@ cuda129 = [
 dev = [
     { name = "ipykernel" },
     { name = "ipywidgets" },
-    { name = "micro-sam" },
-    { name = "mobile-sam" },
     { name = "pytest" },
 ]
 
@@ -511,6 +511,8 @@ requires-dist = [
     { name = "fits-io", editable = "fits_io" },
     { name = "ipython", specifier = ">=9.10.0" },
     { name = "mask-interpolation", editable = "mask_interpolation" },
+    { name = "micro-sam", editable = "micro-sam-headless" },
+    { name = "mobile-sam", git = "https://github.com/ChaoningZhang/MobileSAM.git" },
     { name = "progress-bar", editable = "progress_bar" },
     { name = "pyarrow", specifier = ">=20" },
     { name = "pydantic", specifier = ">=2.12.5" },
@@ -531,8 +533,6 @@ cuda129 = [
 dev = [
     { name = "ipykernel", specifier = ">=7.2.0" },
     { name = "ipywidgets", specifier = ">=8.1.8" },
-    { name = "micro-sam", editable = "micro-sam-headless" },
-    { name = "mobile-sam", git = "https://github.com/ChaoningZhang/MobileSAM.git" },
     { name = "pytest", specifier = ">=9.0.2" },
 ]
 

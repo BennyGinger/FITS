@@ -1,3 +1,4 @@
 @echo off
 cd /d "%~dp0"
-uv run fits-gui
+".venv\Scripts\python.exe" -m fits.gui.main %*
+if errorlevel 1 pause

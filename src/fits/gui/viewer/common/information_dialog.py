@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 HelpRow = tuple[str, str, str, str]
 
 COMMON_HELP: tuple[HelpRow, ...] = (
-    ("S", "Save / apply current work", "REF / ROI / SegTune / RegTune / Tracking",
+    ("S", "Save / apply current work", "REF / ROI / SegTune / RegTune / BGTune / Tracking",
      "Current mask, settings, or ready editing preview"),
     ("Ctrl+Z", "Undo the latest edit or preview", "REF / ROI / Tracking", "Editing"),
     ("X", "Toggle mask overlay", "All viewers", "All modes"),
@@ -45,6 +45,12 @@ SEGMENTATION_HELP: tuple[HelpRow, ...] = (
 
 REGISTRATION_HELP = SEGMENTATION_HELP
 
+BACKGROUND_HELP: tuple[HelpRow, ...] = (
+    ("R", "Run preview", "BGTune", "Selected frame, channel and Z plane only"),
+    ("V", "Toggle original / background-subtracted image", "BGTune", "Same LUT and intensity limits"),
+    ("Left click / drag", "Draw, move or resize measurement box", "BGTune", "Enable measurement box first"),
+)
+
 TRACKING_HELP: tuple[HelpRow, ...] = (
     ("Ctrl+left click mask or centroid", "Select / unselect track", "Tracking", "Edit or selection enabled"),
 )
@@ -61,7 +67,8 @@ HELP_CONDITIONS: dict[str, dict[str, str]] = {
         "Right click / drag": "Replace / Edit; selected drawing tool",
     },
     "SegTune": {"S": "Current settings", "R": "Tuning"},
-    "RegTune": {"S": "Current tab; requires a matching ready preview",
+    "BGTune": {"S": "Save settings and close; preview optional"},
+    "RegTune": {"S": "Current tab; preview optional",
                 "X": "Switch original / registered image"},
     "Tracking": {
         "S": "Split / Add/Edit; ready preview (applies in session)",
@@ -75,7 +82,7 @@ HELP_CONDITIONS: dict[str, dict[str, str]] = {
 }
 
 # One catalog serves every viewer; GUI applicability is internal filter metadata.
-VIEWER_HELP = (*COMMON_HELP, *EDITING_HELP, *MASK_HELP, *SEGMENTATION_HELP, *TRACKING_HELP)
+VIEWER_HELP = (*COMMON_HELP, *EDITING_HELP, *MASK_HELP, *SEGMENTATION_HELP, *BACKGROUND_HELP, *TRACKING_HELP)
 
 
 class ViewerInformationDialog(QDialog):
@@ -100,6 +107,8 @@ class ViewerInformationDialog(QDialog):
                 rows = [(shortcut, "Select cells in rectangle" if shortcut == "Ctrl+left click (hold), drag"
                          else function, scope, mode)
                         for shortcut, function, scope, mode in rows]
+        if gui == "BGTune":
+            rows = [row for row in rows if row[0] != "X"]
         conditions = HELP_CONDITIONS.get(gui or "", {})
         rows = [(shortcut, function, scope, conditions.get(shortcut, mode))
                 for shortcut, function, scope, mode in rows]

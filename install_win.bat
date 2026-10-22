@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 where uv >nul 2>&1
 if errorlevel 1 (
-    echo uv is required. Install it from https://docs.astral.sh/uv/getting-started/startup/
+    echo uv is required. Install it from https://docs.astral.sh/uv/getting-started/installation/
     goto failed
 )
 where git >nul 2>&1
@@ -21,7 +21,6 @@ if not defined FITS_BOOTSTRAP_PYTHON (
 if not defined FITS_BOOTSTRAP_PYTHON goto failed
 "%FITS_BOOTSTRAP_PYTHON%" startup\setup.py %*
 if errorlevel 1 goto failed
-pause
 exit /b 0
 :failed
 echo FITS installation failed. See startup\logs\install.log if it was created.

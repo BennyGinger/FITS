@@ -80,7 +80,7 @@ behavior, and the deferred handling of independent Z planes.
 
 ## Installation
 
-Install Git and [uv](https://docs.astral.sh/uv/getting-started/startup/),
+Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/),
 then clone FITS into a folder writable by your normal user:
 
 ```bash

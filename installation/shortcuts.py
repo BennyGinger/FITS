@@ -1,4 +1,4 @@
-"""Create a per-user menu shortcut after installation succeeds."""
+"""Create per-user launch shortcuts after installation succeeds."""
 
 from __future__ import annotations
 

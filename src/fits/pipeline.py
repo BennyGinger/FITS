@@ -15,7 +15,7 @@ from fits.workflows.runtime.scheduler import run_workflow_scheduler
 from fits.workflows.experiments import (
     assemble_experiment_states, collect_supported_files)
 from fits.environment.log import configure_logging
-from fits.environment.paths import logs_dir, reports_dir
+from fits.environment.paths import ensure_fits_directory, logs_dir, reports_dir
 from fits.settings.loader import load_settings, save_run_settings
 from fits.tasks import aggregate_distance_profiles, aggregate_quantification
 
@@ -103,7 +103,7 @@ def start_pipeline(
         if log_path is None:
             return
         timestamp = log_path.stem.removeprefix("fits_")
-        report_dir.mkdir(parents=True, exist_ok=True)
+        ensure_fits_directory(report_dir)
         report_path = report_dir / f"fits_report_{timestamp}.txt"
         report_path.write_text(
             format_run_report(run_progress, run_dir, include_header=True) + "\n",

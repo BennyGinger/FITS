@@ -22,6 +22,7 @@ from stackalign.preparation import FitPreparation
 from stackalign.planes import fit_planes
 from stackalign.constants import Method
 
+from fits.environment.paths import ensure_fits_directory, fits_dir
 from fits.interaction.crop import CropBounds, validate_crop
 from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
@@ -34,7 +35,7 @@ FORMAT_VERSION = 1
 
 def tuning_path(source: Path, mode: Mode) -> Path:
     """Locate accepted settings and transforms for one registration mode."""
-    return source.parent / ".fits" / "registration" / f"{mode}.npz"
+    return fits_dir(source.parent) / "registration" / f"{mode}.npz"
 
 
 def fitting_signature(fitting: NDArray, shape: tuple[int, ...], axes: str,
@@ -108,7 +109,7 @@ def save_tuning(source: Path, result: TunedRegistration) -> Path:
     model = result.register.model if result.register is not None else None
     plan = resolve_registration_plan(result.settings.context, result.settings.backend, result.settings.method)
     path = tuning_path(source, plan.mode)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_fits_directory(path.parent)
     metadata = {"version": FORMAT_VERSION, "mode": plan.mode, "has_model": model is not None,
                 "backend": plan.backend, "reference_channel": model.reference_channel if model is not None else None,
                 "settings": result.settings.to_payload_dict(), "signature": result.signature,

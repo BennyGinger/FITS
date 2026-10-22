@@ -5,7 +5,7 @@ from collections.abc import Mapping
 import os
 from tempfile import NamedTemporaryFile
 
-from fits.environment.paths import fits_dir
+from fits.environment.paths import ensure_fits_directory, fits_dir
 
 
 SAVED_SETTINGS_NAME = "fits_settings.toml"
@@ -36,7 +36,7 @@ def save_run_settings(source: Path, run_dir: Path) -> Path:
     if source == destination.resolve():
         return destination
     contents = source.read_bytes()
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    ensure_fits_directory(destination.parent)
     temporary_path = None
     try:
         with NamedTemporaryFile(dir=destination.parent,

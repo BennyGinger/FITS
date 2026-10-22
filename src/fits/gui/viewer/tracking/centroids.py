@@ -11,6 +11,7 @@ from zipfile import BadZipFile
 import numpy as np
 from numpy.typing import NDArray
 
+from fits.environment.paths import ensure_fits_directory, fits_dir
 from fits.gui.viewer.tracking.trajectories import calculate_track_centroids
 
 
@@ -23,7 +24,7 @@ def _signature(source: Path) -> str:
 
 
 def _cache_path(source: Path, channel: int, z: int) -> Path:
-    return source.parent / ".fits" / "viewer_cache" / f"{source.name}.centroids-c{channel}-z{z}.npz"
+    return fits_dir(source.parent) / "viewer_cache" / f"{source.name}.centroids-c{channel}-z{z}.npz"
 
 
 def _track_lengths(tracks: dict[int, NDArray[np.float64]]) -> dict[int, int]:
@@ -86,7 +87,7 @@ def _save(source: Path, channel: int, z: int, signature: str,
         if _signature(source) != signature:
             return False
         target = _cache_path(source, channel, z)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        ensure_fits_directory(target.parent)
         ids = np.concatenate([np.full(len(points), track, dtype=np.int64)
                               for track, points in tracks.items()]) if tracks else np.empty(0, np.int64)
         points = np.concatenate(list(tracks.values())) if tracks else np.empty((0, 3))

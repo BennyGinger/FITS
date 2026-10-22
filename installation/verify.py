@@ -3,6 +3,7 @@
 from importlib import import_module
 from pathlib import Path
 from tempfile import TemporaryFile
+import sys
 
 
 def check_writable(directory: Path) -> None:
@@ -13,6 +14,23 @@ def check_writable(directory: Path) -> None:
     except OSError as error:
         raise RuntimeError(f"Model cache is not writable: {directory}. Run as your normal user. {error}") from error
     print(f"Writable model cache: {directory}", flush=True)
+
+
+def hide_checkout_dot_entries(root: Path) -> None:
+    """Hide only direct dot-prefixed checkout entries, without traversing data."""
+    if sys.platform != "win32":
+        return
+    from fits.environment.hidden import hide_on_windows
+
+    try:
+        entries = list(root.iterdir())
+    except OSError as error:
+        print(f"Note: could not inspect checkout visibility: {error}", flush=True)
+        return
+    for entry in entries:
+        if entry.name.startswith(".") and not hide_on_windows(entry):
+            print(f"Note: could not hide {entry}; installation will continue.", flush=True)
+    print("Checked Windows visibility of dot-prefixed checkout entries.", flush=True)
 
 
 def main() -> None:
@@ -34,6 +52,7 @@ def main() -> None:
     ):
         check_writable(directory)
     print(f"CUDA available: {torch.cuda.is_available()} (informational; not required)", flush=True)
+    hide_checkout_dot_entries(Path(__file__).resolve().parents[1])
 
 
 if __name__ == "__main__":

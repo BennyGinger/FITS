@@ -94,10 +94,18 @@ uv obtains Python 3.12 and creates this checkout's single `.venv`.
 
 The installer initializes the recorded submodules, runs ordinary `uv sync`,
 checks GUI/backend imports and model-cache write access, and creates a per-user
-Applications-menu entry on Linux or Start-menu shortcut on Windows. It does
+Applications-menu entry on Linux or Start-menu and desktop shortcuts on Windows. It does
 not run the pipeline or request model weights. Model downloads happen on first
 use. GPU availability is reported without making it an installation requirement.
 Run as your normal user, rather than as administrator or with `sudo`.
+
+On Windows, installation also marks dot-prefixed files and folders directly
+inside the checkout (including `.git` and `.venv`) as hidden. FITS marks its
+`.fits` metadata folders as hidden when creating or accessing them, keeping
+their logs and caches out of ordinary Explorer views. Existing folders are
+handled when next used; no drive-wide scan is performed. Hidden items remain
+accessible through Explorer's **Hidden items** option. Failure to set the
+attribute does not stop installation or processing. Linux behavior is unchanged.
 
 Progress and subprocess errors are saved to `installation/logs/install.log`. If a
 step fails, correct the reported problem and rerun the installer. Submodules
@@ -107,7 +115,7 @@ automatic dependency upgrade is performed. If `uv sync` changes the lockfile,
 the installer reports it for review.
 
 Use `bash install_linux.sh --no-shortcut` or `install_win.bat --no-shortcut`
-to omit the shortcut. If an existing FITS shortcut points to another checkout,
+to omit shortcuts. If an existing FITS shortcut points to another checkout,
 the installer asks before replacing it, after the new installation passes its
 checks. The old folder is left untouched. Rerunning in the same location
 refreshes that user's shortcut. Separate OS users should use their own writable

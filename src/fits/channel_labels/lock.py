@@ -7,6 +7,8 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
+from fits.environment.paths import ensure_fits_directory, fits_dir
+
 
 @contextmanager
 def run_write_guard(run_dir: Path):
@@ -18,8 +20,8 @@ def run_write_guard(run_dir: Path):
     The lock lives in ``<run_dir>/.fits/run_write.lock`` and is released when
     the context exits, including after an error. A busy run raises immediately.
     """
-    lock_path = run_dir / ".fits" / "run_write.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = fits_dir(run_dir) / "run_write.lock"
+    ensure_fits_directory(lock_path.parent)
     lock = FileLock(str(lock_path), timeout=0)
     try:
         with lock:

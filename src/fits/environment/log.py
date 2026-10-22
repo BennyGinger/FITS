@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from fits.environment.paths import ensure_fits_directory
+
 
 LevelName = Literal["debug", "info", "warning", "error", "critical"]
 
@@ -62,7 +64,7 @@ def configure_logging(*,
 
     log_path = None
     if log_dir is not None:
-        log_dir.mkdir(parents=True, exist_ok=True)
+        ensure_fits_directory(log_dir)
 
         log_path = log_dir / f"fits_{datetime.now():%Y%m%d_%H%M%S}.log"
 

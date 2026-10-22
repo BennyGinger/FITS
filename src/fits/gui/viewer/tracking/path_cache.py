@@ -13,6 +13,7 @@ from numpy.typing import NDArray
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QImage
 
+from fits.environment.paths import ensure_fits_directory, fits_dir
 from fits.gui.viewer.tracking.path_item import PreparedPaths
 
 
@@ -32,7 +33,7 @@ class PathDrawingCache:
         for track, points in tracks.items():
             digest.update(f"{track}:{len(points)};".encode())
             digest.update(np.ascontiguousarray(points, dtype=np.float64).tobytes())
-        self.directory = source.parent / ".fits" / "viewer_cache" / "tracking_paths"
+        self.directory = fits_dir(source.parent) / "viewer_cache" / "tracking_paths"
         self.data_path = self.directory / f"{source.name}-{digest.hexdigest()[:24]}.rgba"
         self.metadata_path = self.data_path.with_suffix(".json")
         self.tracks = tracks
@@ -65,7 +66,7 @@ class PathDrawingCache:
         """Draw directly into a pending cache file, with a temporary fallback."""
         temporary = None
         try:
-            self.directory.mkdir(parents=True, exist_ok=True)
+            ensure_fits_directory(self.directory)
             with NamedTemporaryFile(dir=self.directory, suffix=".pending", delete=False) as file:
                 temporary = Path(file.name)
         except OSError:

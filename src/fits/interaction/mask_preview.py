@@ -8,6 +8,8 @@ from threading import RLock
 import numpy as np
 from numpy.typing import NDArray
 
+from fits.environment.paths import ensure_fits_directory, fits_dir
+
 
 class PreviewCancelled(Exception):
     """The requested preview was superseded before it was completed."""
@@ -70,9 +72,9 @@ class MaskPreviewCache:
         check()
         if self.contains(key):
             return
-        parent = self.source.parent / ".fits" / "viewer_cache"
+        parent = fits_dir(self.source.parent) / "viewer_cache"
         try:
-            parent.mkdir(parents=True, exist_ok=True)
+            ensure_fits_directory(parent)
             directory = TemporaryDirectory(prefix="mask-preview-", dir=parent)
         except OSError:
             directory = TemporaryDirectory(prefix="fits-mask-preview-")
@@ -139,10 +141,10 @@ class MaskPreviewCache:
         if self.contains(key):
             assert self._array is not None
             return self._array[index].copy()
-        parent = self.source.parent / ".fits" / "viewer_cache"
+        parent = fits_dir(self.source.parent) / "viewer_cache"
         anchors = completed = output = None
         try:
-            parent.mkdir(parents=True, exist_ok=True)
+            ensure_fits_directory(parent)
             directory = TemporaryDirectory(prefix="mask-preview-", dir=parent)
         except OSError:
             directory = TemporaryDirectory(prefix="fits-mask-preview-")

@@ -80,7 +80,7 @@ behavior, and the deferred handling of independent Z planes.
 
 ## Installation
 
-Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/),
+Install Git and [uv](https://docs.astral.sh/uv/getting-started/startup/),
 then clone FITS into a folder writable by your normal user:
 
 ```bash
@@ -100,14 +100,16 @@ use. GPU availability is reported without making it an installation requirement.
 Run as your normal user, rather than as administrator or with `sudo`.
 
 On Windows, installation also marks dot-prefixed files and folders directly
-inside the checkout (including `.git` and `.venv`) as hidden. FITS marks its
+inside the checkout (including `.git` and `.venv`) as hidden. `uv.lock` and
+`pyproject.toml` remain visible; installation clears their Hidden attribute if
+an earlier installer hid them. FITS marks its
 `.fits` metadata folders as hidden when creating or accessing them, keeping
 their logs and caches out of ordinary Explorer views. Existing folders are
 handled when next used; no drive-wide scan is performed. Hidden items remain
 accessible through Explorer's **Hidden items** option. Failure to set the
 attribute does not stop installation or processing. Linux behavior is unchanged.
 
-Progress and subprocess errors are saved to `installation/logs/install.log`. If a
+Progress and subprocess errors are saved to `startup/logs/install.log`. If a
 step fails, correct the reported problem and rerun the installer. Submodules
 with local edits or commits differing from FITS's recorded versions cause the
 installer to stop before changing their checkouts. No pull, reset, cleanup, or
@@ -127,8 +129,65 @@ and the shortcut remain. A fresh clone and installation recreate the environment
 and can repoint the shortcut. If moving a checkout, recreate its `.venv` at the
 new location and rerun the installer; virtual environments are not portable.
 
-Automatic updates and startup repair are not included yet. Shortcuts currently
-open the installed GUI directly.
+### Startup updates and repair
+
+Menu/desktop shortcuts and the launchers check FITS's configured upstream
+`main`/`master` branch on startup. Every new FITS commit counts as an update;
+tags/releases are not required. The check fetches only FITS, without checking
+submodule remotes or changing the working checkout. If an update is available,
+choose **Update FITS** or **Use current version**. Closing the prompt also keeps
+the current version. If the network check fails, a working installation opens
+with its current version; the failed check is recorded in the update log.
+
+Updates require a clean checkout and a fast-forward from the installed commit.
+Local edits, untracked files, conflicting module commits, or divergent history
+disable automatic updating. FITS never stashes, resets, deletes local work, or
+advances modules independently of their recorded commits. Developer branches
+and checkouts without a configured main/master upstream skip automatic checks.
+
+The prompt closes before installation starts. An independent process then
+updates FITS to the selected commit, initializes/synchronizes the pinned
+submodules, runs the installer checks, and refreshes this checkout's existing
+shortcuts. Progress appears in a terminal window (Linux requires an installed
+GNOME Terminal, Konsole, or xterm when launching from a desktop shortcut).
+The GUI opens only after verification succeeds. Installing an update can take
+time when dependency downloads are needed.
+
+The supervisor/updater use uv's managed Python outside `.venv`, so they remain
+available if FITS's environment needs repair. The installed Python path is saved
+under `startup/logs/`; no extra virtual environment is created. A missing
+environment, changed dependency receipt, or interrupted update offers **Repair
+and launch**. If Qt itself cannot import, Windows's native dialog or Linux's
+`zenity` provides a fallback; console launch remains available for repair.
+
+An interrupted update retains its selected commit and can be retried. There is
+no automatic rollback: one checkout and one `.venv` are updated in place. If a
+step fails, inspect `startup/logs/update.log` and `install.log`; application
+output is captured in `launcher.log`. The progress terminal offers retry after
+fixing the reported issue. Local edits made during an interrupted update still
+require manual reconciliation; they are never discarded automatically.
+
+One supervised FITS session per checkout is allowed. Close FITS completely
+before updating; the updater also checks the application lease used by direct
+`uv run fits-gui` launches. Independent viewer commands should be closed too.
+
+For troubleshooting, append `--skip-update-check` to a launcher to skip the
+network check, `--repair` to offer synchronization, or `--check-only` to print
+the available update as JSON without opening the GUI. Direct `uv run fits-gui`
+continues to launch without the startup update check.
+
+After first pulling the updater changes, rerun the OS installer once. This
+records the independent Python path and refreshes shortcuts to use `startup/`.
+
+Manual launchers live together in `startup/`:
+
+- Linux: `startup/launch_linux.sh`.
+- Windows: `startup/launch_win.vbs` opens without a console;
+  `startup/launch_win.bat` keeps a console available for troubleshooting.
+
+These enter the independent startup supervisor, which opens the GUI in the
+checkout's `.venv`. After updating from the old root-level launchers, refresh
+shortcuts by rerunning the OS installer.
 
 ### Manual development setup
 
@@ -213,12 +272,13 @@ uv run fits channel-labels /path/to/run --set 0=Green --set 1=Red --apply
 On Ubuntu, install an Applications-menu launcher with the FITS logo:
 
 ```bash
-.venv/bin/python scripts/install_linux_launcher.py
+.venv/bin/python startup/shortcuts.py
 ```
 
 Search for **FITS** in Applications, then pin it to your favourites if desired.
-The launcher uses this checkout's `.venv` directly, without opening a terminal
-or syncing dependencies. Rerun the installer if you move the repository.
+The launcher checks for updates before opening this checkout's GUI. Ordinary
+launches do not open a terminal; accepted updates/repairs show terminal progress.
+Rerun the installer if you move the repository.
 
 In `fits-gui`, each segmentation channel has its own settings section. Use
 **+** beside the target channel to add a section, or **−** to remove one.

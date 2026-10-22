@@ -5,6 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryFile
 import sys
 
+from state import show_project_files
+
 
 def check_writable(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
@@ -16,12 +18,13 @@ def check_writable(directory: Path) -> None:
     print(f"Writable model cache: {directory}", flush=True)
 
 
-def hide_checkout_dot_entries(root: Path) -> None:
-    """Hide only direct dot-prefixed checkout entries, without traversing data."""
+def hide_checkout_internal_entries(root: Path) -> None:
+    """Hide only direct dot-prefixed entries on Windows; keep config visible."""
     if sys.platform != "win32":
         return
     from fits.environment.hidden import hide_on_windows
 
+    show_project_files(root)
     try:
         entries = list(root.iterdir())
     except OSError as error:
@@ -30,7 +33,7 @@ def hide_checkout_dot_entries(root: Path) -> None:
     for entry in entries:
         if entry.name.startswith(".") and not hide_on_windows(entry):
             print(f"Note: could not hide {entry}; installation will continue.", flush=True)
-    print("Checked Windows visibility of dot-prefixed checkout entries.", flush=True)
+    print("Checked Windows visibility of internal checkout entries.", flush=True)
 
 
 def main() -> None:
@@ -52,7 +55,7 @@ def main() -> None:
     ):
         check_writable(directory)
     print(f"CUDA available: {torch.cuda.is_available()} (informational; not required)", flush=True)
-    hide_checkout_dot_entries(Path(__file__).resolve().parents[1])
+    hide_checkout_internal_entries(Path(__file__).resolve().parents[1])
 
 
 if __name__ == "__main__":

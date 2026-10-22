@@ -15,7 +15,7 @@ def desktop_value(value: str) -> str:
 
 
 def desktop_entry(root: Path) -> str:
-    command = str(root / "launch.sh").replace("%", "%%")
+    command = str(root / "startup" / "launch_linux.sh").replace("%", "%%")
     for character in ("\\", '"', "`", "$"):
         command = command.replace(character, "\\" + character)
     quoted_command = f'"{command}"'
@@ -30,14 +30,15 @@ def desktop_entry(root: Path) -> str:
     )
 
 
-def install_shortcut(root: Path, *, output_dir: Path | None = None,
+def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only: bool = False,
                      report: Callable[[str], None] = print) -> None:
     if sys.platform == "win32":
         environment = os.environ.copy()
         environment["FITS_INSTALL_ROOT"] = str(root)
+        environment["FITS_REFRESH_SHORTCUTS"] = "1" if refresh_only else "0"
         subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-             str(root / "installation" / "windows_shortcut.ps1")],
+             str(root / "startup" / "windows_shortcut.ps1")],
             env=environment, check=True,
         )
         return
@@ -48,11 +49,15 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None,
     data_home = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
     destination_dir = output_dir or data_home / "applications"
     destination = destination_dir / "fits.desktop"
+    if refresh_only and not destination.exists():
+        return
     contents = desktop_entry(root)
     if destination.exists():
         old = destination.read_text(encoding="utf-8")
         expected_path = f"Path={desktop_value(str(root))}"
         if expected_path not in old.splitlines():
+            if refresh_only:
+                return  # Do not repoint another checkout's shortcut during updates.
             old_path = next((line[5:] for line in old.splitlines() if line.startswith("Path=")), "unknown")
             report(f"Existing FITS shortcut: {old_path}\nNew checkout: {root}")
             try:
@@ -60,12 +65,22 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None,
             except EOFError:
                 answer = ""
             if answer.strip().lower() not in ("y", "yes"):
-                report("Existing shortcut kept. Open this checkout with launch.sh.")
+                report("Existing shortcut kept. Open this checkout with startup/launch_linux.sh.")
                 return
     destination_dir.mkdir(parents=True, exist_ok=True)
-    launcher = root / "launch.sh"
+    launcher = root / "startup" / "launch_linux.sh"
     launcher.chmod(launcher.stat().st_mode | 0o100)
     destination.write_text(contents, encoding="utf-8")
     if shutil.which("update-desktop-database"):
         subprocess.run(["update-desktop-database", str(destination_dir)], check=True)
     report(f"Installed {destination}. Search for FITS in Applications.")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--refresh-existing", action="store_true")
+    parser.add_argument("--output-dir", type=Path, help="Linux only: write the desktop entry here for review.")
+    arguments = parser.parse_args()
+    install_shortcut(Path(__file__).resolve().parents[1], refresh_only=arguments.refresh_existing,
+                     output_dir=arguments.output_dir)

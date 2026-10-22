@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 from shortcuts import install_shortcut
+from state import command_environment, record_bootstrap, record_installation, require_independent_python, show_project_files
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,22 +21,18 @@ ROOT = Path(__file__).resolve().parents[1]
 class Installer:
     def __init__(self, root: Path) -> None:
         self.root = root
-        self.log_path = root / "installation" / "logs" / "install.log"
+        self.log_path = root / "startup" / "logs" / "install.log"
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def message(self, message: str) -> None:
-        print(message, flush=True)
+        if sys.stdout is not None:
+            print(message, flush=True)
         with self.log_path.open("a", encoding="utf-8") as log:
             log.write(message + "\n")
 
     def run(self, *command: str) -> str:
         self.message("Running: " + subprocess.list2cmdline(command))
-        environment = os.environ.copy()
-        # Always install into this checkout, even from an activated environment.
-        environment.pop("VIRTUAL_ENV", None)
-        environment["UV_PROJECT_ENVIRONMENT"] = str(self.root / ".venv")
-        environment["PYTHONUNBUFFERED"] = "1"
-        environment["PYTHONIOENCODING"] = "utf-8"
+        environment = command_environment(self.root)
         with subprocess.Popen(
             command, cwd=self.root, env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -84,11 +81,14 @@ class Installer:
         self.run("git", "submodule", "update", "--init", "--recursive")
         lock_path = self.root / "uv.lock"
         previous_lock = lock_path.read_bytes() if lock_path.exists() else None
+        show_project_files(self.root)
         self.run("uv", "sync", "--python", "3.12")
         if lock_path.read_bytes() != previous_lock:
             self.message("Note: uv sync updated uv.lock; review that change before committing.")
         python = self.root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        self.run(str(python), str(self.root / "installation" / "verify.py"))
+        self.run(str(python), str(self.root / "startup" / "verify.py"))
+        record_bootstrap(self.root)
+        record_installation(self.root)
         if not no_shortcut:
             install_shortcut(self.root, report=self.message)
         self.message("FITS installation complete. No GPU is required to open the GUI.")
@@ -104,6 +104,7 @@ def main() -> int:
         if sys.platform not in ("linux", "win32"):
             raise RuntimeError("This installer supports Linux and Windows.")
         installer = Installer(ROOT)
+        require_independent_python(ROOT)
         installer.install(args.no_shortcut)
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         if installer is None:

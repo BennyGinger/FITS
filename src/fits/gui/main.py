@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import sys
 import argparse
+from contextlib import nullcontext
+import os
 from pathlib import Path
 
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
-
-from fits.gui.theme import apply_dark_theme
-from fits.gui.main_window import FitsMainWindow
+from filelock import FileLock, Timeout
 
 
 def main() -> None:
@@ -18,6 +16,25 @@ def main() -> None:
     arguments, qt_arguments = parser.parse_known_args()
     if arguments.demo_step_delay < 0:
         parser.error("--demo-step-delay must be nonnegative")
+    root = Path(__file__).resolve().parents[3]
+    lock_path = Path(os.environ.get("FITS_APPLICATION_LOCK", str(root / "startup/logs/application.lock")))
+    # Register direct CLI launches too; an updater must never change their .venv.
+    lock = FileLock(str(lock_path), timeout=0) if (root / ".git").exists() else nullcontext()
+    try:
+        with lock:
+            _run_gui(arguments, qt_arguments)
+    except Timeout:
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        app = QApplication.instance() or QApplication([])
+        QMessageBox.information(None, "FITS is already open", "This FITS checkout is already running or being updated.")
+
+
+def _run_gui(arguments: argparse.Namespace, qt_arguments: list[str]) -> None:
+    from PySide6.QtGui import QIcon
+    from PySide6.QtWidgets import QApplication
+    from fits.gui.theme import apply_dark_theme
+    from fits.gui.main_window import FitsMainWindow
+
     app = QApplication.instance()
     if not isinstance(app, QApplication):
         app = QApplication([sys.argv[0], *qt_arguments])

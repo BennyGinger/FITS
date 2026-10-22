@@ -10,13 +10,13 @@ import sys
 import pytest
 
 
-INSTALLATION = Path(__file__).resolve().parents[2] / "installation"
+STARTUP = Path(__file__).resolve().parents[2] / "startup"
 
 
 @pytest.fixture
 def setup_module(monkeypatch):
-    monkeypatch.syspath_prepend(str(INSTALLATION))
-    spec = importlib.util.spec_from_file_location("fits_installer", INSTALLATION / "setup.py")
+    monkeypatch.syspath_prepend(str(STARTUP))
+    spec = importlib.util.spec_from_file_location("fits_installer", STARTUP / "setup.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -117,7 +117,8 @@ def make_install(root):
     (root / ".venv" / "bin" / "python").touch()
     (root / "assets").mkdir()
     (root / "assets" / "fits_logo.png").touch()
-    (root / "launch.sh").touch()
+    (root / "startup").mkdir()
+    (root / "startup" / "launch_linux.sh").touch()
 
 
 def test_shortcut_replacement_requires_consent(shortcuts, tmp_path, monkeypatch):
@@ -142,7 +143,7 @@ def test_desktop_command_quotes_special_paths(shortcuts, tmp_path):
     root = tmp_path / 'FITS with spaces $`"%'
     entry = shortcuts.desktop_entry(root)
     command = next(line for line in entry.splitlines() if line.startswith("Exec="))
-    assert command.startswith('Exec="') and command.endswith('launch.sh"')
+    assert command.startswith('Exec="') and command.endswith('/startup/launch_linux.sh"')
     assert "%%" in command
     assert '\\\\$' in command and '\\\\`' in command and '\\\\"' in command
 
@@ -150,13 +151,12 @@ def test_desktop_command_quotes_special_paths(shortcuts, tmp_path):
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux entry-file integration")
 def test_linux_entry_runs_installation_from_another_directory(checkout, tmp_path):
     """Exercise bootstrap/sync/verify/menu wiring with a fake uv, without downloads."""
-    shutil.copytree(INSTALLATION, checkout / "installation", ignore=shutil.ignore_patterns("__pycache__"))
-    repository = INSTALLATION.parent
-    for name in ("install_linux.sh", "launch.sh"):
-        shutil.copy(repository / name, checkout / name)
+    shutil.copytree(STARTUP, checkout / "startup", ignore=shutil.ignore_patterns("__pycache__", "logs"))
+    repository = STARTUP.parent
+    shutil.copy(repository / "install_linux.sh", checkout / "install_linux.sh")
     (checkout / "assets").mkdir()
     (checkout / "assets" / "fits_logo.png").touch()
-    (checkout / "installation" / "verify.py").write_text("print('Verification invoked')\n")
+    (checkout / "startup" / "verify.py").write_text("print('Verification invoked')\n")
     tools = tmp_path / "tools"
     tools.mkdir()
     uv = tools / "uv"
@@ -165,6 +165,9 @@ def test_linux_entry_runs_installation_from_another_directory(checkout, tmp_path
         "import os, pathlib, sys\n"
         "if sys.argv[1] == 'run':\n"
         "    os.execv(sys.executable, [sys.executable, *sys.argv[6:]])\n"
+        "if sys.argv[1:3] == ['python', 'find']:\n"
+        "    print(sys.executable)\n"
+        "    raise SystemExit(0)\n"
         "assert sys.argv[1:] == ['sync', '--python', '3.12']\n"
         "environment = pathlib.Path(os.environ['UV_PROJECT_ENVIRONMENT'])\n"
         "(environment / 'bin').mkdir(parents=True, exist_ok=True)\n"

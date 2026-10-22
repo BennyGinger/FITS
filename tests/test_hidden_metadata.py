@@ -62,24 +62,30 @@ def test_creation_hides_metadata_root_only_and_lookup_does_not_create(tmp_path, 
     assert hidden_paths == [metadata, metadata]
 
 
-def test_installer_hides_only_direct_dot_entries_and_tolerates_failure(tmp_path, monkeypatch, capsys):
-    source = Path(__file__).resolve().parents[1] / "installation" / "verify.py"
+def test_installer_hides_only_internal_entries_and_tolerates_failure(tmp_path, monkeypatch, capsys):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "startup"))
+    source = Path(__file__).resolve().parents[1] / "startup" / "verify.py"
     spec = importlib.util.spec_from_file_location("fits_install_verify", source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     (tmp_path / ".gitignore").touch()
     (tmp_path / ".venv").mkdir()
+    (tmp_path / "uv.lock").touch()
+    (tmp_path / "pyproject.toml").touch()
+    (tmp_path / "README.md").touch()
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / ".leave-alone").touch()
     hidden_paths = []
     monkeypatch.setattr(module.sys, "platform", "win32")
     monkeypatch.setattr(hidden, "hide_on_windows", lambda path: hidden_paths.append(path) or False)
-    module.hide_checkout_dot_entries(tmp_path)
-    assert set(hidden_paths) == {tmp_path / ".gitignore", tmp_path / ".venv"}
+    module.hide_checkout_internal_entries(tmp_path)
+    assert set(hidden_paths) == {
+        tmp_path / ".gitignore", tmp_path / ".venv",
+    }
     assert "installation will continue" in capsys.readouterr().out
     hidden_paths.clear()
     monkeypatch.setattr(module.sys, "platform", "linux")
-    module.hide_checkout_dot_entries(tmp_path)
+    module.hide_checkout_internal_entries(tmp_path)
     assert not hidden_paths
 
 

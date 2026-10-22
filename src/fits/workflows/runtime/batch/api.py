@@ -17,6 +17,7 @@ def run_batch_workflow(effective_cfg: Mapping[str, Any],
                         exp_states: list[ExperimentState],
                         *,
                         run_progress: RunProgress | None = None,
+                        terminal_progress: bool = True,
                         ) -> list[ExperimentState]:
     """
     Run every enabled workflow step across the entire experiment batch.
@@ -41,6 +42,7 @@ def run_batch_workflow(effective_cfg: Mapping[str, Any],
         exp_states = execute_batch_step(spec=spec,
                                         settings=settings,
                                         exp_states=exp_states,
-                                        reporter=reporter,)
+                                        reporter=reporter,
+                                        terminal_progress=terminal_progress,)
 
     return exp_states

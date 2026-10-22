@@ -32,6 +32,7 @@ def start_pipeline(
     demo_step_delay: float = 0.0,
     run_progress: RunProgress | None = None,
     convert_only: bool = False,
+    terminal_progress: bool = True,
 ) -> None:
     # --- load settings ---
     cfg_path = (settings_path or SETTINGS_PATH).expanduser().resolve()
@@ -133,11 +134,13 @@ def start_pipeline(
                 case "batch":
                     logger.info("Starting batch execution of workflow")
                     final_states = run_batch_workflow(
-                        effective_cfg, states, run_progress=run_progress)
+                        effective_cfg, states, run_progress=run_progress,
+                        terminal_progress=terminal_progress)
                 case "conveyor":
                     logger.info("Starting conveyor execution of workflow")
                     final_states = run_workflow_scheduler(
-                        effective_cfg, states, run_progress=run_progress)
+                        effective_cfg, states, run_progress=run_progress,
+                        terminal_progress=terminal_progress)
     except BaseException:
         run_progress.skip_unfinished()
         save_progress_report()

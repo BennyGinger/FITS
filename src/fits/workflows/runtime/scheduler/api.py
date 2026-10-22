@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 def run_workflow_scheduler(effective_cfg: Mapping[str, Any],
                            exp_states: list[ExperimentState], *,
                            run_progress: RunProgress | None = None,
+                           terminal_progress: bool = True,
                            ) -> list[ExperimentState]:
     """
     Execute configured steps as a concurrent CPU/GPU conveyor pipeline.
@@ -57,7 +58,8 @@ def run_workflow_scheduler(effective_cfg: Mapping[str, Any],
     with (display.task("Pipeline", len(exp_states)) if display is not None else nullcontext(),
           ThreadPoolExecutor(max_workers=cpu_workers) as cpu_executor,
           ThreadPoolExecutor(max_workers=1) as gpu_executor,
-          pbar(total=len(exp_states), desc="Pipeline", logs="off") as progress,):
+          pbar(total=len(exp_states), desc="Pipeline", logs="off",
+               enabled=terminal_progress) as progress,):
         cpu_running: RunningTasks = {}
         gpu_running: RunningTasks = {}
         total_tasks = len(exp_states)

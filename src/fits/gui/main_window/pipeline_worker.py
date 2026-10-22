@@ -63,7 +63,8 @@ class PipelineWorker(QObject):
                                interaction=self.interaction,
                                demo_step_delay=self.demo_step_delay,
                                run_progress=self.progress,
-                               convert_only=self.convert_only,)
+                               convert_only=self.convert_only,
+                               terminal_progress=False,)
         except PipelineCancelled:
             self.cancelled.emit()
         except Exception as error:

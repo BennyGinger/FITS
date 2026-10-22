@@ -13,18 +13,24 @@
 [submodule "tracklink"]
 	path = tracklink
 	url = https://github.com/BennyGinger/tracklink.git
+	branch = main
 [submodule "bg_sub"]
 	path = bg_sub
 	url = https://github.com/BennyGinger/bg_sub.git
+	branch = master
 [submodule "stackalign"]
 	path = stackalign
 	url = https://github.com/BennyGinger/stackalign.git
+	branch = master
 [submodule "mask_interpolation"]
 	path = mask_interpolation
 	url = https://github.com/BennyGinger/mask_interpolation.git
+	branch = main
 [submodule "bioimagequant"]
 	path = bioimagequant
 	url = https://github.com/BennyGinger/bioimagequant.git
+	branch = main
 [submodule "micro-sam-headless"]
 	path = micro-sam-headless
 	url = https://github.com/BennyGinger/micro-sam-headless.git
+	branch = main

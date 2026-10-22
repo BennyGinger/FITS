@@ -25,6 +25,7 @@ def execute_batch_step(spec: StepSpec[Any],
                         settings: SettingsModel,
                         exp_states: list[ExperimentState],
                         reporter: WorkflowReporter | None = None,
+                        terminal_progress: bool = True,
                         ) -> list[ExperimentState]:
     """
     Execute one configured step for every state in the current batch.
@@ -55,7 +56,8 @@ def execute_batch_step(spec: StepSpec[Any],
           if display is not None else nullcontext(),
           pbar(total=len(exp_states),
             desc=profile.step_name.capitalize(),
-            logs="buffered",) as progress):
+            logs="buffered",
+            enabled=terminal_progress,) as progress):
         for produced_states in execute_items(exp_states,
                                             batch_worker,
                                             mode=settings.execution,

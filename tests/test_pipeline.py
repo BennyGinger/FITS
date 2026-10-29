@@ -63,6 +63,45 @@ def _patch_pipeline_services(monkeypatch, run_dir: Path, raw_files: list[Path], 
     monkeypatch.setattr("fits.pipeline.aggregate_distance_profiles", lambda *args: None)
 
 
+@pytest.mark.parametrize("convert_only,force_conversion,overwrite", [
+    (False, False, False), (False, False, True),
+    (True, False, False), (True, True, False),
+])
+def test_gui_conversion_scope_preserves_normal_pipeline_rules(
+    monkeypatch, tmp_path, convert_only, force_conversion, overwrite,
+):
+    from fits.settings.resolution import apply_overwrite_cascade
+
+    captured = {}
+    _patch_pipeline_services(monkeypatch, tmp_path, [], captured)
+    cfg = _base_cfg(tmp_path)
+    cfg.update({
+        "convert": {"enabled": True, "params": {"overwrite": overwrite}},
+        "bg_sub": {"enabled": True, "params": {"overwrite": False}},
+    })
+    monkeypatch.setattr("fits.pipeline.load_settings", lambda _: cfg)
+    monkeypatch.setattr("fits.pipeline.apply_overwrite_cascade", apply_overwrite_cascade)
+
+    def execute(config, states, **kwargs):
+        captured["config"] = config
+        return states
+
+    monkeypatch.setattr("fits.pipeline.run_batch_workflow", execute)
+    monkeypatch.setattr("fits.workflows.runtime.interactive.run_conversion_only", execute)
+    start_pipeline(settings_path=tmp_path / "settings.toml", convert_only=convert_only,
+                   force_conversion=force_conversion)
+
+    effective = captured["config"]
+    assert effective["convert"]["enabled"]
+    assert effective["convert"]["params"]["overwrite"] == (overwrite or force_conversion)
+    assert effective["bg_sub"]["enabled"] == (not convert_only)
+    if not convert_only:
+        assert effective["bg_sub"]["params"]["overwrite"] == overwrite
+    assert cfg["convert"]["params"]["overwrite"] == overwrite
+    assert cfg["bg_sub"]["enabled"]
+    assert not cfg["bg_sub"]["params"]["overwrite"]
+
+
 @pytest.mark.parametrize("source_kind", ["default", "external", "saved"])
 def test_pipeline_saves_input_settings_before_execution(monkeypatch, tmp_path, source_kind):
     from fits.settings.loader import load_settings

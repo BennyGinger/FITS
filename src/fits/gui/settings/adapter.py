@@ -505,11 +505,17 @@ class SettingsAdapter:
         return (REGISTRY[step].settings_model.__doc__ or "").strip()
 
     def validate_steps(self) -> dict[StepName, ValidationError]:
+        """Validate GUI drafts; missing segmentation targets are checked separately."""
         errors: dict[StepName, ValidationError] = {}
         for step in WORKFLOW_ORDER:
             params: Any = resolve_step_params(step, self.as_mapping()[step])
             if hasattr(params, "unwrap"):
                 params = params.unwrap()
+            if step == StepName.SEGMENT:
+                # Unassigned sections are valid while editing/saving settings.
+                # missing_user_fields blocks enabled segmentation at run time.
+                params["channels"] = [entry for entry in params.get("channels", [])
+                                      if entry.get("channel", "").strip()]
             try:
                 REGISTRY[step].model_validate(params)
             except ValidationError as error:
@@ -561,7 +567,7 @@ class SettingsAdapter:
                     errors.append(f"{STEP_LAYOUTS[current_step].title}: {message}")
         return errors
 
-    def validate_for_run(self) -> list[str]:
+    def validate_for_run(self, steps: Sequence[StepName] | None = None) -> list[str]:
         errors: list[str] = []
         run_dir = self.run_dir.strip()
         if not run_dir:
@@ -571,10 +577,12 @@ class SettingsAdapter:
         if not self.user_name.strip():
             errors.append("Enter a user name.")
 
-        errors.extend(self.missing_user_fields())
+        selected = steps if steps is not None else WORKFLOW_ORDER
+        for step in selected:
+            errors.extend(self.missing_user_fields(step))
 
         for step, error in self.validate_steps().items():
-            if self.step_enabled(step):
+            if step in selected and self.step_enabled(step):
                 errors.append(f"{STEP_LAYOUTS[step].title}: {error.errors()[0]['msg']}")
         return errors
 

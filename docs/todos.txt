@@ -351,8 +351,9 @@ Status: registration tuner complete and ready; initial on-demand background tune
 [x] Support original/registered comparison and Composite overlay of the same
     frame/channel/Z plane: original grayscale, registered in its channel LUT;
     use magenta for the original when the registered image is grayscale.
-[x] Transfer accepted settings to the general main-GUI settings and expose
-    Advanced settings; standalone Save updates the supplied/nearest settings
+[x] Transfer accepted settings to the general main-GUI settings; expose Advanced
+    settings only for changed manual overrides and preserve already-open
+    sections. Standalone Save updates the supplied/nearest settings
     file or creates a template-based one. Presets set backend/method; manual
     choices restore a matching preset or select Custom. Top channel changes
     update the active tab's fitting/reference channel.

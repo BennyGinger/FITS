@@ -6,6 +6,7 @@ import os
 os.environ["TQDM_DISABLE"] = "1" # Silence tqdm progress bars of trackastra pkg
 from pathlib import Path
 import logging
+from copy import deepcopy
 from fits.workflows.runtime.progress import RunProgress, format_run_report
 
 from fits.environment.constant import RunTimeMode, WORKFLOW_ORDER
@@ -32,6 +33,7 @@ def start_pipeline(
     demo_step_delay: float = 0.0,
     run_progress: RunProgress | None = None,
     convert_only: bool = False,
+    force_conversion: bool = False,
     terminal_progress: bool = True,
 ) -> None:
     # --- load settings ---
@@ -90,11 +92,14 @@ def start_pipeline(
                 "continuing with full pipeline.")
 
     # --- apply overwrite cascade to user config ---
-    effective_cfg = apply_overwrite_cascade(user_cfg, WORKFLOW_ORDER)
+    scoped_cfg = deepcopy(user_cfg)
     if convert_only:
         for step_name in WORKFLOW_ORDER:
-            if step_name in effective_cfg:
-                effective_cfg[step_name]["enabled"] = step_name == "convert"
+            if step_name in scoped_cfg:
+                scoped_cfg[step_name]["enabled"] = step_name == "convert"
+        if force_conversion:
+            scoped_cfg["convert"].setdefault("params", {})["overwrite"] = True
+    effective_cfg = apply_overwrite_cascade(scoped_cfg, WORKFLOW_ORDER)
     
     # --- build ExperimentState list from saved states + newly discovered raw files ---
     states = assemble_experiment_states(run_dir, supported_files, effective_cfg, user_name)

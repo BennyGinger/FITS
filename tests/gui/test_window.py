@@ -41,9 +41,10 @@ def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
     (tmp_path / "fits_array.tif").touch()
     window = FitsMainWindow(adapter)
 
-    assert window.step_tree.topLevelItemCount() == len(WORKFLOW_ORDER)
-    assert window.step_tree.indexOfTopLevelItem(window._step_items[StepName.EXTRACT]) < (
-        window.step_tree.indexOfTopLevelItem(window._step_items[StepName.DISTANCE_PROFILE]))
+    assert window.convert_tabs.count() == 1
+    assert window.phase_tabs.count() == 3
+    assert window._step_tabs[3].widget(0) is window._editors[StepName.EXTRACT]
+    assert not hasattr(window, "step_tree")
     assert set(window._editors) == set(StepName)
     assert window.runtime_editor is not None
     assert window.runtime_editor.widgets["execution"].isEnabled() is False
@@ -57,12 +58,13 @@ def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
         label = form.labelForField(widget)
         assert label.toolTip()
 
-    segment_item = window._step_items[StepName.SEGMENT]
+    segment_item = window._editors[StepName.SEGMENT].enable_group
     segment_editor = window._editors[StepName.SEGMENT]
     assert segment_editor.channel_widgets[0]["channel"].isEnabled() is False
-    segment_item.setCheckState(0, Qt.CheckState.Checked)
+    segment_item.setChecked(True)
+    window._select_step(StepName.SEGMENT)
     assert adapter.step_enabled(StepName.SEGMENT) is True
-    assert window.settings_stack.currentWidget() is window._editors[StepName.SEGMENT]
+    assert window._current_step == StepName.SEGMENT
     assert segment_editor.channel_widgets[0]["channel"].isEnabled() is True
 
     register_editor = window._editors[StepName.REGISTER_TIME]
@@ -103,103 +105,76 @@ def test_tracking_channels_follow_segmentation_multi_selection(tmp_path) -> None
     window.close()
 
 
-def test_phase_tabs_unlock_when_prepared_image_appears(tmp_path) -> None:
-    _application()
+def test_conversion_and_processing_are_distinct_pages(tmp_path) -> None:
+    app = _application()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     window = FitsMainWindow(adapter)
-
-    assert [window.phase_tabs.tabText(i) for i in range(window.phase_tabs.count())] == [
-        "Convert ✓", "Preprocess", "Process", "Analysis"]
-    assert window.phase_tabs.isTabEnabled(0)
-    assert window.run_button.text() == "Convert experiment(s)"
-    for phase in range(1, 4):
-        assert not window.phase_tabs.isTabEnabled(phase)
-    assert window._step_items[StepName.SEGMENT].isDisabled()
+    app.processEvents()
+    assert window.workflow_pages.currentIndex() == 0
+    assert window.run_button.text() == "Next"
+    assert window.back_button.isHidden()
+    assert not window._editors[StepName.SEGMENT].isEnabled()
     assert not window.segtune_button.isEnabled()
-    assert window._step_items[StepName.REGISTER_TIME].isHidden()
-
-    prepared = tmp_path / "experiment" / "fits_array.tif"
-    prepared.parent.mkdir()
-    prepared.touch()
-    window._refresh_phase_access()
-
-    for phase in range(4):
-        assert window.phase_tabs.isTabEnabled(phase)
-    assert window.phase_tabs.currentIndex() == 0
-    assert window.run_button.text() == "Run pipeline"
-    assert not window._step_items[StepName.SEGMENT].isDisabled()
-    window.step_tree.setCurrentItem(window._step_items[StepName.SEGMENT])
-    assert window.phase_tabs.currentIndex() == 2
-    assert window.settings_stack.currentWidget() is window._editors[StepName.SEGMENT]
-    assert not window._step_items[StepName.SEGMENT].isHidden()
-    assert window._step_items[StepName.CONVERT].isHidden()
+    assert [window.phase_tabs.tabText(i) for i in range(3)] == [
+        "Preprocess", "Process", "Analysis"]
+    assert [window._step_tabs[1].tabText(i) for i in range(3)] == [
+        "Frame-shift", "Channel-shift", "Background subtraction"]
     window.close()
 
 
-@pytest.mark.parametrize("prepared_before,prepared_after", [
-    (False, False), (False, True), (True, True),
-])
-def test_settings_remain_editable_during_run(
-        tmp_path, prepared_before, prepared_after) -> None:
+def test_reopening_converted_experiment_starts_on_preprocess(tmp_path) -> None:
+    _application()
+    (tmp_path / "fits_array.tif").touch()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+    assert window.workflow_pages.currentIndex() == 1
+    assert window.phase_tabs.currentIndex() == 0
+    assert window._current_step == StepName.REGISTER_TIME
+    assert window.run_button.text() == "Run pipeline"
+    assert not window.back_button.isHidden()
+    window._back_to_convert()
+    assert window.workflow_pages.currentIndex() == 0
+    assert window.run_button.text() == "Next"
+    window._next_from_convert()
+    assert window.workflow_pages.currentIndex() == 1
+    assert window._thread is None
+    window.close()
+
+
+def test_settings_remain_editable_during_run(tmp_path) -> None:
     app = _application()
-    source = tmp_path / "fits_array.tif"
-    if prepared_before:
-        source.touch()
+    (tmp_path / "fits_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "test"
-    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
-    for step in WORKFLOW_ORDER:
-        adapter.set_step_enabled(step, step == StepName.CONVERT)
     window = FitsMainWindow(adapter)
     app.processEvents()
     saved_path = adapter.save_to_run_dir()
     saved_settings = saved_path.read_bytes()
-    assert window.phase_tabs.isTabEnabled(1) == prepared_before
-
     window._set_running(True)
-
-    assert all(window.phase_tabs.isTabEnabled(i) for i in range(4))
-    assert window.step_tree.isEnabled()
-    assert window.settings_stack.isEnabled()
-    assert window.segtune_button.isEnabled() == prepared_before
-    assert not window.tracking_viewer_button.isEnabled()
-    assert not window.channel_labels_button.isEnabled()
     for button in (window.run_button, window.load_button, window.save_button,
-                   window.browse_button):
+                   window.browse_button, window.back_button,
+                   window.report_button, window.tracking_viewer_button):
         assert not button.isEnabled()
     assert not window.run_dir_edit.isEnabled()
     assert not window.user_name_edit.isEnabled()
-
-    window.phase_tabs.setCurrentIndex(1)
-    item = window._step_items[StepName.BG_SUB]
-    item.setCheckState(0, Qt.CheckState.Checked)
+    assert not window.segtune_button.isEnabled()
+    assert not window.channel_labels_button.isEnabled()
+    window._select_step(StepName.BG_SUB)
     editor = window._editors[StepName.BG_SUB]
+    editor.enable_group.setChecked(True)
     editor.widgets["sigma"].setValue(2.5)
     window._refresh_phase_access()
-
-    assert window.settings_stack.currentWidget() is editor
     assert editor.widgets["sigma"].isEnabled()
-    assert adapter.step_enabled(StepName.BG_SUB)
     assert adapter.field_value(StepName.BG_SUB, "sigma") == 2.5
-    assert window.phase_tabs.currentIndex() == 1
-    assert window._phases_unlocked == prepared_before
-    assert not window.run_button.isEnabled()
     assert window.run_button.text() == "Running…"
     assert saved_path.read_bytes() == saved_settings
-
-    if prepared_after:
-        source.touch()
     window._set_running(False)
-
-    assert window.phase_tabs.isTabEnabled(1) == prepared_after
-    assert window.channel_labels_button.isEnabled()
-    assert window.segtune_button.isEnabled() == prepared_after
-    assert adapter.field_value(StepName.BG_SUB, "sigma") == 2.5
-    assert window.run_button.text() == (
-        "Run pipeline" if prepared_after else "Convert experiment(s)")
+    assert window.back_button.isEnabled()
+    assert window.segtune_button.isEnabled()
+    assert window.run_button.text() == "Run pipeline"
     window.close()
 
 
@@ -208,22 +183,12 @@ def test_runtime_override_unlocks_settings_but_not_viewers(tmp_path) -> None:
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_runtime_value("unlock_all_tabs", True)
-    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
-    adapter.set_step_enabled(StepName.REGISTER_CHANNEL, True)
     window = FitsMainWindow(adapter)
-
-    assert all(window.phase_tabs.isTabEnabled(i) for i in range(4))
-    assert window.run_button.text() == "Run pipeline"
-    assert window.phase_tabs.tabText(1) == "Preprocess ✓"
+    assert window._editors[StepName.BG_SUB].isEnabled()
     assert not window.segtune_button.isEnabled()
-
-    window.phase_tabs.setCurrentIndex(1)
-    visible = {
-        step for step, item in window._step_items.items() if not item.isHidden()
-    }
-    assert visible == {
-        StepName.REGISTER_TIME, StepName.REGISTER_CHANNEL, StepName.BG_SUB
-    }
+    # Debug settings access does not bypass the user-facing Convert page.
+    assert window.workflow_pages.currentIndex() == 0
+    assert window.run_button.text() == "Next"
     window.close()
 
 
@@ -232,29 +197,23 @@ def test_runtime_unlock_control_updates_phase_access_immediately(tmp_path) -> No
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     window = FitsMainWindow(adapter)
-
-    unlock = window.runtime_editor.widgets["unlock_all_tabs"]
-    unlock.setChecked(True)
-
-    assert adapter.runtime_value("unlock_all_tabs") is True
-    assert all(window.phase_tabs.isTabEnabled(i) for i in range(4))
-    assert window.run_button.text() == "Run pipeline"
+    assert not window._editors[StepName.BG_SUB].isEnabled()
+    window.runtime_editor.widgets["unlock_all_tabs"].setChecked(True)
+    assert window._editors[StepName.BG_SUB].isEnabled()
     assert not window.segtune_button.isEnabled()
     window.close()
 
 
-def test_refresh_keeps_selected_phase_when_arrays_already_exist(tmp_path) -> None:
+def test_refresh_keeps_selected_page_when_arrays_already_exist(tmp_path) -> None:
     _application()
     (tmp_path / "fits_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     window = FitsMainWindow(adapter)
-
-    window.phase_tabs.setCurrentIndex(0)
+    window._back_to_convert()
     window._refresh_phase_access()
-
-    assert window.phase_tabs.currentIndex() == 0
-    assert window.step_tree.currentItem() is window._step_items[StepName.CONVERT]
+    assert window.workflow_pages.currentIndex() == 0
+    assert window._current_step == StepName.CONVERT
     window.close()
 
 
@@ -370,7 +329,7 @@ def test_browsing_run_directory_loads_existing_settings(
     assert window.run_browser.root_path == copied_dir.resolve()
     assert window.adapter.user_name == "Saved user"
     assert window.adapter.step_enabled(StepName.TRACK) is True
-    assert window._step_items[StepName.TRACK].checkState(0) == Qt.CheckState.Checked
+    assert window._editors[StepName.TRACK].enable_group.isChecked()
     saved_path = window.adapter.save_to_run_dir()
     reloaded = SettingsAdapter()
     reloaded.load(saved_path)
@@ -505,7 +464,7 @@ def test_switching_folders_loads_own_settings_or_fresh_template(tmp_path) -> Non
     assert window._editors[StepName.CONVERT].widgets["channel_labels"].value() == []
     assert window._editors[StepName.BG_SUB].widgets["sigma"].value() == (
         expected.field_value(StepName.BG_SUB, "sigma"))
-    assert not window.phase_tabs.isTabEnabled(1)
+    assert window.workflow_pages.currentIndex() == 0
     assert not window.segtune_button.isEnabled()
     fresh.close()
 
@@ -608,6 +567,62 @@ def test_completion_report_shows_stage_counts_and_short_failure_path(tmp_path) -
     assert tmp_path.as_posix() not in report
 
 
+@pytest.mark.parametrize("tool", ["tracking_viewer_button", "report_button"])
+@pytest.mark.parametrize("selected_folder", [False, True])
+def test_missing_results_buttons_explain_what_to_do_next(
+    tmp_path, monkeypatch, tool, selected_folder,
+) -> None:
+    _application()
+    adapter = SettingsAdapter()
+    if selected_folder:
+        adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+    messages = []
+    monkeypatch.setattr(
+        QMessageBox, "information",
+        lambda parent, title, message: messages.append((title, message)))
+    try:
+        window._refresh_phase_access()
+        window._refresh_report_button()
+        button = getattr(window, tool)
+        assert button.isEnabled()
+        button.click()
+        assert len(messages) == 1
+        title, message = messages[0]
+        if selected_folder:
+            assert title == ("No tracking file found" if tool == "tracking_viewer_button" else "No report found")
+            assert "Next" in message
+            assert "Run pipeline" in message
+        else:
+            assert title == "Choose a run folder"
+            assert "Browse" in message
+        assert window._tracking_viewer is None
+    finally:
+        window.close()
+
+
+def test_main_action_buttons_describe_their_behavior(tmp_path) -> None:
+    _application()
+    (tmp_path / "fits_array.tif").touch()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    window = FitsMainWindow(adapter)
+    try:
+        assert window.channel_labels_button.text() == "Edit Channel Labels"
+        assert "rename channel labels" in window.channel_labels_button.toolTip()
+        assert "trajectories" in window.tracking_viewer_button.toolTip()
+        assert "latest run report" in window.report_button.toolTip()
+        assert "without running" in window.back_button.toolTip()
+        assert "all enabled steps" in window.run_button.toolTip()
+        window._back_to_convert()
+        assert window.run_button.text() == "Next"
+        assert "unchanged" in window.run_button.toolTip()
+        # Missing-field guidance supplements the action description.
+        assert "channel_labels" in window.run_button.toolTip()
+    finally:
+        window.close()
+
+
 def test_full_report_button_uses_latest_report_and_browser_activation(tmp_path, monkeypatch) -> None:
     reports = tmp_path / ".fits" / "reports"
     reports.mkdir(parents=True)
@@ -689,7 +704,7 @@ def test_pipeline_failure_opens_available_run_report(tmp_path, monkeypatch) -> N
     window.close()
 
 
-def test_advanced_settings_reserve_space_and_conveyor_is_default():
+def test_advanced_settings_collapse_their_space_and_conveyor_is_default():
     app = _application()
     window = FitsMainWindow(SettingsAdapter())
     assert window.adapter.runtime_value("execution") == "conveyor"
@@ -700,11 +715,30 @@ def test_advanced_settings_reserve_space_and_conveyor_is_default():
         before = group.sizeHint()
         group.setChecked(True)
         app.processEvents()
-        assert group.sizeHint() == before
+        assert group.sizeHint().height() > before.height()
         group.setChecked(False)
         app.processEvents()
         assert group.sizeHint() == before
     window.close()
+
+
+def test_advanced_fields_expand_the_tab_scroll_range() -> None:
+    app = _application()
+    editor = StepSettingsEditor(SettingsAdapter(), StepName.BG_SUB)
+    editor.resize(700, 240)
+    editor.show()
+    app.processEvents()
+    app.processEvents()
+    collapsed = editor.scroll_area.verticalScrollBar().maximum()
+    editor.show_advanced_settings()
+    app.processEvents()
+    app.processEvents()
+    assert editor.scroll_area.verticalScrollBar().maximum() > collapsed
+    editor._advanced_group.setChecked(False)
+    app.processEvents()
+    app.processEvents()
+    assert editor.scroll_area.verticalScrollBar().maximum() == collapsed
+    editor.close()
 
 
 def test_convert_projection_none_can_be_selected() -> None:
@@ -719,15 +753,20 @@ def test_convert_projection_none_can_be_selected() -> None:
 
 
 @pytest.mark.parametrize("navigation", ["step", "phase"])
+@pytest.mark.parametrize("step", [StepName.CONVERT, StepName.SEGMENT])
 def test_leaving_enabled_step_warns_when_user_input_is_missing(
-    tmp_path: Path, monkeypatch, navigation: str,
+    tmp_path: Path, monkeypatch, navigation: str, step: StepName,
 ) -> None:
     app = _application()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_runtime_value("unlock_all_tabs", True)
+    if step == StepName.SEGMENT:
+        adapter.set_field_value(StepName.CONVERT, "channel_labels", ["RFP"])
+        adapter.set_step_enabled(step, True)
     window = FitsMainWindow(adapter)
     app.processEvents()
+    window._select_step(step)
     warnings: list[tuple[str, str]] = []
     monkeypatch.setattr(
         QMessageBox,
@@ -736,20 +775,22 @@ def test_leaving_enabled_step_warns_when_user_input_is_missing(
     )
 
     if navigation == "step":
-        window.step_tree.setCurrentItem(window._step_items[StepName.REGISTER_TIME])
+        target = StepName.TRACK if step == StepName.SEGMENT else StepName.REGISTER_TIME
+        window._select_step(target)
     else:
-        window.phase_tabs.setCurrentIndex(1)
+        window.phase_tabs.setCurrentIndex(2) if step == StepName.SEGMENT else window._select_step(StepName.REGISTER_TIME)
 
+    message = ("Segmentation: Choose a target channel for every section."
+               if step == StepName.SEGMENT else
+               "Convert: Enter at least one channel label (channel_labels).")
     assert warnings == [(
         "Missing required setting",
-        "Convert: Enter at least one channel label (channel_labels).",
+        message,
     )]
-    assert window.step_tree.currentItem() is window._step_items[StepName.CONVERT]
+    assert window._current_step == step
     app.processEvents()
-    assert window.step_tree.selectedItems() == [
-        window._step_items[StepName.CONVERT]
-    ]
-    assert window.phase_tabs.currentIndex() == 0
+    assert window._current_step == step
+    assert window.phase_tabs.currentIndex() == (1 if step == StepName.SEGMENT else 0)
     window.close()
 
 
@@ -761,12 +802,12 @@ def test_leaving_disabled_step_does_not_warn(tmp_path: Path, monkeypatch) -> Non
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     window = FitsMainWindow(adapter)
     app.processEvents()
-    window.step_tree.setCurrentItem(window._step_items[StepName.SEGMENT])
+    window._select_step(StepName.SEGMENT)
     warnings: list[str] = []
     monkeypatch.setattr(
         QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
 
-    window.step_tree.setCurrentItem(window._step_items[StepName.TRACK])
+    window._select_step(StepName.TRACK)
 
     assert warnings == []
     window.close()
@@ -783,18 +824,18 @@ def test_leaving_phase_checks_other_enabled_steps_in_that_phase(
     adapter.set_step_enabled(StepName.REGISTER_CHANNEL, True)
     window = FitsMainWindow(adapter)
     app.processEvents()
-    window.step_tree.setCurrentItem(window._step_items[StepName.REGISTER_TIME])
+    window._select_step(StepName.REGISTER_TIME)
     warnings: list[str] = []
     monkeypatch.setattr(
         QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
 
-    window.phase_tabs.setCurrentIndex(2)
+    window.phase_tabs.setCurrentIndex(1)
 
     assert warnings == [
-        "Register channels: Choose a reference channel (reference_channel)."
+        "Channel-shift: Choose a reference channel (reference_channel)."
     ]
-    assert window.step_tree.currentItem() is window._step_items[StepName.REGISTER_TIME]
-    assert window.phase_tabs.currentIndex() == 1
+    assert window._current_step == StepName.REGISTER_TIME
+    assert window.phase_tabs.currentIndex() == 0
     window.close()
 
 
@@ -803,7 +844,6 @@ def test_run_warns_for_all_missing_enabled_step_inputs(
 ) -> None:
     _application()
     adapter = SettingsAdapter()
-    adapter.set_segment_channels([])
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "User"
     for step in (StepName.REGISTER_CHANNEL, StepName.SEGMENT, StepName.TRACK):
@@ -827,9 +867,63 @@ def test_run_warns_for_all_missing_enabled_step_inputs(
     title, message = warnings[0]
     assert title == "Cannot run FITS"
     assert "Convert: Enter at least one channel label (channel_labels)." in message
-    assert "Register channels: Choose a reference channel (reference_channel)." in message
+    assert "Channel-shift: Choose a reference channel (reference_channel)." in message
     assert "Segmentation: Choose a target channel for every section." in message
     assert "Tracking: Choose at least one channel to track (channel_to_track)." in message
+    window.close()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_save_and_reload_settings_with_unassigned_segmentation_channel(
+    tmp_path, monkeypatch, enabled,
+) -> None:
+    app = _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_step_enabled(StepName.SEGMENT, enabled)
+    window = FitsMainWindow(adapter)
+    app.processEvents()
+    monkeypatch.setattr(
+        QMessageBox, "critical", lambda *args: pytest.fail(str(args[2])))
+
+    saved = window._save_settings()
+    assert saved is not None
+    window.adapter.set_segment_channels([{"channel": "RFP"}])
+    window._load_settings_path(saved)
+
+    assert window.adapter.segment_channels()[0]["channel"] == ""
+    assert window.adapter.step_enabled(StepName.SEGMENT) == enabled
+    assert window._editors[StepName.SEGMENT].channel_widgets[0]["channel"].text() == ""
+    window.close()
+
+
+def test_blank_default_segmentation_channel_blocks_run_until_selected(tmp_path) -> None:
+    app = _application()
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(tmp_path)
+    adapter.set_runtime_value("unlock_all_tabs", True)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["RFP"])
+    window = FitsMainWindow(adapter)
+    app.processEvents()
+    field = window._editors[StepName.SEGMENT].channel_widgets[0]["channel"]
+    assert field.text() == ""
+    assert window.run_button.isEnabled()
+
+    window._select_step(StepName.SEGMENT)
+    window._editors[StepName.SEGMENT].enable_group.setChecked(True)
+    assert not window.run_button.isEnabled()
+    assert "Segmentation: Choose a target channel" in window.run_button.toolTip()
+
+    field.setText("RFP")
+    field.editingFinished.emit()
+    assert adapter.segmentation_settings().channels[0].channel == "RFP"
+    assert window.run_button.isEnabled()
+
+    field.clear()
+    field.editingFinished.emit()
+    assert not window.run_button.isEnabled()
+    window._editors[StepName.SEGMENT].enable_group.setChecked(False)
+    assert window.run_button.isEnabled()
     window.close()
 
 
@@ -847,10 +941,12 @@ def test_run_button_tracks_missing_enabled_inputs(tmp_path: Path) -> None:
     channel_labels.setText("GFP")
     channel_labels.editingFinished.emit()
     assert window.run_button.isEnabled()
-    assert window.run_button.toolTip() == ""
+    assert "Before continuing:" not in window.run_button.toolTip()
 
-    window._step_items[StepName.REGISTER_CHANNEL].setCheckState(
-        0, Qt.CheckState.Checked)
+    window.adapter.set_runtime_value("unlock_all_tabs", True)
+    window._refresh_phase_access()
+    window._select_step(StepName.REGISTER_CHANNEL)
+    window._editors[StepName.REGISTER_CHANNEL].enable_group.setChecked(True)
     assert not window.run_button.isEnabled()
     assert "reference_channel" in window.run_button.toolTip()
 
@@ -886,7 +982,7 @@ def test_segmentation_tuner_does_not_warn_about_missing_target_channel(
     adapter.set_step_enabled(StepName.SEGMENT, True)
     window = FitsMainWindow(adapter)
     app.processEvents()
-    window.step_tree.setCurrentItem(window._step_items[StepName.SEGMENT])
+    window._select_step(StepName.SEGMENT)
     warnings: list[str] = []
     monkeypatch.setattr(
         QMessageBox, "warning", lambda parent, title, message: warnings.append(message))

@@ -41,12 +41,14 @@ class PipelineWorker(QObject):
                  demo_step_delay: float = 0.0,
                  *,
                  convert_only: bool = False,
+                 force_conversion: bool = False,
                  ) -> None:
         super().__init__()
         self.settings_path = settings_path
         self.log_handler = log_handler
         self.demo_step_delay = demo_step_delay
         self.convert_only = convert_only
+        self.force_conversion = force_conversion
         self.interaction = PipelineInteraction(self.mask_requested.emit,
                                                self.mask_input_complete.emit,
                                                self.mask_expected_count.emit,
@@ -64,6 +66,7 @@ class PipelineWorker(QObject):
                                demo_step_delay=self.demo_step_delay,
                                run_progress=self.progress,
                                convert_only=self.convert_only,
+                               force_conversion=self.force_conversion,
                                terminal_progress=False,)
         except PipelineCancelled:
             self.cancelled.emit()

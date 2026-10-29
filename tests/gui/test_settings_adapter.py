@@ -19,7 +19,7 @@ def test_adapter_updates_and_saves_comment_preserving_copy(tmp_path: Path) -> No
     saved_text = destination.read_text(encoding="utf-8")
     assert "# FITS settings template." in saved_text
     assert "# Internal ordering control; not exposed in the GUI." in saved_text
-    assert "# Segmentation settings are independent for every target channel." in saved_text
+    assert "# Enter a target channel before enabling segmentation." in saved_text
 
     saved = tomllib.loads(saved_text)
     assert saved["run_dir"] == str(tmp_path)
@@ -72,7 +72,7 @@ def test_missing_user_fields_only_checks_enabled_steps() -> None:
     adapter.set_step_enabled(StepName.TRACK, True)
     assert adapter.missing_user_fields() == [
         "Convert: Enter at least one channel label (channel_labels).",
-        "Register channels: Choose a reference channel (reference_channel).",
+        "Channel-shift: Choose a reference channel (reference_channel).",
         "Segmentation: Choose a target channel for every section.",
         "Tracking: Choose at least one channel to track (channel_to_track).",
     ]

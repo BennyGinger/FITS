@@ -13,7 +13,7 @@ from fits_io import FitsIO
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtGui import QColor, QImage, QPainter
-from PySide6.QtWidgets import QApplication, QStyleOptionGraphicsItem
+from PySide6.QtWidgets import QApplication, QMessageBox, QStyleOptionGraphicsItem
 from skimage.draw import disk
 
 from fits.environment.constant import (
@@ -799,6 +799,9 @@ def test_main_window_tracking_viewer_loads_selected_experiment(
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     window = FitsMainWindow(adapter)
     launches = []
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda parent, title, text: messages.append((title, text)))
     class FakeViewer:
         def __init__(self, **options):
             launches.append(options)
@@ -845,6 +848,8 @@ def test_main_window_tracking_viewer_loads_selected_experiment(
         assert window.run_browser.select_path(empty)
         window.tracking_viewer_button.click()
         assert len(launches) == 2
+        assert messages[-1][0] == "No tracking file found"
+        assert "Segmentation" in messages[-1][1]
         assert window.run_browser.select_path(tmp_path)
         window.tracking_viewer_button.click()
         assert launches[-1]["tracking_path"] == edited

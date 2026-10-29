@@ -43,7 +43,7 @@ def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> N
             assert isinstance(button, QPushButton)
             labels.append(button.text())
         assert labels == [
-            "Tracking Viewer", "Channel Labels", "Full Report"]
+            "Tracking Viewer", "Edit Channel Labels", "Full Report"]
         window.run_dir_edit.setText(str(tmp_path))
         assert window.channel_labels_button.isEnabled()
         window.channel_labels_button.click()

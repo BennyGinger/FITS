@@ -1,6 +1,8 @@
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
+
 from fits.environment.constant import WORKFLOW_ORDER
 from fits.settings.loader import load_settings
 from fits.workflows.definitions.registry import REGISTRY
@@ -13,6 +15,13 @@ TEMPLATE_PATH = (
     / "settings"
     / "template_settings.toml"
 )
+
+
+@pytest.mark.parametrize("filename", ["template_settings.toml", "user_settings.toml"])
+def test_packaged_settings_do_not_assume_segmentation_channel(filename) -> None:
+    config = load_settings(TEMPLATE_PATH.with_name(filename))
+    assert config["segment"]["channels"]
+    assert all(entry["channel"] == "" for entry in config["segment"]["channels"])
 
 
 def test_template_contains_and_validates_every_registered_step() -> None:

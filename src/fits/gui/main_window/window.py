@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtCore import QMimeData, Qt, QThread, QTimer, Slot
-from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QPalette
-from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter, QStackedWidget, QTabBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent
+from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 
 from fits.environment import constant as cst
 from fits.environment.paths import reports_dir
-from fits.workflows.runtime.progress import RunProgress, StageStatus
+from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
 from fits.workflows.runtime.interactive.messages import TrackEditRequest, TrackEditOutcome
 from fits.gui.settings import STEP_LAYOUTS, RuntimeSettingsEditor, SettingsAdapter, StepSettingsEditor
 from fits.gui.main_window.report_dialog import ReportDialog
@@ -17,7 +18,8 @@ from fits.gui.main_window.run_browser import RunDirectoryBrowser
 from fits.gui.main_window.logging import LogEmitter, QtLogHandler
 from fits.gui.main_window.pipeline_worker import PipelineWorker
 from fits.gui.main_window.progress_display import PipelineProgressWidget
-from fits.settings.models import SegmentSettings
+from fits.settings.models import BGSubSettings, RegisterChannelSettings, RegisterTimeSettings, SegmentSettings
+from fits.tasks.registration.registration_resolver import resolve_registration_plan
 from fits.settings.loader import run_settings_path
 
 
@@ -51,7 +53,12 @@ class FitsMainWindow(QMainWindow):
         self._thread: QThread | None = None
         self._worker: PipelineWorker | None = None
         self._running = False
-        self._step_items: dict[cst.StepName, QTreeWidgetItem] = {}
+        self._current_step = cst.StepName.CONVERT
+        self._conversion_root: str | None = None
+        self._converted_settings: dict | None = None
+        self._pending_conversion: dict | None = None
+        self._advance_after_conversion = False
+        self._conversion_run = False
         self._editors: dict[cst.StepName, StepSettingsEditor] = {}
         self.runtime_editor: RuntimeSettingsEditor | None = None
         self._segmentation_tuner = None
@@ -73,17 +80,11 @@ class FitsMainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         central = QWidget()
-        palette = central.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(40, 40, 40))
-        palette.setColor(QPalette.ColorRole.Base, QColor(30, 30, 30))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(52, 52, 52))
-        central.setPalette(palette)
         central.setAutoFillBackground(True)
         outer = QVBoxLayout(central)
 
         top_splitter = QSplitter(Qt.Orientation.Horizontal)
-        top_splitter.setMinimumHeight(280)
-        top_splitter.setMaximumHeight(340)
+        top_splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         identity_panel = QWidget()
         identity = QVBoxLayout(identity_panel)
@@ -131,23 +132,25 @@ class FitsMainWindow(QMainWindow):
         self.run_browser = RunDirectoryBrowser()
         self.run_browser.path_activated.connect(self._open_selected_report)
         self.tracking_viewer_button = QPushButton("Tracking Viewer")
-        self.tracking_viewer_button.setEnabled(False)
         self.tracking_viewer_button.setToolTip(
-            "Open tracking for the selected experiment folder or tracking file, "
-            "or the first tracking result in the run directory when nothing is selected.")
+            "Inspect tracked cells, masks and trajectories in the selected experiment, "
+            "or the first tracking result in the run. If none exist, show how to create them.")
         self.tracking_viewer_button.setStyleSheet(
             "QPushButton { background-color: #d97706; color: white; font-weight: bold; } "
             "QPushButton:disabled { background-color: #6b4b2a; color: #aaa; }")
         self.tracking_viewer_button.clicked.connect(
             lambda: self._open_tracking_viewer())
         self.run_browser.selection_layout.addWidget(self.tracking_viewer_button)
-        self.channel_labels_button = QPushButton("Channel Labels")
+        self.channel_labels_button = QPushButton("Edit Channel Labels")
         self.channel_labels_button.setToolTip(
-            "Inspect and rename channel labels throughout this run directory.")
+            "Inspect and rename channel labels across this run's converted images, "
+            "masks, measurement tables and settings.")
         self.channel_labels_button.clicked.connect(self._open_channel_labels)
         self.run_browser.selection_layout.addWidget(self.channel_labels_button)
         self.report_button = QPushButton("Full Report")
-        self.report_button.setEnabled(False)
+        self.report_button.setToolTip(
+            "Open the latest run report with completed, skipped and failed work. "
+            "If no report exists, show how to create one.")
         self.report_button.clicked.connect(self._open_latest_report)
         self.run_browser.selection_layout.addWidget(self.report_button)
         top_splitter.addWidget(self.run_browser)
@@ -156,33 +159,57 @@ class FitsMainWindow(QMainWindow):
         top_splitter.setSizes([470, 690])
         outer.addWidget(top_splitter)
 
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.step_tree = QTreeWidget()
-        self.step_tree.setHeaderLabel("Pipeline steps")
-        self.step_tree.setMinimumWidth(230)
-        self.step_tree.currentItemChanged.connect(self._selected_step_changed)
-        self.step_tree.itemChanged.connect(self._step_enabled_changed)
-        main_splitter.addWidget(self.step_tree)
-
         settings_panel = QWidget()
         settings_layout = QVBoxLayout(settings_panel)
         settings_layout.setContentsMargins(0, 0, 0, 0)
         settings_layout.setSpacing(6)
-        self.phase_tabs = QTabBar()
-        self.phase_tabs.setExpanding(True)
-        self.phase_tabs.setDrawBase(True)
-        for title, _ in _PHASE_STEPS:
-            self.phase_tabs.addTab(title)
+        self.page_title = QLabel("1 · Convert your images")
+        self.page_title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 4px 0;")
+        settings_layout.addWidget(self.page_title)
+        self.workflow_pages = QStackedWidget()
+        self.convert_tabs = QTabWidget()
+        self.workflow_pages.addWidget(self.convert_tabs)
+        self.phase_tabs = QTabWidget()
+        main_tab_style = (
+            "QTabBar::tab { font-size: 17px; font-weight: bold; padding: 7px 26px; "
+            "color: #cedbe7; background: #26384b; border: 1px solid #476580; "
+            "border-top-left-radius: 12px; border-top-right-radius: 12px; margin-right: 6px; }"
+            "QTabBar::tab:selected { color: white; background: #494949; "
+            "border-color: #6fc5ff; border-bottom-color: #494949; }"
+            "QTabBar::tab:hover:!selected { background: #334e67; }")
+        for main_tabs in (self.convert_tabs, self.phase_tabs):
+            main_tabs.setObjectName("mainWorkflowTabs")
+            main_tabs.setStyleSheet(
+                "QTabWidget#mainWorkflowTabs::pane { border: 1px solid #476580; "
+                "background: #494949; top: -1px; }")
+            main_tabs.tabBar().setStyleSheet(main_tab_style)
+        self._step_tabs: dict[int, QTabWidget] = {}
+        for phase, (title, _) in enumerate(_PHASE_STEPS[1:], start=1):
+            tabs = QTabWidget()
+            tabs.setObjectName("stepSettingsTabs")
+            tabs.setStyleSheet(
+                "QTabWidget#stepSettingsTabs::pane { border: 1px solid #626262; "
+                "background: #383838; top: -1px; }")
+            tabs.tabBar().setStyleSheet(
+                "QTabBar::tab { font-size: 12px; font-weight: normal; padding: 5px 16px; "
+                "color: #bfc5cc; background: #292929; border: 1px solid #626262; "
+                "border-top-left-radius: 8px; border-top-right-radius: 8px; margin-right: 5px; }"
+                "QTabBar::tab:selected { color: #a8dcff; background: #383838; "
+                "border-color: #82b4d6; border-bottom-color: #383838; }"
+                "QTabBar::tab:hover:!selected { background: #323232; }")
+            tabs.currentChanged.connect(lambda index, p=phase: self._substep_selected(p, index))
+            self._step_tabs[phase] = tabs
+            phase_page = QWidget()
+            phase_layout = QVBoxLayout(phase_page)
+            phase_layout.setContentsMargins(10, 12, 10, 10)
+            phase_layout.addWidget(tabs)
+            self.phase_tabs.addTab(phase_page, title)
         self.phase_tabs.currentChanged.connect(self._phase_selected)
-        settings_layout.addWidget(self.phase_tabs)
-        self.settings_stack = QStackedWidget()
-        settings_layout.addWidget(self.settings_stack, 1)
-        main_splitter.addWidget(settings_panel)
-        main_splitter.setStretchFactor(1, 1)
-        main_splitter.setSizes([230, 900])
+        self.workflow_pages.addWidget(self.phase_tabs)
+        settings_layout.addWidget(self.workflow_pages, 1)
 
         vertical_splitter = QSplitter(Qt.Orientation.Vertical)
-        vertical_splitter.addWidget(main_splitter)
+        vertical_splitter.addWidget(settings_panel)
 
         console_container = QWidget()
         console_layout = QVBoxLayout(console_container)
@@ -211,10 +238,19 @@ class FitsMainWindow(QMainWindow):
         self.run_button = QPushButton("Run pipeline")
         self.load_button.clicked.connect(self._load_settings)
         self.save_button.clicked.connect(self._save_settings)
-        self.run_button.clicked.connect(self._run_pipeline)
+        self.run_button.clicked.connect(self._primary_action)
         buttons.addWidget(self.load_button)
         buttons.addWidget(self.save_button)
         buttons.addStretch()
+        self.navigation_status = QLabel()
+        self.navigation_status.setStyleSheet("color: #b8b8b8;")
+        buttons.addWidget(self.navigation_status)
+        self.back_button = QPushButton("Back")
+        self.back_button.setToolTip(
+            "Return to Convert settings without running the pipeline. "
+            "Your current processing settings are kept.")
+        self.back_button.clicked.connect(self._back_to_convert)
+        buttons.addWidget(self.back_button)
         self.activity_indicator = QProgressBar()
         self.activity_indicator.setFixedSize(160, 10)
         self.activity_indicator.setTextVisible(False)
@@ -238,89 +274,101 @@ class FitsMainWindow(QMainWindow):
         self.run_browser.set_root(self.adapter.run_dir)
         self._refresh_report_button()
 
-        self.step_tree.blockSignals(True)
-        self.step_tree.clear()
-        self._step_items.clear()
+        previous_step = self._current_step
+        self.convert_tabs.clear()
+        for tabs in self._step_tabs.values():
+            tabs.clear()
         if self.runtime_editor is not None:
             self.runtime_host_layout.removeWidget(self.runtime_editor)
             self.runtime_editor.deleteLater()
         for editor in self._editors.values():
-            self.settings_stack.removeWidget(editor)
             editor.deleteLater()
         self._editors.clear()
+        self._registration_tune_buttons.clear()
 
         self.runtime_editor = RuntimeSettingsEditor(self.adapter)
         self.runtime_editor.value_changed.connect(self._refresh_phase_access)
         self.runtime_host_layout.addWidget(self.runtime_editor)
 
         for step in (step for _, steps in _PHASE_STEPS for step in steps):
-            item = QTreeWidgetItem([STEP_LAYOUTS[step].title])
-            item.setData(0, Qt.ItemDataRole.UserRole, step.value)
-            item.setFlags(
-                item.flags()
-                | Qt.ItemFlag.ItemIsUserCheckable
-                | Qt.ItemFlag.ItemIsSelectable
-            )
-            item.setCheckState(
-                0,
-                Qt.CheckState.Checked
-                if self.adapter.step_enabled(step)
-                else Qt.CheckState.Unchecked,
-            )
-            self.step_tree.addTopLevelItem(item)
-            self._step_items[step] = item
-
             editor = StepSettingsEditor(self.adapter, step)
             editor.value_changed.connect(self._update_run_button_text)
+            editor.enabled_changed.connect(self._refresh_phase_markers)
             if step in (cst.StepName.REGISTER_TIME, cst.StepName.REGISTER_CHANNEL):
                 tune_row = QWidget()
                 tune_layout = QHBoxLayout(tune_row)
                 tune_layout.setContentsMargins(0, 0, 0, 0)
-                description = QLabel("Preview registration and save settings with this experiment's transforms.")
+                operation = "frame-shift registration" if step == cst.StepName.REGISTER_TIME else "channel-shift registration"
+                preview_description = f"Preview {operation} and save this experiment's settings and transforms."
+                description = QLabel(preview_description)
                 description.setWordWrap(True)
+                description.setToolTip(preview_description)
                 tune_layout.addWidget(description, 1)
-                tune_button = QPushButton("Tune registration…")
+                tune_button = QPushButton("Preview")
+                tune_button.setToolTip(
+                    f"Preview {operation}. Requires a converted fits_array.tif image.")
                 mode = "time" if step == cst.StepName.REGISTER_TIME else "channel"
                 tune_button.clicked.connect(lambda checked=False, selected=mode: self._open_registration_tuner(selected))
                 tune_layout.addWidget(tune_button)
                 self._registration_tune_buttons[step] = tune_button
                 editor.outer_layout.insertWidget(1, tune_row)
             if step == cst.StepName.BG_SUB:
-                self.bgtune_button = QPushButton("Tune background subtraction…")
-                self.bgtune_button.setToolTip("Preview selected image planes and compare intensities before a batch run.")
+                tune_row = QWidget()
+                tune_layout = QHBoxLayout(tune_row)
+                tune_layout.setContentsMargins(0, 0, 0, 0)
+                tune_layout.setSpacing(16)
+                self.bgtune_button = QPushButton("Preview")
+                self.bgtune_button.setToolTip(
+                    "Preview background subtraction on selected image planes and compare intensities. "
+                    "Requires a converted fits_array.tif image.")
                 self.bgtune_button.clicked.connect(self._open_background_tuner)
-                editor.outer_layout.insertWidget(1, self.bgtune_button)
+                tune_description = QLabel(
+                    "Preview background subtraction on an image and compare intensities. "
+                    "Save and close copies your changes back here.")
+                tune_description.setWordWrap(True)
+                tune_description.setToolTip(tune_description.text())
+                tune_description.setStyleSheet("color: #b8b8b8;")
+                tune_layout.addWidget(tune_description, 1)
+                tune_layout.addWidget(
+                    self.bgtune_button, 0, Qt.AlignmentFlag.AlignVCenter)
+                editor.outer_layout.insertWidget(1, tune_row)
             if step == cst.StepName.SEGMENT:
                 tune_row = QWidget()
                 tune_layout = QHBoxLayout(tune_row)
                 tune_layout.setContentsMargins(0, 0, 0, 0)
                 tune_layout.setSpacing(16)
-                self.segtune_button = QPushButton("Tune segmentation…")
+                self.segtune_button = QPushButton("Preview")
                 self.segtune_button.setToolTip(
+                    "Preview segmentation and adjust Cellpose settings. "
                     "Requires a converted fits_array.tif image in the run directory.")
                 self.segtune_button.clicked.connect(self._open_segmentation_tuner)
                 tune_description = QLabel(
                     "Preview segmentation on an image and adjust Cellpose settings. "
                     "Apply and close copies your changes back here.")
                 tune_description.setWordWrap(True)
+                tune_description.setToolTip(tune_description.text())
                 tune_description.setStyleSheet("color: #b8b8b8;")
                 tune_layout.addWidget(tune_description, 1)
                 tune_layout.addWidget(
                     self.segtune_button, 0, Qt.AlignmentFlag.AlignVCenter)
                 editor.outer_layout.insertWidget(1, tune_row)
             editor.set_editable(self.adapter.step_enabled(step))
-            self.settings_stack.addWidget(editor)
+            tabs = self.convert_tabs if step == cst.StepName.CONVERT else self._step_tabs[_STEP_PHASE[step]]
+            tabs.addTab(editor, STEP_LAYOUTS[step].title)
             self._editors[step] = editor
 
         self._editors[cst.StepName.SEGMENT].value_changed.connect(
             self._editors[cst.StepName.TRACK].refresh_tracking_channels)
 
-        self.step_tree.blockSignals(False)
-        if self.step_tree.topLevelItemCount():
-            first_item = self.step_tree.topLevelItem(0)
-            if first_item is not None:
-                self.step_tree.setCurrentItem(first_item)
         self._refresh_phase_access()
+        root = self._conversion_signature()["run_dir"]
+        if root != self._conversion_root:
+            self._conversion_root = root
+            self._converted_settings = self._conversion_signature() if self._prepared_available else None
+            previous_step = cst.StepName.REGISTER_TIME if self._prepared_available else cst.StepName.CONVERT
+        elif previous_step != cst.StepName.CONVERT and not self._conversion_is_current():
+            previous_step = cst.StepName.CONVERT
+        self._show_step(previous_step)
         self._schedule_settings_population_finish()
 
     def _begin_settings_population(self) -> None:
@@ -342,7 +390,6 @@ class FitsMainWindow(QMainWindow):
     def _open_background_tuner(self) -> None:
         """Open background tuning with GUI settings and a fixed run directory."""
         from fits.gui.viewer.background import BackgroundTunerWindow
-        from fits.settings.models import BGSubSettings
 
         if self._background_tuner is not None:
             self._background_tuner.show()
@@ -365,16 +412,39 @@ class FitsMainWindow(QMainWindow):
         self._background_tuner = tuner
         tuner.show()
 
-    @Slot(object)
-    def _apply_background_settings(self, settings) -> None:
-        """Transfer tuning parameters while preserving step-enabled and runtime states."""
+    def _tuner_expanded_sections(
+        self, step: cst.StepName,
+        settings: BGSubSettings | RegisterTimeSettings | RegisterChannelSettings,
+    ) -> set[cst.StepName]:
+        """Preserve open sections and reveal only changed advanced tuner values."""
         expanded = {name for name, editor in self._editors.items() if editor.advanced_settings_visible}
+        current = type(settings).model_validate(self.adapter.as_mapping()[step]["params"])
+        before, after = current.to_payload_dict(), settings.to_payload_dict()
+        advanced = set(STEP_LAYOUTS[step].advanced)
+        if isinstance(settings, (RegisterTimeSettings, RegisterChannelSettings)):
+            assert isinstance(current, (RegisterTimeSettings, RegisterChannelSettings))
+            previous = resolve_registration_plan(current.context, current.backend, current.method)
+            effective = resolve_registration_plan(settings.context, settings.backend, settings.method)
+            preset = resolve_registration_plan(settings.context)
+            for field in ("backend", "method"):
+                before[field] = getattr(previous, field)
+                after[field] = getattr(effective, field)
+            if effective == preset:
+                advanced.difference_update(("backend", "method"))
+        if any(before.get(field) != after[field] for field in advanced if field in after):
+            expanded.add(step)
+        return expanded
+
+    @Slot(object)
+    def _apply_background_settings(self, settings: BGSubSettings) -> None:
+        """Transfer tuning parameters while preserving step-enabled and runtime states."""
+        expanded = self._tuner_expanded_sections(cst.StepName.BG_SUB, settings)
         for key, value in {**settings.to_payload_dict(), "overwrite": settings.overwrite}.items():
             self.adapter.set_field_value(cst.StepName.BG_SUB, key, "None" if value is None else value)
         self._populate_from_adapter()
-        for name in expanded | {cst.StepName.BG_SUB}:
+        for name in expanded:
             self._editors[name].show_advanced_settings()
-        self.step_tree.setCurrentItem(self._step_items[cst.StepName.BG_SUB])
+        self._show_step(cst.StepName.BG_SUB)
         self._append_log("Applied background-subtraction settings from the tuner.")
 
     @Slot()
@@ -402,7 +472,6 @@ class FitsMainWindow(QMainWindow):
 
     def _open_registration_tuner(self, mode: str) -> None:
         from fits.gui.viewer.registration import RegistrationTunerWindow
-        from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
         if self._registration_tuner is not None:
             self._registration_tuner.tabs.setCurrentIndex(0 if mode == "time" else 1)
             self._registration_tuner.show()
@@ -430,113 +499,94 @@ class FitsMainWindow(QMainWindow):
         tuner.show()
 
     @Slot(str, object)
-    def _apply_registration_settings(self, mode: str, settings) -> None:
-        """Apply accepted tuner settings and expose their advanced controls."""
+    def _apply_registration_settings(
+        self, mode: str, settings: RegisterTimeSettings | RegisterChannelSettings,
+    ) -> None:
+        """Apply registration settings, revealing changed manual overrides only."""
         step = cst.StepName.REGISTER_TIME if mode == "time" else cst.StepName.REGISTER_CHANNEL
-        expanded = {name for name, editor in self._editors.items() if editor.advanced_settings_visible}
+        expanded = self._tuner_expanded_sections(step, settings)
         for key, value in {**settings.to_payload_dict(), "overwrite": settings.overwrite}.items():
             self.adapter.set_field_value(step, key, "None" if value is None else value)
         self._populate_from_adapter()
-        for name in expanded | {step}:
+        for name in expanded:
             self._editors[name].show_advanced_settings()
-        self.step_tree.setCurrentItem(self._step_items[step])
+        self._show_step(step)
         self._append_log(f"Applied {mode} registration settings from the tuner.")
 
     @Slot(object)
     def _apply_segmentation_settings(self, settings: SegmentSettings) -> None:
+        """Apply channel parameters without changing advanced-section visibility."""
+        expanded = {name for name, editor in self._editors.items() if editor.advanced_settings_visible}
         self.adapter.set_segment_channels(
             [entry.to_payload_dict() for entry in settings.channels])
         self._populate_from_adapter()
-        self.step_tree.setCurrentItem(self._step_items[cst.StepName.SEGMENT])
+        for name in expanded:
+            self._editors[name].show_advanced_settings()
+        self._show_step(cst.StepName.SEGMENT)
         self._append_log("Applied settings from the segmentation tuner.")
 
-    def _step_from_item(self, item: QTreeWidgetItem) -> cst.StepName:
-        return cst.StepName(item.data(0, Qt.ItemDataRole.UserRole))
+    def _show_step(self, step: cst.StepName) -> None:
+        """Display one step without triggering navigation validation."""
+        if step != cst.StepName.CONVERT and not self._phases_unlocked:
+            step = cst.StepName.CONVERT
+        self._current_step = step
+        converting = step == cst.StepName.CONVERT
+        self.workflow_pages.setCurrentIndex(0 if converting else 1)
+        self.page_title.setText("1 · Convert your images" if converting else "2 · Process and analyse")
+        self.back_button.setVisible(not converting)
+        if not converting:
+            phase = _STEP_PHASE[step]
+            self.phase_tabs.blockSignals(True)
+            self.phase_tabs.setCurrentIndex(phase - 1)
+            self.phase_tabs.blockSignals(False)
+            tabs = self._step_tabs[phase]
+            tabs.blockSignals(True)
+            tabs.setCurrentIndex(_PHASE_STEPS[phase][1].index(step))
+            tabs.blockSignals(False)
+        self._update_run_button_text()
 
-    @Slot(QTreeWidgetItem, QTreeWidgetItem)
-    def _selected_step_changed(self,
-                                current: QTreeWidgetItem | None,
-                                previous: QTreeWidgetItem | None,
-                                ) -> None:
-        if self._populating_settings:
-            pass
-        elif previous is not None and previous is not current:
-            if self._warn_about_missing_user_fields(self._step_from_item(previous)):
-                self._restore_step_selection(previous)
-                QTimer.singleShot(
-                    0, lambda item=previous: self._restore_step_selection(item))
-                return
-        if current is None:
-            return
-        step = self._step_from_item(current)
-        phase = _STEP_PHASE[step]
-        if not self.phase_tabs.isTabEnabled(phase):
-            return
-        self.phase_tabs.blockSignals(True)
-        self.phase_tabs.setCurrentIndex(phase)
-        self.phase_tabs.blockSignals(False)
-        self._show_phase_steps(phase)
-        self.settings_stack.setCurrentWidget(self._editors[step])
-
-    def _restore_step_selection(self, item: QTreeWidgetItem) -> None:
-        """Keep tree selection and the displayed editor on the rejected step."""
-        if item.treeWidget() is not self.step_tree:
-            return
-        step = self._step_from_item(item)
-        phase = _STEP_PHASE[step]
-        self.step_tree.blockSignals(True)
-        self.step_tree.clearSelection()
-        self.step_tree.setCurrentItem(item)
-        item.setSelected(True)
-        self.step_tree.blockSignals(False)
-        self.phase_tabs.blockSignals(True)
-        self.phase_tabs.setCurrentIndex(phase)
-        self.phase_tabs.blockSignals(False)
-        self._show_phase_steps(phase)
-        self.settings_stack.setCurrentWidget(self._editors[step])
-
-    def _warn_about_missing_user_fields(self, step: cst.StepName) -> bool:
-        errors = self.adapter.missing_user_fields(step)
-        if errors:
-            QMessageBox.warning(self, "Missing required setting", "\n".join(errors))
-            return True
-        return False
-
-    @Slot(int)
-    def _phase_selected(self, phase: int) -> None:
-        if phase < 0 or not self.phase_tabs.isTabEnabled(phase):
-            return
-        steps = _PHASE_STEPS[phase][1]
-        current = self.step_tree.currentItem()
-        if current is not None and self._step_from_item(current) in steps:
-            self._show_phase_steps(phase)
-            return
-        if current is not None and not self._populating_settings:
-            previous_step = self._step_from_item(current)
-            previous_phase = _STEP_PHASE[previous_step]
-            errors = [error
-                        for step in _PHASE_STEPS[previous_phase][1]
-                        for error in self.adapter.missing_user_fields(step)]
+    def _select_step(self, step: cst.StepName) -> None:
+        """Navigate between step subtabs, retaining required-field warnings."""
+        if not self._populating_settings and step != self._current_step:
+            previous_phase = _STEP_PHASE[self._current_step]
+            steps = (_PHASE_STEPS[previous_phase][1]
+                     if _STEP_PHASE[step] != previous_phase else (self._current_step,))
+            errors = [error for previous in steps
+                      for error in self.adapter.missing_user_fields(previous)]
             if errors:
                 QMessageBox.warning(self, "Missing required setting", "\n".join(errors))
-                self.phase_tabs.blockSignals(True)
-                self.phase_tabs.setCurrentIndex(previous_phase)
-                self.phase_tabs.blockSignals(False)
+                self._show_step(self._current_step)
                 return
-        self.step_tree.setCurrentItem(self._step_items[steps[0]])
-        self._show_phase_steps(phase)
+        self._show_step(step)
 
-    def _show_phase_steps(self, phase: int) -> None:
-        visible_steps = set(_PHASE_STEPS[phase][1])
-        for step, item in self._step_items.items():
-            item.setHidden(step not in visible_steps)
+    def _substep_selected(self, phase: int, index: int) -> None:
+        if not self._populating_settings and index >= 0:
+            self._select_step(_PHASE_STEPS[phase][1][index])
+
+    @Slot(int)
+    def _phase_selected(self, index: int) -> None:
+        if self._populating_settings or index < 0:
+            return
+        phase = index + 1
+        selected = self._step_tabs[phase].currentIndex()
+        self._select_step(_PHASE_STEPS[phase][1][max(0, selected)])
+
+    @Slot()
+    def _back_to_convert(self) -> None:
+        if not self._running and self._thread is None:
+            self._show_step(cst.StepName.CONVERT)
 
     def _refresh_phase_markers(self) -> None:
-        for phase, (title, steps) in enumerate(_PHASE_STEPS):
+        for phase, (title, steps) in enumerate(_PHASE_STEPS[1:], start=1):
             active = any(self.adapter.step_enabled(step) for step in steps)
-            self.phase_tabs.setTabText(phase, f"{title} ✓" if active else title)
-            self.phase_tabs.setTabToolTip(phase,
-                "At least one step is enabled." if active else "No steps are enabled.",)
+            self.phase_tabs.setTabText(phase - 1, title)
+            self.phase_tabs.setTabToolTip(phase - 1,
+                "At least one step is enabled." if active else "No steps are enabled.")
+            for index, step in enumerate(steps):
+                enabled = self.adapter.step_enabled(step)
+                self._step_tabs[phase].setTabText(index, STEP_LAYOUTS[step].title)
+                self._step_tabs[phase].setTabToolTip(index,
+                    "Enabled" if enabled else "Use Enable in this subtab to include this step.")
 
     def _refresh_phase_access(self) -> None:
         root = Path(self.adapter.run_dir).expanduser() if self.adapter.run_dir else None
@@ -546,57 +596,56 @@ class FitsMainWindow(QMainWindow):
                 prepared = next(root.rglob("fits_array.tif"), None) is not None
             except OSError:
                 prepared = False
-        unlocked = prepared or bool(self.adapter.runtime_value("unlock_all_tabs"))
-        settings_available = unlocked or self._running
-        selected_phase = self.phase_tabs.currentIndex()
-        self.phase_tabs.blockSignals(True)
-        tree_signals_blocked = self.step_tree.blockSignals(True)
-        for phase, (_, steps) in enumerate(_PHASE_STEPS):
-            available = phase == 0 or settings_available
-            self.phase_tabs.setTabEnabled(phase, available)
-            for step in steps:
-                item = self._step_items.get(step)
-                editor = self._editors.get(step)
-                if item is not None:
-                    item.setDisabled(not available)
-                if editor is not None:
-                    editor.setEnabled(available)
-        self.step_tree.blockSignals(tree_signals_blocked)
-        if settings_available and selected_phase >= 0:
-            self.phase_tabs.setCurrentIndex(selected_phase)
-        else:
-            self.phase_tabs.setCurrentIndex(0)
-        self.phase_tabs.blockSignals(False)
         self._prepared_available = prepared
-        self._phases_unlocked = unlocked
+        self._phases_unlocked = prepared or bool(self.adapter.runtime_value("unlock_all_tabs"))
+        for step, editor in self._editors.items():
+            editor.setEnabled(step == cst.StepName.CONVERT or self._phases_unlocked)
         self._refresh_phase_markers()
-        self._show_phase_steps(self.phase_tabs.currentIndex())
         if hasattr(self, "bgtune_button"):
             self.bgtune_button.setEnabled(prepared and not self._running)
         if hasattr(self, "segtune_button"):
-            self.segtune_button.setEnabled(prepared)
+            self.segtune_button.setEnabled(prepared and not self._running)
         for button in self._registration_tune_buttons.values():
             button.setEnabled(prepared and not self._running)
         self._refresh_tracking_viewer_button()
         self.channel_labels_button.setEnabled(
-            not self._running and bool(self.run_dir_edit.text().strip())
-            and Path(self.run_dir_edit.text().strip()).expanduser().is_dir())
+            not self._running and root is not None and root.is_dir())
+        if not self._phases_unlocked and self._current_step != cst.StepName.CONVERT:
+            self._show_step(cst.StepName.CONVERT)
         self._update_run_button_text()
-        current = self.step_tree.currentItem()
-        if current is not None and self._step_from_item(current) != cst.StepName.CONVERT and not settings_available:
-            self.step_tree.setCurrentItem(self._step_items[cst.StepName.CONVERT])
 
-    @Slot(QTreeWidgetItem, int)
-    def _step_enabled_changed(self, item: QTreeWidgetItem, column: int) -> None:
-        del column
-        step = self._step_from_item(item)
-        enabled = item.checkState(0) == Qt.CheckState.Checked
-        self.adapter.set_step_enabled(step, enabled)
-        self._refresh_phase_markers()
-        self._editors[step].set_editable(enabled)
-        self._update_run_button_text()
-        self.step_tree.setCurrentItem(item)
-        self._selected_step_changed(item, None)
+    def _conversion_signature(self) -> dict:
+        root = self.adapter.run_dir.strip()
+        return {"run_dir": str(Path(root).expanduser().resolve()) if root else "",
+                "params": deepcopy(self.adapter.as_mapping()["convert"]["params"])}
+
+    def _conversion_is_current(self) -> bool:
+        return self._prepared_available and self._converted_settings == self._conversion_signature()
+
+    @Slot()
+    def _primary_action(self) -> None:
+        if self._current_step == cst.StepName.CONVERT:
+            self._next_from_convert()
+        else:
+            self._run_pipeline()
+
+    @Slot()
+    def _next_from_convert(self) -> None:
+        if self._running or self._thread is not None:
+            return
+        self._sync_identity()
+        self._refresh_phase_access()
+        if self._conversion_is_current():
+            self._show_step(cst.StepName.REGISTER_TIME)
+            return
+        errors = self.adapter.validate_for_run((cst.StepName.CONVERT,))
+        if errors:
+            QMessageBox.warning(self, "Cannot convert images", "\n".join(errors))
+            return
+        if not self.adapter.step_enabled(cst.StepName.CONVERT):
+            QMessageBox.warning(self, "Conversion required", "Enable Convert before continuing.")
+            return
+        self._launch_pipeline(convert_only=True)
 
     @Slot()
     def _browse_run_dir(self) -> None:
@@ -712,6 +761,8 @@ class FitsMainWindow(QMainWindow):
             QMessageBox.critical(self, "Cannot load settings", str(error))
             self._schedule_settings_population_finish()
             return
+        if run_dir is not None:
+            self._conversion_root = None
         self._populate_from_adapter()
         self._append_log(f"Loaded settings from {path}")
 
@@ -738,24 +789,30 @@ class FitsMainWindow(QMainWindow):
 
     @Slot()
     def _run_pipeline(self) -> None:
+        if self._running or self._thread is not None:
+            return
+        self._sync_identity()
+        errors = self.adapter.validate_for_run()
+        if not self._phases_unlocked:
+            errors.append("Convert your images with Next before running the pipeline.")
+        if errors:
+            QMessageBox.warning(self, "Cannot run FITS", "\n".join(errors))
+            return
+        self._launch_pipeline(convert_only=False)
+
+    def _launch_pipeline(self, *, convert_only: bool) -> None:
         label_window = self._channel_labels_window
         if (label_window is not None and label_window._job is not None
                 and label_window._job.isRunning()):
             return
         self._sync_identity()
-        errors = self.adapter.validate_for_run()
-        if not self._prepared_available and not self.adapter.step_enabled(cst.StepName.CONVERT):
-            convert_error = self.adapter.validate_steps().get(cst.StepName.CONVERT)
-            if convert_error is not None:
-                errors.append(f"{STEP_LAYOUTS[cst.StepName.CONVERT].title}: "
-                                f"{convert_error.errors()[0]['msg']}")
-        if errors:
-            QMessageBox.warning(self, "Cannot run FITS", "\n".join(errors))
-            return
         settings_path = self._save_settings()
         if settings_path is None:
             return
         self._mask_expected_count = None
+        self._conversion_run = convert_only
+        self._advance_after_conversion = False
+        self._pending_conversion = self._conversion_signature() if convert_only else None
 
         emitter = LogEmitter(self)
         emitter.message.connect(self._append_log)
@@ -766,7 +823,8 @@ class FitsMainWindow(QMainWindow):
         worker = PipelineWorker(settings_path,
                                 handler,
                                 self.demo_step_delay,
-                                convert_only=not self._phases_unlocked,)
+                                convert_only=convert_only,
+                                force_conversion=convert_only and self._prepared_available,)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.mask_requested.connect(self._enqueue_mask_request)
@@ -891,6 +949,15 @@ class FitsMainWindow(QMainWindow):
         self._append_log("FITS pipeline completed with errors." if had_errors
                          else "FITS pipeline completed successfully.")
         self._refresh_phase_access()
+        converted = self._run_progress is not None and any(
+            experiment.stage(WorkflowStage.CONVERT) is not None
+            and experiment.stages[WorkflowStage.CONVERT].status == StageStatus.COMPLETED
+            for experiment in self._run_progress.snapshot())
+        if self._conversion_run and converted and not had_errors and self._prepared_available:
+            self._converted_settings = self._pending_conversion
+            self._advance_after_conversion = True
+        elif self._conversion_run:
+            self._append_log("Conversion is incomplete. Review the log before continuing.")
         self._refresh_report_button()
         report = self._latest_report()
         if report is not None:
@@ -922,9 +989,17 @@ class FitsMainWindow(QMainWindow):
     @Slot()
     def _thread_finished(self) -> None:
         thread = self._thread
+        if thread is not None:
+            # finished can arrive before Qt's native worker cleanup is done.
+            thread.wait()
         self._worker = None
         self._thread = None
         self._set_running(False)
+        if self._advance_after_conversion and self._conversion_is_current():
+            self._show_step(cst.StepName.REGISTER_TIME)
+        self._advance_after_conversion = False
+        self._conversion_run = False
+        self._pending_conversion = None
         if thread is not None:
             thread.deleteLater()
 
@@ -947,11 +1022,12 @@ class FitsMainWindow(QMainWindow):
         self.browse_button.setEnabled(not running)
         self.run_dir_edit.setEnabled(not running)
         self.user_name_edit.setEnabled(not running)
+        self.back_button.setEnabled(not running)
         if running:
-            self.run_button.setText("Running…")
+            self.run_button.setText("Converting…" if self._conversion_run else "Running…")
         else:
             self._update_run_button_text()
-        self.report_button.setEnabled(not running and self._latest_report() is not None)
+        self._refresh_report_button()
         self._refresh_phase_access()
 
     def _set_activity_active(self, active: bool) -> None:
@@ -965,14 +1041,26 @@ class FitsMainWindow(QMainWindow):
     def _update_run_button_text(self) -> None:
         if self._running or self._thread is not None:
             return
-        self.run_button.setText(
-            "Run pipeline" if self._phases_unlocked else "Convert experiment(s)")
-        missing = self.adapter.missing_user_fields()
+        converting = self._current_step == cst.StepName.CONVERT
+        self.run_button.setText("Next" if converting else "Run pipeline")
+        steps = (cst.StepName.CONVERT,) if converting else cst.WORKFLOW_ORDER
+        missing = [error for step in steps for error in self.adapter.missing_user_fields(step)]
+        if converting and not self.adapter.step_enabled(cst.StepName.CONVERT) and not self._conversion_is_current():
+            missing.append("Enable Convert before continuing.")
         label_job = (self._channel_labels_window is not None
                      and self._channel_labels_window._job is not None
                      and self._channel_labels_window._job.isRunning())
         self.run_button.setEnabled(not missing and not label_job)
-        self.run_button.setToolTip("\n".join(missing))
+        action_help = (
+            "Continue to processing. Reuse the converted images when conversion settings "
+            "are unchanged; otherwise run Convert first."
+            if converting else
+            "Run the normal pipeline using all enabled steps and their overwrite settings.")
+        self.run_button.setToolTip(
+            action_help + ("\n\nBefore continuing:\n" + "\n".join(missing) if missing else ""))
+        self.navigation_status.setText(
+            ("Converted images are ready." if self._conversion_is_current()
+             else "Next converts your images before processing.") if converting else "")
 
     def _latest_report(self) -> Path | None:
         if not self.adapter.run_dir:
@@ -984,7 +1072,7 @@ class FitsMainWindow(QMainWindow):
 
     def _refresh_report_button(self) -> None:
         self.report_button.setEnabled(
-            self._thread is None and self._latest_report() is not None)
+            not self._running and self._thread is None)
 
     def _tracking_artifacts(self, root: Path | None = None) -> list[Path]:
         if root is None:
@@ -1002,7 +1090,7 @@ class FitsMainWindow(QMainWindow):
             return []
 
     def _refresh_tracking_viewer_button(self) -> None:
-        self.tracking_viewer_button.setEnabled(bool(self._tracking_artifacts()))
+        self.tracking_viewer_button.setEnabled(not self._running and self._thread is None)
 
     @Slot()
     def _open_channel_labels(self) -> None:
@@ -1052,6 +1140,12 @@ class FitsMainWindow(QMainWindow):
     def _open_tracking_viewer(self, path: Path | None = None) -> None:
         from fits.gui.viewer.tracking import TrackingViewerWindow
 
+        if path is None and not self.adapter.run_dir.strip():
+            QMessageBox.information(
+                self, "Choose a run folder",
+                "Choose your experiment or run folder first using Browse or drag and drop. "
+                "Tracking Viewer can then look for saved tracking results.")
+            return
         selected = path or self.run_browser.selected_path
         tracking_names = {cst.FITS_MASK_TRACK,
                           cst.FITS_MASK_TRACK_EDITED,
@@ -1062,6 +1156,12 @@ class FitsMainWindow(QMainWindow):
             artifacts = self._tracking_artifacts(root)
             selected = artifacts[0] if artifacts else None
         if selected is None:
+            QMessageBox.information(
+                self, "No tracking file found",
+                "No tracking result was found in the selected experiment or run folder.\n\n"
+                "First convert your images with Next if needed. Then enable Segmentation "
+                "and Tracking under Process and click Run pipeline. If tracking results "
+                "already exist, select the experiment folder containing them.")
             return
         viewer = self._tracking_viewer
         if viewer is not None and viewer.isVisible():
@@ -1084,6 +1184,17 @@ class FitsMainWindow(QMainWindow):
         report = self._latest_report()
         if report is not None:
             self._show_report(report)
+        elif not self.adapter.run_dir.strip():
+            QMessageBox.information(
+                self, "Choose a run folder",
+                "Choose your experiment or run folder first using Browse or drag and drop. "
+                "Full Report opens the latest saved report for that run.")
+        else:
+            QMessageBox.information(
+                self, "No report found",
+                "No saved report was found for this run.\n\n"
+                "Click Next on the Convert page to convert your images, or Run pipeline "
+                "on the processing page. A report is saved when the run finishes.")
 
     @Slot(object)
     def _open_selected_report(self, path: object) -> None:

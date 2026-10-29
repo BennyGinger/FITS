@@ -2,7 +2,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import cast
 
-from PySide6.QtCore import QSignalBlocker, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -38,17 +38,16 @@ TRACK_POSTPROCESS_PARAMETERS = (
 )
 
 
-class StableAdvancedGroup(QGroupBox):
-    """Hide advanced fields while reserving their space in the layout."""
+class CollapsibleAdvancedGroup(QGroupBox):
+    """Expand advanced fields only when requested, without reserving space."""
 
     def __init__(self, title: str) -> None:
         super().__init__(title)
         self.setCheckable(True)
+        self.setFlat(True)
         self.content = QWidget()
-        policy = self.content.sizePolicy()
-        policy.setRetainSizeWhenHidden(True)
-        self.content.setSizePolicy(policy)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.content)
         self.form = QFormLayout(self.content)
         self.toggled.connect(self.content.setVisible)
@@ -60,6 +59,7 @@ class StepSettingsEditor(QWidget):
     """Dynamically render the basic and advanced fields for one workflow step."""
 
     value_changed = Signal()
+    enabled_changed = Signal(bool)
 
     def __init__(
         self,
@@ -78,9 +78,6 @@ class StepSettingsEditor(QWidget):
         outer = QVBoxLayout(self)
         self.outer_layout = outer
 
-        title = QLabel(f"<h2>{layout_spec.title}</h2>")
-        outer.addWidget(title)
-
         description = QLabel(adapter.step_description(step))
         description.setWordWrap(True)
         description.setStyleSheet("color: #b8b8b8;")
@@ -92,7 +89,11 @@ class StepSettingsEditor(QWidget):
         contents = QWidget()
         contents_layout = QVBoxLayout(contents)
 
-        basic = QGroupBox("Basic settings")
+        basic = QGroupBox("Enable")
+        basic.setCheckable(True)
+        basic.setChecked(adapter.step_enabled(step))
+        self.enable_group = basic
+        basic.toggled.connect(self._enabled_toggled)
         basic_form = QFormLayout(basic)
         self._add_fields(basic_form, layout_spec.basic)
         contents_layout.addWidget(basic)
@@ -102,16 +103,24 @@ class StepSettingsEditor(QWidget):
             contents_layout.addWidget(self.channel_sections)
             self._build_channel_sections()
 
-        advanced = StableAdvancedGroup("Advanced settings")
+        advanced = CollapsibleAdvancedGroup("Advanced settings")
         self._add_fields(advanced.form, layout_spec.advanced)
         advanced.toggled.connect(self._refresh_enabled_states)
         self._advanced_group = advanced
         contents_layout.addWidget(advanced)
         contents_layout.addStretch()
+        contents_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         scroll.setWidget(contents)
+        self.scroll_area = scroll
         outer.addWidget(scroll)
         self._refresh_enabled_states()
+
+    def _enabled_toggled(self, enabled: bool) -> None:
+        self.adapter.set_step_enabled(self.step, enabled)
+        self.set_editable(enabled)
+        self.enabled_changed.emit(enabled)
+        self.value_changed.emit()
 
     def _add_fields(self, form: QFormLayout, paths: tuple[str, ...]) -> None:
         for path in paths:
@@ -292,6 +301,8 @@ class StepSettingsEditor(QWidget):
 
     def set_editable(self, editable: bool) -> None:
         self._editable = editable
+        with QSignalBlocker(self.enable_group):
+            self.enable_group.setChecked(editable)
         if hasattr(self, "channel_sections"):
             self.channel_sections.setEnabled(editable)
         self._refresh_enabled_states()
@@ -352,7 +363,7 @@ class RuntimeSettingsEditor(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        group = StableAdvancedGroup("Advanced runtime settings")
+        group = CollapsibleAdvancedGroup("Advanced runtime settings")
         form = group.form
         form.setVerticalSpacing(8)
         for name in (
@@ -373,7 +384,6 @@ class RuntimeSettingsEditor(QWidget):
             form.addRow(label, widget)
             self.widgets[name] = widget
         group.toggled.connect(self._set_fields_enabled)
-        group.setMinimumHeight(210)
         self._advanced_group = group
         outer.addWidget(group)
         self._set_fields_enabled(group.isChecked())

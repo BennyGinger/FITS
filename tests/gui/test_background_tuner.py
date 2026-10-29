@@ -246,7 +246,7 @@ def test_gui_selected_experiment_settings_and_save_without_preview(source, tmp_p
         assert not tuner.isVisible()
         assert main.adapter.field_value(StepName.BG_SUB, "size") == 7
         assert main.adapter.step_enabled(StepName.BG_SUB) == enabled
-        assert main._editors[StepName.BG_SUB].advanced_settings_visible
+        assert not main._editors[StepName.BG_SUB].advanced_settings_visible
     finally:
         main.close()
 

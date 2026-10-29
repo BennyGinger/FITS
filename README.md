@@ -254,7 +254,7 @@ uv run fits-trackedit /path/to/experiment/fits_track.tif
 uv run fits-channel-labels /path/to/run
 ```
 
-In the main GUI, **Channel Labels** sits between **Tracking Viewer** and
+In the main GUI, **Edit Channel Labels** sits between **Tracking Viewer** and
 **Full Report**. It inspects every FITS artifact in the run directory, then
 lets you rename labels by original source channel index. It maps channel
 references in FITS TIFFs, measurement Parquets, experiment states, and saved
@@ -280,7 +280,9 @@ The launcher checks for updates before opening this checkout's GUI. Ordinary
 launches do not open a terminal; accepted updates/repairs show terminal progress.
 Rerun the installer if you move the repository.
 
-In `fits-gui`, each segmentation channel has its own settings section. Use
+In `fits-gui`, each segmentation channel has its own settings section. New
+sections start with an empty target channel; enter its name explicitly before
+running segmentation. Use
 **+** beside the target channel to add a section, or **−** to remove one.
 Each channel can use a different model, diameter, denoising option, and nuclear
 helper channel. Execution and overwrite controls apply to the whole step.
@@ -299,7 +301,7 @@ stage completion as **Pipeline steps**. The elapsed clock has no time-remaining
 estimate and freezes when work finishes; the blue activity indicator runs while
 the pipeline is active.
 
-Click **Tune segmentation…** to preview Cellpose with those settings.
+Click **Preview** in the segmentation settings to preview Cellpose with those settings.
 SegTune and RegTune open the experiment selected in the main GUI, or the first
 available `fits_array.tif` when the run folder or no experiment is selected.
 The opened file is highlighted in the tuner's browser. Choosing an experiments
@@ -320,7 +322,7 @@ model path, or denoising option queues the latest model for initialization.
 Different initialized models remain cached in the Python process, so switching
 back reuses the model. Keeping multiple models also uses more CPU/GPU memory.
 
-Click **Tune background subtraction…** in the background-subtraction settings
+Click **Preview** in the background-subtraction settings
 section to open BGTune. It loads the GUI's current settings and selected
 experiment, with run-directory browsing locked. Standalone `fits-bgtune` keeps
 browsing and accepts an initial experiment/image, `--experiments-dir`, and
@@ -353,14 +355,15 @@ negative pixels as zero in a separate display array. Box means and downstream
 analysis use the signed values, not that display copy.
 
 **Save and close** accepts settings even without a preview. It transfers them
-to the main GUI and reveals Advanced settings without changing whether the
-background-subtraction step is enabled. Standalone saving updates the supplied
+to the main GUI without changing whether the background-subtraction step is
+enabled. Advanced settings opens only when an advanced value, such as threshold
+or statistic, changes; basic edits leave it collapsed. Standalone saving updates the supplied
 or nearest general settings file, or creates one at the selected run root.
 Images are never overwritten by the tuner; the measurement box and preview
 pixels are not saved. The status bar reports each plane's processing time.
 Press **R** to preview or **S** to save and close; **Info** lists the shortcuts.
 
-Click **Tune registration…** in either registration settings section to open
+Click **Preview** in the Frame-shift or Channel-shift settings to open
 RegTune on its **Time registration** or **Channel registration** tab. Both tabs
 share the same image browser and navigation. When launched from the main GUI,
 its current settings take priority over saved experiment tuning. Explicit channel
@@ -420,8 +423,9 @@ directly on the source image; the Channel tab does not run time registration fir
 **Save current settings** works with or without a preview. It updates the
 general settings in the main GUI and saves the accepted experiment's settings,
 crop and any matching fitted matrices in `<experiment>/.fits/registration/time.npz` or `channel.npz`.
-Accepting tuner settings checks **Advanced settings** in the main panel so the
-effective backend and method remain visible.
+Accepting changed manual backend/method overrides opens **Advanced settings**
+in the main panel. Unchanged saves and named preset selections leave it
+collapsed. All tuners preserve advanced sections the user already opened.
 Save settings or Run pipeline in the main GUI persists the general settings,
 as with SegTune. **Save current settings** saves only the selected tab and keeps
 the viewer open for further time or channel tuning. **Complete session** saves
@@ -451,22 +455,34 @@ settings found within the browser root. Without one, it creates
 `<browser-root>/.fits/fits_settings.toml` from the template. The module launcher
 `python -m fits.gui.viewer.registration` accepts the same arguments.
 
-The main settings interface groups steps into **Convert**, **Preprocess**,
-**Process**, and **Analysis** tabs. The step list on the left shows only the
-selected phase, and a `✓` in a tab title means that phase contains at least one
-enabled step. When a run directory has no `fits_array.tif`, only Convert is
-available and **Convert experiment(s)** performs a conversion-only pass. After
-successful conversion, the other tabs unlock and the button becomes **Run
-pipeline**. **Unlock all phase tabs** in advanced runtime settings allows a
-single full run from raw inputs; artifact-dependent viewers remain disabled
-until converted arrays really exist.
+The main interface has two pages. An unconverted run opens on **Convert**;
+**Next** performs conversion only and moves to the processing page after it
+finishes successfully. Reopening a run containing `fits_array.tif` opens the
+processing page directly, with **Preprocess** selected. **Back** returns to
+Convert. An unchanged **Next** returns to processing without another conversion;
+changed conversion settings, including overwrite, request a fresh conversion.
+Settings changed while conversion is running apply to the next conversion.
+
+The processing page has **Preprocess**, **Process**, and **Analysis** tabs,
+each with smaller step subtabs across the top. **Frame-shift** and
+**Channel-shift** are the time and channel registration settings. There is no
+separate pipeline-step panel. Each step's **Enable** checkbox includes or omits
+that step; its settings sit inside the Enable group. **Advanced settings** and
+advanced runtime settings collapse fully, letting the tab's scroll area adjust
+instead of reserving empty space.
+
+**Run pipeline** launches the normal pipeline with the configured enabled steps
+and overwrite rules, including Convert when enabled. The page layout does not
+change the workflow's execution order or processing algorithms.
 
 For enabled steps, the GUI requires conversion channel labels, a channel-
 registration reference channel, at least one segmentation channel, and at
 least one tracking channel. If one is missing, the GUI keeps the affected step
 or phase selected and explains which field must be completed. **Run pipeline**
 remains disabled until all required fields belonging to enabled steps have a
-value. These checks detect omitted input only; the pipeline continues to handle
+value. **Next** checks the Convert inputs independently of later steps, so
+unfinished processing settings do not prevent conversion. These checks detect
+omitted input only; the pipeline continues to handle
 invalid channel names and other data-dependent validation.
 
 Enable **Edit tracking** in the Process phase to review each active tracking

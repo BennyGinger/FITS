@@ -104,11 +104,10 @@ execution = "thread" # serial | thread | process
 workers = "None" # "None" lets the executor select the worker count; ignored when execution = "serial".
 # ordered_execution = false # Internal ordering control; not exposed in the GUI.
 
-# Segmentation settings are independent for every target channel. Uncomment
-# this entire block, then copy it once for every channel to segment. Each copy
-# may use a completely different Cellpose model and parameter set.
+# Enter a target channel before enabling segmentation. Copy this block for
+# each additional channel; every channel can use its own Cellpose parameters.
 [[segment.channels]]
-channel = "GFP"
+channel = "" # Required when segmentation is enabled; no channel is assumed.
 do_denoise = true
 nuclear_channel = "None" # Optional helper channel, or "None".
 
@@ -121,7 +120,7 @@ do_3D = false
 stitch_threshold = 0.0
 
 # [[segment.channels]]
-# channel = "GFP"
+# channel = ""
 # do_denoise = true
 # nuclear_channel = "None" # Optional helper channel, or "None".
 #

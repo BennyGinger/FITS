@@ -4,7 +4,19 @@ import pytest
 from pydantic import ValidationError
 
 from fits.settings.loader import resolve_step_params
-from fits.settings.models import SegmentSettings
+from fits.settings.models import SegmentChannelSettings, SegmentSettings
+
+
+def test_segmentation_has_no_implicit_target_channel() -> None:
+    assert SegmentSettings().channels == []
+    with pytest.raises(ValidationError, match="Field required"):
+        SegmentChannelSettings.model_validate({})
+
+
+@pytest.mark.parametrize("channel", ["", "   "])
+def test_blank_segmentation_target_is_rejected(channel) -> None:
+    with pytest.raises(ValidationError, match="Segmentation channel cannot be empty"):
+        SegmentChannelSettings(channel=channel)
 
 
 def test_per_channel_settings_are_independent() -> None:

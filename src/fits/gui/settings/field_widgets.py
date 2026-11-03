@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, Qt, Signal
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QPaintEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
-    QListWidget,
-    QListWidgetItem,
+    QComboBox,
+    QStyle,
+    QStyleOptionComboBox,
+    QStylePainter,
     QLineEdit,
     QWidget,
 )
@@ -88,46 +91,227 @@ class ListWidget(QLineEdit):
         return [part.strip() for part in self.text().split(",") if part.strip()]
 
 
-class ChannelSelectionWidget(QListWidget):
-    """Compact multi-selection list populated from segmentation channels."""
+class ChannelSelectionWidget(FocusWheelComboBox):
+    """Collapsed channel summary with a persistent popup of checked choices."""
 
     value_changed = Signal(object)
 
-    def __init__(self, channels: list[str], selected: list[str]) -> None:
+    def __init__(self, channels: list[str], selected: list[str], *, allow_none: bool = False) -> None:
+        """
+        Offer multiple checked channels and an optional exclusive None entry.
+        """
         super().__init__()
-        self.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-        self.itemSelectionChanged.connect(
-            lambda: self.value_changed.emit(self.value()))
+        self._allow_none = allow_none
+        self._help_tooltip = ""
+        self._summary = ""
+        self._updating_choices = False
+        self._pressed_popup_row: int | None = None
+        self._items = QStandardItemModel(self)
+        self.setModel(self._items)
+        self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.setMinimumContentsLength(12)
+        self.setMaxVisibleItems(12)
+        self.view().viewport().installEventFilter(self)
+        self.view().installEventFilter(self)
+        self._items.itemChanged.connect(self._selection_changed)
         self.set_channels(channels, selected)
 
     def set_channels(self, channels: list[str], selected: list[str] | None = None) -> None:
-        selected_values = set(self.value() if selected is None else selected)
-        self.blockSignals(True)
-        self.clear()
-        for channel in channels:
-            item = QListWidgetItem(channel)
-            self.addItem(item)
-            item.setSelected(channel in selected_values)
-        row_height = self.sizeHintForRow(0) if self.count() else self.fontMetrics().height() + 6
-        self.setFixedHeight(round(row_height * 2.5) + self.frameWidth() * 2)
-        self.blockSignals(False)
+        """
+        Refresh choices silently, preserving an open popup when nothing changed.
+        """
+        selected_values = set(self.value() if selected is None else selected).intersection(channels)
+        options: list[str | None] = ([None] if self._allow_none else []) + list(channels)
+        checked: set[str | None] = set(selected_values)
+        if self._allow_none and not checked:
+            checked.add(None)
+        current = [self.itemData(index) for index in range(self.count())]
+        current_checked = {self.itemData(index) for index in range(self.count())
+                           if self.is_channel_selected(index)}
+        if current == options and current_checked == checked:
+            self._update_summary()
+            return
+        self._updating_choices = True
+        with QSignalBlocker(self):
+            self._items.clear()
+            for channel in options:
+                item = QStandardItem("None" if channel is None else channel)
+                item.setData(channel, Qt.ItemDataRole.UserRole)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                              | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked if channel in checked else Qt.CheckState.Unchecked)
+                self._items.appendRow(item)
+        self._updating_choices = False
+        self._update_summary()
+
+    def set_channel_selected(self, index: int, selected: bool) -> None:
+        """
+        Check or uncheck one channel using the same rules as a popup click.
+        """
+        item = self._items.item(index)
+        if item is not None:
+            item.setCheckState(Qt.CheckState.Checked if selected else Qt.CheckState.Unchecked)
+
+    def is_channel_selected(self, index: int) -> bool:
+        """
+        Report whether a popup entry is checked.
+        """
+        item = self._items.item(index)
+        return item is not None and item.checkState() == Qt.CheckState.Checked
+
+    def clearSelection(self) -> None:
+        """
+        Clear all channel checks, restoring None for optional exclusions.
+        """
+        with QSignalBlocker(self._items):
+            for index in range(self.count()):
+                item = self._items.item(index)
+                if item is not None:
+                    item.setCheckState(Qt.CheckState.Checked if self._allow_none and index == 0
+                                       else Qt.CheckState.Unchecked)
+        self._update_summary()
+        self.value_changed.emit(self.value())
+
+    def _selection_changed(self, changed: QStandardItem) -> None:
+        """
+        Keep None exclusive and publish the updated channel selection.
+        """
+        if self._updating_choices:
+            return
+        if self._allow_none:
+            with QSignalBlocker(self._items):
+                if changed.data(Qt.ItemDataRole.UserRole) is None and changed.checkState() == Qt.CheckState.Checked:
+                    for index in range(1, self.count()):
+                        self.set_channel_selected(index, False)
+                else:
+                    self.set_channel_selected(0, not bool(self.value()))
+        self._update_summary()
+        self.value_changed.emit(self.value())
 
     def value(self) -> list[str]:
-        return [item.text() for item in self.selectedItems()]
+        """
+        Return checked channel labels in source order, excluding None.
+        """
+        return [self.itemText(index) for index in range(self.count())
+                if self.itemData(index) is not None and self.is_channel_selected(index)]
+
+    def selection_text(self) -> str:
+        """
+        Return the complete, unabridged selection shown by the collapsed control.
+        """
+        return self._summary
+
+    def showPopup(self) -> None:
+        """
+        Open for inspection without carrying a mouse press into the popup.
+        """
+        self._pressed_popup_row = None
+        super().showPopup()
+
+    def setToolTip(self, tooltip: str) -> None:
+        """
+        Retain parameter help alongside the complete selected-channel list.
+        """
+        self._help_tooltip = tooltip
+        self._update_summary()
+
+    def _update_summary(self) -> None:
+        """
+        Refresh the display, accessible description and full-selection tooltip.
+        """
+        selected = self.value()
+        self._summary = ", ".join(selected) if selected else (
+            "None" if self._allow_none else "Select channels…" if self.count() else "No channels available")
+        super().setToolTip(self._summary + ("\n\n" + self._help_tooltip if self._help_tooltip else ""))
+        self.setAccessibleDescription(self._summary)
+        self.update()
+        self.view().viewport().update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """
+        Paint the selected names on one line with an ellipsis when they do not fit.
+        """
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        rectangle = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, option,
+                                                 QStyle.SubControl.SC_ComboBoxEditField, self)
+        option.currentText = self.fontMetrics().elidedText(self._summary, Qt.TextElideMode.ElideRight,
+                                                          max(0, rectangle.width()))
+        painter = QStylePainter(self)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
+        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """
+        Toggle popup checks without closing it; let native outside clicks dismiss it.
+        """
+        if watched is self.view().viewport() and isinstance(event, QMouseEvent):
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                index = self.view().indexAt(event.position().toPoint())
+                self._pressed_popup_row = index.row() if index.isValid() else None
+                if index.isValid():
+                    self.view().setCurrentIndex(index)
+                    return True
+            if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                index = self.view().indexAt(event.position().toPoint())
+                pressed_row = self._pressed_popup_row
+                self._pressed_popup_row = None
+                if index.isValid():
+                    if pressed_row == index.row():
+                        self.set_channel_selected(index.row(), not self.is_channel_selected(index.row()))
+                    return True
+        if watched in (self.view(), self.view().viewport()) and isinstance(event, QKeyEvent):
+            if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Space:
+                index = self.view().currentIndex()
+                if index.isValid():
+                    self.set_channel_selected(index.row(), not self.is_channel_selected(index.row()))
+                return True
+        return super().eventFilter(watched, event)
 
 
-class ExportChannelsWidget(TextWidget):
-    """Edit the all-channels sentinel or a list of channel labels."""
+class ExportChannelsWidget(ChannelSelectionWidget):
+    """Select exported channels from the source-channel labels."""
 
-    def __init__(self, value: str | list[str]) -> None:
-        super().__init__(value if isinstance(value, str) else ", ".join(value))
-        self.setPlaceholderText("all or comma-separated channel labels")
+    def __init__(self, value: str | list[str], channels: list[str]) -> None:
+        """
+        Select every source channel by default while retaining saved subsets.
+        """
+        selected = channels if value == "all" else ([value] if isinstance(value, str) else value)
+        super().__init__(channels, selected)
 
-    def value(self) -> str | list[str]:
-        text = self.text().strip()
-        if text.lower() == "all":
-            return "all"
-        return [part.strip() for part in text.split(",") if part.strip()]
+
+class ChannelChoiceWidget(FocusWheelComboBox):
+    """Choose one available image channel, optionally leaving it unspecified."""
+
+    value_changed = Signal(object)
+
+    def __init__(self, channels: list[str], value: Any, *, optional: bool) -> None:
+        """
+        Start with None for optional choices and a blank entry for required ones.
+        """
+        super().__init__()
+        self._optional = optional
+        self.set_channels(channels, value)
+        self.currentIndexChanged.connect(lambda: self.value_changed.emit(self.value()))
+
+    def set_channels(self, channels: list[str], value: Any) -> None:
+        """
+        Keep a valid saved label or index without introducing unavailable choices.
+        """
+        if isinstance(value, int):
+            value = channels[value] if 0 <= value < len(channels) else None
+        with QSignalBlocker(self):
+            self.clear()
+            self.addItem("None" if self._optional else "", "None" if self._optional else "")
+            for channel in channels:
+                self.addItem(channel, channel)
+            self.setCurrentIndex(max(0, self.findData(value)))
+
+    def value(self) -> str:
+        """
+        Return the selected label or the appropriate unspecified value.
+        """
+        return str(self.currentData())
 
 
 class ChoiceWidget(FocusWheelComboBox):

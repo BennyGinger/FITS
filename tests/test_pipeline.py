@@ -87,7 +87,7 @@ def test_gui_conversion_scope_preserves_normal_pipeline_rules(
         return states
 
     monkeypatch.setattr("fits.pipeline.run_batch_workflow", execute)
-    monkeypatch.setattr("fits.workflows.runtime.interactive.run_conversion_only", execute)
+    monkeypatch.setattr("fits.pipeline.run_conversion_only", execute)
     start_pipeline(settings_path=tmp_path / "settings.toml", convert_only=convert_only,
                    force_conversion=force_conversion)
 
@@ -274,3 +274,16 @@ def test_failed_processing_writes_report_without_analysis(monkeypatch, tmp_path,
     text = (tmp_path / ".fits" / "reports" / "fits_report_test.txt").read_text()
     assert "Processing: 0 completed / 0 partial / 0 skipped / 1 failed" in text
     assert "Tracker failed" in text
+
+
+@pytest.fixture(autouse=True)
+def isolate_artifact_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Isolate dispatch tests from artifact validation of their intentionally empty files.
+    """
+    from fits.workflows.checks.models import PreflightReport
+    monkeypatch.setattr("fits.pipeline.resolve_run_root", lambda root: root.resolve())
+    monkeypatch.setattr("fits.pipeline.require_current_run", lambda root: None)
+    # This file tests dispatch/reporting with empty touched files.
+    monkeypatch.setattr('fits.pipeline.inspect_run', lambda *args: PreflightReport((), (), (), ()))
+    monkeypatch.setattr('fits.pipeline.refresh_branches', lambda state: None)

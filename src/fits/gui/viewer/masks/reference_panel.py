@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from fits.gui.theme import PREVIEW_BUTTON_STYLE
+
 from typing import cast
 
 from PySide6.QtCore import Qt, Signal
@@ -152,9 +154,7 @@ class ReferenceMaskPanel(QWidget):
         self.live_preview.setCheckable(True)
         self.live_preview.setToolTip(
             "Show or hide the propagated result without changing the drawn masks.")
-        self.live_preview.setStyleSheet(
-            "QPushButton:checked { background-color: #2a82da; color: white; "
-            "border: 1px solid #7fc0ff; }")
+        self.live_preview.setStyleSheet(PREVIEW_BUTTON_STYLE)
         self.live_preview.setFixedWidth(self.BUTTON_WIDTH)
         propagation_layout.addWidget(self.live_preview, alignment=Qt.AlignmentFlag.AlignLeft)
         self.controls_layout.addWidget(self.propagation_section)
@@ -168,7 +168,7 @@ class ReferenceMaskPanel(QWidget):
         self.overlay_widget = QWidget()
         overlay = QHBoxLayout(self.overlay_widget)
         overlay.setContentsMargins(0, 0, 0, 0)
-        overlay.addWidget(QLabel("Mask overlay"))
+        overlay.addWidget(QLabel("Mask opacity (0–100%)"))
         self.show_mask = QCheckBox()
         self.show_mask.setChecked(True)
         self.show_mask.toggled.connect(self.mask_visibility_changed)

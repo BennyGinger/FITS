@@ -3,15 +3,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QAbstractItemView, QDialog, QDialogButtonBox, QHeaderView, QLabel, QPlainTextEdit, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QDialog, QDialogButtonBox, QFrame, QHeaderView, QLabel, QPlainTextEdit, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget
+from fits.gui.dialogs import size_resizable_dialog
 
 
-_COUNTS = re.compile(
-    r"^(.+): (\d+) completed / (\d+) partial / (\d+) skipped / (\d+) failed$"
-)
+_COUNTS = re.compile(r"^(.+): (\d+) completed / (\d+) partial / (\d+) skipped / (\d+) failed$")
 _COLORS = ("#dcfce7", "#fef3c7", "#e2e8f0", "#fee2e2")
 _INKS = ("#166534", "#92400e", "#334155", "#991b1b")
 
@@ -19,26 +17,37 @@ _INKS = ("#166534", "#92400e", "#334155", "#991b1b")
 class ReportDialog(QDialog):
     """Render saved summaries as tables, with the original text available."""
 
-    def __init__(self, path: Path, content: str, parent: QWidget | None = None):
+    def __init__(self,
+                 path: Path | None,
+                 content: str,
+                 parent: QWidget | None = None,
+                 *,
+                 title: str = 'Pipeline report',
+                 ) -> None:
+        """
+        Initialize the ReportDialog state and dependencies.
+        """
         super().__init__(parent)
-        self.setWindowTitle(f"Pipeline report — {path.name}")
-        self.resize(960, 680)
+        self.setWindowTitle(f"{title} — {path.name}" if path is not None else title)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(14)
-        title = QLabel("Pipeline report")
-        font = title.font()
+        heading = QLabel(title)
+        font = heading.font()
         font.setPointSize(font.pointSize() + 6)
         font.setBold(True)
-        title.setFont(font)
-        layout.addWidget(title)
-        source = QLabel(path.name)
-        source.setToolTip(str(path))
+        heading.setFont(font)
+        layout.addWidget(heading)
+        source = QLabel(path.name if path is not None else "")
+        source.setToolTip(str(path) if path is not None else "")
+        source.setWordWrap(True)
+        source.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        source.setVisible(path is not None)
         source.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(source)
 
         tabs = QTabWidget()
-        layout.addWidget(tabs)
+        layout.addWidget(tabs, 1)
         summary = QWidget()
         summary_layout = QVBoxLayout(summary)
         summary_layout.setSpacing(12)
@@ -48,7 +57,7 @@ class ReportDialog(QDialog):
         in_details = False
         for line in content.splitlines():
             if not in_details and line.startswith("Created: "):
-                source.setText(f"{line}  ·  {path.name}")
+                source.setText(f"{line}  ·  {path.name}" if path is not None else line)
                 continue
             if line == "Experiment details":
                 in_details = True
@@ -62,8 +71,7 @@ class ReportDialog(QDialog):
                 remaining.append(line)
 
         self.table = QTableWidget(len(rows), 5)
-        self.table.setHorizontalHeaderLabels(
-            ["Stage", "Completed", "Partial", "Skipped", "Failed"])
+        self.table.setHorizontalHeaderLabels(["Stage", "Completed", "Partial", "Skipped", "Failed"])
         self.table.verticalHeader().hide()
         self.table.verticalHeader().setDefaultSectionSize(42)
         self.table.setShowGrid(False)
@@ -99,7 +107,11 @@ class ReportDialog(QDialog):
         if self.details.toPlainText():
             summary_layout.addWidget(QLabel("Experiment details" if in_details else "Report notes"))
             summary_layout.addWidget(self.details, 2)
-        tabs.addTab(summary, "Overview")
+        overview = QScrollArea()
+        overview.setWidgetResizable(True)
+        overview.setFrameShape(QFrame.Shape.NoFrame)
+        overview.setWidget(summary)
+        tabs.addTab(overview, "Overview")
         original = QPlainTextEdit()
         original.setReadOnly(True)
         original.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -108,3 +120,4 @@ class ReportDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        size_resizable_dialog(self, 900, 600)

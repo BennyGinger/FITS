@@ -1,18 +1,18 @@
 """Time/channel registration tuning in one standard FITS image viewer."""
 
 from __future__ import annotations
-
+from typing import Any
+from numpy.typing import NDArray
 from pathlib import Path
-
+from fits.environment import constant as cst
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTabWidget
-from PySide6.QtWidgets import QVBoxLayout, QWidget
-
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget
 from fits.gui.settings.wheel_widgets import FocusWheelComboBox
-from fits.environment.constant import FITS_ARRAY_NAME, StepName
+from fits.workflows.artifacts.paths import image_input_for, image_for, first_image
+from fits.environment.constant import IMAGE_NAMES, FITS_ARRAY_NAME, StepName
 from fits.gui.settings import SettingsAdapter
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.common.crop import CropPanel
@@ -29,17 +29,24 @@ from fits.tasks.registration.tuning import RegistrationPreview, RegistrationTuni
 class RegistrationTunerWindow(ImageToolWindow):
     settings_applied = Signal(str, object)
     auto_open_first_image = True
-    file_filters = (FITS_ARRAY_NAME,)
+    file_filters = IMAGE_NAMES
     help_gui = "RegTune"
     tool_help = REGISTRATION_HELP
 
-    def __init__(self, experiments_dir: str | Path | None = None, *, mode: Mode = "time",
+    def __init__(self,
+                 experiments_dir: str | Path | None = None,
+                 *,
+                 mode: Mode = "time",
                  time_settings: RegisterTimeSettings | None = None,
                  channel_settings: RegisterChannelSettings | None = None,
                  settings_path: Path | None = None,
                  initial_path: str | Path | None = None,
-                 parent: QWidget | None = None, directory_locked: bool = False) -> None:
-        """Build the shared time/channel tuner and optionally open an experiment."""
+                 parent: QWidget | None = None,
+                 directory_locked: bool = False,
+                 ) -> None:
+        """
+        Build the shared time/channel tuner and optionally open an experiment.
+        """
         self._provided = time_settings is not None or channel_settings is not None
         self._defaults: dict[Mode, RegistrationSettings] = {
             "time": time_settings or RegisterTimeSettings(),
@@ -64,7 +71,9 @@ class RegistrationTunerWindow(ImageToolWindow):
             self._set_experiments_directory(experiments_dir, initial_path=initial_path)
 
     def _build_tools(self) -> QWidget:
-        """Build both settings tabs and their optional crop controls."""
+        """
+        Build both settings tabs and their optional crop controls.
+        """
         self.tool_panel = QWidget()
         layout = QVBoxLayout(self.tool_panel)
         self.tabs = QTabWidget()
@@ -112,7 +121,9 @@ class RegistrationTunerWindow(ImageToolWindow):
         return self.tool_panel
 
     def _build_viewer_actions(self, layout: QHBoxLayout) -> None:
-        """Place the registration actions to the right of the LUT."""
+        """
+        Place the registration actions to the right of the LUT.
+        """
         self.session_actions = QWidget()
         actions_layout = QVBoxLayout(self.session_actions)
         actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -122,13 +133,17 @@ class RegistrationTunerWindow(ImageToolWindow):
         layout.addWidget(self.session_actions)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """Keep both resolved cards aligned when the settings area is resized."""
+        """
+        Keep both resolved cards aligned when the settings area is resized.
+        """
         if isinstance(watched, RegistrationSettingsPanel) and event.type() == QEvent.Type.Resize:
             self._sync_resolved_panel_heights()
         return super().eventFilter(watched, event)
 
     def _sync_resolved_panel_heights(self) -> None:
-        """Reserve the same wrapped-summary height in both registration tabs."""
+        """
+        Reserve the same wrapped-summary height in both registration tabs.
+        """
         panel = self.panels[self.mode()]
         layout = panel.layout()
         assert layout is not None
@@ -145,12 +160,16 @@ class RegistrationTunerWindow(ImageToolWindow):
                 candidate.resolved_group.setFixedHeight(height)
 
     def _set_source_controls_enabled(self, enabled: bool) -> None:
-        """Enable source navigation and registration actions together."""
+        """
+        Enable source navigation and registration actions together.
+        """
         super()._set_source_controls_enabled(enabled)
         self.session_actions.setEnabled(enabled)
 
     def _build_overlay_controls(self, layout: QHBoxLayout) -> None:
-        """Build the image comparison menu with per-item explanations."""
+        """
+        Build the image comparison menu with per-item explanations.
+        """
         self.comparison = FocusWheelComboBox()
         options = (
             ("Registered image", "Show the selected image after registration using a matching "
@@ -164,16 +183,19 @@ class RegistrationTunerWindow(ImageToolWindow):
         )
         for label, tooltip in options:
             self.comparison.addItem(label)
-            self.comparison.setItemData(
-                self.comparison.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole)
+            self.comparison.setItemData(self.comparison.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole)
         self.comparison.setToolTip(options[0][1])
         self.comparison.currentIndexChanged.connect(
-            lambda index: self.comparison.setToolTip(
-                self.comparison.itemData(index, Qt.ItemDataRole.ToolTipRole)))
+            lambda index: self.comparison.setToolTip(self.comparison.itemData(index,
+                                                                              Qt.ItemDataRole.ToolTipRole,
+                                                                              ),
+                                                     ))
         layout.addWidget(self.comparison)
 
     def _connect_tools(self) -> None:
-        """Connect registration actions, crop tools and display controls."""
+        """
+        Connect registration actions, crop tools and display controls.
+        """
         self._composite_item = pg.ImageItem(axisOrder="row-major")
         self._composite_item.setZValue(1)
         self.image_viewer.view_box.addItem(self._composite_item)
@@ -194,31 +216,43 @@ class RegistrationTunerWindow(ImageToolWindow):
             panel.changed.connect(self._settings_edited)
 
     def mode(self) -> Mode:
-        """Return the selected registration tab."""
+        """
+        Return the selected registration tab.
+        """
         return "time" if self.tabs.currentIndex() == 0 else "channel"
 
     def current_settings(self) -> RegistrationSettings:
-        """Read validated settings from the selected tab."""
+        """
+        Read validated settings from the selected tab.
+        """
         return self.panels[self.mode()].settings()
 
     @Slot(int)
     def _display_channel_changed(self, index: int) -> None:
-        """Use explicit display-channel choices in the active registration settings."""
+        """
+        Use explicit display-channel choices in the active registration settings.
+        """
         if not self._loading and self._session is not None and index >= 0:
-            self.panels[self.mode()].channel.setCurrentIndex(index)
+            self.panels[self.mode()].channel.setCurrentText(self.channel_combo.itemText(index))
 
     def _composite_lut_changed(self) -> None:
-        """Refresh the composite after LUT edits, once channel colour updates finish."""
+        """
+        Refresh the composite after LUT edits, once channel colour updates finish.
+        """
         if self.comparison.currentIndex() == 2:
             QTimer.singleShot(0, self._display_selection)
 
     def _crop(self, mode: Mode | None = None) -> CropBounds | None:
-        """Use a tab's stored rectangle only while its crop tool is enabled."""
+        """
+        Use a tab's stored rectangle only while its crop tool is enabled.
+        """
         crop = self.crops[mode or self.mode()]
         return crop.bounds if crop.enabled.isChecked() else None
 
     def _general_settings(self, source: Path) -> None:
-        """Load general registration defaults for the selected experiment."""
+        """
+        Load general registration defaults for the selected experiment.
+        """
         if self._provided:
             return
         adapter = SettingsAdapter()
@@ -245,20 +279,31 @@ class RegistrationTunerWindow(ImageToolWindow):
 
     @Slot(object)
     def _path_selected(self, selected: object) -> None:
-        """Open the selected normalized image or experiment directory."""
+        """
+        Open the selected normalized image or experiment directory.
+        """
         if isinstance(selected, (str, Path)):
             source = Path(selected)
-            self._open_source(source / FITS_ARRAY_NAME if source.is_dir() else source)
+            self._open_source((image_for(source) or source / FITS_ARRAY_NAME) if source.is_dir() else source)
 
     def _open_source(self, source: Path) -> None:
-        """Load one experiment and reset preview and crop controls."""
+        """
+        Load one experiment and reset preview and crop controls.
+        """
+        try:
+            source = image_input_for(source,
+                                     cst.StepName.REGISTER_TIME if self.mode() == "time" else cst.StepName.REGISTER_CHANNEL,
+                                     ) or source
+        except ValueError as error:
+            self.status_label.setText(str(error))
+            return
         if source == self._source_path:
             return
         if self._thread is not None:
             self.status_label.setText("Wait for or cancel the preview before changing experiment.")
             return
-        if source.name != FITS_ARRAY_NAME or not source.is_file():
-            self.status_label.setText(f"Choose a folder containing {FITS_ARRAY_NAME}.")
+        if source.name not in IMAGE_NAMES or not source.is_file():
+            self.status_label.setText("Choose an experiment folder containing FITS image artifacts.")
             return
         self._close_session()
         self._last_mode = None
@@ -272,7 +317,9 @@ class RegistrationTunerWindow(ImageToolWindow):
             for mode, panel in self.panels.items():
                 tuned = load_tuning(source, mode)
                 panel.load(self._defaults[mode] if self._provided or tuned is None else tuned.settings,
-                           session.channel_labels, session.frame_count)
+                           session.channel_labels,
+                           session.frame_count,
+                           )
                 self.crops[mode].reset((session._axis_size("Y"), session._axis_size("X")))
                 if tuned is not None and tuned.crop is not None:
                     self.crops[mode].set_bounds(tuned.crop)
@@ -294,7 +341,9 @@ class RegistrationTunerWindow(ImageToolWindow):
 
     @Slot()
     def _settings_edited(self) -> None:
-        """Refresh preview validity, actions and the displayed image."""
+        """
+        Refresh preview validity, actions and the displayed image.
+        """
         if self._loading:
             return
         for mode, crop in self.crops.items():
@@ -307,13 +356,30 @@ class RegistrationTunerWindow(ImageToolWindow):
         self._sync_resolved_panel_heights()
         valid = False
         if self._session is not None:
+            if self._thread is None and self.mode() != self._last_mode:
+                try:
+                    step = cst.StepName.REGISTER_TIME if self.mode() == "time" else cst.StepName.REGISTER_CHANNEL
+                    source = image_input_for(self._session.source_path, step)
+                    if source is not None and source != self._session.source_path:
+                        # Switch the input cache while preserving both tabs' unsaved
+                        # settings/crops. Registration outputs share the image grid.
+                        session = RegistrationTuningSession(source)
+                        self._session.close()
+                        self._session = session
+                        self._image_session = session
+                        self._source_path = source
+                        self.directory_browser.select_path(source)
+                except ValueError as error:
+                    self.status_label.setText(str(error))
+                    self.run_button.setEnabled(False)
+                    return
             if self.mode() != self._last_mode:
                 self._last_mode = self.mode()
-                channel = self.panels[self.mode()].channel.currentIndex()
-                if self.mode() == "channel":
+                channel = self.channel_combo.findText(self.panels[self.mode()].channel.currentText())
+                if self.mode() == "channel" and channel >= 0:
                     channel = next((i for i in range(self.channel_combo.count()) if i != channel), 0)
                 with QSignalBlocker(self.channel_combo):
-                    self.channel_combo.setCurrentIndex(channel)
+                    self.channel_combo.setCurrentIndex(max(0, channel))
                 self.comparison.setCurrentIndex(2 if self.mode() == "channel" else 0)
             try:
                 settings = self.current_settings()
@@ -326,8 +392,10 @@ class RegistrationTunerWindow(ImageToolWindow):
         self.complete_button.setEnabled(self._session is not None and self._thread is None)
         self._display_selection()
 
-    def _display_overlay(self, image, frame, channel, z_index) -> None:
-        """Display one original, registered or composite plane on demand."""
+    def _display_overlay(self, image: NDArray[Any], frame: int, channel: str, z_index: int) -> None:
+        """
+        Display one original, registered or composite plane on demand.
+        """
         self._composite_item.hide()
         self.image_viewer.image_item.show()
         self.lut_controls.setEnabled(True)
@@ -335,8 +403,7 @@ class RegistrationTunerWindow(ImageToolWindow):
             return
         try:
             settings = self.current_settings()
-            preview = self._session.cached_preview(self.mode(), settings,
-                                                    crop=self._crop())
+            preview = self._session.cached_preview(self.mode(), settings, crop=self._crop())
         except ValueError:
             return
         if preview is None or self.comparison.currentIndex() == 1:
@@ -345,16 +412,22 @@ class RegistrationTunerWindow(ImageToolWindow):
         self.image_viewer.set_image(selected)
         if self.comparison.currentIndex() != 2:
             return
-        def scaled(plane):
-            """Normalize image contrast for an alignment comparison."""
+        def scaled(plane: np.ndarray) -> np.ndarray:
+            """
+            Normalize image contrast for an alignment comparison.
+            """
             low, high = np.percentile(plane, (1, 99))
             return np.clip((plane.astype(np.float32) - low) / max(float(high - low), 1.0), 0, 1)
 
         original, registered = scaled(image), scaled(selected)
         colour_map = self.image_viewer.histogram.item.gradient.colorMap()
-        palette = np.asarray(colour_map.getLookupTable(nPts=256, alpha=False, mode=pg.ColorMap.FLOAT), dtype=np.float32)
+        palette = np.asarray(colour_map.getLookupTable(nPts=256, alpha=False, mode=pg.ColorMap.FLOAT),
+                             dtype=np.float32,
+                             )
         grayscale = (self.grayscale_lut_button.isChecked()
-                     or (np.allclose(palette[:, 0], palette[:, 1]) and np.allclose(palette[:, 1], palette[:, 2])))
+                     or (np.allclose(palette[:, 0], palette[:, 1]) and np.allclose(palette[:, 1],
+                                                                                   palette[:, 2],
+                                                                                   )))
         original_colour = np.array((1, 0, 1) if grayscale else (1, 1, 1), dtype=np.float32)
         background = original[..., None] * original_colour
         foreground = (np.repeat(registered[..., None], 3, axis=-1) if self.grayscale_lut_button.isChecked()
@@ -368,7 +441,9 @@ class RegistrationTunerWindow(ImageToolWindow):
 
     @Slot()
     def _run_preview(self) -> None:
-        """Start or cancel a background registration fit."""
+        """
+        Start or cancel a background registration fit.
+        """
         if self._thread is not None:
             self._thread.requestInterruption()
             self.status_label.setText("Cancelling registration preview…")
@@ -381,8 +456,7 @@ class RegistrationTunerWindow(ImageToolWindow):
             self.status_label.setText(str(error))
             return
         self._thread = QThread(self)
-        self._worker = RegistrationPreviewWorker(self._session, self.mode(), settings,
-                                                  crop=self._crop())
+        self._worker = RegistrationPreviewWorker(self._session, self.mode(), settings, crop=self._crop())
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.ready.connect(self._preview_ready)
@@ -400,7 +474,9 @@ class RegistrationTunerWindow(ImageToolWindow):
 
     @Slot(str, int, int)
     def _preview_progress(self, message: str, done: int, total: int) -> None:
-        """Show fitting progress without applying the complete stack."""
+        """
+        Show fitting progress without applying the complete stack.
+        """
         self.status_label.setText(message)
         self.progress.setRange(0, total)
         self.progress.setValue(done)
@@ -408,13 +484,17 @@ class RegistrationTunerWindow(ImageToolWindow):
 
     @Slot(object)
     def _preview_ready(self, preview: RegistrationPreview) -> None:
-        """Show the first requested plane after transforms are fitted."""
+        """
+        Show the first requested plane after transforms are fitted.
+        """
         self.status_label.setText("Transforms ready. Preview applies as you navigate; save settings to accept them.")
         self._display_selection()
 
     @Slot()
     def _thread_finished(self) -> None:
-        """Restore controls after a fit finishes or is cancelled."""
+        """
+        Restore controls after a fit finishes or is cancelled.
+        """
         thread = self._thread
         self._thread = None
         self._worker = None
@@ -431,20 +511,26 @@ class RegistrationTunerWindow(ImageToolWindow):
 
     @Slot()
     def _save_settings(self) -> None:
-        """Save current settings and crop, including matching transforms when available."""
+        """
+        Save current settings and crop, including matching transforms when available.
+        """
         if self._session is None or self._thread is not None:
             return
         try:
             settings = self.current_settings()
-            preview = self._session.cached_preview(self.mode(), settings,
-                                                    crop=self._crop())
+            preview = self._session.cached_preview(self.mode(), settings, crop=self._crop())
             self._save_tab(self.mode(), settings, preview)
         except Exception as error:
             self.status_label.setText(f"Cannot save registration tuning: {error}")
 
-    def _save_tab(self, mode: Mode, settings: RegistrationSettings,
-                  preview: RegistrationPreview | None) -> None:
-        """Persist one tab with optional transforms and notify the main GUI."""
+    def _save_tab(self,
+                  mode: Mode,
+                  settings: RegistrationSettings,
+                  preview: RegistrationPreview | None,
+                  ) -> None:
+        """
+        Persist one tab with optional transforms and notify the main GUI.
+        """
         assert self._session is not None
         if self._general_adapter is not None and self._general_path is not None:
             step = StepName.REGISTER_TIME if mode == "time" else StepName.REGISTER_CHANNEL
@@ -460,7 +546,9 @@ class RegistrationTunerWindow(ImageToolWindow):
 
     @Slot()
     def _complete_session(self) -> None:
-        """Save both tabs with optional matching transforms and close after success."""
+        """
+        Save both tabs with optional matching transforms and close after success.
+        """
         if self._session is None or self._thread is not None:
             return
         try:
@@ -474,7 +562,9 @@ class RegistrationTunerWindow(ImageToolWindow):
         self.close()
 
     def _tool_keypress(self, event: QKeyEvent) -> bool:
-        """Handle registration preview, save and comparison shortcuts."""
+        """
+        Handle registration preview, save and comparison shortcuts.
+        """
         if event.modifiers() != Qt.KeyboardModifier.NoModifier:
             return False
         if event.key() == Qt.Key.Key_R:
@@ -489,7 +579,9 @@ class RegistrationTunerWindow(ImageToolWindow):
         return False
 
     def _clear_tools(self) -> None:
-        """Clear registration overlays, crop controls and the session reference."""
+        """
+        Clear registration overlays, crop controls and the session reference.
+        """
         self._session = None
         for crop in self.crops.values():
             with QSignalBlocker(crop):
@@ -499,7 +591,9 @@ class RegistrationTunerWindow(ImageToolWindow):
         self.image_viewer.image_item.show()
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Cancel active fitting before closing the viewer."""
+        """
+        Cancel active fitting before closing the viewer.
+        """
         if self._thread is not None:
             self._closing = True
             self._thread.requestInterruption()

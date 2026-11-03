@@ -26,3 +26,6 @@ def test_unusual_label_planes_preserve_colours(labels):
     expected = np.asarray([_label_rgba(int(value)) for value in labels.ravel()],
                           dtype=np.uint8).reshape(*labels.shape, 4)
     np.testing.assert_array_equal(FitsImageViewer._colour_mask(labels), expected)
+
+
+pytestmark = pytest.mark.usefixtures("current_format_tiffs")

@@ -1,11 +1,13 @@
 """Background Qt worker that owns one pipeline execution."""
 
+from __future__ import annotations
+
+from fits.workflows.file_management.rebuild import ProcessingPlan
+from typing import Any
 import logging
 import traceback
 from pathlib import Path
-
 from PySide6.QtCore import QObject, Signal, Slot
-
 from fits.pipeline import start_pipeline
 from fits.channel_labels.lock import run_write_guard
 from fits.settings.loader import load_settings
@@ -36,30 +38,46 @@ class PipelineWorker(QObject):
     mask_input_complete = Signal()
     mask_expected_count = Signal(int)
     failed = Signal(str, str)
+    artifact_decision_requested = Signal(object)
 
-    def __init__(self, settings_path: Path, log_handler: logging.Handler,
+    def __init__(self,
+                 settings_path: Path,
+                 log_handler: logging.Handler,
                  demo_step_delay: float = 0.0,
                  *,
                  convert_only: bool = False,
                  force_conversion: bool = False,
+                 upgrading: bool = False,
+                 maintenance: ProcessingPlan | None = None,
                  ) -> None:
+        """
+        Initialize the PipelineWorker state and dependencies.
+        """
         super().__init__()
         self.settings_path = settings_path
         self.log_handler = log_handler
         self.demo_step_delay = demo_step_delay
         self.convert_only = convert_only
         self.force_conversion = force_conversion
+        self.upgrading = upgrading
+        self.maintenance = maintenance
         self.interaction = PipelineInteraction(self.mask_requested.emit,
                                                self.mask_input_complete.emit,
                                                self.mask_expected_count.emit,
-                                               self.track_edit_requested.emit,)
+                                               self.track_edit_requested.emit,
+                                               decision_request=self.artifact_decision_requested.emit,
+                                               )
         self.progress = RunProgress()
 
     @Slot()
     def run(self) -> None:
+        """
+        Execute the background worker operation.
+        """
         try:
             root = Path(load_settings(self.settings_path)["run_dir"]).expanduser().resolve()
             with run_write_guard(root):
+                options: dict[str, Any] = {'maintenance': self.maintenance} if self.maintenance is not None else {}
                 start_pipeline(settings_path=self.settings_path,
                                console_handler=self.log_handler,
                                interaction=self.interaction,
@@ -67,7 +85,10 @@ class PipelineWorker(QObject):
                                run_progress=self.progress,
                                convert_only=self.convert_only,
                                force_conversion=self.force_conversion,
-                               terminal_progress=False,)
+                               terminal_progress=False,
+                               upgrading=self.upgrading,
+                               **options,
+                               )
         except PipelineCancelled:
             self.cancelled.emit()
         except Exception as error:

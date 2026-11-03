@@ -1,6 +1,6 @@
 [project]
 name = "fits"
-version = "3.3.0"
+version = "4.0.0"
 description = "Fluorescent Image Tracking Software, or FITS, is a Python package to analyze fluorescent microscopy images and track individual cells over time."
 readme = "README.md"
 authors = [
@@ -28,6 +28,7 @@ dependencies = [
     "roifile>=2026.2.10",
     "micro-sam>=1.8.3",
     "mobile-sam",
+    "psutil>=7.2.2",
 ]
 
 # Windows accelerator profile; enabled by default below.

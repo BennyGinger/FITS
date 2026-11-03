@@ -79,3 +79,23 @@ def DummyFitsIO_class():
 def DummyCtx_class():
     """Fixture that provides access to the DummyCtx class."""
     return DummyCtx
+
+
+@pytest.fixture
+def current_format_tiffs(monkeypatch):
+    """Write fixtures with the FITS 4 metadata contract, retaining lazy test reads."""
+    import json
+    import tifffile
+    from fits_io.metadata.models import FitsIOMeta
+    from fits_io.metadata.codec import FITS_TAG
+    original = tifffile.imwrite
+    def write(path, *args, **kwargs):
+        kind = 'tracking' if 'track' in Path(path).name else 'image_raw'
+        payload = FitsIOMeta().with_fitsio(artifact_type=kind).with_custom_metadata(
+            {'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+        tags = list(kwargs.get('extratags') or [])
+        if not any(tag[0] == FITS_TAG for tag in tags):
+            data = json.dumps(payload.dump()).encode()
+            kwargs['extratags'] = [*tags, (FITS_TAG, 7, len(data), data, False)]
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(tifffile, 'imwrite', write)

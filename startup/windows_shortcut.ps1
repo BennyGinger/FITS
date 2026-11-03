@@ -3,6 +3,8 @@ $root = $env:FITS_INSTALL_ROOT
 if (-not $root) { throw 'FITS_INSTALL_ROOT was not provided.' }
 $python = Join-Path $root '.venv\Scripts\pythonw.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw "Missing FITS Python: $python" }
+$icon = Join-Path $root 'assets\fits_icon.ico'
+if (-not (Test-Path -LiteralPath $icon)) { throw "Missing FITS icon: $icon" }
 $shell = New-Object -ComObject WScript.Shell
 $launcher = Join-Path $root 'startup\launch_win.vbs'
 $wscript = Join-Path ([Environment]::GetFolderPath('System')) 'wscript.exe'
@@ -35,6 +37,7 @@ foreach ($folder in $folders) {
     $shortcut.Arguments = '"' + $launcher + '"'
     $shortcut.WorkingDirectory = $root
     $shortcut.Description = 'Fluorescent Image Tracking Software'
+    $shortcut.IconLocation = "$icon,0"
     $shortcut.Save()
     Write-Host "Installed $destination."
 }

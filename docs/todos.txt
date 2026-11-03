@@ -16,72 +16,40 @@ Pipeline robustness and performance
     a performance limitation.
 [ ] Define realistic cancellation guarantees for each processing backend.
 
-Intermediate artifacts and experiment archiving — agreed design, not implemented
--------------------------------------------------------------------------------
-Goal: keep independent preprocessing outputs while working on an experiment,
-then recover disk space by archiving only its final usable image and object
-mask. Avoid applying preprocessing repeatedly to already processed pixels.
+Intermediate artifacts and experiment compacting — FITS 4 implementation
+----------------------------------------------------------------------
+[x] Independent raw/channel/frame/background image artifacts and segmentation/
+    tracking masks, with channel-before-time execution and disabled-stage bypass.
+[x] Shared StepProfile input resolution for execution, provenance and checking.
+[x] Generic created_at / derived_from metadata in fits_io; preserve existing step
+    timestamps and preserve data revisions through metadata-only edits/compact.
+[x] Shared GUI/CLI overwrite/conflict decisions with explicit downstream plans.
+[x] FITS <4 read-only viewing until migration; preserve results during migration,
+    with optional missing-intermediate reconstruction and separate downstream updates.
+[x] Compact preview, canonical image/mask aliases, accepted-conflict provenance,
+    retained REF/ROI/acquisitions/tables/settings/reports, and publication rollback.
+[x] Intermediate/compact/legacy/REF/ROI viewer loading and tracking-only controls.
 
-Preprocessing artifacts and reruns
-[ ] Convert produces fits_array_raw.tif, preserving the original acquisition
-    file as the source for future rebuilding.
-[ ] Execute channel registration before time registration; leave the main-GUI
-    settings layout/order unchanged. Give each registration step its own
-    artifact so either can be rerun from its predecessor. Proposed channel
-    output: fits_array_reg_channel.tif; time output: fits_array_reg.tif.
-[ ] Background subtraction produces fits_array_bgsub.tif, containing the
-    preceding enabled registration results. Each step reads the latest valid
-    preceding enabled stage, falling back to converted raw when appropriate.
-[ ] Overwriting a step reads its predecessor, never its own previous output.
-    Rerun later enabled dependent steps, including background subtraction after
-    registration changes. Handle newly enabled preprocessing steps consistently.
-    Adapt pipeline, viewers, tuners, and artifact discovery to explicit inputs.
+Full agreed contract, five implementation phases and validation evidence:
+    docs/fits4_artifacts_plan.md
 
-Artifact validity through existing provenance timestamps
-[ ] Use step execution timestamps stored in artifact metadata, not filesystem
-    modification times and not a separate validity/tracking list. Each successful
-    execution gets a distinct timestamp; ordinary file/metadata edits preserve
-    it. Derived artifacts retain the execution timestamps of their upstream
-    steps and add their own step timestamp.
-[ ] Compare upstream execution timestamps across artifacts to establish lineage.
-    Example: registration R1 -> background subtraction retaining R1 and adding
-    B1. Overwriting registration produces R2; the old background artifact still
-    records R1 and is therefore stale, even if its file remains on disk.
-    Check the full required upstream lineage, not simply the newest timestamp.
-[ ] Use this provenance check for reuse and archive selection when later steps
-    are disabled, fail, or are interrupted. Select the furthest valid completed
-    artifact in workflow order. Define handling for missing/legacy timestamps;
-    do not silently assume that ambiguous lineage is valid.
+Portable acquisitions and file management — implemented
+-------------------------------------------------------
+[x] Group originals and series under portable acquisition folders; keep state,
+    tuning, cache and history in acquisition-local .fits_experiment directories.
+[x] Promote processed selections to their run root and rebind moved run paths.
+[x] Mark the entire run read-only when active legacy layout/metadata is present.
+[x] Preview and apply migrations and path/condition/ID table refreshes with rollback;
+    preserve existing pixels/measurements and record unavailable historical lineage.
+[x] Manage files: optional intermediate reconstruction, explicit downstream updates,
+    review drawing alignment, restore snapshots,
+    delete reviewed history; compact retains history and conditionally hints at it.
+[x] Selected-file summary, raw channels and status above the existing browser;
+    Runtime-only reserved Advanced space, preserving step-tab expansion behavior.
 
-Mask artifacts
-[ ] Segmentation produces fits_masks_seg.tif; tracking produces
-    fits_masks_track.tif. Keep reference and ROI artifact behavior unchanged.
-[ ] Archive keeps the final authoritative object mask: valid active tracking
-    (including its edited/filtered final result when applicable), otherwise
-    segmentation. Remove superseded segmentation when tracking is retained.
-    Preserve metadata identifying segmentation labels versus track IDs.
-
-Archive operation and artifact paths
-[ ] Preview the exact files to retain, rename, and remove before applying
-    cleanup. Keep the final valid image as fits_array.tif and the final valid
-    object mask as fits_masks.tif, removing their stage suffixes.
-[ ] Preserve original acquisition files, reference/ROI masks, analysis tables,
-    settings, and processing provenance. Remove superseded intermediate images,
-    object masks, and disposable preview caches; define other retained outputs
-    explicitly before implementing cleanup.
-[ ] Add authoritative archived image/mask artifact paths and archived state.
-    Readers resolve those paths for archived experiments, where intermediate
-    paths are expected to be absent. Preserve historical step paths/provenance
-    rather than rewriting every stage path to the same archived file.
-[ ] Update saved experiment state and embedded metadata once during archiving
-    so archived paths agree. Preserve step execution timestamps and history.
-    Verify retained outputs and path updates before deleting intermediates.
-[ ] Reprocessing an archived experiment rebuilds missing prerequisites from
-    the original source. If the source is unavailable, report the missing
-    prerequisite instead of reprocessing the final archived pixels as raw.
-[ ] Validate stage-specific reruns, disabled steps, interrupted/failed reruns,
-    mismatched upstream timestamps, archive selection, final-mask precedence,
-    archived reader paths, and rebuilding after archive.
+Full plan, implementation phases and validation:
+    docs/portable_experiments_plan.md
+    docs/file_management_actions_plan.md (revised migration and processing actions)
 
 Analysis identifiers: deferred Z-plane support
 ----------------------------------------------
@@ -123,12 +91,15 @@ Mask label consistency across experiments — proposal only
 Tracking post-processing for static cells
 -----------------------------------------
 [x] Implemented a FITS-owned, tracker-agnostic static-mask postprocessor.
-    It restores stable identities with a temporal nonzero-mode super-mask,
+    It restores stable identities with a temporal super-mask built from pixels
+    present in at least half of each label's observed frames,
     removes masks that differ from each track's consensus shape, discards
     tracks below the minimum-appearances threshold, fills internal gaps, and
     optionally extrapolates the first and last valid masks to the sequence
-    boundaries. Existing valid masks are protected and conflicting generated
-    masks fall back to the disjoint super-mask shape to avoid halo artefacts.
+    boundaries. Weak, ambiguous, and unmatched identities are cleared before
+    filling. Existing valid masks are protected; collision-clipped reconstructions
+    must retain sufficient IoU with their intended shape. Tiny remnants are
+    rejected, and tracks that cannot be completed are removed.
     Settings are integrated into the tracking task, TOML configuration, and
     the GUI's basic settings. The implementation remains independent of
     `tracklink`, allowing future tracking backends to reuse it unchanged.
@@ -232,7 +203,11 @@ GUI
     denoising option, and Cellpose settings.
 [x] Tune the channel collection in SegTune. Select a summary row to revisit
     its controls; add the next unused channel or remove an existing row.
-    Apply and close transfers the complete collection to the main GUI.
+    Save current settings transfers the complete collection without closing.
+[x] Add compartment preview using shared bioimagequant distance maps, independent
+    mask/image channels, per-tab colours, and unsaved-settings checks.
+[x] Optionally export mb/cyto FITS masks; remove exports on compaction and rebuild
+    them only when enabled in the saved extraction settings.
 [x] Keep execution, workers, ordering, and overwrite at the shared step level.
 
 Configuration and CLI
@@ -354,7 +329,7 @@ Status: registration tuner complete and ready; initial on-demand background tune
 [x] Transfer accepted settings to the general main-GUI settings; expose Advanced
     settings only for changed manual overrides and preserve already-open
     sections. Standalone Save updates the supplied/nearest settings
-    file or creates a template-based one. Presets set backend/method; manual
+    file or creates a template-based one. Presets set algorithm/method; manual
     choices restore a matching preset or select Custom. Top channel changes
     update the active tab's fitting/reference channel.
 [x] Save accepted per-experiment settings, optional crop and matching matrices
@@ -373,7 +348,7 @@ Status: registration tuner complete and ready; initial on-demand background tune
     it restores full-image fitting. Lift crop transforms to full-image
     coordinates and retain unchanged output dimensions. Pin Resolved below
     scrolling settings and keep its size aligned across tabs.
-[x] Validate backend restoration, pixel equivalence, saved-model reuse, stale
+[x] Validate algorithm restoration, pixel equivalence, saved-model reuse, stale
     input rejection, settings transfer, cancellation, GUI/CLI launch, context
     matching, GUI settings priority and settings-only pipeline fitting.
 [x] Avoid waiting for all preview frames after fitting: display the requested

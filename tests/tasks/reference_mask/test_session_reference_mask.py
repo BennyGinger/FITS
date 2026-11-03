@@ -1,4 +1,5 @@
 from pathlib import Path
+from fits_io.metadata.models import FitsIOMeta
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,7 +15,7 @@ class FakeFitsIO:
         self._array = array
         self._axes = axes
         self.axes = axes
-        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"))
+        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"), metadata=FitsIOMeta().with_custom_metadata({"pipeline_meta": {"version": "4.0.0"}}).new_revision())
         self.channel_labels = labels
         self.saved: dict[str, Any] | None = None
 

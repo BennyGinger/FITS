@@ -1,8 +1,9 @@
 """Orchestrate workflows that complete each step for the full batch."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from typing import Any
-
 from fits.environment.constant import WORKFLOW_ORDER
 from fits.workflows.runtime.progress import RunProgress
 from fits.workflows.experiments import ExperimentState
@@ -11,28 +12,21 @@ from fits.workflows.definitions.registry import REGISTRY
 from fits.workflows.runtime.batch.execution import execute_batch_step
 from fits.workflows.runtime.progress.reporting import WorkflowReporter
 from fits.workflows.definitions.models import require_automatic_specs
+from fits.workflows.runtime.scheduler.planning import resolve_runtime_steps
 
 
 def run_batch_workflow(effective_cfg: Mapping[str, Any],
-                        exp_states: list[ExperimentState],
-                        *,
-                        run_progress: RunProgress | None = None,
-                        terminal_progress: bool = True,
-                        ) -> list[ExperimentState]:
+                       exp_states: list[ExperimentState],
+                       *,
+                       run_progress: RunProgress | None = None,
+                       terminal_progress: bool = True,
+                       ) -> list[ExperimentState]:
     """
     Run every enabled workflow step across the entire experiment batch.
     """
-    enabled_steps = [step_name
-                    for step_name in WORKFLOW_ORDER
-                    if isinstance(effective_cfg.get(step_name), Mapping)
-                    and effective_cfg[step_name].get("enabled", False)]
-    resolved_steps = []
-    for step_name in enabled_steps:
-        spec = REGISTRY.get(step_name)
-        if spec is None:
-            raise ValueError(f"Enabled step {str(step_name)!r} is missing from the registry.")
-        params = resolve_step_params(str(step_name), effective_cfg[step_name])
-        resolved_steps.append((spec, spec.model_validate(params)))
+    steps = resolve_runtime_steps(effective_cfg, registry=REGISTRY, workflow_order=WORKFLOW_ORDER)
+    resolved_steps = [(step.spec, step.settings) for step in steps]
+    enabled_steps = [step.spec.profile.step_name for step in steps]
     require_automatic_specs(spec for spec, _ in resolved_steps)
     reporter = (WorkflowReporter(run_progress, enabled_steps, exp_states)
                 if run_progress is not None
@@ -43,6 +37,7 @@ def run_batch_workflow(effective_cfg: Mapping[str, Any],
                                         settings=settings,
                                         exp_states=exp_states,
                                         reporter=reporter,
-                                        terminal_progress=terminal_progress,)
+                                        terminal_progress=terminal_progress,
+                                        )
 
     return exp_states

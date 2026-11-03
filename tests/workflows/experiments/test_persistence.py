@@ -26,7 +26,10 @@ def test_save_and_load_state_roundtrip(tmp_path: Path) -> None:
 
 
 def test_load_state_raises_on_invalid_artifact_path_type(tmp_path: Path) -> None:
-    (tmp_path / "experiment_state.json").write_text(
+    from fits.environment.paths import experiment_state_path
+    path = experiment_state_path(tmp_path, acquisition=tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(
         '{"artifacts": {"raw_image": 10}, "completed_steps": [], '
         '"updated_at": null, "meta": {}}',
         encoding="utf-8",

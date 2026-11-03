@@ -1,15 +1,16 @@
 """Portable experiment provenance and object identity for FITS measurements."""
 
+from __future__ import annotations
+
 from urllib.parse import quote
 from typing import cast
-
 import pandas as pd
-
 from fits.environment.constant import ARTI_SEG, ARTI_TRACK
 
 
 def add_quantification_ids(dataframe: pd.DataFrame, experiment_id: str) -> pd.DataFrame:
-    """Return measurements with portable experiment and cell identifiers.
+    """
+    Return measurements with portable experiment and cell identifiers.
 
     Tracked labels identify a cell over time; segmentation labels identify an
     observation in one frame. Intensity channels never change cell identity.
@@ -57,3 +58,19 @@ def add_quantification_ids(dataframe: pd.DataFrame, experiment_id: str) -> pd.Da
         )
     result.insert(1, "cell_id", ids)
     return result
+
+
+def add_condition_tags(dataframe: pd.DataFrame, conditions: tuple[str, ...]) -> pd.DataFrame:
+    """
+    Refresh folder tags on an adapter-owned table without touching measurements.
+    """
+    old = [column for column in dataframe if column.startswith('condition_level_')]
+    if old:
+        dataframe.drop(columns=old, inplace=True)
+    insert_at = 1 if 'experiment_id' in dataframe else 0
+    for level, value in enumerate(conditions, start=1):
+        dataframe.insert(insert_at + level - 1,
+                         f'condition_level_{level}',
+                         pd.Series(value, index=dataframe.index, dtype='string'),
+                         )
+    return dataframe

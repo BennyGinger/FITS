@@ -2,25 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
+import numpy as np
 from pathlib import Path
 from typing import Any
-
 from fits_io import FitsIO
-import numpy as np
 from numpy.typing import NDArray
-
 from fits.environment import constant as cst
 from fits.workflows.experiments import ExperimentState
+from fits.workflows.definitions.inputs import resolve_inputs
+from fits.workflows.artifacts.branch_masks import refresh_branch
 
 
 logger = logging.getLogger(__name__)
 
 
-def project_z(array: NDArray[Any],
-              axes: str,
-              *,
-              mask: bool,
-              ) -> tuple[NDArray[Any], str]:
+def project_z(array: NDArray[Any], axes: str, *, mask: bool) -> tuple[NDArray[Any], str]:
     """
     Project Z with maximum intensity or logical mask inclusion.
     """
@@ -39,28 +35,46 @@ class AnalysisManager:
     """
 
     state: ExperimentState
+    profile: Any = field(default=None, kw_only=True)
     _reader: FitsIO | None = field(init=False, default=None, repr=False)
 
     @property
     def image_path(self) -> Path:
-        path = self.state.artifact(cst.ARTI_IMG)
+        """
+        Image path.
+        """
+        path = (next(iter(resolve_inputs(self.state, self.profile).values()))
+                if self.profile is not None else self.state.artifact(cst.ARTI_IMG))
         if path is None or not path.is_file():
             raise ValueError("Analysis requires an image artifact.")
         return path
 
     @property
     def image_reader(self) -> FitsIO:
+        """
+        Image reader.
+        """
         if self._reader is None:
             self._reader = FitsIO.from_path(self.image_path)
         return self._reader
 
     def reference_paths(self) -> tuple[Path, ...]:
-        return tuple(sorted(self.state.workdir.glob(
-            cst.FITS_REFERENCE_TEMPLATE.format(label="*"))))
+        """
+        Reference paths.
+        """
+        paths = tuple(sorted(self.state.workdir.glob(cst.FITS_REFERENCE_TEMPLATE.format(label="*"))))
+        for path in paths:
+            refresh_branch(path, self.image_path)
+        return paths
 
     def roi_paths(self) -> tuple[Path, ...]:
-        return tuple(sorted(self.state.workdir.glob(
-            cst.FITS_ROI_TEMPLATE.format(label="*"))))
+        """
+        Roi paths.
+        """
+        paths = tuple(sorted(self.state.workdir.glob(cst.FITS_ROI_TEMPLATE.format(label="*"))))
+        for path in paths:
+            refresh_branch(path, self.image_path)
+        return paths
 
     def isotropic_pixel_size_um(self, *, spatial_axes: str = "YX") -> float | None:
         """

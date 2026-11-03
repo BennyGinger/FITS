@@ -13,6 +13,7 @@ from fits.workflows.experiments import ExperimentState
 from fits.settings.models import SegmentChannelSettings, SegmentSettings
 from fits.tasks.segmentation.segment import segment
 from fits.workflows.definitions.registry import REGISTRY
+from fits.workflows.definitions.inputs import configured_profile
 from fits.workflows.runtime.errors import StepExecutionError
 
 
@@ -71,7 +72,7 @@ def _image_state(tmp_path: Path) -> ExperimentState:
     image.write_bytes(b"")
     return ExperimentState.init(tmp_path, raw).with_complete_step(
         step_name=StepName.CONVERT,
-        artifact_kind="image",
+        artifact_kind="image_raw",
         artifact_path=image,
     )
 
@@ -81,11 +82,11 @@ def test_segment_requires_image_artifact(tmp_path: Path) -> None:
     raw.write_bytes(b"")
     state = ExperimentState.init(tmp_path, raw)
 
-    with pytest.raises(StepExecutionError, match="missing 'image' input"):
+    with pytest.raises(StepExecutionError, match="missing image_raw input"):
         segment(
             SegmentSettings(channels=[SegmentChannelSettings(channel="RFP")]),
             state,
-            REGISTRY[StepName.SEGMENT].profile,
+            configured_profile(REGISTRY[StepName.SEGMENT].profile, {"convert": {"enabled": True}}),
         )
 
 
@@ -94,7 +95,7 @@ def test_segment_requires_a_configured_channel(tmp_path: Path) -> None:
         segment(
             SegmentSettings(),
             _image_state(tmp_path),
-            REGISTRY[StepName.SEGMENT].profile,
+            configured_profile(REGISTRY[StepName.SEGMENT].profile, {"convert": {"enabled": True}}),
         )
 
 
@@ -119,7 +120,7 @@ def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Pat
             SegmentChannelSettings(channel="RFP", nuclear_channel="DAPI"),
         ]),
         _image_state(tmp_path),
-        REGISTRY[StepName.SEGMENT].profile,
+        configured_profile(REGISTRY[StepName.SEGMENT].profile, {"convert": {"enabled": True}}),
     )
 
     assert results[0].last_step == StepName.SEGMENT
@@ -127,8 +128,8 @@ def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Pat
     assert reader.get_channel_calls == [["RFP", "DAPI"]]
     assert wrapper.setup_called
     assert wrapper.run_calls[0][1] == "CYX"
-    assert reader.save_calls[0]["export_channels"] == ["RFP"]
-    assert reader.save_calls[0]["artifact_kind"] == "segmentation"
+    assert reader.save_calls[0]["metadata"].fits_io.channel_labels == ["RFP"]
+    assert reader.save_calls[0]["metadata"].fits_io.artifact_type == "segmentation"
 
 
 def test_segment_skips_when_requested_channels_are_complete(monkeypatch, tmp_path: Path) -> None:
@@ -149,7 +150,7 @@ def test_segment_skips_when_requested_channels_are_complete(monkeypatch, tmp_pat
     assert segment(
         SegmentSettings(channels=[SegmentChannelSettings(channel="GFP")]),
         state,
-        REGISTRY[StepName.SEGMENT].profile,
+        configured_profile(REGISTRY[StepName.SEGMENT].profile, {"convert": {"enabled": True}}),
     ) == [state]
     assert reader.save_calls == []
 
@@ -180,14 +181,14 @@ def test_segment_uses_independent_settings_and_saves_once(monkeypatch, tmp_path:
             ],
         }),
         _image_state(tmp_path),
-        REGISTRY[StepName.SEGMENT].profile,
+        configured_profile(REGISTRY[StepName.SEGMENT].profile, {"convert": {"enabled": True}}),
     )
 
     assert [payload["user_settings"]["model_type"] for payload in payloads] == ["cyto2", "nuclei"]
     assert payloads[1]["do_denoise"] is False
     assert reader.get_channel_calls == [["GFP"], ["DAPI"]]
     assert len(reader.save_calls) == 1
-    assert reader.save_calls[0]["export_channels"] == ["GFP", "DAPI"]
+    assert reader.save_calls[0]["metadata"].fits_io.channel_labels == ["GFP", "DAPI"]
 
 
 def test_segment_failure_does_not_save_partial_output(monkeypatch, tmp_path: Path) -> None:
@@ -217,7 +218,20 @@ def test_segment_failure_does_not_save_partial_output(monkeypatch, tmp_path: Pat
                 "channels": [{"channel": "GFP"}, {"channel": "DAPI"}],
             }),
             _image_state(tmp_path),
-            REGISTRY[StepName.SEGMENT].profile,
+            configured_profile(REGISTRY[StepName.SEGMENT].profile, {"convert": {"enabled": True}}),
         )
 
     assert reader.save_calls == []
+
+
+@pytest.fixture(autouse=True)
+def isolate_revision_payload_for_fake_readers(monkeypatch):
+    from fits_io.metadata.models import FitsIOMeta
+    from fits.workflows.artifacts.provenance import revision_payload
+    def payload(reader, state, profile, *, export_channels):
+        if hasattr(reader, 'build_payload'):
+            return revision_payload(reader, state, profile, export_channels=export_channels)
+        return FitsIOMeta().with_fitsio(
+            artifact_type=profile.output_artifact, channel_labels=list(export_channels)
+        ).with_custom_metadata(state.metadata_dump).new_revision()
+    monkeypatch.setattr('fits.tasks.common.artifact_results.revision_payload', payload)

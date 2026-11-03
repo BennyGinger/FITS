@@ -34,6 +34,28 @@ def test_per_channel_settings_are_independent() -> None:
     assert settings.channels[1].do_denoise is False
 
 
+@pytest.mark.parametrize("threshold", [0, 0.5, 1])
+def test_stitch_threshold_accepts_overlap_boundaries(threshold: float) -> None:
+    """
+    Allow disabled stitching and the complete range of valid overlap scores.
+    """
+    settings = SegmentSettings.model_validate({
+        "channels": [{"channel": "GFP", "user_settings": {"stitch_threshold": threshold}}],
+    })
+    assert settings.channels[0].user_settings["stitch_threshold"] == threshold
+
+
+@pytest.mark.parametrize("threshold", [-0.1, 1.1, float("nan"), float("inf")])
+def test_stitch_threshold_rejects_invalid_overlap_scores(threshold: float) -> None:
+    """
+    Reject invalid TOML or API values before invoking Cellpose.
+    """
+    with pytest.raises(ValidationError, match="stitch_threshold must be between 0 and 1"):
+        SegmentSettings.model_validate({
+            "channels": [{"channel": "GFP", "user_settings": {"stitch_threshold": threshold}}],
+        })
+
+
 def test_duplicate_segmentation_targets_are_rejected() -> None:
     with pytest.raises(ValidationError, match="Duplicate segmentation target channel"):
         SegmentSettings.model_validate({

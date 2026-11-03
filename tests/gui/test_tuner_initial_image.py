@@ -18,10 +18,19 @@ _APP = None
 
 
 @pytest.fixture(autouse=True)
-def application(monkeypatch):
+def application(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Load model choices and prevent GPU inference in image-navigation tests.
+    """
     global _APP
     _APP = QApplication.instance() or QApplication([])
     monkeypatch.setattr(SegmentationTunerWindow, "_initialize_selected_model", lambda self: None)
+    monkeypatch.setattr(SegmentationTunerWindow, "_run_preview_when_ready", lambda self: None)
+    from fits.gui.segmentation_models.loader import model_options_loader
+    loader = model_options_loader()
+    loader.start()
+    loader.wait()
+    _APP.processEvents()
 
 
 @pytest.fixture
@@ -96,7 +105,7 @@ def test_selected_empty_experiment_does_not_open_another(tuner_class, images, tm
     tuner = tuner_class(tmp_path, initial_path=empty)
     try:
         assert tuner._source_path is None
-        assert "No fits_array.tif" in tuner.status_label.text()
+        assert "No FITS image artifact" in tuner.status_label.text()
     finally:
         tuner.close()
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+from fits_io.metadata.models import FitsIOMeta
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,7 +19,7 @@ class FakeFitsIO:
         self._array = array
         self._axes = axes
         self.axes = axes
-        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"))
+        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"), metadata=FitsIOMeta().with_custom_metadata({"pipeline_meta": {"version": "4.0.0"}}).new_revision())
         self.channel_labels = labels
         self.saved: dict[str, Any] | None = None
 
@@ -349,3 +350,6 @@ def test_roi_tiff_round_trip_reads_encoding_from_fitsio_metadata(tmp_path: Path)
         reloaded.save('region', channel=0)
     reloaded.save('region', channel=0, overwrite=True)
     np.testing.assert_array_equal(RoiSession(source, roi_path=path).mask_array, session.mask_array)
+
+
+pytestmark = pytest.mark.usefixtures("current_format_tiffs")

@@ -8,8 +8,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 from typing import Any
-
-from fits.environment.constant import ARTI_RAW, ArtifactType, ChannelScope, StepName
+from fits.environment.constant import ARTI_RAW, ArtifactType, ChannelScope, StepName, ARTI_IMG, IMAGE_STAGE_ARTIFACTS
 from fits.workflows.metadata import FitsMeta
 
 
@@ -25,48 +24,55 @@ class ExperimentState:
     metadata: FitsMeta = field(default_factory=FitsMeta)
     # Runtime context is rebound on discovery, never saved as an absolute path.
     run_dir: Path | None = field(default=None, repr=False, compare=False)
+    compacted: bool = False
+    compaction_conflicts_accepted: bool = False
+    migration_checkpoint: str | None = None
+    # Temporary processing scope; never serialized or used as durable validity.
+    execution_scope: dict[Path, tuple[str, ...]] | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def init(cls,
-            workdir: Path,
-            original_image: Path,
-            *,
-            fits_meta: FitsMeta | None = None,
-            run_dir: Path | None = None,
-            ) -> ExperimentState:
+             workdir: Path,
+             original_image: Path,
+             *,
+             fits_meta: FitsMeta | None = None,
+             run_dir: Path | None = None,
+             ) -> ExperimentState:
         """
         Create an initial state for a raw image.
         """
         artifacts: dict[ArtifactType, Path] = {ARTI_RAW: cls._to_relative(workdir, original_image)}
         return cls(workdir=workdir,
-                    run_dir=run_dir,
-                    artifacts=artifacts,
-                    updated_at=datetime.now(),
-                    metadata=fits_meta if fits_meta is not None else FitsMeta(),)
+                   run_dir=run_dir,
+                   artifacts=artifacts,
+                   updated_at=datetime.now(),
+                   metadata=fits_meta if fits_meta is not None else FitsMeta(),
+                   )
 
     def with_metadata(self,
-                        *,
-                        step_name: StepName,
-                        created_by: str,
-                        exported_channel: ChannelScope = None,
-                        channels_params: Mapping[str, Any] | None = None,
-                        ) -> ExperimentState:
+                      *,
+                      step_name: StepName,
+                      created_by: str,
+                      exported_channel: ChannelScope = None,
+                      channels_params: Mapping[str, Any] | None = None,
+                      ) -> ExperimentState:
         """
         Return a copy with metadata recorded for a workflow step.
         """
         return replace(self,
                         metadata=self.metadata.with_step(step_name=step_name,
-                                                        created_by=created_by,
-                                                        exported_channel=exported_channel,
-                                                        params=channels_params,),)
+                                                         created_by=created_by,
+                                                         exported_channel=exported_channel,
+                                                         params=channels_params,
+                                                         ),)
 
     def with_complete_step(self,
-                            *,
-                            step_name: StepName,
-                            artifact_kind: ArtifactType,
-                            artifact_path: Path,
-                            workdir: Path | None = None,
-                            ) -> ExperimentState:
+                           *,
+                           step_name: StepName,
+                           artifact_kind: ArtifactType,
+                           artifact_path: Path,
+                           workdir: Path | None = None,
+                           ) -> ExperimentState:
         """
         Return a copy containing a completed step and its output artifact.
         """
@@ -74,12 +80,17 @@ class ExperimentState:
         artifacts = {kind: self._to_relative(target_workdir, self._to_absolute(path))
                         for kind, path in self.artifacts.items()}
         artifacts[artifact_kind] = self._to_relative(target_workdir, artifact_path)
+        if artifact_kind in IMAGE_STAGE_ARTIFACTS:
+            artifacts[ARTI_IMG] = artifacts[artifact_kind]
         completed_steps = self.completed_steps
         if step_name not in completed_steps:
             completed_steps = (*completed_steps, step_name)
         return replace(self,
                         workdir=target_workdir,
                         artifacts=artifacts,
+                        compacted=False,
+                        migration_checkpoint=(None if str(step_name) == self.migration_checkpoint
+                                              else self.migration_checkpoint),
                         completed_steps=completed_steps,
                         updated_at=datetime.now(),)
 
@@ -112,14 +123,15 @@ class ExperimentState:
 
     @property
     def analysis_experiment_id(self) -> str:
-        """Identify a branch by run folder name and its full relative subtree.
+        """
+        Identify a branch by its full path relative to the run folder.
 
         Standalone callers without a run directory use the work folder's name.
         Supply ``run_dir`` when combining branches from nested folders.
         """
         root = (self.run_dir if self.run_dir is not None else self.workdir).resolve()
         relative = self.workdir.resolve().relative_to(root)
-        return (Path(root.name) / relative).as_posix()
+        return relative.as_posix() if relative.parts else self.workdir.name
 
     @property
     def metadata_dump(self) -> dict[str, Any]:

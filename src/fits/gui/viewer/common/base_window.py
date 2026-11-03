@@ -1,30 +1,14 @@
 from __future__ import annotations
-
+from typing import Any, cast
+from numpy.typing import NDArray
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import cast
-
 from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTimer, Qt, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent
-from PySide6.QtWidgets import (
-    QAbstractSpinBox,
-    QFileDialog,
-    QCheckBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QProgressBar,
-    QPushButton,
-    QSlider,
-    QSplitter,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
-
+from PySide6.QtWidgets import QAbstractSpinBox, QFileDialog, QCheckBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar, QPushButton, QSlider, QSplitter, QToolButton, QVBoxLayout, QWidget
 from fits.gui.viewer.common.information_dialog import HelpRow, ViewerInformationDialog
-from fits.environment.constant import FITS_ARRAY_NAME
+from fits.workflows.artifacts.paths import image_for, first_image
+from fits.environment.constant import IMAGE_NAMES, FITS_ARRAY_NAME
 from fits.gui.main_window.run_browser import DirectoryBrowser
 from fits.gui.settings.wheel_widgets import FocusWheelComboBox, FocusWheelSlider
 from fits.gui.viewer.common.image_viewer import FitsImageViewer
@@ -41,9 +25,15 @@ class ImageToolWindow(QMainWindow):
     tool_help: tuple[HelpRow, ...]
     tool_panel: QWidget
 
-    def __init__(self, experiments_dir: str | Path | None = None,
-                 parent: QWidget | None = None, *,
-                 directory_locked: bool = False) -> None:
+    def __init__(self,
+                 experiments_dir: str | Path | None = None,
+                 parent: QWidget | None = None,
+                 *,
+                 directory_locked: bool = False,
+                 ) -> None:
+        """
+        Initialize the ImageToolWindow state and dependencies.
+        """
         super().__init__(parent)
         self._directory_locked = directory_locked
         self.resize(1700, 1150)
@@ -59,6 +49,9 @@ class ImageToolWindow(QMainWindow):
             self._set_experiments_directory(experiments_dir)
 
     def _build_ui(self) -> None:
+        """
+        Build ui.
+        """
         central = QWidget()
         self.setCentralWidget(central)
         outer_layout = QVBoxLayout(central)
@@ -103,8 +96,8 @@ class ImageToolWindow(QMainWindow):
         left_controls.addWidget(self.channel_combo)
         self.grayscale_lut_button = QPushButton("Grayscale")
         self.grayscale_lut_button.setCheckable(True)
-        self.grayscale_lut_button.setToolTip(
-            "Toggle grayscale display. Turn it off to restore the channel colour.")
+        self.grayscale_lut_button.setToolTip("Toggle grayscale display. Turn it off to restore the channel colour.",
+                                             )
         self.grayscale_lut_button.setStyleSheet(
             "QPushButton:checked { background-color: #2a82da; color: white; "
             "border: 1px solid #7fc0ff; }")
@@ -115,7 +108,7 @@ class ImageToolWindow(QMainWindow):
 
         right_controls = QHBoxLayout()
         right_controls.addStretch(1)
-        self.overlay_label = QLabel("Overlay")
+        self.overlay_label = QLabel("Mask opacity (0–100%)")
         right_controls.addWidget(self.overlay_label)
         self.show_mask = QCheckBox()
         self.show_mask.setChecked(True)
@@ -196,6 +189,9 @@ class ImageToolWindow(QMainWindow):
         outer_layout.addWidget(self.status_bar)
 
     def _build_source_controls(self) -> QWidget:
+        """
+        Build source controls.
+        """
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -213,48 +209,67 @@ class ImageToolWindow(QMainWindow):
         directory_row.addWidget(self.browse_button)
         layout.addLayout(directory_row)
 
-        self.directory_browser = DirectoryBrowser(
-            "Experiments directory contents", file_name_filters=self.file_filters)
+        self.directory_browser = DirectoryBrowser("Experiments directory contents",
+                                                  file_name_filters=self.file_filters,
+                                                  )
         layout.addWidget(self.directory_browser)
         return container
 
     def _connect_source_controls(self) -> None:
+        """
+        Connect source controls.
+        """
         self.browse_button.clicked.connect(self._browse)
-        self.directory_edit.returnPressed.connect(
-            lambda: self._set_experiments_directory(self.directory_edit.text()))
+        self.directory_edit.returnPressed.connect(lambda: self._set_experiments_directory(self.directory_edit.text()),
+                                                  )
         self.directory_browser.path_selected.connect(self._path_selected)
 
     def _connect_signals(self) -> None:
+        """
+        Connect signals.
+        """
         self._connect_source_controls()
         self.frame_slider.valueChanged.connect(self._display_selection)
         self.channel_combo.currentIndexChanged.connect(self._display_selection)
         self.z_slider.valueChanged.connect(self._display_selection)
         self._connect_tools()
-        self.grayscale_lut_button.toggled.connect(
-            lambda checked: self.image_viewer.set_coloured_lut(not checked))
+        self.grayscale_lut_button.toggled.connect(lambda checked: self.image_viewer.set_coloured_lut(not checked),
+                                                  )
         self.auto_scale_button.clicked.connect(self.image_viewer.auto_scale)
         self.full_range_button.clicked.connect(self.image_viewer.full_range)
         self.info_button.clicked.connect(self._show_information)
         self.show_mask.toggled.connect(self.image_viewer.set_mask_visible)
-        self.mask_opacity.valueChanged.connect(
-            lambda value: self.image_viewer.set_mask_opacity(value / 100.0))
+        self.mask_opacity.valueChanged.connect(lambda value: self.image_viewer.set_mask_opacity(value / 100.0),
+                                               )
 
     @Slot()
     def _show_information(self) -> None:
-        dialog = ViewerInformationDialog(
-            self, title=self.windowTitle(), version=self._package_version("fits"),
-            gui=self.help_gui, editing_enabled=getattr(self, "editing_enabled", True),
-            selection_enabled=getattr(self, "selection_enabled", False))
+        """
+        Show information.
+        """
+        dialog = ViewerInformationDialog(self,
+                                         title=self.windowTitle(),
+                                         version=self._package_version("fits"),
+                                         gui=self.help_gui,
+                                         editing_enabled=getattr(self, "editing_enabled", True),
+                                         selection_enabled=getattr(self, "selection_enabled", False),
+                                         )
         dialog.exec()
 
     @staticmethod
     def _package_version(distribution: str) -> str:
+        """
+        Package version.
+        """
         try:
             return version(distribution)
         except PackageNotFoundError:
             return "development version"
 
     def _install_keyboard_shortcuts(self) -> None:
+        """
+        Install keyboard shortcuts.
+        """
         self.installEventFilter(self)
         central = self.centralWidget()
         central.installEventFilter(self)
@@ -262,6 +277,9 @@ class ImageToolWindow(QMainWindow):
             widget.installEventFilter(self)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """
+        Route relevant keyboard and mouse events to the viewer controls.
+        """
         if (event.type() != QEvent.Type.KeyPress
                 or not isinstance(event, QKeyEvent)
                 or not self.isActiveWindow()):
@@ -312,6 +330,9 @@ class ImageToolWindow(QMainWindow):
 
     @staticmethod
     def _parent_spin_box(widget: QWidget | None) -> QAbstractSpinBox | None:
+        """
+        Parent spin box.
+        """
         while widget is not None:
             if isinstance(widget, QAbstractSpinBox):
                 return widget
@@ -320,18 +341,25 @@ class ImageToolWindow(QMainWindow):
 
     @staticmethod
     def _step_slider(slider: QSlider, step: int) -> None:
+        """
+        Step slider.
+        """
         if slider.isEnabled():
             slider.setValue(slider.value() + step)
 
     def _next_channel(self) -> None:
+        """
+        Next channel.
+        """
         if self.channel_combo.isEnabled() and self.channel_combo.count() > 0:
             next_index = (self.channel_combo.currentIndex() + 1) % self.channel_combo.count()
             self.channel_combo.setCurrentIndex(next_index)
 
     @staticmethod
-    def _navigation_control(label: str,
-                            layout: QHBoxLayout,
-                            ) -> tuple[QSlider, QLabel]:
+    def _navigation_control(label: str, layout: QHBoxLayout) -> tuple[QSlider, QLabel]:
+        """
+        Navigation control.
+        """
         layout.addWidget(QLabel(label))
         slider = FocusWheelSlider(Qt.Orientation.Horizontal)
         slider.setRange(0, 0)
@@ -342,24 +370,30 @@ class ImageToolWindow(QMainWindow):
         return slider, value
 
     def _set_directory_controls_enabled(self, enabled: bool) -> None:
-        """Enable run-directory browsing only when the launching GUI allows it."""
+        """
+        Enable run-directory browsing only when the launching GUI allows it.
+        """
         self.directory_edit.setEnabled(enabled and not self._directory_locked)
         self.browse_button.setEnabled(enabled and not self._directory_locked)
 
     @Slot()
     def _browse(self) -> None:
-        """Choose a run directory in standalone viewers."""
+        """
+        Choose a run directory in standalone viewers.
+        """
         if self._directory_locked:
             return
-        selected = QFileDialog.getExistingDirectory(
-            self,
-            "Choose experiments directory",
-            self.directory_edit.text(),)
+        selected = QFileDialog.getExistingDirectory(self,
+                                                    "Choose experiments directory",
+                                                    self.directory_edit.text(),
+                                                    )
         if selected:
             self._set_experiments_directory(selected)
 
-    def _set_experiments_directory(self, path: str | Path, *,
-                                   initial_path: str | Path | None = None) -> None:
+    def _set_experiments_directory(self, path: str | Path, *, initial_path: str | Path | None = None) -> None:
+        """
+        Set experiments directory.
+        """
         raw_path = str(path).strip()
         resolved = Path(raw_path).expanduser().resolve() if raw_path else None
         if resolved is None or not resolved.is_dir():
@@ -369,7 +403,7 @@ class ImageToolWindow(QMainWindow):
             self.status_label.setText("Choose an existing experiments directory.")
             return
         self.directory_edit.setText(str(resolved))
-        self.status_label.setText("Select an experiment folder or its fits_array.tif file.")
+        self.status_label.setText("Select an experiment folder or a FITS image artifact.")
         if self.auto_open_first_image:
             with QSignalBlocker(self.directory_browser):
                 self.directory_browser.set_root(resolved)
@@ -378,25 +412,25 @@ class ImageToolWindow(QMainWindow):
             self.directory_browser.set_root(resolved)
 
     def _open_initial_image(self, initial_path: str | Path | None = None) -> None:
-        """Open and reveal the selected experiment, or the first prepared image."""
+        """
+        Open and reveal the selected experiment, or the first prepared image.
+        """
         root = self.directory_browser.root_path
         if root is None:
             return
         selected = Path(initial_path).expanduser().resolve() if initial_path is not None else root
-        if selected.is_dir():
-            source = selected / FITS_ARRAY_NAME
-            if not source.is_file():
-                source = next(iter(sorted(selected.rglob(FITS_ARRAY_NAME))), None)
-        else:
-            source = selected.parent / FITS_ARRAY_NAME
+        source = first_image(selected) if selected.is_dir() else image_for(selected)
         if source is None or not source.is_file():
-            self.status_label.setText(f"No {FITS_ARRAY_NAME} found in {selected}.")
+            self.status_label.setText(f"No FITS image artifact found in {selected}.")
             return
         if not self.directory_browser.select_path(source):
             self._path_selected(source)
 
     @Slot()
     def _display_selection(self) -> None:
+        """
+        Display selection.
+        """
         if self._image_session is None or self.channel_combo.currentIndex() < 0:
             return
         frame = self.frame_slider.value()
@@ -422,18 +456,22 @@ class ImageToolWindow(QMainWindow):
         except Exception as error:
             self.status_label.setText(str(error))
             return
-        self.frame_value.setText(
-            f"{frame + 1} / {self._image_session.frame_count}")
-        self.z_value.setText(
-            f"{z_index + 1} / {self._image_session.plane_count}")
+        self.frame_value.setText(f"{frame + 1} / {self._image_session.frame_count}")
+        self.z_value.setText(f"{z_index + 1} / {self._image_session.plane_count}")
 
     def _set_source_controls_enabled(self, enabled: bool) -> None:
+        """
+        Set source controls enabled.
+        """
         self.tool_panel.setEnabled(enabled)
         self.frame_slider.setEnabled(enabled)
         self.channel_combo.setEnabled(enabled)
         self.z_slider.setEnabled(enabled)
 
     def _close_session(self) -> None:
+        """
+        Close session.
+        """
         self._clear_tools()
         if self._image_session is not None:
             self._image_session.close()
@@ -452,35 +490,65 @@ class ImageToolWindow(QMainWindow):
         self._set_source_controls_enabled(False)
 
     def _build_tools(self) -> QWidget:
+        """
+        Build tools.
+        """
         raise NotImplementedError
 
     def _build_mode_controls(self, layout: QHBoxLayout) -> None:
-        """Optional compact mode indicator above the image."""
+        """
+        Optional compact mode indicator above the image.
+        """
 
     def _build_viewer_actions(self, layout: QHBoxLayout) -> None:
-        """Optional session actions beside the half-width LUT controls."""
+        """
+        Optional session actions beside the half-width LUT controls.
+        """
 
     def _build_overlay_controls(self, layout: QHBoxLayout) -> None:
+        """
+        Build overlay controls.
+        """
         raise NotImplementedError
 
     def _connect_tools(self) -> None:
+        """
+        Connect tools.
+        """
         raise NotImplementedError
 
     def _tool_keypress(self, event: QKeyEvent) -> bool:
+        """
+        Tool keypress.
+        """
         raise NotImplementedError
 
     def _undo(self) -> None:
-        """Undo the latest edit when the active tool maintains edit history."""
+        """
+        Undo the latest edit when the active tool maintains edit history.
+        """
 
-    def _display_overlay(self, image, frame, channel, z_index) -> None:
+    def _display_overlay(self, image: NDArray[Any], frame: int, channel: str, z_index: int) -> None:
+        """
+        Display overlay.
+        """
         raise NotImplementedError
 
     def _clear_tools(self) -> None:
+        """
+        Clear tools.
+        """
         raise NotImplementedError
 
     def _path_selected(self, selected: object) -> None:
+        """
+        Path selected.
+        """
         raise NotImplementedError
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        """
+        Stop active work and handle the window close event.
+        """
         self._close_session()
         super().closeEvent(event)

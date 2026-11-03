@@ -96,9 +96,10 @@ def test_discovery_rebinds_run_root_after_moving_entire_run(tmp_path: Path) -> N
     shutil.move(str(run_dir), str(moved))
     restored = discover_saved_states(moved)[0]
     assert restored.run_dir == moved
-    assert restored.analysis_experiment_id == state.analysis_experiment_id == "run/condition/sample_s1"
+    assert restored.analysis_experiment_id == state.analysis_experiment_id == "condition/sample_s1"
     assert str(tmp_path) not in restored.analysis_experiment_id
-    assert "run_dir" not in (restored.workdir / "experiment_state.json").read_text()
+    from fits.environment.paths import experiment_state_path
+    assert "run_dir" not in experiment_state_path(restored.workdir).read_text()
 
 
 def test_assembly_preserves_root_when_conversion_creates_branch(tmp_path: Path) -> None:
@@ -110,7 +111,7 @@ def test_assembly_preserves_root_when_conversion_creates_branch(tmp_path: Path) 
     branch = state.with_complete_step(
         step_name=StepName.CONVERT, artifact_kind=ARTI_IMG,
         artifact_path=branch_dir / "fits_array.tif", workdir=branch_dir)
-    assert branch.analysis_experiment_id == f"{tmp_path.name}/condition/sample_s1"
+    assert branch.analysis_experiment_id == "condition/sample_s1"
 
 
 def test_master_upgrades_legacy_ids_without_rewriting_experiment_files(tmp_path: Path) -> None:
@@ -130,8 +131,8 @@ def test_master_upgrades_legacy_ids_without_rewriting_experiment_files(tmp_path:
     assert master_path is not None
     master = pd.read_parquet(master_path)
     assert master["experiment_id"].tolist() == (
-        [f"{tmp_path.name}/control/sample_s1"] * 4
-        + [f"{tmp_path.name}/treated/sample_s1"] * 4)
+        ["control/sample_s1"] * 4
+        + ["treated/sample_s1"] * 4)
     assert master["cell_id"].nunique() == 2
     assert master["track_length"].tolist() == [2] * 8
     assert master["track_start_frame"].tolist() == [1] * 8
@@ -165,7 +166,7 @@ def test_extraction_saves_portable_ids_with_real_quantification(
     path = updated.artifact(ARTI_QUANTI)
     assert path is not None
     table = pd.read_parquet(path)
-    assert table["experiment_id"].unique().tolist() == [f"{tmp_path.name}/condition/sample_s1"]
+    assert table["experiment_id"].unique().tolist() == ["condition/sample_s1"]
     assert table["cell_id"].nunique() == (1 if object_name == ARTI_TRACK else 2)
     if object_name == ARTI_TRACK:
         assert table["track_length"].tolist() == [4, 4]
@@ -217,3 +218,68 @@ def test_extraction_and_master_save_calibrated_motion_and_reference_progress(
     master = pd.read_parquet(master_path)
     np.testing.assert_allclose(master["track_total_dist_pixel"], 9)
     np.testing.assert_allclose(master["Dw"], 1 / 3)
+
+
+def test_compartments_save_shared_identity_and_motion_from_dilated_full_cells(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        ) -> None:
+    """
+    Exercise FITS settings through quantification, Parquet and master aggregation.
+    """
+    workdir = tmp_path / "condition" / "sample_s1"
+    workdir.mkdir(parents=True)
+    image_path = workdir / "fits_array.tif"
+    image_path.touch()
+    state = ExperimentState.init(workdir, workdir.parent / "sample.nd2", run_dir=tmp_path)
+    state = state.with_complete_step(step_name=StepName.CONVERT,
+                                     artifact_kind=ARTI_IMG,
+                                     artifact_path=image_path,
+                                     )
+    extractor = ExtractData(interval=2, pixel_size=0.5)
+    extractor.add_intensity(np.ones((2, 2, 10, 10)), "TCYX", channel_labels=["GFP", "RFP"])
+    labels = np.zeros((2, 10, 10), dtype=np.uint16)
+    labels[0, 0, 0] = labels[1, 2, 3] = 24
+    extractor.add_labels(labels, "TYX", name=ARTI_TRACK, channel_labels=["iRed"])
+    reference = np.zeros((10, 10), dtype=np.uint8)
+    reference[0, 9] = 1
+    extractor.add_ref(reference, "YX", name="wound", channel_labels=["iRed"])
+    monkeypatch.setattr(ExtractionManager, "prepare_quantification", lambda self: extractor)
+    profile = StepProfile(step_name=StepName.EXTRACT,
+                          distribution=DIST_EXTRACT,
+                          input_artifact=ARTI_IMG,
+                          output_artifact=ARTI_QUANTI,
+                          output_name=FITS_QUANTI_NAME,
+                          )
+    settings = ExtractSettings(compartments=True, membrane_thickness=6, dilation_radius=1, frame_workers=1)
+    updated = extract(settings, state, profile)[0]
+    path = updated.artifact(ARTI_QUANTI)
+    assert path is not None
+    table = pd.read_parquet(path)
+    assert len(table) == 12
+    assert table["cell_id"].nunique() == 1
+    assert set(table["compartment"]) == {"full", "mb", "cyto"}
+    for frame, x, y, distance in [(1, 1 / 3, 1 / 3, 9), (2, 3, 2, np.sqrt(40))]:
+        rows = table.loc[table["frame"] == frame]
+        np.testing.assert_allclose(rows["centroid_x"], x)
+        np.testing.assert_allclose(rows["centroid_y"], y)
+        np.testing.assert_allclose(rows["dist_pixel"], distance)
+    np.testing.assert_allclose(table["track_total_dist_pixel"], np.sqrt(89) / 3)
+    np.testing.assert_allclose(table["track_length"], 2)
+    assert table.loc[table["compartment"] == "cyto", "area"].eq(1).all()
+    full = table.loc[table["compartment"] == "full"].sort_values("frame")
+    assert full["area"].tolist() == [3, 3, 5, 5]
+    master_path = _save_master_quantification([updated], tmp_path)
+    assert master_path is not None
+    master = pd.read_parquet(master_path)
+    assert len(master) == len(table)
+    assert master["compartment"].tolist() == table["compartment"].tolist()
+    np.testing.assert_allclose(master["track_total_dist_pixel"], np.sqrt(89) / 3)
+
+
+@pytest.fixture(autouse=True)
+def isolate_table_provenance(monkeypatch):
+    from fits_io.metadata.models import FitsIOMeta
+    import importlib
+    monkeypatch.setattr(importlib.import_module('fits.tasks.analysis.extraction.extract'), 'revision_payload',
+        lambda reader, state, profile, **kwargs: FitsIOMeta().with_custom_metadata(state.metadata_dump).new_revision())
+    monkeypatch.setattr(ExtractionManager, 'image_reader', property(lambda self: None))

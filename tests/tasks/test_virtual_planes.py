@@ -251,3 +251,6 @@ def test_plane_snapshot_survives_later_edits_and_repeated_clearing():
     store.restore_plane((1, 0, 0), snapshot)
     assert np.all(store.plane(1) == 4)
     store.close()
+
+
+pytestmark = pytest.mark.usefixtures("current_format_tiffs")

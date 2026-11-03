@@ -127,3 +127,10 @@ def test_manager_rejects_missing_references_before_loading_image(tmp_path: Path)
     state = ExperimentState(workdir=tmp_path)
     with pytest.raises(ValueError, match="at least one reference mask"):
         DistanceProfileManager(state, DistanceProfileSettings()).calculate()
+
+
+import pytest
+@pytest.fixture(autouse=True)
+def isolate_geometry_metadata(monkeypatch):
+    # Readers in this numerical test are in-memory arrays, not TIFF files.
+    monkeypatch.setattr('fits.tasks.analysis.manager.refresh_branch', lambda *args: None)

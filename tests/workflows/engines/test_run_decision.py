@@ -14,7 +14,7 @@ def _state_with_image(tmp_path: Path, *, completed: bool = False) -> ExperimentS
     step = StepName.CONVERT if completed else StepName.REGISTER_TIME
     return ExperimentState.init(tmp_path, raw).with_complete_step(
         step_name=step,
-        artifact_kind="image",
+        artifact_kind="image_raw" if completed else "image_time_registered",
         artifact_path=image,
     )
 

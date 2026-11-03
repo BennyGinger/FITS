@@ -13,6 +13,7 @@ from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
 from fits.tasks.registration.register_channel import register_channel
 from fits.tasks.registration.register_time import register_time
 from fits.workflows.definitions.registry import REGISTRY
+from fits.workflows.definitions.inputs import configured_profile
 
 
 class DummyReader:
@@ -63,7 +64,7 @@ def _image_state(tmp_path: Path) -> ExperimentState:
     image.write_bytes(b"")
     return ExperimentState.init(tmp_path, raw).with_complete_step(
         step_name=StepName.CONVERT,
-        artifact_kind="image",
+        artifact_kind="image_raw",
         artifact_path=image,
     )
 
@@ -88,7 +89,7 @@ def test_register_time_resolves_fit_channel_and_saves(monkeypatch, tmp_path: Pat
     results = register_time(
         RegisterTimeSettings(context="linear_drift", fit_channel="RFP"),
         _image_state(tmp_path),
-        REGISTRY[StepName.REGISTER_TIME].profile,
+        configured_profile(REGISTRY[StepName.REGISTER_TIME].profile, {"convert": {"enabled": True}}),
     )
 
     assert results[0].last_step == StepName.REGISTER_TIME
@@ -108,7 +109,7 @@ def test_register_channel_resolves_reference_and_saves(monkeypatch, tmp_path: Pa
     results = register_channel(
         RegisterChannelSettings(context="channel_shift", reference_channel="RFP"),
         _image_state(tmp_path),
-        REGISTRY[StepName.REGISTER_CHANNEL].profile,
+        configured_profile(REGISTRY[StepName.REGISTER_CHANNEL].profile, {"convert": {"enabled": True}}),
     )
 
     assert results[0].last_step == StepName.REGISTER_CHANNEL
@@ -125,7 +126,7 @@ def test_registration_steps_skip_when_complete(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=True))
 
     assert register_channel(
-        RegisterChannelSettings(), state, REGISTRY[StepName.REGISTER_CHANNEL].profile
+        RegisterChannelSettings(), state, configured_profile(REGISTRY[StepName.REGISTER_CHANNEL].profile, {"convert": {"enabled": True}})
     ) == [state]
     assert reader.save_calls == []
 
@@ -138,3 +139,16 @@ def test_registry_exposes_distinct_registration_steps() -> None:
     assert channel_spec.profile.step_name == StepName.REGISTER_CHANNEL
     assert time_spec.item_runner is register_time
     assert channel_spec.item_runner is register_channel
+
+
+@pytest.fixture(autouse=True)
+def isolate_revision_payload_for_fake_readers(monkeypatch):
+    from fits_io.metadata.models import FitsIOMeta
+    from fits.workflows.artifacts.provenance import revision_payload
+    def payload(reader, state, profile, *, export_channels):
+        if hasattr(reader, 'build_payload'):
+            return revision_payload(reader, state, profile, export_channels=export_channels)
+        return FitsIOMeta().with_fitsio(
+            artifact_type=profile.output_artifact, channel_labels=list(export_channels)
+        ).with_custom_metadata(state.metadata_dump).new_revision()
+    monkeypatch.setattr('fits.tasks.common.artifact_results.revision_payload', payload)

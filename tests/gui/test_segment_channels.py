@@ -25,10 +25,11 @@ def application():
 def test_channel_sections_add_edit_remove_and_round_trip(tmp_path):
     application()
     adapter = SettingsAdapter()
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP", "DAPI"])
     adapter.set_segment_channels([{"channel": "GFP", "user_settings": {"diameter": 20}}])
     editor = StepSettingsEditor(adapter, StepName.SEGMENT)
     editor._add_channel(0)
-    editor.channel_widgets[1]["channel"].setText("DAPI")
+    editor.channel_widgets[1]["channel"].setCurrentText("DAPI")
     editor.channel_widgets[1]["user_settings.diameter"].setValue(12)
     editor.sync_to_adapter()
     assert adapter.segment_channels()[0]["user_settings"]["diameter"] == 20

@@ -1,13 +1,40 @@
 from __future__ import annotations
 
 from pathlib import Path
-
+from collections.abc import Sequence
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 
+STEP_TAB_BAR_STYLE = (
+    "QTabBar::tab { font-size: 12px; font-weight: normal; padding: 5px 16px; "
+    "color: #bfc5cc; background: #292929; border: 1px solid #626262; "
+    "border-top-left-radius: 8px; border-top-right-radius: 8px; margin-right: 5px; }"
+    "QTabBar::tab:selected { color: #a8dcff; background: #383838; "
+    "border-color: #82b4d6; border-bottom-color: #383838; }"
+    "QTabBar::tab:hover:!selected { background: #323232; }")
+
+
+PREVIEW_BUTTON_STYLE = (
+    "QPushButton { background-color: #d97706; color: white; font-weight: bold; "
+    "padding: 6px 12px; border-radius: 4px; } "
+    "QPushButton:hover { background-color: #ea8a0c; } "
+    "QPushButton:pressed, QPushButton:checked { background-color: #b85f05; } "
+    "QPushButton:disabled { background-color: #6b4b2a; color: #aaa; }")
+
+
+def get_application(arguments: Sequence[str] = ()) -> QApplication:
+    """
+    Reuse the GUI application or create it with the supplied Qt arguments.
+    """
+    application = QApplication.instance()
+    return application if isinstance(application, QApplication) else QApplication(list(arguments))
+
+
 def apply_dark_theme(app: QApplication) -> None:
-    """Apply a charcoal Fusion theme with explicit text and indicator contrast."""
+    """
+    Apply a charcoal Fusion theme with explicit text and indicator contrast.
+    """
 
     app.setStyle("Fusion")
     palette = QPalette()
@@ -50,6 +77,9 @@ def apply_dark_theme(app: QApplication) -> None:
     indicators = "QCheckBox::indicator, QGroupBox::indicator, QAbstractItemView::indicator"
 
     def states(state: str) -> str:
+        """
+        Return the current states.
+        """
         return ", ".join(f"{selector}{state}" for selector in indicators.split(", "))
 
     app.setStyleSheet(

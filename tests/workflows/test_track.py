@@ -107,7 +107,8 @@ def test_channel_failure_does_not_replace_existing_tracking(monkeypatch, tmp_pat
     first = track(TrackSettings(channel_to_track=["GFP"]), state, PROFILE)[0]
     output_path = first.artifact("tracking")
     saved_output = output_path.read_bytes()
-    state_path = first.workdir / "experiment_state.json"
+    from fits.environment.paths import experiment_state_path
+    state_path = experiment_state_path(first.workdir)
     saved_state = state_path.read_bytes()
     tracker.fail_on = 3
     with pytest.raises(StepExecutionError, match="channel 'RFP'.*tracking failed"):

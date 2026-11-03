@@ -63,17 +63,17 @@ def test_registration_uses_effective_values_and_distinguishes_presets(main, mode
     step = StepName.REGISTER_TIME if mode == "time" else StepName.REGISTER_CHANNEL
     settings_type = RegisterTimeSettings if mode == "time" else RegisterChannelSettings
     if change in ("unchanged_manual", "restore_preset"):
-        main.adapter.set_field_value(step, "backend", "scikit")
+        main.adapter.set_field_value(step, "algorithm", "scikit")
         main.adapter.set_field_value(step, "method", "translation")
     params = dict(main.adapter.as_mapping()[step]["params"])
     settings = settings_type.model_validate(params)
     if change == "preset":
         settings = settings.model_copy(update={"context": "complex_drift" if mode == "time" else "channel_shift_complex"})
     if change in ("manual", "unchanged_manual"):
-        settings = settings.model_copy(update={"backend": "scikit", "method": "translation"})
+        settings = settings.model_copy(update={"algorithm": "scikit", "method": "translation"})
     else:
-        effective = resolve_registration_plan(settings.context) if change in ("preset", "restore_preset") else resolve_registration_plan(settings.context, settings.backend, settings.method)
-        settings = settings.model_copy(update={"backend": effective.backend, "method": effective.method})
+        effective = resolve_registration_plan(settings.context) if change in ("preset", "restore_preset") else resolve_registration_plan(settings.context, settings.algorithm, settings.method)
+        settings = settings.model_copy(update={"algorithm": effective.algorithm, "method": effective.method})
     if change == "basic":
         settings = settings.model_copy(update={"reference_strategy": "first"} if mode == "time" else {"reference_frame": 2})
     main._apply_registration_settings(mode, settings)

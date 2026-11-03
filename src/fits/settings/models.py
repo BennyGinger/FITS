@@ -4,7 +4,7 @@ from typing import Any, Literal, TypeVar
 import numpy as np
 from numpy.typing import NDArray
 from fits_io.readers._types import Zproj
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from fits.environment.constant import ExecMode, TimeRegiContext, ChannelRegiContext, STATISTIC_MAP, SUPPORTED_STATISTICS
 
@@ -87,11 +87,11 @@ class ConvertSettings(SettingsModel):
 
 class RegisterSettings(SettingsModel):
     """
-    Common backend overrides for registration settings.
+    Common algorithm overrides for registration settings.
 
     Attributes:
-        backend: Optional registration backend override. ``None`` lets the
-            registration context choose its backend.
+        algorithm: Optional registration algorithm override. ``None`` lets the
+            registration context choose its algorithm.
         method: Optional transform-method override. ``None`` lets the
             registration context choose its method.
 
@@ -106,7 +106,8 @@ class RegisterSettings(SettingsModel):
 
     This model is intended to be subclassed rather than used directly.
     """
-    backend: Literal["scikit", "pystackreg", "cv2"] | None = None
+    algorithm: Literal["scikit", "pystackreg", "cv2"] | None = Field(
+        default=None, validation_alias=AliasChoices("algorithm", "backend"))
     method: Literal["translation", "rigid_body", "affine"] | None = None
 
     @field_validator('fit_channel', 'reference_channel', mode='before', check_fields=False)
@@ -116,9 +117,12 @@ class RegisterSettings(SettingsModel):
             return None
         return v
 
-    @field_validator('backend', 'method', mode='before')
+    @field_validator('algorithm', 'method', mode='before')
     @classmethod
-    def parse_optional_literals(cls, v):
+    def parse_optional_literals(cls, v: Any) -> Any:
+        """
+        Normalize optional registration algorithm and method values.
+        """
         if isinstance(v, str) and v.strip().lower() == 'none':
             return None
         return v
@@ -129,14 +133,14 @@ class RegisterTimeSettings(RegisterSettings):
     Settings for time-wise registration and drift correction.
 
     Attributes:
-        context: Registration scenario used to resolve default backend and
+        context: Registration scenario used to resolve default algorithm and
             transform method.
         reference_strategy: Frame reference used to estimate transforms.
         fit_channel: Channel index or label used to estimate transforms. A
-            value of ``None`` delegates channel selection to the backend.
+            value of ``None`` delegates channel selection to the algorithm.
 
     Inherited attributes:
-        backend: Optional registration backend override.
+        algorithm: Optional registration algorithm override.
         method: Optional transform-method override.
         overwrite: Recompute time registration even when its output exists.
         execution: Experiment-level execution mode. Defaults to ``"serial"``.
@@ -157,7 +161,7 @@ class RegisterTimeSettings(RegisterSettings):
         Convert the RegisterTimeSettings instance to a metadata dictionary suitable for serialization.
         Excludes any fields that are not relevant for metadata.
         """
-        payload = {"backend": self.backend,
+        payload = {"algorithm": self.algorithm,
                 "method": self.method,
                 "context": self.context,
                 "reference_strategy": self.reference_strategy,
@@ -170,14 +174,14 @@ class RegisterChannelSettings(RegisterSettings):
     Settings for cross-channel registration.
 
     Attributes:
-        context: Registration scenario used to resolve default backend and
+        context: Registration scenario used to resolve default algorithm and
             transform method.
         reference_channel: Channel index or label used as the fixed channel.
         exclude_channel: Channel labels excluded from registration.
         reference_frame: Frame index used to estimate channel transforms.
 
     Inherited attributes:
-        backend: Optional registration backend override.
+        algorithm: Optional registration algorithm override.
         method: Optional transform-method override.
         overwrite: Recompute channel registration even when its output exists.
         execution: Experiment-level execution mode. Defaults to ``"thread"``.
@@ -211,7 +215,7 @@ class RegisterChannelSettings(RegisterSettings):
         Convert the RegisterChannelSettings instance to a metadata dictionary suitable for serialization.
         Excludes any fields that are not relevant for metadata.
         """
-        payload = {"backend": self.backend,
+        payload = {"algorithm": self.algorithm,
                 "method": self.method,
                 "context": self.context,
                 "reference_channel": self.reference_channel,
@@ -319,6 +323,17 @@ class SegmentChannelSettings(BaseModel):
     user_settings: dict[str, Any] = Field(default_factory=dict)
     model: Any | None = None
 
+    @field_validator("user_settings")
+    @classmethod
+    def validate_stitch_threshold(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """
+        Restrict the Cellpose overlap cutoff to its meaningful zero-to-one scale.
+        """
+        threshold = value.get("stitch_threshold", 0.0)
+        if not isinstance(threshold, (int, float)) or not 0 <= threshold <= 1:
+            raise ValueError("stitch_threshold must be between 0 and 1; 0 disables stitching.")
+        return value
+
     @field_validator("channel")
     @classmethod
     def validate_channel(cls, value: str) -> str:
@@ -399,6 +414,10 @@ class SegmentSettings(SettingsModel):
 class TrackPostprocessSettings(BaseModel):
     """
     Settings for optional static-cell mask post-processing.
+
+    Shape consistency controls observed-mask Dice similarity and the equivalent
+    IoU for identity matching and collision-clipped reconstruction, with a 0.5
+    minimum IoU. Doubtful observations are cleared before interpolation.
     """
     enabled: bool = False
     shape_similarity: float = Field(default=0.9, ge=0, le=1)
@@ -507,6 +526,12 @@ class ExtractSettings(SettingsModel):
         expected_ref_masks: Initial drawing target per experiment.
         additional_properties: Extra scikit-image region properties appended to
             bioimagequant's defaults.
+        compartments: Extract full, membrane and cytoplasm measurements.
+        save_compartment_masks: Optionally export labelled mb/cyto TIFFs. These
+            derived files are removed by compaction and rebuilt when enabled.
+        membrane_thickness: Positive Euclidean membrane thickness in pixels.
+        dilation_radius: Non-negative expansion in pixels before compartment
+            extraction. The expanded mask defines full and its centroid.
         frame_workers: Bioimagequant worker processes used to quantify frames
             within one experiment.
 
@@ -523,12 +548,19 @@ class ExtractSettings(SettingsModel):
     draw_ref_mask: bool = False
     expected_ref_masks: int = Field(default=1, ge=1)
     additional_properties: str | Sequence[str] | None = None
+    compartments: bool = False
+    save_compartment_masks: bool = False
+    membrane_thickness: float = Field(default=6.0, gt=0, allow_inf_nan=False)
+    dilation_radius: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     execution: ExecMode = Field(default="serial", exclude=True)
     frame_workers: int = Field(default=8, ge=1, exclude=True)
 
     @field_validator('additional_properties', mode='before')
     @classmethod
-    def parse_properties(cls, v):
+    def parse_properties(cls, v: Any) -> Any:
+        """
+        Normalize the TOML sentinel for no additional properties.
+        """
         if isinstance(v, str) and v.strip().lower() == 'none':
             return None
         return v

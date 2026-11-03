@@ -1,18 +1,39 @@
+from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import tomllib
-from collections.abc import Mapping
 import os
+import tomlkit
+from collections.abc import Mapping, MutableMapping
 from tempfile import NamedTemporaryFile
-
 from fits.environment.paths import ensure_fits_directory, fits_dir
 
 
 SAVED_SETTINGS_NAME = "fits_settings.toml"
 
 
+def normalize_registration_algorithms(document: MutableMapping[str, Any]) -> bool:
+    """
+    Rename legacy registration backend keys while preserving their TOML values.
+    """
+    changed = False
+    for name in ("register_time", "register_channel"):
+        step = document.get(name)
+        if not isinstance(step, Mapping):
+            continue
+        params = step.get("params")
+        if isinstance(params, MutableMapping) and "backend" in params:
+            previous = params.pop("backend")
+            if "algorithm" not in params:
+                params["algorithm"] = previous
+            changed = True
+    return changed
+
+
 def run_settings_path(run_dir: Path) -> Path:
-    """Return the canonical settings snapshot path for a FITS run."""
+    """
+    Return the canonical settings snapshot path for a FITS run.
+    """
     return fits_dir(run_dir) / SAVED_SETTINGS_NAME
 
 
@@ -21,7 +42,11 @@ def load_settings(path: str | Path) -> dict[str, Any]:
     Load settings from a TOML file and return them as a dictionary.
     """
     input_path = Path(path).expanduser().resolve()
-    return tomllib.loads(input_path.read_text())
+    settings = tomllib.loads(input_path.read_text())
+    normalize_registration_algorithms(settings)
+    if input_path.name == SAVED_SETTINGS_NAME and input_path.parent.name == '.fits':
+        settings['run_dir'] = str(input_path.parent.parent)
+    return settings
 
 
 def save_run_settings(source: Path, run_dir: Path) -> Path:
@@ -33,15 +58,18 @@ def save_run_settings(source: Path, run_dir: Path) -> Path:
     """
     source = source.expanduser().resolve()
     destination = run_settings_path(run_dir)
-    if source == destination.resolve():
-        return destination
     contents = source.read_bytes()
+    document = tomlkit.parse(contents.decode('utf-8'))
+    renamed = normalize_registration_algorithms(document)
+    if document.get('run_dir') != str(run_dir.resolve()) or renamed:
+        document['run_dir'] = str(run_dir.resolve())
+        contents = tomlkit.dumps(document).encode('utf-8')
+    if source == destination.resolve() and contents == source.read_bytes():
+        return destination
     ensure_fits_directory(destination.parent)
     temporary_path = None
     try:
-        with NamedTemporaryFile(dir=destination.parent,
-                                prefix=".fits_settings.", suffix=".tmp",
-                                delete=False) as temporary:
+        with NamedTemporaryFile(dir=destination.parent, prefix=".fits_settings.", suffix=".tmp", delete=False) as temporary:
             temporary_path = Path(temporary.name)
             temporary.write(contents)
         os.replace(temporary_path, destination)

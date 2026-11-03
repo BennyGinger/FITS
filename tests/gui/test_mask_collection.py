@@ -568,3 +568,6 @@ def test_saving_one_channel_keeps_other_channel_dirty(window, tmp_path):
     window.channel_combo.setCurrentIndex(0)
     window._saved_mask('reference', folder / 'fits_ref_ref.tif')
     assert window._dirty('reference')
+
+
+pytestmark = pytest.mark.usefixtures("current_format_tiffs")

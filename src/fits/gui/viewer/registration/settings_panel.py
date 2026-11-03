@@ -8,7 +8,8 @@ from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
 
 from fits.gui.settings.wheel_widgets import FocusWheelComboBox, FocusWheelSpinBox
 from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
-from fits.environment.constant import RegistrationContext
+from fits.environment.constant import RegistrationContext, StepName
+from fits.gui.settings.adapter import field_tooltip
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
 from fits.tasks.registration.tuned import Mode, RegistrationSettings
 
@@ -58,19 +59,20 @@ class RegistrationSettingsPanel(QWidget):
                         else ["channel_shift", "channel_shift_dual_cam", "channel_shift_complex"]):
             self.context.addItem(context, context)
         self.context.addItem("Custom", None)
-        self.context.setToolTip("Choose a preset, or edit backend/method. Matching choices select their preset; others use Custom.")
+        step = StepName.REGISTER_TIME if mode == "time" else StepName.REGISTER_CHANNEL
+        self.context.setToolTip(field_tooltip(step, "context") + "\nCustom: choose the algorithm and method manually.")
         form.addRow("Context", self.context)
-        self.manual_group = QGroupBox("Backend and method")
+        self.manual_group = QGroupBox("Algorithm and method")
         manual_layout = QVBoxLayout(self.manual_group)
         self.manual_status = QLabel("Set by context")
         manual_layout.addWidget(self.manual_status)
         manual_form = QFormLayout()
         manual_layout.addLayout(manual_form)
         settings_layout.addWidget(self.manual_group)
-        self.backend = FocusWheelComboBox()
-        for backend in ("pystackreg", "cv2", "scikit"):
-            self.backend.addItem(backend, backend)
-        manual_form.addRow("Backend", self.backend)
+        self.algorithm = FocusWheelComboBox()
+        for algorithm in ("pystackreg", "cv2", "scikit"):
+            self.algorithm.addItem(algorithm, algorithm)
+        manual_form.addRow("Algorithm", self.algorithm)
         self.method = FocusWheelComboBox()
         for method in ("translation", "rigid_body", "affine"):
             self.method.addItem(method, method)
@@ -78,7 +80,8 @@ class RegistrationSettingsPanel(QWidget):
         form = QFormLayout()
         settings_layout.addLayout(form)
         self.channel = FocusWheelComboBox()
-        form.addRow("Fitting channel" if mode == "time" else "Reference channel", self.channel)
+        form.addRow("Fitting channel (optional)" if mode == "time" else "Reference channel (required)", self.channel)
+        self.channel.setToolTip(field_tooltip(step, "fit_channel" if mode == "time" else "reference_channel"))
         self.strategy = FocusWheelComboBox()
         self.strategy.addItems(["previous", "first", "mean"])
         self.reference_frame = FocusWheelSpinBox()
@@ -106,7 +109,7 @@ class RegistrationSettingsPanel(QWidget):
         panel_layout.addWidget(self.resolved_group)
         outer.addStretch(1)
         self.context.currentIndexChanged.connect(self._context_changed)
-        for combo in (self.backend, self.method):
+        for combo in (self.algorithm, self.method):
             combo.currentIndexChanged.connect(self._manual_changed)
         for combo in (self.channel, self.strategy):
             combo.currentIndexChanged.connect(self._controls_changed)
@@ -141,20 +144,20 @@ class RegistrationSettingsPanel(QWidget):
         if self.context.currentData() is not None:
             self._preset_context = self.context.currentData()
             plan = resolve_registration_plan(self._preset_context)
-            with QSignalBlocker(self.backend), QSignalBlocker(self.method):
-                self.backend.setCurrentIndex(self.backend.findData(plan.backend))
+            with QSignalBlocker(self.algorithm), QSignalBlocker(self.method):
+                self.algorithm.setCurrentIndex(self.algorithm.findData(plan.algorithm))
                 self.method.setCurrentIndex(self.method.findData(plan.method))
         self._controls_changed()
 
     def _match_context(self) -> None:
-        """Select a preset matching the displayed backend and method, or Custom."""
+        """Select a preset matching the displayed algorithm and method, or Custom."""
         matching = None
         for index in range(self.context.count()):
             context = self.context.itemData(index)
             if context is None:
                 continue
             plan = resolve_registration_plan(context)
-            if plan.backend == self.backend.currentData() and plan.method == self.method.currentData():
+            if plan.algorithm == self.algorithm.currentData() and plan.method == self.method.currentData():
                 matching = context
                 break
         with QSignalBlocker(self.context):
@@ -182,13 +185,13 @@ class RegistrationSettingsPanel(QWidget):
         if crop_active is not None:
             self._crop_active = crop_active
         try:
-            plan = resolve_registration_plan(self._preset_context, self.backend.currentData(), self.method.currentData())
-            if plan.backend == "scikit" and plan.method != "translation":
-                raise ValueError("The scikit backend supports translation only.")
+            plan = resolve_registration_plan(self._preset_context, self.algorithm.currentData(), self.method.currentData())
+            if plan.algorithm == "scikit" and plan.method != "translation":
+                raise ValueError("The scikit algorithm supports translation only.")
             reference = (self.strategy.currentText() if self.mode == "time" else
                          f"reference {self.channel.currentText() or 'not selected'}, frame {self.reference_frame.value()}")
             scope = "from crop" if self._crop_active else "full image"
-            self.resolved.setText(f"{plan.backend} / {plan.method} / {reference} / {scope}")
+            self.resolved.setText(f"{plan.algorithm} / {plan.method} / {reference} / {scope}")
         except ValueError as error:
             self.resolved.setText(str(error))
 
@@ -197,15 +200,16 @@ class RegistrationSettingsPanel(QWidget):
         self._updating = True
         self._baseline = settings.model_copy(deep=True)
         self._preset_context = cast(RegistrationContext, settings.context)
-        effective = resolve_registration_plan(self._preset_context, settings.backend, settings.method)
+        effective = resolve_registration_plan(self._preset_context, settings.algorithm, settings.method)
         self.overwrite.setChecked(settings.overwrite)
-        self.backend.setCurrentIndex(self.backend.findData(effective.backend))
+        self.algorithm.setCurrentIndex(self.algorithm.findData(effective.algorithm))
         self.method.setCurrentIndex(self.method.findData(effective.method))
         self.channel.clear()
+        self.channel.addItem("None" if self.mode == "time" else "")
         self.channel.addItems(list(labels))
         selected = settings.fit_channel if isinstance(settings, RegisterTimeSettings) else settings.reference_channel
         if isinstance(selected, int):
-            self.channel.setCurrentIndex(selected if 0 <= selected < len(labels) else 0)
+            self.channel.setCurrentIndex(selected + 1 if 0 <= selected < len(labels) else 0)
         elif selected in labels:
             self.channel.setCurrentText(selected)
         self.reference_frame.setMaximum(frames)
@@ -226,18 +230,20 @@ class RegistrationSettingsPanel(QWidget):
     def settings(self) -> RegistrationSettings:
         """Return CLI-compatible settings, retaining the last named context for Custom."""
         payload = {**self._baseline.model_dump(), "overwrite": self.overwrite.isChecked(),
-                   "context": self._preset_context, "backend": self.backend.currentData(),
+                   "context": self._preset_context, "algorithm": self.algorithm.currentData(),
                    "method": self.method.currentData()}
         if self.mode == "time":
             payload.update(fit_channel=self.channel.currentText(), reference_strategy=self.strategy.currentText())
             settings = RegisterTimeSettings.model_validate(payload)
         else:
+            if not self.channel.currentText():
+                raise ValueError("Choose a reference channel.")
             excluded = [self.excluded.item(i).text() for i in range(self.excluded.count())
                         if self.excluded.item(i).checkState() == Qt.CheckState.Checked]
             payload.update(reference_channel=self.channel.currentText(), exclude_channel=excluded or None,
                            reference_frame=self.reference_frame.value() - 1)
             settings = RegisterChannelSettings.model_validate(payload)
-        plan = resolve_registration_plan(settings.context, settings.backend, settings.method)
-        if plan.backend == "scikit" and plan.method != "translation":
-            raise ValueError("The scikit backend supports translation only.")
+        plan = resolve_registration_plan(settings.context, settings.algorithm, settings.method)
+        if plan.algorithm == "scikit" and plan.method != "translation":
+            raise ValueError("The scikit algorithm supports translation only.")
         return settings

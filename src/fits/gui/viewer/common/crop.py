@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QCheckBox, QColorDialog, QGraphicsRe
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from fits.gui.settings.wheel_widgets import FocusWheelSpinBox
+from fits.gui.theme import PREVIEW_BUTTON_STYLE
 from fits.gui.viewer.common.image_viewer import FitsImageViewer
 from fits.interaction.crop import CropBounds
 
@@ -71,6 +72,7 @@ class CropPanel(QWidget):
         if self.crop_button is not None:
             self.crop_button.setToolTip("Fit a rectangle around all selected cells across time, plus 5% on each side.")
         self.preview_button = QPushButton("Preview")
+        self.preview_button.setStyleSheet(PREVIEW_BUTTON_STYLE)
         self.preview_button.setCheckable(True)
         self.preview_button.setToolTip("Zoom to the rectangle. Turn off or press Home to see the full image.")
         for button in (self.color_button, self.crop_button, self.preview_button):

@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from types import ModuleType
 
 import pytest
 
@@ -14,9 +15,13 @@ STARTUP = Path(__file__).resolve().parents[2] / "startup"
 
 
 @pytest.fixture
-def setup_module(monkeypatch):
+def setup_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """
+    Load the standalone installer for isolated installation checks.
+    """
     monkeypatch.syspath_prepend(str(STARTUP))
     spec = importlib.util.spec_from_file_location("fits_installer", STARTUP / "setup.py")
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -116,7 +121,7 @@ def make_install(root):
     (root / ".venv" / "bin").mkdir(parents=True)
     (root / ".venv" / "bin" / "python").touch()
     (root / "assets").mkdir()
-    (root / "assets" / "fits_logo.png").touch()
+    (root / "assets" / "fits_icon.png").touch()
     (root / "startup").mkdir()
     (root / "startup" / "launch_linux.sh").touch()
 
@@ -149,13 +154,13 @@ def test_desktop_command_quotes_special_paths(shortcuts, tmp_path):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux entry-file integration")
-def test_linux_entry_runs_installation_from_another_directory(checkout, tmp_path):
-    """Exercise bootstrap/sync/verify/menu wiring with a fake uv, without downloads."""
+def test_linux_entry_runs_installation_from_another_directory(checkout: Path, tmp_path: Path) -> None:
+    """
+    Exercise bootstrap/sync/verify/menu wiring with a fake uv, without downloads.
+    """
     shutil.copytree(STARTUP, checkout / "startup", ignore=shutil.ignore_patterns("__pycache__", "logs"))
-    repository = STARTUP.parent
-    shutil.copy(repository / "install_linux.sh", checkout / "install_linux.sh")
     (checkout / "assets").mkdir()
-    (checkout / "assets" / "fits_logo.png").touch()
+    (checkout / "assets" / "fits_icon.png").touch()
     (checkout / "startup" / "verify.py").write_text("print('Verification invoked')\n")
     tools = tmp_path / "tools"
     tools.mkdir()
@@ -179,7 +184,7 @@ def test_linux_entry_runs_installation_from_another_directory(checkout, tmp_path
     environment["PATH"] = str(tools) + os.pathsep + environment["PATH"]
     environment["XDG_DATA_HOME"] = str(tmp_path / "user data")
     result = subprocess.run(
-        ["bash", str(checkout / "install_linux.sh")], cwd=tmp_path,
+        ["bash", str(checkout / "startup" / "install_linux.sh")], cwd=tmp_path,
         env=environment, text=True, capture_output=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr

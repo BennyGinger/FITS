@@ -14,29 +14,41 @@ def track_labels(masks: NDArray[np.generic]) -> NDArray[np.generic]:
 
 def build_temporal_supermask(masks: NDArray[np.generic],) -> NDArray[np.generic]:
     """
-    Return the most frequent nonzero label at every spatial pixel.
+    Return the most frequent consistent identity at every spatial pixel.
+
+    A label must occupy a pixel in at least half of its observed frames. This
+    prevents one expanded outlier from enlarging the reference for every frame.
     """
     mode = np.zeros(masks.shape[1:], dtype=masks.dtype)
     largest_count = np.zeros(masks.shape[1:], dtype=np.intp)
     for label in track_labels(masks):
-        count = np.count_nonzero(masks == label, axis=0)
-        replace = count > largest_count
+        track = masks == label
+        count = np.count_nonzero(track, axis=0)
+        appearances = np.count_nonzero(np.any(track, axis=(1, 2)))
+        replace = (count > largest_count) & (2 * count >= appearances)
         mode[replace] = label
         largest_count[replace] = count[replace]
     return mode
 
 
-def reconnect_identities(masks: NDArray[np.generic], supermask: NDArray[np.generic],) -> NDArray[np.generic]:
+def reconnect_identities(masks: NDArray[np.generic],
+                         supermask: NDArray[np.generic],
+                         *,
+                         minimum_iou: float = 0.5,
+                         ) -> NDArray[np.generic]:
     """
-    Map frame labels to identities in the temporal supermask.
+    Map confident observations to the temporal supermask, leaving doubtful ones empty.
     """
-    reconnected = masks.copy()
+    reconnected = np.zeros_like(masks)
     super_areas = _label_areas(supermask)
     for frame_index, frame in enumerate(masks):
         for label in track_labels(frame):
             frame_object = frame == label
-            identity = _unique_best_supermask_label(
-                frame_object, supermask, super_areas)
+            identity = _unique_best_supermask_label(frame_object,
+                                                   supermask,
+                                                   super_areas,
+                                                   minimum_iou=minimum_iou,
+                                                   )
             if identity is not None:
                 reconnected[frame_index][frame_object] = identity
     return reconnected
@@ -61,11 +73,13 @@ def _overlap_counts(frame_object: NDArray[np.bool_], supermask: NDArray[np.gener
 
 
 def _unique_best_supermask_label(frame_object: NDArray[np.bool_],
-                                supermask: NDArray[np.generic],
-                                super_areas: dict[int, int],
-                                ) -> int | None:
+                                 supermask: NDArray[np.generic],
+                                 super_areas: dict[int, int],
+                                 *,
+                                 minimum_iou: float,
+                                 ) -> int | None:
     """
-    Return the sole supermask identity with the highest intersection-over-union.
+    Return the unique best identity only when its overlap meets the required IoU.
     """
     intersections = _overlap_counts(frame_object, supermask)
     if not intersections:
@@ -75,6 +89,8 @@ def _unique_best_supermask_label(frame_object: NDArray[np.bool_],
     scores = {label: intersection / (object_area + super_areas[label] - intersection)
                 for label, intersection in intersections.items()}
     best_score = max(scores.values())
+    if best_score < minimum_iou:
+        return None
     best_labels = [label for label, score in scores.items()
                     if np.isclose(score, best_score)]
     return best_labels[0] if len(best_labels) == 1 else None

@@ -1,9 +1,11 @@
+from __future__ import annotations
 import logging
-
+from bioimagequant import CompartmentSettings
 from fits.workflows.experiments import ExperimentState
 from fits.settings.models import ExtractSettings
 from fits.tasks.analysis.extraction.manager import ExtractionManager
-from fits.tasks.analysis.identity import add_quantification_ids
+from fits.tasks.analysis.extraction.compartment_export import export_compartments
+from fits.tasks.analysis.identity import add_quantification_ids, add_condition_tags
 from fits.tasks.analysis.tracking_summary import add_track_statistics
 from fits.tasks.analysis.tracking_motion import add_track_motion
 from fits.tasks.common.artifact_results import complete_step_result
@@ -11,62 +13,72 @@ from fits.tasks.common.preparation import resolve_step_run
 from fits.tasks.common.table_results import save_parquet
 from fits.workflows.definitions.models import StepProfile
 from fits.workflows.runtime.errors import StepExecutionError
+from fits.workflows.artifacts.provenance import revision_payload
+from fits.tasks.analysis.aggregate import _condition_values
 
 
 logger = logging.getLogger(__name__)
 
 
-def extract(settings: ExtractSettings, 
-            exp_state: ExperimentState, 
+def extract(settings: ExtractSettings,
+            exp_state: ExperimentState,
             step_profile: StepProfile,
             ) -> list[ExperimentState]:
     """
     Process a single experiment through the extract step.
-    
+
     Args:
         settings: Extract step settings
         exp_state: Single experiment state to process
         step_profile: Step metadata
-    
+
     Returns:
         List of one output experiment state. Extract step produces a single output artifact.
     """
     try:
-        run = resolve_step_run(exp_state,
-                            step_profile,
-                            settings.overwrite,)
+        compartments = None
+        if settings.compartments:
+            compartments = CompartmentSettings(membrane_thickness=settings.membrane_thickness,
+                                               dilation_radius=settings.dilation_radius,
+                                               )
+        run = resolve_step_run(exp_state, step_profile, settings.overwrite)
         if run.is_complete:
+            if compartments is not None and settings.save_compartment_masks:
+                export_compartments(exp_state, compartments)
             return [exp_state]
 
         # Drawing flags/counts configure collection, not numerical extraction.
         # Reuse every discovered reference, including when drawing is disabled.
-        manager = ExtractionManager(exp_state)
+        manager = ExtractionManager(exp_state, profile=step_profile)
         extractor = manager.prepare_quantification()
 
         dataframe = extractor.quantify(additional_properties=settings.additional_properties,
-                                    workers=settings.frame_workers,)
+                                       workers=settings.frame_workers,
+                                       compartments=compartments,
+                                       )
 
         # Add FITS-specific provenance to the extracted measurements.
         dataframe = add_quantification_ids(dataframe, exp_state.analysis_experiment_id)
+        if exp_state.run_dir is not None:
+            add_condition_tags(dataframe, _condition_values(exp_state, exp_state.run_dir))
         add_track_statistics(dataframe)
         add_track_motion(dataframe, pixel_size=extractor.pixel_size)
 
         # Save the quantification DataFrame to a Parquet file in the experiment's workdir
         output_path = (exp_state.workdir / step_profile.output_name)
 
-        save_path = save_parquet(dataframe, output_path,)
-
         updated_state = exp_state.with_metadata(step_name=step_profile.step_name,
-                                                created_by=step_profile.distribution,)
+                                                created_by=step_profile.distribution,
+                                                )
+        payload = revision_payload(manager.image_reader, updated_state, step_profile, export_channels="all")
+        save_path = save_parquet(dataframe, output_path, payload)
+        if compartments is not None and settings.save_compartment_masks:
+            export_compartments(exp_state, compartments)
 
-        new_state = complete_step_result(updated_state,
-                                        step_profile,
-                                        save_path,)
+        new_state = complete_step_result(updated_state, step_profile, save_path)
         return [new_state]
 
     except Exception as exc:
-        logger.exception("%s failed for %s",
-                        step_profile.step_name,
-                        exp_state.experiment_id,)
+        logger.exception("%s failed for %s", step_profile.step_name, exp_state.experiment_id)
         raise StepExecutionError(f"Step {str(step_profile.step_name)!r} failed for "
                                 f"{exp_state.experiment_id}: {exc}") from exc

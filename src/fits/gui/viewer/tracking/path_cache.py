@@ -1,19 +1,19 @@
 """Persist completed trajectory drawings; partial drawings are never reused."""
+
+from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 import hashlib
 import json
 import logging
+import numpy as np
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
-
-import numpy as np
 from numpy.typing import NDArray
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QImage
-
-from fits.environment.paths import ensure_fits_directory, fits_dir
+from fits.environment.paths import ensure_fits_directory, experiment_cache
 from fits.gui.viewer.tracking.path_item import PreparedPaths
 
 
@@ -23,8 +23,16 @@ CACHE_ENTRIES = 4
 
 
 class PathDrawingCache:
-    def __init__(self, source: Path, channel: int, z: int,
-                 tracks: dict[int, NDArray[np.float64]], style: dict[str, Any]) -> None:
+    def __init__(self,
+                 source: Path,
+                 channel: int,
+                 z: int,
+                 tracks: dict[int, NDArray[np.float64]],
+                 style: dict[str, Any],
+                 ) -> None:
+        """
+        Initialize the PathDrawingCache state and dependencies.
+        """
         stat = source.stat()
         settings = [1, source.name, stat.st_size, stat.st_mtime_ns,
                     stat.st_ctime_ns, channel, z, style]
@@ -33,12 +41,15 @@ class PathDrawingCache:
         for track, points in tracks.items():
             digest.update(f"{track}:{len(points)};".encode())
             digest.update(np.ascontiguousarray(points, dtype=np.float64).tobytes())
-        self.directory = fits_dir(source.parent) / "viewer_cache" / "tracking_paths"
+        self.directory = experiment_cache(source.parent) / "tracking_paths"
         self.data_path = self.directory / f"{source.name}-{digest.hexdigest()[:24]}.rgba"
         self.metadata_path = self.data_path.with_suffix(".json")
         self.tracks = tracks
 
     def load(self) -> PreparedPaths | None:
+        """
+        Load.
+        """
         try:
             metadata = json.loads(self.metadata_path.read_text())
             shape = tuple(metadata["shape"])
@@ -63,7 +74,9 @@ class PathDrawingCache:
 
     @contextmanager
     def storage(self) -> Iterator[Path | None]:
-        """Draw directly into a pending cache file, with a temporary fallback."""
+        """
+        Draw directly into a pending cache file, with a temporary fallback.
+        """
         temporary = None
         try:
             ensure_fits_directory(self.directory)
@@ -81,6 +94,9 @@ class PathDrawingCache:
                     logger.debug("Cannot remove pending trajectory cache %s", temporary)
 
     def save(self, prepared: PreparedPaths, temporary: Path | None) -> None:
+        """
+        Save.
+        """
         if temporary is None or prepared.frames is None:
             return
         metadata_temp = None
@@ -90,8 +106,7 @@ class PathDrawingCache:
             bounds = prepared.bounds
             metadata = {"shape": prepared.frames.shape,
                         "bounds": [bounds.x(), bounds.y(), bounds.width(), bounds.height()]}
-            with NamedTemporaryFile(mode="w", dir=self.directory, suffix=".pending",
-                                    delete=False) as file:
+            with NamedTemporaryFile(mode="w", dir=self.directory, suffix=".pending", delete=False) as file:
                 metadata_temp = Path(file.name)
                 json.dump(metadata, file)
             temporary.replace(self.data_path)
@@ -107,7 +122,9 @@ class PathDrawingCache:
                     logger.debug("Cannot remove pending trajectory metadata %s", metadata_temp)
 
     def _prune(self) -> None:
-        """Retain recent drawings, always keeping the drawing just completed."""
+        """
+        Retain recent drawings, always keeping the drawing just completed.
+        """
         entries = sorted(self.directory.glob("*.json"), key=lambda path: path.stat().st_mtime_ns)
         sizes = {path: path.with_suffix(".rgba").stat().st_size
                  for path in entries if path.with_suffix(".rgba").exists()}

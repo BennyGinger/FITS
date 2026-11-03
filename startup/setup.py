@@ -96,8 +96,16 @@ class Installer:
 
 
 def main() -> int:
+    """
+    Install FITS first, then offer the independent optional table viewer.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-shortcut", action="store_true", help="Install without creating a menu shortcut.")
+    tad = parser.add_mutually_exclusive_group()
+    tad.add_argument('--with-tad', dest='tad', action='store_true', help='Install Tad without prompting if unavailable.')
+    tad.add_argument('--without-tad', dest='tad', action='store_false', help='Skip optional Tad installation.')
+    parser.set_defaults(tad=None)
+    parser.add_argument('--pause', action='store_true', help='Keep the installation terminal open to read the result.')
     args = parser.parse_args()
     installer = None
     try:
@@ -116,6 +124,21 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nInstallation interrupted. Rerun the installer to retry.", file=sys.stderr)
         return 130
+    python = ROOT / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    option = ('--with-tad',) if args.tad is True else ('--without-tad',) if args.tad is False else ()
+    try:
+        # Inherit the terminal so input prompts remain visible before a newline.
+        subprocess.run([str(python), '-m', 'fits.external_tools.tad', str(ROOT), *option],
+                       cwd=ROOT, env=command_environment(ROOT), check=True,
+                       )
+    except (OSError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+        installer.message(f'Optional Tad installation was unsuccessful: {error}')
+    installer.message('FITS installed successfully and is ready to use.')
+    if args.pause and sys.stdin is not None and sys.stdin.isatty():
+        try:
+            input('Press Enter to close…')
+        except (EOFError, KeyboardInterrupt):
+            pass
     return 0
 
 

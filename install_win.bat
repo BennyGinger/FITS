@@ -19,7 +19,7 @@ if not defined FITS_BOOTSTRAP_PYTHON (
     for /f "delims=" %%P in ('uv python find --system --managed-python 3.12') do set "FITS_BOOTSTRAP_PYTHON=%%P"
 )
 if not defined FITS_BOOTSTRAP_PYTHON goto failed
-"%FITS_BOOTSTRAP_PYTHON%" startup\setup.py %*
+"%FITS_BOOTSTRAP_PYTHON%" startup\setup.py --pause %*
 if errorlevel 1 goto failed
 exit /b 0
 :failed

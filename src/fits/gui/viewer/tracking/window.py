@@ -1,45 +1,32 @@
 from __future__ import annotations
 
+from fits.gui.theme import PREVIEW_BUTTON_STYLE
+from numpy.typing import NDArray
+from PySide6.QtGui import QMouseEvent, QColor, QCloseEvent, QKeyEvent
 from pathlib import Path
 from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any, cast
-
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.GraphicsScene.mouseEvents import MouseClickEvent
 from scipy.ndimage import distance_transform_edt
 from PySide6.QtCore import QObject, QPointF, QThread, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QCloseEvent, QKeyEvent
-from PySide6.QtWidgets import (
-    QCheckBox, QColorDialog, QDialog, QDialogButtonBox, QFrame,
-    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QProgressBar, QVBoxLayout, QWidget,
-)
-
+from PySide6.QtWidgets import QCheckBox, QColorDialog, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QProgressBar, QVBoxLayout, QWidget
 from fits.gui.settings.wheel_widgets import FocusWheelComboBox, FocusWheelSpinBox
-from fits.environment.constant import (
-    FITS_ARRAY_NAME,
-    FITS_MASK_TRACK,
-    FITS_MASK_TRACK_EDITED,
-    FITS_MASK_TRACK_EDITED_FILTERED,
-)
+from fits.environment import constant as cst
+from fits.workflows.artifacts.paths import image_for
+from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK, FITS_MASK_TRACK_EDITED, FITS_MASK_TRACK_EDITED_FILTERED
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.common.information_dialog import TRACKING_HELP
 from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
 from fits.gui.viewer.tracking.session import TrackingViewerSession
-from fits.gui.viewer.tracking.path_item import (
-    PreparedPaths, TrackPathsItem, prepare_paths)
+from fits.gui.viewer.tracking.path_item import PreparedPaths, TrackPathsItem, prepare_paths
 from fits.gui.viewer.tracking.path_cache import PathDrawingCache
 from fits.gui.viewer.tracking.colors import track_rgb
 from fits.gui.viewer.tracking.crop import CropFitWorker, CropPanel
-from fits.tasks.segmentation.local_seg import (
-    component_at_point,
-    fill_clicked_enclosure,
-    remove_clicked_component,
-)
-from fits.workflows.runtime.interactive.messages import (
-    TrackEditOutcome, TrackEditRequest)
+from fits.tasks.segmentation.local_seg import component_at_point, fill_clicked_enclosure, remove_clicked_component
+from fits.workflows.runtime.interactive.messages import TrackEditOutcome, TrackEditRequest
 
 
 # Drawings live in temporary mapped files. Bound both their disk use and count.
@@ -53,31 +40,55 @@ class _TrajectoryWorker(QObject):
     failed = Signal(str)
     done = Signal()
 
-    def __init__(self, session: TrackingViewerSession, key: tuple,
-                 channel: int, z: int, options: dict[str, Any]) -> None:
+    def __init__(self,
+                 session: TrackingViewerSession,
+                 key: tuple,
+                 channel: int,
+                 z: int,
+                 options: dict[str, Any],
+                 ) -> None:
+        """
+        Initialize the _TrajectoryWorker state and dependencies.
+        """
         super().__init__()
         self.session, self.key = session, key
         self.channel, self.z, self.options = channel, z, options
 
     def _report_progress(self, value: int, total: int, stage: str) -> None:
+        """
+        Report progress.
+        """
         if value in (1, total) or value % max(1, total // 100) == 0:
             self.progress.emit(value, total, stage)
 
     @Slot()
     def run(self) -> None:
+        """
+        Execute the background worker operation.
+        """
         cancelled = QThread.currentThread().isInterruptionRequested
         try:
-            centroids = self.session.centroid_cache.calculate(
-                self.session.centroid_frame, count=self.session.frame_count,
-                channel=self.channel, z=self.z, source=self.session.centroid_source, cancelled=cancelled,
-                progress=lambda n, total: self._report_progress(n, total, "Calculating centroids"))
+            centroids = self.session.centroid_cache.calculate(self.session.centroid_frame,
+                                                              count=self.session.frame_count,
+                                                              channel=self.channel,
+                                                              z=self.z,
+                                                              source=self.session.centroid_source,
+                                                              cancelled=cancelled,
+                                                              progress=lambda n, total: self._report_progress(n,
+                                                                                                              total,
+                                                                                                              "Calculating centroids",
+                                                                                                              ),
+                                                              )
             if centroids is None or cancelled():
                 return
             accepted = None
             if self.options["filter"]:
-                accepted = self.session.track_ids_matching(
-                    self.channel, self.z, self.options["operator"],
-                    self.options["value"], self.options["maximum"])
+                accepted = self.session.track_ids_matching(self.channel,
+                                                           self.z,
+                                                           self.options["operator"],
+                                                           self.options["value"],
+                                                           self.options["maximum"],
+                                                           )
                 centroids = {track: points for track, points in centroids.items()
                              if track in accepted}
             prepared = None
@@ -90,8 +101,13 @@ class _TrajectoryWorker(QObject):
         finally:
             self.done.emit()
 
-    def _prepare_paths(self, centroids: dict[int, np.ndarray],
-                       cancelled: Callable[[], bool]) -> PreparedPaths | None:
+    def _prepare_paths(self,
+                       centroids: dict[int, np.ndarray],
+                       cancelled: Callable[[], bool],
+                       ) -> PreparedPaths | None:
+        """
+        Prepare paths.
+        """
         style = {name: self.options[name] for name in
                  ("single", "color", "thickness", "markers", "size")}
         cache = PathDrawingCache(self.session.source_path, self.channel, self.z, centroids, style)
@@ -101,14 +117,24 @@ class _TrajectoryWorker(QObject):
             return prepared
 
         def color_for(track: int) -> QColor:
+            """
+            Color for.
+            """
             return (QColor(style["color"]) if style["single"] else QColor(*track_rgb(track)))
 
         with cache.storage() as path:
-            prepared = prepare_paths(
-                centroids, color_for=color_for, thickness=style["thickness"],
-                show_markers=style["markers"], marker_size=style["size"],
-                cancelled=cancelled, frame_path=path,
-                progress=lambda n, total: self._report_progress(n, total, "Preparing trajectories"))
+            prepared = prepare_paths(centroids,
+                                     color_for=color_for,
+                                     thickness=style["thickness"],
+                                     show_markers=style["markers"],
+                                     marker_size=style["size"],
+                                     cancelled=cancelled,
+                                     frame_path=path,
+                                     progress=lambda n, total: self._report_progress(n,
+                                                                                     total,
+                                                                                     "Preparing trajectories",
+                                                                                     ),
+                                     )
             if prepared is not None and not cancelled():
                 cache.save(prepared, path)
         return prepared
@@ -119,12 +145,18 @@ class _SaveWorker(QObject):
     failed = Signal(str)
 
     def __init__(self, session: TrackingViewerSession, options: dict) -> None:
+        """
+        Initialize the _SaveWorker state and dependencies.
+        """
         super().__init__()
         self.session = session
         self.options = options
 
     @Slot()
     def run(self) -> None:
+        """
+        Execute the background worker operation.
+        """
         try:
             self.finished.emit(self.session.save_overlay_display(**self.options))
         except Exception as error:
@@ -136,12 +168,18 @@ class _LocalSegmentationWorker(QObject):
     failed = Signal(str)
 
     def __init__(self, session: TrackingViewerSession, options: dict) -> None:
+        """
+        Initialize the _LocalSegmentationWorker state and dependencies.
+        """
         super().__init__()
         self.session = session
         self.options = options
 
     @Slot()
     def run(self) -> None:
+        """
+        Execute the background worker operation.
+        """
         try:
             self.finished.emit(self.session.preview_add_edit(**self.options))
         except Exception as error:
@@ -153,11 +191,17 @@ class _LocalBackendPreparationWorker(QObject):
     failed = Signal(str)
 
     def __init__(self, session: TrackingViewerSession) -> None:
+        """
+        Initialize the _LocalBackendPreparationWorker state and dependencies.
+        """
         super().__init__()
         self.session = session
 
     @Slot()
     def run(self) -> None:
+        """
+        Execute the background worker operation.
+        """
         try:
             self.session.prepare_add_edit_backend()
             self.finished.emit()
@@ -170,12 +214,18 @@ class _TrackingSaveWorker(QObject):
     failed = Signal(str)
 
     def __init__(self, session: TrackingViewerSession, options: dict) -> None:
+        """
+        Initialize the _TrackingSaveWorker state and dependencies.
+        """
         super().__init__()
         self.session = session
         self.options = options
 
     @Slot()
     def run(self) -> None:
+        """
+        Execute the background worker operation.
+        """
         try:
             self.finished.emit(self.session.save_edited_tracking(**self.options))
         except Exception as error:
@@ -187,15 +237,19 @@ class _ColorSwatchButton(QPushButton):
     right_selected = Signal(object)
 
     def __init__(self, color: QColor, parent: QWidget | None = None) -> None:
+        """
+        Initialize the _ColorSwatchButton state and dependencies.
+        """
         super().__init__(parent)
         self.color = QColor(color)
         self.setFixedSize(34, 26)
-        self.setToolTip(
-            "Left-click: active mask color. Right-click: other masks color.")
-        self.setStyleSheet(
-            f"background-color: {self.color.name()}; border: 1px solid #777;")
+        self.setToolTip("Left-click: active mask color. Right-click: other masks color.")
+        self.setStyleSheet(f"background-color: {self.color.name()}; border: 1px solid #777;")
 
-    def mousePressEvent(self, event) -> None:
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """
+        Handle mouse presses for this control.
+        """
         if event.button() == Qt.MouseButton.RightButton:
             self.right_selected.emit(self.color)
             event.accept()
@@ -208,8 +262,10 @@ class _ColorSwatchButton(QPushButton):
 class _MaskColorDialog(QDialog):
     """Choose both mask-edit colors from one left/right-click palette."""
 
-    def __init__(self, active: QColor, other: QColor,
-                 parent: QWidget | None = None) -> None:
+    def __init__(self, active: QColor, other: QColor, parent: QWidget | None = None) -> None:
+        """
+        Initialize the _MaskColorDialog state and dependencies.
+        """
         super().__init__(parent)
         self.active_color = QColor(active)
         self.other_color = QColor(other)
@@ -248,15 +304,24 @@ class _MaskColorDialog(QDialog):
 
     @Slot(object)
     def _set_active(self, color: QColor) -> None:
+        """
+        Set active.
+        """
         self.active_color = QColor(color)
         self._update_preview()
 
     @Slot(object)
     def _set_other(self, color: QColor) -> None:
+        """
+        Set other.
+        """
         self.other_color = QColor(color)
         self._update_preview()
 
     def _update_preview(self) -> None:
+        """
+        Update preview.
+        """
         self.preview.setStyleSheet(
             f"background-color: {self.active_color.name()}; "
             f"border: 7px solid {self.other_color.name()}; "
@@ -268,24 +333,28 @@ class TrackingViewerWindow(ImageToolWindow):
 
     tracking_finalized = Signal(object)
 
-    file_filters = (FITS_MASK_TRACK, FITS_MASK_TRACK_EDITED,
-                    FITS_MASK_TRACK_EDITED_FILTERED, FITS_ARRAY_NAME)
+    file_filters = (*cst.MASK_NAMES, *cst.IMAGE_NAMES,
+                    cst.FITS_REFERENCE_TEMPLATE.format(label="*"),
+                    cst.FITS_ROI_TEMPLATE.format(label="*"))
     help_gui = "Tracking"
     tool_help = TRACKING_HELP
 
-    def __init__(self, experiments_dir: str | Path | None = None,
+    def __init__(self,
+                 experiments_dir: str | Path | None = None,
                  tracking_path: str | Path | None = None,
                  parent: QWidget | None = None,
-                 *, editing_enabled: bool = True,
+                 *,
+                 editing_enabled: bool = True,
                  selection_enabled: bool = False,
-                 pipeline_request: TrackEditRequest | None = None) -> None:
+                 pipeline_request: TrackEditRequest | None = None,
+                 ) -> None:
+        """
+        Initialize the TrackingViewerWindow state and dependencies.
+        """
         self.editing_enabled = editing_enabled
         self.selection_enabled = selection_enabled
         self._pipeline_request = pipeline_request
         self._pipeline_resolved = False
-        if not editing_enabled:
-            self.file_filters = (FITS_MASK_TRACK, FITS_MASK_TRACK_EDITED,
-                                 FITS_MASK_TRACK_EDITED_FILTERED)
         self._active_track_filter: tuple[str, int, int] | None = None
         self._tracking_session: TrackingViewerSession | None = None
         self._track_path_items: list[TrackPathsItem] = []
@@ -331,14 +400,13 @@ class TrackingViewerWindow(ImageToolWindow):
         self._active_mask_color = QColor(255, 235, 0)
         self.raw_image_toggle = QCheckBox("Display raw image")
         self.raw_image_toggle.setChecked(True)
-        self.raw_image_toggle.setToolTip(
-            "Show or hide the selected channel from the sibling fits_array.tif image.")
+        self.raw_image_toggle.setToolTip("Show or hide the selected channel from the sibling fits_array.tif image.",
+                                         )
         super().__init__(experiments_dir, parent)
-        self.setWindowTitle(
-            "FITS Tracking Viewer / Editor" if editing_enabled else "FITS Tracking Viewer")
+        self.setWindowTitle("FITS Tracking Viewer / Editor" if editing_enabled else "FITS Tracking Viewer")
         self.left_display_controls.insertWidget(0, self.raw_image_toggle)
         self.left_display_controls.insertSpacing(1, 10)
-        self.overlay_label.setText("Mask overlay")
+        self.overlay_label.setText("Mask opacity (0–100%)")
         if not editing_enabled:
             self.track_edit_section.hide()
             self.mask_edit_section.hide()
@@ -347,6 +415,9 @@ class TrackingViewerWindow(ImageToolWindow):
             self._path_selected(Path(tracking_path))
 
     def _build_tools(self) -> QWidget:
+        """
+        Build tools.
+        """
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -359,8 +430,8 @@ class TrackingViewerWindow(ImageToolWindow):
             "border-radius: 4px; color: white; font-weight: bold; padding: 6px;")
         selection_row.addWidget(self.track_selection_label, 1)
         self.clear_track_selection_button = QPushButton("Clear selection")
-        self.clear_track_selection_button.setToolTip(
-            "Clear the current track selection without changing masks or tracks.")
+        self.clear_track_selection_button.setToolTip("Clear the current track selection without changing masks or tracks.",
+                                                     )
         selection_row.addWidget(self.clear_track_selection_button)
         selection.addLayout(selection_row)
         select_row = QHBoxLayout()
@@ -373,8 +444,8 @@ class TrackingViewerWindow(ImageToolWindow):
         else:
             self.track_id_input = QLineEdit()
             self.track_id_input.setPlaceholderText("e.g. 7, 11, 23")
-            self.track_id_input.setToolTip(
-                "Comma-separated cell IDs. Press Enter or Select to apply; Ctrl+click toggles cells.")
+            self.track_id_input.setToolTip("Comma-separated cell IDs. Press Enter or Select to apply; Ctrl+click toggles cells.",
+                                           )
         select_row.addWidget(self.track_id_input, 1)
         self.select_track_button = QPushButton("Select")
         select_row.addWidget(self.select_track_button)
@@ -385,8 +456,7 @@ class TrackingViewerWindow(ImageToolWindow):
         self.track_id_display_mode.addItem("None", "none")
         self.track_id_display_mode.addItem("Selected", "selected")
         self.track_id_display_mode.addItem("All", "all")
-        self.track_id_display_mode.setCurrentIndex(
-            self.track_id_display_mode.findData("selected"))
+        self.track_id_display_mode.setCurrentIndex(self.track_id_display_mode.findData("selected"))
         track_id_row.addWidget(self.track_id_display_mode, 1)
         selection.addLayout(track_id_row)
         layout.addWidget(selection_section)
@@ -400,8 +470,7 @@ class TrackingViewerWindow(ImageToolWindow):
         self.track_path_display_mode = FocusWheelComboBox()
         self.track_path_display_mode.addItem("all", "all")
         self.track_path_display_mode.addItem("selected", "selected")
-        self.track_path_display_mode.setToolTip(
-            "Show paths for all tracks or only the selected tracks.")
+        self.track_path_display_mode.setToolTip("Show paths for all tracks or only the selected tracks.")
         tracks_row.addWidget(self.track_path_display_mode)
         tracks_row.addStretch(1)
         tracks_row.addWidget(QLabel("Thickness"))
@@ -442,13 +511,14 @@ class TrackingViewerWindow(ImageToolWindow):
         self.path_color_mode.addItem("Single color", "single")
         color_row.addWidget(self.path_color_mode, 1)
         self.path_color_button = QPushButton("Center Color")
-        self.path_color_button.setToolTip(
-            "Used only when Colors is set to Single color; it changes paths and centroids.")
+        self.path_color_button.setToolTip("Used only when Colors is set to Single color; it changes paths and centroids.",
+                                          )
         self._update_path_color_button()
         self.path_color_button.hide()
         color_row.addWidget(self.path_color_button)
         display.addLayout(color_row)
         layout.addWidget(display_section)
+        self.trajectory_section = display_section
 
         filter_section, filters = self._section("Track filtering")
         filter_row = QHBoxLayout()
@@ -477,14 +547,15 @@ class TrackingViewerWindow(ImageToolWindow):
         filter_buttons = QHBoxLayout()
         filter_buttons.addStretch(1)
         self.filter_button = QPushButton("Filter")
-        self.filter_button.setToolTip(
-            "Apply the selected track length condition. Length includes gaps between frames.")
+        self.filter_button.setToolTip("Apply the selected track length condition. Length includes gaps between frames.",
+                                      )
         self.clear_filter_button = QPushButton("Clear filter")
         self.clear_filter_button.setToolTip("Remove the track length filter and show all tracks.")
         filter_buttons.addWidget(self.filter_button)
         filter_buttons.addWidget(self.clear_filter_button)
         filters.addLayout(filter_buttons)
         layout.addWidget(filter_section)
+        self.filter_section = filter_section
 
         if not self.editing_enabled:
             crop_section, crop_layout = self._section("Crop")
@@ -505,24 +576,20 @@ class TrackingViewerWindow(ImageToolWindow):
         self.preview_split_button.setToolTip(
             "Select one track, then click or draw through its current mask to "
             "preview a split. Press S to accept the preview.")
-        self.preview_split_button.setStyleSheet(
-            "QPushButton:checked { background-color: #2563a6; color: white; "
-            "font-weight: bold; }")
+        self.preview_split_button.setStyleSheet(PREVIEW_BUTTON_STYLE)
         merge_split_row.addWidget(self.preview_split_button, 1)
         self.apply_split_button = QPushButton("Accept split")
-        self.apply_split_button.setToolTip(
-            "Apply the displayed split to this frame. Shortcut: S.")
+        self.apply_split_button.setToolTip("Apply the displayed split to this frame. Shortcut: S.")
         merge_split_row.addWidget(self.apply_split_button, 1)
         self.cancel_split_button = QPushButton("Cancel split")
-        self.cancel_split_button.setToolTip(
-            "Discard the current split preview without changing the mask.")
+        self.cancel_split_button.setToolTip("Discard the current split preview without changing the mask.")
         merge_split_row.addWidget(self.cancel_split_button, 1)
         track_editing.addLayout(merge_split_row)
         track_editing.addSpacing(7)
         history_row = QHBoxLayout()
         self.link_tracks_button = QPushButton("Link histories")
-        self.link_tracks_button.setToolTip(
-            "Join two selected track fragments into one history across the movie.")
+        self.link_tracks_button.setToolTip("Join two selected track fragments into one history across the movie.",
+                                           )
         history_row.addWidget(self.link_tracks_button)
         self.stop_track_button = QPushButton("Split Track")
         self.stop_track_button.setToolTip(
@@ -585,8 +652,8 @@ class TrackingViewerWindow(ImageToolWindow):
         self.local_brush_size.setSuffix(" px")
         brush_row.addWidget(self.local_brush_size)
         self.mask_edit_colors_button = QPushButton("Mask edit colors")
-        self.mask_edit_colors_button.setToolTip(
-            "Outer border: other masks. Inner fill: the mask being edited.")
+        self.mask_edit_colors_button.setToolTip("Outer border: other masks. Inner fill: the mask being edited.",
+                                                )
         self._update_mask_edit_colors_button()
         brush_row.addStretch(1)
         brush_row.addWidget(self.mask_edit_colors_button)
@@ -607,6 +674,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @staticmethod
     def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
+        """
+        Return the current section.
+        """
         frame = QFrame()
         frame.setObjectName("settingsSection")
         frame.setStyleSheet(
@@ -620,6 +690,9 @@ class TrackingViewerWindow(ImageToolWindow):
         return frame, section_layout
 
     def _build_viewer_actions(self, layout: QHBoxLayout) -> None:
+        """
+        Build viewer actions.
+        """
         layout.addSpacing(24)
         if not self.editing_enabled:
             section, saving = self._section("Save current display")
@@ -633,7 +706,7 @@ class TrackingViewerWindow(ImageToolWindow):
             self.save_display_button.setToolTip(
                 "Save a new TIFF containing all raw channels and an ImageJ overlay of "
                 "the displayed masks, paths, and track IDs across time at the current Z plane. "
-                "Requires the experiment's fits_array.tif.")
+                "Requires an associated FITS image artifact.")
             row.addWidget(self.save_display_button)
             saving.addLayout(row)
             layout.addWidget(section, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -642,8 +715,8 @@ class TrackingViewerWindow(ImageToolWindow):
             finalize_row = QHBoxLayout()
             self.save_tracking_button = QPushButton("Save edited tracking")
             self.save_tracking_button.setEnabled(False)
-            self.save_tracking_button.setToolTip(
-                "Save a label-mask copy and make it the active downstream tracking artifact.")
+            self.save_tracking_button.setToolTip("Save a label-mask copy and make it the active downstream tracking artifact.",
+                                                 )
             self.save_tracking_button.setStyleSheet(
                 "QPushButton { background-color: #16803b; color: white; "
                 "font-weight: bold; padding: 7px 12px; border-radius: 4px; } "
@@ -651,8 +724,8 @@ class TrackingViewerWindow(ImageToolWindow):
                 "QPushButton:pressed { background-color: #11652f; }")
             finalize_row.addWidget(self.save_tracking_button)
             self.use_original_button = QPushButton("Use original tracking")
-            self.use_original_button.setToolTip(
-                "Finish this edit step without changing the active tracking artifact.")
+            self.use_original_button.setToolTip("Finish this edit step without changing the active tracking artifact.",
+                                                )
             self.use_original_button.setStyleSheet(
                 "QPushButton { background-color: #d97706; color: white; "
                 "font-weight: bold; padding: 7px 12px; border-radius: 4px; } "
@@ -664,16 +737,22 @@ class TrackingViewerWindow(ImageToolWindow):
         layout.addSpacing(24)
 
     def _build_overlay_controls(self, layout: QHBoxLayout) -> None:
+        """
+        Build overlay controls.
+        """
         self.track_palette_label = QLabel("Track palette")
         layout.addWidget(self.track_palette_label)
         layout.addSpacing(12)
         layout.addWidget(QLabel("Mask channel"))
         self.mask_channel_combo = FocusWheelComboBox()
-        self.mask_channel_combo.setToolTip(
-            "Choose the tracked-label channel independently from the raw image channel.")
+        self.mask_channel_combo.setToolTip("Choose the tracked-label channel independently from the raw image channel.",
+                                           )
         layout.addWidget(self.mask_channel_combo)
 
     def _connect_tools(self) -> None:
+        """
+        Connect tools.
+        """
         self.image_viewer.canvas.setBackground("black")
         self.local_cell_diameter.setParent(cast(QWidget, self.image_viewer.canvas))
         self.local_cell_diameter.setFixedSize(105, 30)
@@ -684,10 +763,10 @@ class TrackingViewerWindow(ImageToolWindow):
         self.local_cell_diameter.raise_()
         self.diameter_reference = None
         if self.editing_enabled:
-            self.diameter_reference = DiameterReference(
-                self.image_viewer.view_box, self.image_viewer.image_item)
-            self.local_cell_diameter.valueChanged.connect(
-                self.diameter_reference.set_diameter)
+            self.diameter_reference = DiameterReference(self.image_viewer.view_box,
+                                                        self.image_viewer.image_item,
+                                                        )
+            self.local_cell_diameter.valueChanged.connect(self.diameter_reference.set_diameter)
             self.diameter_reference.set_diameter(self.local_cell_diameter.value())
         self.raw_image_toggle.toggled.connect(self.image_viewer.image_item.setVisible)
         self.trajectory_status = QLabel()
@@ -701,8 +780,7 @@ class TrackingViewerWindow(ImageToolWindow):
         self.mask_channel_combo.currentIndexChanged.connect(self._display_selection)
         self.show_track_paths.toggled.connect(self._display_track_paths)
         self.track_path_display_mode.currentIndexChanged.connect(self._display_track_paths)
-        self.track_id_display_mode.currentIndexChanged.connect(
-            self._display_track_paths)
+        self.track_id_display_mode.currentIndexChanged.connect(self._display_track_paths)
         self.path_extent.currentIndexChanged.connect(self._display_track_paths)
         self.path_thickness.valueChanged.connect(self._display_track_paths)
         self.path_color_mode.currentIndexChanged.connect(self._path_color_mode_changed)
@@ -725,8 +803,8 @@ class TrackingViewerWindow(ImageToolWindow):
         if self._pipeline_request is not None:
             self.save_tracking_button.clicked.connect(self._save_edited_tracking)
             self.use_original_button.clicked.connect(self._use_original_tracking)
-        cast(pg.GraphicsScene, self.image_viewer.canvas.scene()).sigMouseClicked.connect(
-            self._tracking_scene_clicked)
+        cast(pg.GraphicsScene, self.image_viewer.canvas.scene()).sigMouseClicked.connect(self._tracking_scene_clicked,
+                                                                                         )
         self.merge_tracks_button.clicked.connect(self._merge_selected_tracks)
         self.link_tracks_button.clicked.connect(self._link_selected_tracks)
         self.stop_track_button.clicked.connect(self._stop_selected_track)
@@ -754,9 +832,15 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _filter_value_changed(self) -> None:
+        """
+        Filter value changed.
+        """
         self.filter_maximum.setMinimum(self.filter_value.value())
 
     def _tool_keypress(self, event: QKeyEvent) -> bool:
+        """
+        Tool keypress.
+        """
         if (event.key() == Qt.Key.Key_D
                 and event.modifiers() == Qt.KeyboardModifier.ControlModifier
                 and self.delete_mask_button.isEnabled()):
@@ -781,6 +865,9 @@ class TrackingViewerWindow(ImageToolWindow):
         return False
 
     def _undo(self) -> None:
+        """
+        Return the current undo.
+        """
         if self._split_preview is not None:
             self._cancel_split_preview()
             self.status_label.setText("Removed the current split preview.")
@@ -789,8 +876,7 @@ class TrackingViewerWindow(ImageToolWindow):
             restored = self.image_viewer.undo_drawing()
             if restored is not None and self._local_segmentation_preview is not None:
                 y0, y1, x0, x1 = self._local_segmentation_preview["bounds"]
-                self._local_segmentation_preview["mask"] = np.asarray(
-                    restored[y0:y1, x0:x1], dtype=bool)
+                self._local_segmentation_preview["mask"] = np.asarray(restored[y0:y1, x0:x1], dtype=bool)
             self._update_edit_buttons()
             self.status_label.setText("Restored the previous mask drawing.")
             return
@@ -815,30 +901,26 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(object)
     def _path_selected(self, selected: object) -> None:
+        """
+        Path selected.
+        """
         if not isinstance(selected, (str, Path)):
             return
         source = Path(selected)
         if source.is_dir():
-            tracking_candidates = (
-                source / FITS_MASK_TRACK_EDITED_FILTERED,
-                source / FITS_MASK_TRACK_EDITED,
-                source / FITS_MASK_TRACK,
-            )
-            track_source = next(
-                (path for path in tracking_candidates if path.is_file()),
-                source / FITS_MASK_TRACK,
-            )
-            image_source = source / FITS_ARRAY_NAME
+            tracking_candidates = tuple(source / name for name in
+                (FITS_MASK_TRACK_EDITED_FILTERED, FITS_MASK_TRACK_EDITED,
+                 *cst.TRACKING_NAMES, *cst.SEGMENTATION_NAMES, cst.FITS_MASKS_COMPACTED))
+            track_source = next((path for path in tracking_candidates if path.is_file()),
+                                source / FITS_MASK_TRACK,
+                                )
+            image_source = image_for(source) or source / FITS_ARRAY_NAME
             source = track_source if track_source.is_file() else image_source
             if source.is_file() and self.directory_browser.select_path(source):
                 return
-        if source.name not in {
-                FITS_MASK_TRACK,
-                FITS_MASK_TRACK_EDITED,
-                FITS_MASK_TRACK_EDITED_FILTERED,
-                FITS_ARRAY_NAME} or not source.is_file():
-            self.status_label.setText(
-                f"Select an experiment containing {FITS_MASK_TRACK} or {FITS_ARRAY_NAME}.")
+        if not source.is_file() or not any(source.match(pattern) for pattern in self.file_filters):
+            self.status_label.setText("Select a FITS image, mask or an experiment containing saved artifacts.",
+                                      )
             return
         if (self.directory_browser.selected_path != source.resolve()
                 and self.directory_browser.select_path(source)):
@@ -846,6 +928,9 @@ class TrackingViewerWindow(ImageToolWindow):
         self._open_source(source)
 
     def _open_source(self, source: Path) -> None:
+        """
+        Open source.
+        """
         if source == self._source_path:
             return
         self._close_session()
@@ -854,12 +939,21 @@ class TrackingViewerWindow(ImageToolWindow):
                           if self._pipeline_request is not None
                           and source == self._pipeline_request.tracking_path
                           else None)
-            self._tracking_session = TrackingViewerSession(
-                source, image_path=image_path)
+            self._tracking_session = TrackingViewerSession(source, image_path=image_path)
         except Exception as error:
             self.status_label.setText(str(error))
             return
         session = self._tracking_session
+        self.setWindowTitle("FITS Tracking Viewer" if session.is_tracking else "FITS Image / Mask Viewer")
+        self.filter_section.setVisible(session.is_tracking)
+        self.trajectory_section.setVisible(session.is_tracking)
+        self.show_track_paths.setChecked(session.is_tracking)
+        self.show_centroids.setChecked(session.is_tracking)
+        can_edit = self.editing_enabled and not session.read_only and (session.is_tracking or session.started_from_image)
+        self.track_edit_section.setEnabled(can_edit)
+        self.mask_edit_section.setEnabled(can_edit)
+        self.track_edit_section.setVisible(self.editing_enabled and session.is_tracking)
+        self.mask_edit_section.setVisible(self.editing_enabled and (session.is_tracking or session.started_from_image))
         self._source_path = source
         self._image_session = session.image_session
         self.channel_combo.blockSignals(True)
@@ -881,9 +975,10 @@ class TrackingViewerWindow(ImageToolWindow):
         areas = counts[label_ids != 0]
         if areas.size:
             diameter = int(round(2.0 * np.sqrt(np.median(areas) / np.pi)))
-            self.local_cell_diameter.setValue(
-                max(self.local_cell_diameter.minimum(),
-                    min(self.local_cell_diameter.maximum(), diameter)))
+            self.local_cell_diameter.setValue(max(self.local_cell_diameter.minimum(),
+                                                  min(self.local_cell_diameter.maximum(), diameter),
+                                                  ),
+                                              )
         else:
             self.local_cell_diameter.setValue(40)
         self._set_source_controls_enabled(True)
@@ -898,7 +993,7 @@ class TrackingViewerWindow(ImageToolWindow):
         if not self.editing_enabled:
             self.save_display_button.setEnabled(has_raw_image)
         if self._pipeline_request is not None:
-            self.save_tracking_button.setEnabled(True)
+            self.save_tracking_button.setEnabled(can_edit)
         self.local_cell_diameter.setEnabled(True)
         self._display_selection()
         if self.diameter_reference is not None:
@@ -906,33 +1001,41 @@ class TrackingViewerWindow(ImageToolWindow):
         self._update_edit_buttons()
         image_note = "with raw image" if has_raw_image else "without raw image"
         mode_note = "new empty tracking session" if session.started_from_image else image_note
+        if session.read_only:
+            mode_note += "; earlier FITS version — read-only"
         self.status_label.setText(
             f"Loaded {source.parent.name} — axes {session.axes}, shape {session.shape}, "
             f"{mode_note}.")
 
-    def _display_overlay(self, image, frame, channel, z_index) -> None:
+    def _display_overlay(self, image: NDArray[Any] | None, frame: int, channel: str, z_index: int) -> None:
+        """
+        Display overlay.
+        """
         del image, channel
         if self.diameter_reference is not None:
             self.diameter_reference.refresh()
         if self._tracking_session is not None and self.mask_channel_combo.currentIndex() >= 0:
             if self._split_preview is not None and self._preview_matches_current_view():
                 self.image_viewer.set_mask_color(None)
-                self.image_viewer.set_mask(
-                    self._tracking_session.split_preview_labels(self._split_preview))
+                self.image_viewer.set_mask(self._tracking_session.split_preview_labels(self._split_preview))
                 return
             if self.preview_split_button.isChecked():
-                labels = self._tracking_session.filtered_tracked_frame(
-                    frame, self.mask_channel_combo.currentText(), z_index,
-                    self._accepted_track_ids()).copy()
+                labels = self._tracking_session.filtered_tracked_frame(frame,
+                                                                       self.mask_channel_combo.currentText(),
+                                                                       z_index,
+                                                                       self._accepted_track_ids(),
+                                                                       ).copy()
                 if self._selected_track_ids:
                     labels[labels == self._selected_track_ids[0]] = 0
                 self.image_viewer.set_mask_color(self._other_mask_color)
                 self.image_viewer.set_mask(labels)
                 return
             if self._collect_local_prompts and self._local_context_matches_current_view():
-                labels = self._tracking_session.filtered_tracked_frame(
-                    frame, self.mask_channel_combo.currentText(), z_index,
-                    self._accepted_track_ids()).copy()
+                labels = self._tracking_session.filtered_tracked_frame(frame,
+                                                                       self.mask_channel_combo.currentText(),
+                                                                       z_index,
+                                                                       self._accepted_track_ids(),
+                                                                       ).copy()
                 if self._local_target_track_id is not None:
                     labels[labels == self._local_target_track_id] = 0
                 self.image_viewer.set_mask_color(self._other_mask_color)
@@ -940,11 +1043,16 @@ class TrackingViewerWindow(ImageToolWindow):
                 return
             self.image_viewer.set_mask_color(None)
             self.image_viewer.set_mask(
-                self._tracking_session.filtered_tracked_frame(
-                    frame, self.mask_channel_combo.currentText(), z_index,
-                    self._accepted_track_ids()))
+                self._tracking_session.filtered_tracked_frame(frame,
+                                                              self.mask_channel_combo.currentText(),
+                                                              z_index,
+                                                              self._accepted_track_ids(),
+                                                              ))
 
     def _accepted_track_ids(self) -> frozenset[int] | None:
+        """
+        Accepted track ids.
+        """
         session = self._tracking_session
         if (session is None or self._active_track_filter is None
                 or self.mask_channel_combo.currentIndex() < 0):
@@ -958,11 +1066,17 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _filter_changed(self) -> None:
+        """
+        Filter changed.
+        """
         between = self.filter_operator.currentData() == "between"
         self.filter_maximum.setVisible(between)
 
     @Slot()
     def _apply_track_filter(self) -> None:
+        """
+        Apply track filter.
+        """
         self._active_track_filter = (
             str(self.filter_operator.currentData()),
             self.filter_value.value(), self.filter_maximum.value())
@@ -970,11 +1084,17 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _clear_track_filter(self) -> None:
+        """
+        Clear track filter.
+        """
         self._active_track_filter = None
         self._display_selection()
 
     @Slot()
     def _display_selection(self) -> None:
+        """
+        Display selection.
+        """
         if (self._collect_local_prompts or self._local_segmentation_preview is not None):
             if not self._local_context_matches_current_view():
                 self._clear_local_segmentation_state()
@@ -986,7 +1106,9 @@ class TrackingViewerWindow(ImageToolWindow):
         self._display_track_paths()
 
     def _trajectory_key(self) -> tuple | None:
-        """Identify the base drawing; selection highlights are a separate layer."""
+        """
+        Identify the base drawing; selection highlights are a separate layer.
+        """
         session = self._tracking_session
         if session is None or self.mask_channel_combo.currentIndex() < 0:
             return None
@@ -1001,6 +1123,12 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _display_track_paths(self) -> None:
+        """
+        Display track paths.
+        """
+        if self._tracking_session is not None and not self._tracking_session.is_tracking:
+            self._clear_track_paths()
+            return
         if self._save_thread is not None or self._tracking_save_thread is not None:
             self.image_viewer.set_preview_loading(True, "Preparation of saving…")
             return
@@ -1012,8 +1140,9 @@ class TrackingViewerWindow(ImageToolWindow):
             if self._trajectory_cache_context != key[:2]:
                 self._trajectory_cache.clear()
                 self._trajectory_cache_context = key[:2]
-            all_centroids = session.centroid_cache.cached(
-                session._resolve_channel(self.mask_channel_combo.currentText()), self.z_slider.value())
+            all_centroids = session.centroid_cache.cached(session._resolve_channel(self.mask_channel_combo.currentText()),
+                                                          self.z_slider.value(),
+                                                          )
             if all_centroids is not None:
                 accepted = self._accepted_track_ids()
                 visible_ids = frozenset(all_centroids) if accepted is None else accepted
@@ -1047,8 +1176,8 @@ class TrackingViewerWindow(ImageToolWindow):
                 "markers": self.show_centroids.isChecked(), "size": self.centroid_size.value(),
                 "paths": self.show_track_paths.isChecked(),
             }
-            worker = _TrajectoryWorker(session, key, session._resolve_channel(
-                self.mask_channel_combo.currentText()), self.z_slider.value(), options)
+            worker = _TrajectoryWorker(session, key, session._resolve_channel(self.mask_channel_combo.currentText(),
+                                                                              ), self.z_slider.value(), options)
             stage = "Preparing trajectories" if all_centroids is not None else "Calculating centroids"
             self._start_trajectory_worker(worker, session.frame_count, stage)
             return
@@ -1071,8 +1200,10 @@ class TrackingViewerWindow(ImageToolWindow):
             item.setVisible(self.show_track_paths.isChecked()
                             and self.track_path_display_mode.currentData() == "all")
 
-    def _start_trajectory_worker(self, worker: _TrajectoryWorker,
-                                 total: int, stage: str) -> None:
+    def _start_trajectory_worker(self, worker: _TrajectoryWorker, total: int, stage: str) -> None:
+        """
+        Start trajectory worker.
+        """
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -1093,6 +1224,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(int, int, str)
     def _trajectory_progress_changed(self, value: int, total: int, stage: str) -> None:
+        """
+        Trajectory progress changed.
+        """
         if self.sender() is not self._trajectory_worker:
             return
         self.trajectory_status.setText(f"{stage}: {value}/{total}")
@@ -1103,6 +1237,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(object)
     def _trajectories_ready(self, result: tuple) -> None:
+        """
+        Trajectories ready.
+        """
         key, centroids, prepared, accepted = result
         if key != self._trajectory_key():
             return
@@ -1110,6 +1247,9 @@ class TrackingViewerWindow(ImageToolWindow):
         self._trajectory_cache[drawing_key] = centroids, prepared
         self._trajectory_cache.move_to_end(drawing_key)
         def size(entry: tuple[dict[int, np.ndarray], PreparedPaths | None]) -> int:
+            """
+            Return the retained data size.
+            """
             drawing = entry[1]
             if drawing is None:
                 return 0
@@ -1122,9 +1262,15 @@ class TrackingViewerWindow(ImageToolWindow):
             total -= size(removed)
         self._apply_trajectories(key, centroids, prepared, accepted)
 
-    def _apply_trajectories(self, key: tuple, centroids: dict[int, np.ndarray],
-                            prepared: PreparedPaths | None, accepted: frozenset[int] | None) -> None:
-        """Display a completed or cached drawing without starting another worker."""
+    def _apply_trajectories(self,
+                            key: tuple,
+                            centroids: dict[int, np.ndarray],
+                            prepared: PreparedPaths | None,
+                            accepted: frozenset[int] | None,
+                            ) -> None:
+        """
+        Display a completed or cached drawing without starting another worker.
+        """
         self._trajectory_ready_key = key
         self._visible_centroids = centroids
         self._visible_accepted = accepted
@@ -1140,6 +1286,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(str)
     def _trajectories_failed(self, message: str) -> None:
+        """
+        Trajectories failed.
+        """
         if self._trajectory_worker is not None and self.sender() is self._trajectory_worker:
             self._trajectory_failed_key = self._trajectory_worker.key
             if self._trajectory_failed_key == self._trajectory_key():
@@ -1149,6 +1298,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _trajectory_finished(self) -> None:
+        """
+        Trajectory finished.
+        """
         thread = self.sender()
         if thread is not self._trajectory_thread:
             return
@@ -1162,6 +1314,9 @@ class TrackingViewerWindow(ImageToolWindow):
             self._display_track_paths()
 
     def _display_track_ids(self, centroids: dict[int, np.ndarray], current_frame: int) -> None:
+        """
+        Display track ids.
+        """
         mode = self.track_id_display_mode.currentData()
         frame_key = (self._trajectory_ready_key, current_frame, mode,
                      tuple(self._selected_track_ids))
@@ -1184,8 +1339,11 @@ class TrackingViewerWindow(ImageToolWindow):
             _, x_position, y_position = points[index]
             item = self._id_pool.get(track_id)
             if item is None:
-                item = pg.TextItem(str(track_id), color=self._palette_track_color(track_id),
-                                   anchor=(0.0, 1.0), fill=QColor(20, 20, 20, 190))
+                item = pg.TextItem(str(track_id),
+                                   color=self._palette_track_color(track_id),
+                                   anchor=(0.0, 1.0),
+                                   fill=QColor(20, 20, 20, 190),
+                                   )
                 item.setZValue(60)
                 self.image_viewer.view_box.addItem(item)
                 self._id_pool[track_id] = item
@@ -1194,7 +1352,9 @@ class TrackingViewerWindow(ImageToolWindow):
             self._track_id_items.append(item)
 
     def _display_selected_paths(self, frame: int, *, full: bool) -> None:
-        """Highlight only the selected tracks using already-cached coordinates."""
+        """
+        Highlight only the selected tracks using already-cached coordinates.
+        """
         key = (self._trajectory_ready_key, tuple(self._selected_track_ids),
                None if full else frame)
         if key == self._selected_path_key:
@@ -1219,15 +1379,22 @@ class TrackingViewerWindow(ImageToolWindow):
                 self.image_viewer.view_box.addItem(item, ignoreBounds=True)
                 self._selected_path_items.append(item)
             item = self._selected_path_items[index]
-            item.setData(
-                points[:, 1], points[:, 2],
-                pen=pg.mkPen("white", width=self.path_thickness.value(), cosmetic=False),
-                symbol="o" if self.show_centroids.isChecked() else None,
-                symbolSize=self.centroid_size.value(), symbolBrush="white",
-                symbolPen=None, pxMode=False, antialias=True)
+            item.setData(points[:, 1],
+                         points[:, 2],
+                         pen=pg.mkPen("white", width=self.path_thickness.value(), cosmetic=False),
+                         symbol="o" if self.show_centroids.isChecked() else None,
+                         symbolSize=self.centroid_size.value(),
+                         symbolBrush="white",
+                         symbolPen=None,
+                         pxMode=False,
+                         antialias=True,
+                         )
             item.show()
 
     def _track_color(self, track_id: int) -> QColor:
+        """
+        Track color.
+        """
         if track_id in self._selected_track_ids:
             return QColor(255, 255, 255)
         if self.path_color_mode.currentData() == "single":
@@ -1236,10 +1403,16 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @staticmethod
     def _palette_track_color(track_id: int) -> QColor:
+        """
+        Palette track color.
+        """
         return QColor(*track_rgb(track_id))
 
     @Slot(object)
     def _tracking_scene_clicked(self, event: MouseClickEvent) -> None:
+        """
+        Tracking scene clicked.
+        """
         if ((not self.editing_enabled and not self.selection_enabled)
                 or self._tracking_session is None
                 or not self.image_viewer.view_box.isVisible()
@@ -1270,17 +1443,22 @@ class TrackingViewerWindow(ImageToolWindow):
             self._toggle_track_selection(track_id)
 
     def _switch_local_edit_target(self, track_id: int) -> None:
+        """
+        Switch local edit target.
+        """
         active = (self._local_target_track_id == track_id
                   and self._selected_track_ids == [track_id])
         self._clear_local_segmentation_state(stop_mode=False)
         self._selected_track_ids[:] = [] if active else [track_id]
         self._start_local_segmentation()
         action = "unselected" if active else "selected for editing"
-        self.status_label.setText(
-            f"Track {track_id} {action}. Press S to accept the current mask.")
+        self.status_label.setText(f"Track {track_id} {action}. Press S to accept the current mask.")
 
     @Slot(object)
     def _viewer_cell_clicked(self, position: QPointF) -> None:
+        """
+        Viewer cell clicked.
+        """
         if not self.selection_enabled or self._tracking_session is None or self._save_thread is not None:
             return
         track_id = self._track_at_position(position.x(), position.y())
@@ -1289,6 +1467,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(object)
     def _viewer_rectangle_selected(self, bounds: tuple[int, int, int, int]) -> None:
+        """
+        Viewer rectangle selected.
+        """
         if not self.selection_enabled or self._tracking_session is None or self._save_thread is not None:
             return
         x0, y0, x1, y1 = bounds
@@ -1305,6 +1486,9 @@ class TrackingViewerWindow(ImageToolWindow):
         self._display_track_paths()
 
     def _track_at_position(self, x_position: float, y_position: float) -> int | None:
+        """
+        Track at position.
+        """
         session = self._tracking_session
         if session is None:
             return None
@@ -1344,20 +1528,28 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @staticmethod
     def _distance_to_polyline(point: np.ndarray, path: np.ndarray) -> float:
+        """
+        Distance to polyline.
+        """
         if len(path) == 1:
             return float(np.linalg.norm(point - path[0]))
         starts = path[:-1]
         vectors = path[1:] - starts
         lengths = np.sum(vectors * vectors, axis=1)
-        fractions = np.divide(
-            np.sum((point - starts) * vectors, axis=1), lengths,
-            out=np.zeros_like(lengths), where=lengths != 0)
+        fractions = np.divide(np.sum((point - starts) * vectors, axis=1),
+                              lengths,
+                              out=np.zeros_like(lengths),
+                              where=lengths != 0,
+                              )
         fractions = np.clip(fractions, 0.0, 1.0)
         projected = starts + fractions[:, None] * vectors
         return float(np.min(np.linalg.norm(projected - point, axis=1)))
 
     @Slot()
     def _select_track_id(self) -> None:
+        """
+        Select track id.
+        """
         session = self._tracking_session
         if (session is None or self._trajectory_ready_key != self._trajectory_key()
                 or self._save_thread is not None or self._tracking_save_thread is not None):
@@ -1373,8 +1565,8 @@ class TrackingViewerWindow(ImageToolWindow):
                 return
             missing = [track for track in ids if track not in self._visible_centroids]
             if missing:
-                self.status_label.setText(
-                    f"Cells {', '.join(map(str, missing))} are unavailable in this channel, Z plane, or filter.")
+                self.status_label.setText(f"Cells {', '.join(map(str, missing))} are unavailable in this channel, Z plane, or filter.",
+                                          )
                 return
             self._selected_track_ids[:] = ids
             self._update_edit_buttons()
@@ -1397,6 +1589,9 @@ class TrackingViewerWindow(ImageToolWindow):
             self._toggle_track_selection(track_id)
 
     def _toggle_track_selection(self, track_id: int) -> None:
+        """
+        Toggle track selection.
+        """
         if self._save_thread is not None:
             return
         self._split_preview = None
@@ -1405,20 +1600,25 @@ class TrackingViewerWindow(ImageToolWindow):
         elif not self.editing_enabled or len(self._selected_track_ids) < 2:
             self._selected_track_ids.append(track_id)
         else:
-            self.status_label.setText(
-                "Two tracks are already selected; clear one before selecting another.")
+            self.status_label.setText("Two tracks are already selected; clear one before selecting another.")
             return
         self._update_edit_buttons()
         self._display_track_paths()
 
     @Slot()
     def _clear_track_selection(self) -> None:
+        """
+        Clear track selection.
+        """
         self._split_preview = None
         self._selected_track_ids.clear()
         self._update_edit_buttons()
         self._display_track_paths()
 
     def _update_edit_buttons(self) -> None:
+        """
+        Update edit buttons.
+        """
         count = len(self._selected_track_ids)
         local_busy = (
             self._local_segmentation_thread is not None
@@ -1458,16 +1658,17 @@ class TrackingViewerWindow(ImageToolWindow):
             has_image and self._save_thread is None
             and self._tracking_save_thread is None
             and (local_active or count <= 1))
-        self.accept_mask_button.setEnabled(
-            self._local_segmentation_preview is not None and not local_busy)
+        self.accept_mask_button.setEnabled(self._local_segmentation_preview is not None and not local_busy)
         self.cancel_mask_button.setEnabled(local_active and not local_busy)
         split_drawing = (self.preview_split_button.isChecked()
                          and count == 1 and self._split_preview is None)
-        self.local_brush_size.setEnabled(
-            (local_active or split_drawing) and not local_busy)
+        self.local_brush_size.setEnabled((local_active or split_drawing) and not local_busy)
 
     @Slot(bool)
     def _toggle_split_mode(self, enabled: bool) -> None:
+        """
+        Toggle split mode.
+        """
         if enabled:
             if self.add_mask_button.isChecked():
                 self.add_mask_button.setChecked(False)
@@ -1475,8 +1676,7 @@ class TrackingViewerWindow(ImageToolWindow):
                 self._start_split_guidance()
             else:
                 self._display_selection()
-                self.status_label.setText(
-                    "Split Mask: Ctrl+click a mask or centroid to select it.")
+                self.status_label.setText("Split Mask: Ctrl+click a mask or centroid to select it.")
             return
         if self._split_preview is not None:
             self._split_preview = None
@@ -1488,6 +1688,9 @@ class TrackingViewerWindow(ImageToolWindow):
         self.status_label.setText("Split Mask stopped.")
 
     def _switch_split_target(self, track_id: int) -> None:
+        """
+        Switch split target.
+        """
         active = self._selected_track_ids == [track_id]
         self._split_preview = None
         self._selected_track_ids[:] = [] if active else [track_id]
@@ -1495,18 +1698,21 @@ class TrackingViewerWindow(ImageToolWindow):
             self.image_viewer.set_drawing_enabled(False)
             self.image_viewer.clear_drawing_overlay()
             self._display_selection()
-            self.status_label.setText(
-                f"Track {track_id} unselected. Ctrl+click another mask to split.")
+            self.status_label.setText(f"Track {track_id} unselected. Ctrl+click another mask to split.")
             return
         self._start_split_guidance()
 
     def _start_split_guidance(self) -> None:
+        """
+        Start split guidance.
+        """
         if self._tracking_session is None or len(self._selected_track_ids) != 1:
             return
         track_id = self._selected_track_ids[0]
-        selected = self._tracking_session.tracked_frame(
-            self.frame_slider.value(), self.mask_channel_combo.currentText(),
-            self.z_slider.value()) == track_id
+        selected = self._tracking_session.tracked_frame(self.frame_slider.value(),
+                                                        self.mask_channel_combo.currentText(),
+                                                        self.z_slider.value(),
+                                                        ) == track_id
         if not np.any(selected):
             self.status_label.setText("The selected track has no mask in this frame.")
             return
@@ -1514,14 +1720,16 @@ class TrackingViewerWindow(ImageToolWindow):
         self._display_selection()
         self.image_viewer.set_drawing_style(self._other_mask_color, 0.65)
         self.image_viewer.set_drawing_mask(selected.astype(np.uint8))
-        self.image_viewer.set_drawing_options(
-            "edit", "brush", "add", self.local_brush_size.value())
+        self.image_viewer.set_drawing_options("edit", "brush", "add", self.local_brush_size.value())
         self.image_viewer.set_drawing_enabled(True)
         self._update_edit_buttons()
-        self.status_label.setText(
-            "Click where the division should pass, or drag along the proposed split line.")
+        self.status_label.setText("Click where the division should pass, or drag along the proposed split line.",
+                                  )
 
     def _local_context_matches_current_view(self) -> bool:
+        """
+        Local context matches current view.
+        """
         preview = self._local_segmentation_preview
         if preview is not None:
             return self._local_preview_matches_current_view()
@@ -1534,17 +1742,22 @@ class TrackingViewerWindow(ImageToolWindow):
                 self.z_slider.value()))
 
     def _local_preview_matches_current_view(self) -> bool:
+        """
+        Local preview matches current view.
+        """
         preview = self._local_segmentation_preview
         session = self._tracking_session
         return bool(
             preview is not None and session is not None
             and preview["frame_index"] == self.frame_slider.value()
-            and preview["mask_channel"] == session._resolve_channel(
-                self.mask_channel_combo.currentText())
+            and preview["mask_channel"] == session._resolve_channel(self.mask_channel_combo.currentText())
             and preview["z_index"] == self.z_slider.value())
 
     @Slot()
     def _delete_selected_mask(self) -> None:
+        """
+        Delete selected mask.
+        """
         if len(self._selected_track_ids) != 1:
             return
         session, channel, z_index = self._edit_context()
@@ -1554,11 +1767,14 @@ class TrackingViewerWindow(ImageToolWindow):
         except ValueError as error:
             QMessageBox.warning(self, "Cannot delete mask", str(error))
             return
-        self._finish_track_edit(
-            f"Deleted track {track_id}'s mask from frame {self.frame_slider.value() + 1}.")
+        self._finish_track_edit(f"Deleted track {track_id}'s mask from frame {self.frame_slider.value() + 1}.",
+                                )
 
     @Slot()
     def _delete_selected_track(self) -> None:
+        """
+        Delete selected track.
+        """
         if len(self._selected_track_ids) != 1:
             return
         session, channel, z_index = self._edit_context()
@@ -1569,11 +1785,13 @@ class TrackingViewerWindow(ImageToolWindow):
             QMessageBox.warning(self, "Cannot delete track", str(error))
             return
         self._selected_track_ids.clear()
-        self._finish_track_edit(
-            f"Deleted track {track_id} and all its masks in this channel and Z plane.")
+        self._finish_track_edit(f"Deleted track {track_id} and all its masks in this channel and Z plane.")
 
     @Slot(bool)
     def _toggle_local_segmentation_mode(self, enabled: bool) -> None:
+        """
+        Toggle local segmentation mode.
+        """
         if enabled:
             if self.preview_split_button.isChecked():
                 self.preview_split_button.setChecked(False)
@@ -1586,6 +1804,9 @@ class TrackingViewerWindow(ImageToolWindow):
             self.status_label.setText("Add masks mode stopped.")
 
     def _start_local_segmentation(self, *, propagate_previous: bool = False) -> None:
+        """
+        Start local segmentation.
+        """
         if len(self._selected_track_ids) > 1 or self._tracking_session is None:
             self.add_mask_button.setChecked(False)
             return
@@ -1593,19 +1814,22 @@ class TrackingViewerWindow(ImageToolWindow):
         track_id = (self._tracking_session.next_track_id()
                     if self._local_target_is_new else self._selected_track_ids[0])
         self._local_target_track_id = track_id
-        labels = self._tracking_session.tracked_frame(
-            self.frame_slider.value(), self.mask_channel_combo.currentText(),
-            self.z_slider.value())
+        labels = self._tracking_session.tracked_frame(self.frame_slider.value(),
+                                                      self.mask_channel_combo.currentText(),
+                                                      self.z_slider.value(),
+                                                      )
         existing_mask = labels == track_id
         prototype_mask = existing_mask
         registration_note = ""
         if propagate_previous:
             registered, shift, confidence = (
-                self._tracking_session._registered_temporal_mask_prior(
-                    track_id, self.frame_slider.value(),
-                    self.channel_combo.currentText(),
-                    self.mask_channel_combo.currentText(), self.z_slider.value(),
-                    self.local_cell_diameter.value()))
+                self._tracking_session._registered_temporal_mask_prior(track_id,
+                                                                       self.frame_slider.value(),
+                                                                       self.channel_combo.currentText(),
+                                                                       self.mask_channel_combo.currentText(),
+                                                                       self.z_slider.value(),
+                                                                       self.local_cell_diameter.value(),
+                                                                       ))
             if registered is not None and np.any(registered):
                 prototype_mask = registered
                 registration_note = (
@@ -1621,15 +1845,15 @@ class TrackingViewerWindow(ImageToolWindow):
             self._tracking_session._resolve_channel(self.mask_channel_combo.currentText()),
             self.z_slider.value())
         self._configure_local_drawing()
-        image = self._tracking_session.display_frame(
-            self.frame_slider.value(), self.channel_combo.currentText(),
-            self.z_slider.value())
+        image = self._tracking_session.display_frame(self.frame_slider.value(),
+                                                     self.channel_combo.currentText(),
+                                                     self.z_slider.value(),
+                                                     )
         if np.any(prototype_mask):
             self._local_segmentation_preview = {
                 "track_id": track_id,
                 "frame_index": self.frame_slider.value(),
-                "mask_channel": self._tracking_session._resolve_channel(
-                    self.mask_channel_combo.currentText()),
+                "mask_channel": self._tracking_session._resolve_channel(self.mask_channel_combo.currentText()),
                 "image_channel": self.channel_combo.currentText(),
                 "z_index": self.z_slider.value(),
                 "bounds": (0, image.shape[0], 0, image.shape[1]),
@@ -1643,20 +1867,19 @@ class TrackingViewerWindow(ImageToolWindow):
         self.image_viewer.set_drawing_mask(prototype_mask.astype(np.uint8))
         self.image_viewer.set_drawing_enabled(True)
         if np.any(prototype_mask):
-            self._request_local_segmentation(dict(
-                track_id=track_id,
-                frame_index=self.frame_slider.value(),
-                image_channel=self.channel_combo.currentText(),
-                mask_channel=self.mask_channel_combo.currentText(),
-                z_index=self.z_slider.value(),
-                positive_points=[],
-                negative_points=[],
-                expected_diameter=self.local_cell_diameter.value(),
-                initial_mask=prototype_mask.copy(),
-                manual_stroke=False,
-                continue_from_previous=False,
-                excluded_mask=self._manual_excluded_mask.copy(),
-            ))
+            self._request_local_segmentation(dict(track_id=track_id,
+                                                  frame_index=self.frame_slider.value(),
+                                                  image_channel=self.channel_combo.currentText(),
+                                                  mask_channel=self.mask_channel_combo.currentText(),
+                                                  z_index=self.z_slider.value(),
+                                                  positive_points=[],
+                                                  negative_points=[],
+                                                  expected_diameter=self.local_cell_diameter.value(),
+                                                  initial_mask=prototype_mask.copy(),
+                                                  manual_stroke=False,
+                                                  continue_from_previous=False,
+                                                  excluded_mask=self._manual_excluded_mask.copy(),
+                                                  ))
         elif not self._tracking_session.add_edit_backend_ready:
             self._prepare_local_backend()
         if np.any(prototype_mask):
@@ -1669,6 +1892,9 @@ class TrackingViewerWindow(ImageToolWindow):
                 "be excluded; press S to accept.")
 
     def _prepare_local_backend(self) -> None:
+        """
+        Prepare local backend.
+        """
         session = self._tracking_session
         if session is None or self._local_preparation_thread is not None:
             return
@@ -1691,10 +1917,16 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(str)
     def _local_preparation_failed(self, message: str) -> None:
+        """
+        Local preparation failed.
+        """
         self.status_label.setText(f"Could not load μSAM: {message}")
 
     @Slot()
     def _local_preparation_finished(self) -> None:
+        """
+        Local preparation finished.
+        """
         thread = self._local_preparation_thread
         self._local_preparation_worker = None
         self._local_preparation_thread = None
@@ -1703,19 +1935,23 @@ class TrackingViewerWindow(ImageToolWindow):
             self.image_viewer.set_drawing_enabled(True)
             if self._tracking_session is not None:
                 if self._tracking_session.add_edit_backend_ready:
-                    self.status_label.setText(
-                        "μSAM ready. Click inside the cell to predict.")
+                    self.status_label.setText("μSAM ready. Click inside the cell to predict.")
         self._update_edit_buttons()
         if thread is not None:
             thread.deleteLater()
 
     @Slot()
     def _configure_local_drawing(self) -> None:
-        self.image_viewer.set_drawing_options(
-            "edit", "brush", "add", self.local_brush_size.value())
+        """
+        Configure local drawing.
+        """
+        self.image_viewer.set_drawing_options("edit", "brush", "add", self.local_brush_size.value())
 
     @Slot(object)
     def _local_drawing_finished(self, drawing: object) -> None:
+        """
+        Local drawing finished.
+        """
         if self.preview_split_button.isChecked():
             selection = self.image_viewer.last_drawing_selection
             if selection is not None and np.any(selection):
@@ -1741,8 +1977,7 @@ class TrackingViewerWindow(ImageToolWindow):
                 else np.asarray(drawing, dtype=bool))
             point = (int(point_y), int(point_x))
             if operation == "add":
-                unlocked = component_at_point(
-                    self._manual_excluded_mask, point)
+                unlocked = component_at_point(self._manual_excluded_mask, point)
                 self._manual_excluded_mask[unlocked] = False
             deterministic = (
                 remove_clicked_component(before_click, point)
@@ -1757,12 +1992,10 @@ class TrackingViewerWindow(ImageToolWindow):
                     message = "Filled the clicked enclosed region."
                 self._positive_points.clear()
                 self._negative_points.clear()
-                self._set_local_mask_preview(
-                    deterministic, message, manual_stroke=False)
+                self._set_local_mask_preview(deterministic, message, manual_stroke=False)
                 return
             self.image_viewer.set_drawing_mask(before_click.astype(np.uint8))
-            self._add_local_segmentation_prompt(
-                *point, positive=operation == "add")
+            self._add_local_segmentation_prompt(*point, positive=operation == "add")
             return
         if operation == "erase":
             self._manual_excluded_mask |= selection
@@ -1771,15 +2004,15 @@ class TrackingViewerWindow(ImageToolWindow):
             self._negative_points = [
                 point for point in self._negative_points if not selection[point]]
         mask = np.asarray(drawing, dtype=bool)
-        self._set_local_mask_preview(
-            mask,
-            "Manual mask updated. Continue drawing, accept it, or cancel this frame.",
-            manual_stroke=True)
+        self._set_local_mask_preview(mask,
+                                     "Manual mask updated. Continue drawing, accept it, or cancel this frame.",
+                                     manual_stroke=True,
+                                     )
 
-    def _set_local_mask_preview(
-            self, mask: np.ndarray, message: str, *,
-            manual_stroke: bool,
-            ) -> None:
+    def _set_local_mask_preview(self, mask: np.ndarray, message: str, *, manual_stroke: bool) -> None:
+        """
+        Set local mask preview.
+        """
         session = self._tracking_session
         if session is None:
             return
@@ -1790,15 +2023,13 @@ class TrackingViewerWindow(ImageToolWindow):
             self._local_segmentation_preview = None
             self._manual_excluded_mask = np.zeros(mask.shape, dtype=bool)
             self._update_edit_buttons()
-            self.status_label.setText(
-                "The working mask is empty. Draw or click to predict a new mask.")
+            self.status_label.setText("The working mask is empty. Draw or click to predict a new mask.")
             return
         self._local_manual_stroke = manual_stroke
         self._local_segmentation_preview = {
             "track_id": self._local_target_track_id,
             "frame_index": self.frame_slider.value(),
-            "mask_channel": session._resolve_channel(
-                self.mask_channel_combo.currentText()),
+            "mask_channel": session._resolve_channel(self.mask_channel_combo.currentText()),
             "image_channel": self.channel_combo.currentText(),
             "z_index": self.z_slider.value(),
             "bounds": (0, mask.shape[0], 0, mask.shape[1]),
@@ -1809,20 +2040,26 @@ class TrackingViewerWindow(ImageToolWindow):
         self.status_label.setText(message)
 
     def _add_local_segmentation_prompt(self, y: int, x: int, *, positive: bool) -> None:
+        """
+        Add local segmentation prompt.
+        """
         session = self._tracking_session
         if session is None or self._local_segmentation_thread is not None:
             return
-        image = session.display_frame(
-            self.frame_slider.value(), self.channel_combo.currentText(), self.z_slider.value())
+        image = session.display_frame(self.frame_slider.value(),
+                                      self.channel_combo.currentText(),
+                                      self.z_slider.value(),
+                                      )
         if y < 0 or x < 0 or y >= image.shape[0] or x >= image.shape[1]:
             return
-        labels = session.tracked_frame(
-            self.frame_slider.value(), self.mask_channel_combo.currentText(),
-            self.z_slider.value())
+        labels = session.tracked_frame(self.frame_slider.value(),
+                                       self.mask_channel_combo.currentText(),
+                                       self.z_slider.value(),
+                                       )
         occupied = int(labels[y, x])
         if positive and occupied not in (0, self._local_target_track_id):
-            self.status_label.setText(
-                f"Track {occupied} occupies this pixel. Ctrl+click it to edit that mask.")
+            self.status_label.setText(f"Track {occupied} occupies this pixel. Ctrl+click it to edit that mask.",
+                                      )
             return
         if positive:
             if self._local_manual_stroke:
@@ -1866,6 +2103,9 @@ class TrackingViewerWindow(ImageToolWindow):
         self._request_local_segmentation(options)
 
     def _request_local_segmentation(self, options: dict) -> None:
+        """
+        Request local segmentation.
+        """
         session = self._tracking_session
         if session is None or self._local_segmentation_thread is not None:
             return
@@ -1889,20 +2129,24 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(object)
     def _local_segmentation_ready(self, preview: object) -> None:
+        """
+        Local segmentation ready.
+        """
         if isinstance(preview, dict):
             session = self._tracking_session
             if (session is None or self._local_target_track_id is None
                     or int(preview["track_id"]) != self._local_target_track_id
                     or preview["frame_index"] != self.frame_slider.value()
-                    or preview["mask_channel"] != session._resolve_channel(
-                        self.mask_channel_combo.currentText())
+                    or preview["mask_channel"] != session._resolve_channel(self.mask_channel_combo.currentText(),
+                                                                           )
                     or preview["z_index"] != self.z_slider.value()):
                 return
             preview = dict(preview)
             y0, y1, x0, x1 = preview["bounds"]
-            full_mask = np.zeros(session.tracked_frame(
-                int(preview["frame_index"]), int(preview["mask_channel"]),
-                int(preview["z_index"])).shape, dtype=bool)
+            full_mask = np.zeros(session.tracked_frame(int(preview["frame_index"]),
+                                                       int(preview["mask_channel"]),
+                                                       int(preview["z_index"]),
+                                                       ).shape, dtype=bool)
             full_mask[y0:y1, x0:x1] = np.asarray(preview["mask"], dtype=bool)
             clipped = self._clip_local_mask(full_mask)
             preview["bounds"] = (0, clipped.shape[0], 0, clipped.shape[1])
@@ -1910,16 +2154,19 @@ class TrackingViewerWindow(ImageToolWindow):
             self._local_segmentation_preview = preview
             self._display_selection()
             self._set_local_drawing_from_preview(preview)
-            self.status_label.setText(
-                "Mask preview updated. Add clicks, accept, or cancel.")
+            self.status_label.setText("Mask preview updated. Add clicks, accept, or cancel.")
 
     def _clip_local_mask(self, mask: np.ndarray) -> np.ndarray:
+        """
+        Clip local mask.
+        """
         session = self._tracking_session
         if session is None:
             return np.asarray(mask, dtype=bool)
-        labels = session.tracked_frame(
-            self.frame_slider.value(), self.mask_channel_combo.currentText(),
-            self.z_slider.value())
+        labels = session.tracked_frame(self.frame_slider.value(),
+                                       self.mask_channel_combo.currentText(),
+                                       self.z_slider.value(),
+                                       )
         allowed = labels == 0
         if self._local_target_track_id is not None:
             allowed |= labels == self._local_target_track_id
@@ -1927,11 +2174,17 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(str)
     def _local_segmentation_failed(self, message: str) -> None:
+        """
+        Local segmentation failed.
+        """
         self.image_viewer.set_drawing_enabled(True)
         self.status_label.setText(message)
 
     @Slot()
     def _local_segmentation_finished(self) -> None:
+        """
+        Local segmentation finished.
+        """
         thread = self._local_segmentation_thread
         self._local_segmentation_worker = None
         self._local_segmentation_thread = None
@@ -1941,12 +2194,16 @@ class TrackingViewerWindow(ImageToolWindow):
             thread.deleteLater()
 
     def _set_local_drawing_from_preview(self, preview: dict[str, Any]) -> None:
+        """
+        Set local drawing from preview.
+        """
         session = self._tracking_session
         if session is None:
             return
-        shape = session.tracked_frame(
-            int(preview["frame_index"]), int(preview["mask_channel"]),
-            int(preview["z_index"])).shape
+        shape = session.tracked_frame(int(preview["frame_index"]),
+                                      int(preview["mask_channel"]),
+                                      int(preview["z_index"]),
+                                      ).shape
         drawing = np.zeros(shape, dtype=np.uint8)
         y0, y1, x0, x1 = preview["bounds"]
         drawing[y0:y1, x0:x1] = np.asarray(preview["mask"], dtype=np.uint8)
@@ -1955,12 +2212,14 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _accept_local_segmentation(self) -> None:
+        """
+        Accept local segmentation.
+        """
         if self._local_segmentation_preview is None or self._tracking_session is None:
             return
         track_id = int(self._local_segmentation_preview["track_id"])
         try:
-            self._tracking_session.apply_add_edit(
-                self._local_segmentation_preview)
+            self._tracking_session.apply_add_edit(self._local_segmentation_preview)
         except ValueError as error:
             QMessageBox.warning(self, "Cannot add mask", str(error))
             return
@@ -1970,8 +2229,8 @@ class TrackingViewerWindow(ImageToolWindow):
             self._clear_local_segmentation_state()
             self._update_edit_buttons()
             self._display_selection()
-            self.status_label.setText(
-                f"Added a mask to track {track_id} in the last frame; add masks mode stopped.")
+            self.status_label.setText(f"Added a mask to track {track_id} in the last frame; add masks mode stopped.",
+                                      )
             return
         self._clear_local_segmentation_state(stop_mode=False)
         self.frame_slider.setValue(completed_frame + 1)
@@ -1983,6 +2242,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _cancel_local_segmentation(self) -> None:
+        """
+        Cancel local segmentation.
+        """
         if not self._collect_local_prompts:
             return
         self._positive_points.clear()
@@ -1991,9 +2253,10 @@ class TrackingViewerWindow(ImageToolWindow):
         self._local_segmentation_preview = None
         session = self._tracking_session
         if session is not None:
-            image = session.display_frame(
-                self.frame_slider.value(), self.channel_combo.currentText(),
-                self.z_slider.value())
+            image = session.display_frame(self.frame_slider.value(),
+                                          self.channel_combo.currentText(),
+                                          self.z_slider.value(),
+                                          )
             self.image_viewer.set_drawing_mask(np.zeros(image.shape, dtype=np.uint8))
             self._manual_excluded_mask = np.zeros(image.shape, dtype=bool)
         self._update_edit_buttons()
@@ -2002,10 +2265,12 @@ class TrackingViewerWindow(ImageToolWindow):
         if displayed_image is not None:
             self.image_viewer.set_drawing_mask(np.zeros(displayed_image.shape, dtype=np.uint8))
         self.image_viewer.set_drawing_enabled(True)
-        self.status_label.setText(
-            "Current mask cleared. Click or draw again, or turn off Add masks mode.")
+        self.status_label.setText("Current mask cleared. Click or draw again, or turn off Add masks mode.")
 
     def _clear_local_segmentation_state(self, *, stop_mode: bool = True) -> None:
+        """
+        Clear local segmentation state.
+        """
         self._local_segmentation_preview = None
         self._positive_points.clear()
         self._negative_points.clear()
@@ -2024,8 +2289,10 @@ class TrackingViewerWindow(ImageToolWindow):
             self.add_mask_button.blockSignals(False)
 
     def _choose_mask_edit_colors(self) -> None:
-        dialog = _MaskColorDialog(
-            self._active_mask_color, self._other_mask_color, self)
+        """
+        Choose mask edit colors.
+        """
+        dialog = _MaskColorDialog(self._active_mask_color, self._other_mask_color, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self._active_mask_color = dialog.active_color
@@ -2033,41 +2300,58 @@ class TrackingViewerWindow(ImageToolWindow):
         self._apply_mask_edit_colors()
 
     def _apply_mask_edit_colors(self) -> None:
+        """
+        Apply mask edit colors.
+        """
         self._update_mask_edit_colors_button()
         drawing_color = (
             self._other_mask_color if self.preview_split_button.isChecked()
             else self._active_mask_color)
         self.image_viewer.set_drawing_style(drawing_color, 0.65)
         if self._tracking_session is not None:
-            self._display_overlay(None, self.frame_slider.value(),
-                                  self.channel_combo.currentText(), self.z_slider.value())
+            self._display_overlay(None,
+                                  self.frame_slider.value(),
+                                  self.channel_combo.currentText(),
+                                  self.z_slider.value(),
+                                  )
 
     def _update_mask_edit_colors_button(self) -> None:
+        """
+        Update mask edit colors button.
+        """
         self.mask_edit_colors_button.setStyleSheet(
             f"background-color: {self._active_mask_color.name()}; "
             f"border: 5px solid {self._other_mask_color.name()}; "
             "color: black; padding: 2px 6px;")
 
     def _preview_matches_current_view(self) -> bool:
+        """
+        Preview matches current view.
+        """
         preview = self._split_preview
         session = self._tracking_session
         return bool(
             preview is not None and session is not None
             and preview["frame_index"] == self.frame_slider.value()
-            and preview["channel"] == session._resolve_channel(
-                self.mask_channel_combo.currentText())
+            and preview["channel"] == session._resolve_channel(self.mask_channel_combo.currentText())
             and preview["z_index"] == self.z_slider.value())
 
     @Slot()
     def _preview_selected_split(self, *, guide: np.ndarray | None = None) -> None:
+        """
+        Preview selected split.
+        """
         if len(self._selected_track_ids) != 1:
             return
         session, channel, z_index = self._edit_context()
         try:
-            self._split_preview = session.preview_split(
-                self._selected_track_ids[0], self.frame_slider.value(),
-                channel, z_index,
-                image_channel=self.channel_combo.currentText(), guide=guide)
+            self._split_preview = session.preview_split(self._selected_track_ids[0],
+                                                        self.frame_slider.value(),
+                                                        channel,
+                                                        z_index,
+                                                        image_channel=self.channel_combo.currentText(),
+                                                        guide=guide,
+                                                        )
         except ValueError as error:
             QMessageBox.warning(self, "Cannot split track", str(error))
             return
@@ -2075,11 +2359,13 @@ class TrackingViewerWindow(ImageToolWindow):
         self.image_viewer.clear_drawing_overlay()
         self._update_edit_buttons()
         self._display_selection()
-        self.status_label.setText(
-            "Split preview ready. Press S or choose Accept split.")
+        self.status_label.setText("Split preview ready. Press S or choose Accept split.")
 
     @Slot()
     def _apply_previewed_split(self) -> None:
+        """
+        Apply previewed split.
+        """
         if self._split_preview is None or self._tracking_session is None:
             return
         track_id = int(self._split_preview["track_id"])
@@ -2090,9 +2376,9 @@ class TrackingViewerWindow(ImageToolWindow):
             QMessageBox.warning(self, "Cannot split track", str(error))
             return
         self._split_preview = None
-        self._finish_track_edit(
-            f"Split track {track_id}; the second region is track {new_track_id}.",
-            preserve_track_id=track_id)
+        self._finish_track_edit(f"Split track {track_id}; the second region is track {new_track_id}.",
+                                preserve_track_id=track_id,
+                                )
         if completed_frame < self.frame_slider.maximum():
             self.frame_slider.setValue(completed_frame + 1)
         if self.preview_split_button.isChecked():
@@ -2100,6 +2386,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _cancel_split_preview(self) -> None:
+        """
+        Cancel split preview.
+        """
         if self._split_preview is None:
             return
         self._split_preview = None
@@ -2111,6 +2400,9 @@ class TrackingViewerWindow(ImageToolWindow):
         self.status_label.setText("Split preview cancelled; draw or click again.")
 
     def _edit_context(self) -> tuple[TrackingViewerSession, str, int]:
+        """
+        Edit context.
+        """
         if self._tracking_session is None:
             raise RuntimeError("No tracking artifact is open.")
         return (self._tracking_session, self.mask_channel_combo.currentText(),
@@ -2118,13 +2410,15 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _merge_selected_tracks(self) -> None:
+        """
+        Merge selected tracks.
+        """
         if len(self._selected_track_ids) != 2:
             return
         session, channel, z_index = self._edit_context()
         selected = (self._selected_track_ids[0], self._selected_track_ids[1])
         try:
-            survivor = session.merge_tracks(
-                selected, self.frame_slider.value(), channel, z_index)
+            survivor = session.merge_tracks(selected, self.frame_slider.value(), channel, z_index)
         except ValueError as error:
             QMessageBox.warning(self, "Cannot merge tracks", str(error))
             return
@@ -2134,6 +2428,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _link_selected_tracks(self) -> None:
+        """
+        Link selected tracks.
+        """
         if len(self._selected_track_ids) != 2:
             return
         session, channel, z_index = self._edit_context()
@@ -2144,18 +2441,19 @@ class TrackingViewerWindow(ImageToolWindow):
             QMessageBox.warning(self, "Cannot link tracks", str(error))
             return
         note = " using a new ID because their frames overlap" if conflict else ""
-        self._finish_track_edit(
-            f"Linked tracks {selected[0]} and {selected[1]} as {target}{note}.")
+        self._finish_track_edit(f"Linked tracks {selected[0]} and {selected[1]} as {target}{note}.")
 
     @Slot()
     def _stop_selected_track(self) -> None:
+        """
+        Stop selected track.
+        """
         if len(self._selected_track_ids) != 1:
             return
         session, channel, z_index = self._edit_context()
         track_id = self._selected_track_ids[0]
         try:
-            new_track_id = session.stop_track(
-                track_id, self.frame_slider.value(), channel, z_index)
+            new_track_id = session.stop_track(track_id, self.frame_slider.value(), channel, z_index)
         except ValueError as error:
             QMessageBox.warning(self, "Cannot split track", str(error))
             return
@@ -2165,6 +2463,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _unlink_selected_track(self) -> None:
+        """
+        Unlink selected track.
+        """
         if len(self._selected_track_ids) != 1:
             return
         session, channel, z_index = self._edit_context()
@@ -2174,10 +2475,12 @@ class TrackingViewerWindow(ImageToolWindow):
         except ValueError as error:
             QMessageBox.warning(self, "Cannot unlink track", str(error))
             return
-        self._finish_track_edit(
-            f"Unlinked track {track_id} into {len(assigned_ids)} independent masks.")
+        self._finish_track_edit(f"Unlinked track {track_id} into {len(assigned_ids)} independent masks.")
 
     def _finish_track_edit(self, message: str, preserve_track_id: int | None = None) -> None:
+        """
+        Finish track edit.
+        """
         self._split_preview = None
         self._selected_track_ids.clear()
         if preserve_track_id is not None:
@@ -2188,6 +2491,9 @@ class TrackingViewerWindow(ImageToolWindow):
         self.status_label.setText(message + " Edits are not saved to the tracking mask yet.")
 
     def _clear_track_paths(self) -> None:
+        """
+        Clear track paths.
+        """
         for item in self._track_path_items:
             self.image_viewer.view_box.removeItem(item)
         self._track_path_items.clear()
@@ -2208,12 +2514,18 @@ class TrackingViewerWindow(ImageToolWindow):
         self._id_frame = None
 
     def _path_color_mode_changed(self) -> None:
+        """
+        Path color mode changed.
+        """
         single_color = self.path_color_mode.currentData() == "single"
         self.path_color_button.setVisible(single_color)
         self.path_color_button.setEnabled(single_color)
         self._display_track_paths()
 
     def _choose_path_color(self) -> None:
+        """
+        Choose path color.
+        """
         color = QColorDialog.getColor(self._path_color, self, "Choose path color")
         if color.isValid():
             self._path_color = color
@@ -2221,19 +2533,32 @@ class TrackingViewerWindow(ImageToolWindow):
             self._display_track_paths()
 
     def _update_path_color_button(self) -> None:
-        self.path_color_button.setStyleSheet(
-            f"background-color: {self._path_color.name()}; color: black;")
+        """
+        Update path color button.
+        """
+        self.path_color_button.setStyleSheet(f"background-color: {self._path_color.name()}; color: black;")
 
     def _show_crop_guidance(self) -> None:
-        QMessageBox.information(
-            self, "Choose a crop", "Select at least one cell or draw a rectangle on the image.")
+        """
+        Show crop guidance.
+        """
+        QMessageBox.information(self,
+                                "Choose a crop",
+                                "Select at least one cell or draw a rectangle on the image.",
+                                )
 
     def _current_crop_context(self) -> tuple:
+        """
+        Current crop context.
+        """
         return (id(self._tracking_session), self.mask_channel_combo.currentText(),
                 self.z_slider.value(), tuple(self._selected_track_ids))
 
     @Slot()
     def _create_crop(self) -> None:
+        """
+        Create crop.
+        """
         panel, session = self.crop_panel, self._tracking_session
         if (panel is None or session is None or not panel.enabled.isChecked()
                 or self._crop_thread is not None or self._save_thread is not None):
@@ -2250,7 +2575,10 @@ class TrackingViewerWindow(ImageToolWindow):
         z = self.z_slider.value()
         self._crop_context = self._current_crop_context()
         worker = CropFitWorker(lambda frame: session.tracked_frame(frame, channel, z),
-                               session.frame_count, tuple(self._selected_track_ids), self._crop_context)
+                               session.frame_count,
+                               tuple(self._selected_track_ids),
+                               self._crop_context,
+                               )
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -2267,6 +2595,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(object)
     def _crop_ready(self, result: tuple) -> None:
+        """
+        Crop ready.
+        """
         context, bounds = result
         if context != self._crop_context or self.crop_panel is None:
             return
@@ -2278,12 +2609,18 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(object)
     def _crop_failed(self, result: tuple) -> None:
+        """
+        Crop failed.
+        """
         context, message = result
         if context == self._crop_context:
             QMessageBox.warning(self, "Cannot create crop", message)
 
     @Slot()
     def _crop_finished(self) -> None:
+        """
+        Crop finished.
+        """
         if self.sender() is not self._crop_thread:
             return
         thread = self._crop_thread
@@ -2300,6 +2637,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _save_current_display(self) -> None:
+        """
+        Save current display.
+        """
         session = self._tracking_session
         if (session is None or self.mask_channel_combo.currentIndex() < 0
                 or self._crop_thread is not None or self._save_thread is not None):
@@ -2322,11 +2662,12 @@ class TrackingViewerWindow(ImageToolWindow):
             self.status_label.setText(str(error))
             return
         if output_path.exists():
-            answer = QMessageBox.question(
-                self, "Replace tracking display?",
-                f"{output_path.name} already exists. Replace it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,)
+            answer = QMessageBox.question(self,
+                                          "Replace tracking display?",
+                                          f"{output_path.name} already exists. Replace it?",
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                          QMessageBox.StandardButton.No,
+                                          )
             if answer != QMessageBox.StandardButton.Yes:
                 return
         display_settings = {
@@ -2396,6 +2737,9 @@ class TrackingViewerWindow(ImageToolWindow):
         thread.start()
 
     def _filter_metadata(self) -> dict[str, object]:
+        """
+        Filter metadata.
+        """
         if self._active_track_filter is None:
             return {}
         operator, value, maximum = self._active_track_filter
@@ -2422,6 +2766,9 @@ class TrackingViewerWindow(ImageToolWindow):
         return metadata
 
     def _filter_spec(self) -> dict[str, object] | None:
+        """
+        Filter spec.
+        """
         if self._active_track_filter is None:
             return None
         operator, value, maximum = self._active_track_filter
@@ -2434,6 +2781,9 @@ class TrackingViewerWindow(ImageToolWindow):
         return spec
 
     def _edited_filter_metadata(self) -> dict[str, object] | None:
+        """
+        Edited filter metadata.
+        """
         if self._active_track_filter is None:
             return None
         metadata = self._filter_metadata()
@@ -2443,6 +2793,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _save_edited_tracking(self) -> None:
+        """
+        Save edited tracking.
+        """
         session = self._tracking_session
         request = self._pipeline_request
         if session is None or request is None or self._tracking_save_thread is not None:
@@ -2486,6 +2839,9 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(object)
     def _edited_tracking_saved(self, result: object) -> None:
+        """
+        Edited tracking saved.
+        """
         if not isinstance(result, tuple) or len(result) != 2:
             return
         path, metadata = result
@@ -2495,10 +2851,16 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot(str)
     def _edited_tracking_save_failed(self, message: str) -> None:
+        """
+        Edited tracking save failed.
+        """
         QMessageBox.warning(self, "Cannot save edited tracking", message)
 
     @Slot()
     def _tracking_save_finished(self) -> None:
+        """
+        Tracking save finished.
+        """
         thread = self._tracking_save_thread
         self._tracking_save_worker = None
         self._tracking_save_thread = None
@@ -2509,11 +2871,10 @@ class TrackingViewerWindow(ImageToolWindow):
         if result is not None and self._pipeline_request is not None:
             path, metadata = result
             self._pipeline_resolved = True
-            self.tracking_finalized.emit(TrackEditOutcome(
-                request=self._pipeline_request,
-                edited_path=path,
-                metadata=metadata,
-            ))
+            self.tracking_finalized.emit(TrackEditOutcome(request=self._pipeline_request,
+                                                          edited_path=path,
+                                                          metadata=metadata,
+                                                          ))
             if thread is not None:
                 thread.deleteLater()
             self.close()
@@ -2528,24 +2889,35 @@ class TrackingViewerWindow(ImageToolWindow):
 
     @Slot()
     def _use_original_tracking(self) -> None:
+        """
+        Use original tracking.
+        """
         request = self._pipeline_request
         if request is None or self._pipeline_resolved:
             return
         self._pipeline_resolved = True
-        self.tracking_finalized.emit(TrackEditOutcome(
-            request=request, edited_path=None, metadata=None))
+        self.tracking_finalized.emit(TrackEditOutcome(request=request, edited_path=None, metadata=None))
         self.close()
 
     @Slot(object)
     def _display_saved(self, saved: Path) -> None:
+        """
+        Display saved.
+        """
         self.status_label.setText(f"Saved tracking display to {Path(saved).name}.")
 
     @Slot(str)
     def _display_save_failed(self, message: str) -> None:
+        """
+        Display save failed.
+        """
         QMessageBox.warning(self, "Cannot save tracking display", message)
 
     @Slot()
     def _save_thread_finished(self) -> None:
+        """
+        Save thread finished.
+        """
         thread = self._save_thread
         # finished is emitted before deferred worker deletion completes. Keep
         # its Python wrapper alive until the thread's native cleanup is done.
@@ -2557,14 +2929,17 @@ class TrackingViewerWindow(ImageToolWindow):
             self.crop_panel.set_busy(False)
         self.image_viewer.set_preview_loading(False)
         self.progress.hide()
-        self.save_display_button.setEnabled(
-            self._tracking_session is not None and self._tracking_session.image_session is not None)
+        self.save_display_button.setEnabled(self._tracking_session is not None and self._tracking_session.image_session is not None,
+                                            )
         self._update_edit_buttons()
         self._display_track_paths()
         if thread is not None:
             thread.deleteLater()
 
     def _clear_tools(self) -> None:
+        """
+        Clear tools.
+        """
         if self._crop_thread is not None:
             self._crop_thread.requestInterruption()
             self._crop_thread.quit()
@@ -2612,8 +2987,13 @@ class TrackingViewerWindow(ImageToolWindow):
         self._tracking_session = None
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        """
+        Stop active work and handle the window close event.
+        """
         if self._pipeline_request is not None and not self._pipeline_resolved:
             self._pipeline_resolved = True
-            self.tracking_finalized.emit(TrackEditOutcome(
-                request=self._pipeline_request, edited_path=None, metadata=None))
+            self.tracking_finalized.emit(TrackEditOutcome(request=self._pipeline_request,
+                                                          edited_path=None,
+                                                          metadata=None,
+                                                          ))
         super().closeEvent(event)

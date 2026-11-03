@@ -179,3 +179,6 @@ def test_clear_all_is_session_only_and_keeps_other_channels(tmp_path: Path, roi:
         np.testing.assert_array_equal(reopened.mask_plane(2, 'GFP', 1), mask)
     finally:
         reopened.close()
+
+
+pytestmark = pytest.mark.usefixtures("current_format_tiffs")

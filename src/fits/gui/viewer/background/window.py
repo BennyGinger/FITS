@@ -1,14 +1,16 @@
 """Background-subtraction tuning using the shared FITS image viewer."""
 
-from pathlib import Path
+from __future__ import annotations
 
+from pathlib import Path
+from fits.environment import constant as cst
 import numpy as np
 from numpy.typing import NDArray
 from PySide6.QtCore import QSignalBlocker, Qt, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
-
-from fits.environment.constant import FITS_ARRAY_NAME, StepName
+from fits.workflows.artifacts.paths import image_input_for, image_for, first_image
+from fits.environment.constant import IMAGE_NAMES, FITS_ARRAY_NAME, StepName
 from fits.gui.settings import SettingsAdapter
 from fits.gui.settings.wheel_widgets import FocusWheelComboBox
 from fits.gui.viewer.background.settings_panel import BackgroundSettingsPanel
@@ -25,15 +27,22 @@ class BackgroundTunerWindow(ImageToolWindow):
 
     settings_applied = Signal(object)
     auto_open_first_image = True
-    file_filters = (FITS_ARRAY_NAME,)
+    file_filters = IMAGE_NAMES
     help_gui = "BGTune"
     tool_help = BACKGROUND_HELP
 
-    def __init__(self, experiments_dir: str | Path | None = None, *,
-                 settings: BGSubSettings | None = None, settings_path: Path | None = None,
-                 initial_path: str | Path | None = None, parent: QWidget | None = None,
-                 directory_locked: bool = False) -> None:
-        """Load GUI settings or standalone defaults and optionally open an experiment."""
+    def __init__(self,
+                 experiments_dir: str | Path | None = None,
+                 *,
+                 settings: BGSubSettings | None = None,
+                 settings_path: Path | None = None,
+                 initial_path: str | Path | None = None,
+                 parent: QWidget | None = None,
+                 directory_locked: bool = False,
+                 ) -> None:
+        """
+        Load GUI settings or standalone defaults and optionally open an experiment.
+        """
         self._provided = settings is not None
         self._defaults = settings or BGSubSettings()
         self._settings_path = settings_path
@@ -54,7 +63,9 @@ class BackgroundTunerWindow(ImageToolWindow):
             self._set_experiments_directory(experiments_dir, initial_path=initial_path)
 
     def _build_tools(self) -> QWidget:
-        """Build parameters, measurement controls and the two requested actions."""
+        """
+        Build parameters, measurement controls and the two requested actions.
+        """
         self.settings_panel = BackgroundSettingsPanel()
         self.tool_panel = self.settings_panel
         self.run_button = QPushButton("Run preview")
@@ -76,7 +87,9 @@ class BackgroundTunerWindow(ImageToolWindow):
         return self.settings_panel
 
     def _build_viewer_actions(self, layout: QHBoxLayout) -> None:
-        """Place the orange and dark-green actions to the right of the LUT."""
+        """
+        Place the orange and dark-green actions to the right of the LUT.
+        """
         self.session_actions = QWidget()
         actions = QVBoxLayout(self.session_actions)
         actions.setContentsMargins(0, 0, 0, 0)
@@ -86,7 +99,9 @@ class BackgroundTunerWindow(ImageToolWindow):
         layout.addWidget(self.session_actions)
 
     def _build_overlay_controls(self, layout: QHBoxLayout) -> None:
-        """Offer original and processed images with per-option help."""
+        """
+        Offer original and processed images with per-option help.
+        """
         self.comparison = FocusWheelComboBox()
         for title, description in (
             ("Original image", "Original pixels. Press V to switch; intensity limits stay the same."),
@@ -99,11 +114,15 @@ class BackgroundTunerWindow(ImageToolWindow):
         layout.addWidget(self.comparison)
 
     def _comparison_changed(self) -> None:
-        """Update comparison help; display refresh is connected after UI creation."""
+        """
+        Update comparison help; display refresh is connected after UI creation.
+        """
         self.comparison.setToolTip(self.comparison.currentData(Qt.ItemDataRole.ToolTipRole))
 
     def _connect_tools(self) -> None:
-        """Connect actions and the shared measurement rectangle."""
+        """
+        Connect actions and the shared measurement rectangle.
+        """
         self.settings_panel.measurement.bind(self.image_viewer)
         self.settings_panel.measurement.changed.connect(self._display_selection)
         self.settings_panel.changed.connect(self._settings_edited)
@@ -112,12 +131,16 @@ class BackgroundTunerWindow(ImageToolWindow):
         self.comparison.currentIndexChanged.connect(self._display_selection)
 
     def _set_source_controls_enabled(self, enabled: bool) -> None:
-        """Enable tuning and navigation when an experiment is open."""
+        """
+        Enable tuning and navigation when an experiment is open.
+        """
         super()._set_source_controls_enabled(enabled)
         self.session_actions.setEnabled(enabled)
 
     def _load_general_settings(self, source: Path) -> None:
-        """Find standalone settings without overriding settings passed by the GUI."""
+        """
+        Find standalone settings without overriding settings passed by the GUI.
+        """
         if self._provided:
             return
         adapter = SettingsAdapter()
@@ -141,20 +164,29 @@ class BackgroundTunerWindow(ImageToolWindow):
 
     @Slot(object)
     def _path_selected(self, selected: object) -> None:
-        """Open the chosen normalized image or its experiment directory."""
+        """
+        Open the chosen normalized image or its experiment directory.
+        """
         if isinstance(selected, (str, Path)):
             source = Path(selected)
-            self._open_source(source / FITS_ARRAY_NAME if source.is_dir() else source)
+            self._open_source((image_for(source) or source / FITS_ARRAY_NAME) if source.is_dir() else source)
 
     def _open_source(self, source: Path) -> None:
-        """Replace the input and release previews when selecting another experiment."""
+        """
+        Replace the input and release previews when selecting another experiment.
+        """
+        try:
+            source = image_input_for(source, cst.StepName.BG_SUB) or source
+        except ValueError as error:
+            self.status_label.setText(str(error))
+            return
         if source == self._source_path:
             return
         if self._thread is not None:
             self.status_label.setText("Wait for the selected plane to finish before changing experiment.")
             return
-        if source.name != FITS_ARRAY_NAME or not source.is_file():
-            self.status_label.setText(f"Choose a folder containing {FITS_ARRAY_NAME}.")
+        if source.name not in IMAGE_NAMES or not source.is_file():
+            self.status_label.setText("Choose an experiment folder containing FITS image artifacts.")
             return
         self._close_session()
         self._loading = True
@@ -180,7 +212,9 @@ class BackgroundTunerWindow(ImageToolWindow):
         self._display_selection()
 
     def _settings_edited(self) -> None:
-        """Hide stale processed images until the user explicitly previews new settings."""
+        """
+        Hide stale processed images until the user explicitly previews new settings.
+        """
         if self._loading:
             return
         self._preview_enabled = False
@@ -188,7 +222,9 @@ class BackgroundTunerWindow(ImageToolWindow):
         self._display_selection()
 
     def _display_overlay(self, image: NDArray, frame: int, channel: str, z_index: int) -> None:
-        """Show a matching processed plane or request just the current selection."""
+        """
+        Show a matching processed plane or request just the current selection.
+        """
         if self._loading or self._session is None:
             return
         settings = self.settings_panel.settings()
@@ -203,7 +239,9 @@ class BackgroundTunerWindow(ImageToolWindow):
             self._start_plane(image, settings, frame, channel, z_index)
 
     def _update_means(self, original: NDArray, processed: NDArray | None) -> None:
-        """Measure identical raw pixel coordinates independently of LUT scaling."""
+        """
+        Measure identical raw pixel coordinates independently of LUT scaling.
+        """
         box = self.settings_panel.measurement
         if not box.enabled.isChecked() or box.bounds is None:
             self.settings_panel.means.setText("Enable the measurement box and draw a rectangle.")
@@ -218,16 +256,19 @@ class BackgroundTunerWindow(ImageToolWindow):
 
     @Slot()
     def _run_preview(self) -> None:
-        """Enable on-demand processing and request the selected plane first."""
+        """
+        Enable on-demand processing and request the selected plane first.
+        """
         if self._session is None or self._thread is not None:
             return
         self._preview_enabled = True
         self.comparison.setCurrentIndex(1)
         self._display_selection()
 
-    def _start_plane(self, image: NDArray, settings: BGSubSettings,
-                     frame: int, channel: str, z: int) -> None:
-        """Run one plane in a worker; coalesce navigation into the next current plane."""
+    def _start_plane(self, image: NDArray, settings: BGSubSettings, frame: int, channel: str, z: int) -> None:
+        """
+        Run one plane in a worker; coalesce navigation into the next current plane.
+        """
         assert self._session is not None
         self._thread = BackgroundPreviewWorker(self._session, image.copy(), settings, frame, channel, z, self)
         self._thread.ready.connect(self._preview_ready)
@@ -244,19 +285,25 @@ class BackgroundTunerWindow(ImageToolWindow):
 
     @Slot(float)
     def _preview_ready(self, seconds: float) -> None:
-        """Report per-plane latency so users can assess interactive performance."""
+        """
+        Report per-plane latency so users can assess interactive performance.
+        """
         if self._preview_enabled and not self._closing:
             self.status_label.setText(f"Preview plane computed in {seconds:.3f} s. Press V to compare.")
 
     @Slot(str)
     def _preview_failed(self, message: str) -> None:
-        """Stop automatic requests after an error, keeping source and settings usable."""
+        """
+        Stop automatic requests after an error, keeping source and settings usable.
+        """
         self._preview_enabled = False
         self.status_label.setText(f"Background preview failed: {message}")
 
     @Slot()
     def _thread_finished(self) -> None:
-        """Restore controls, then display or process the latest requested plane."""
+        """
+        Restore controls, then display or process the latest requested plane.
+        """
         thread = self._thread
         # finished can arrive before native thread-local cleanup has completed.
         if thread is not None:
@@ -277,14 +324,19 @@ class BackgroundTunerWindow(ImageToolWindow):
 
     @Slot()
     def _save_and_close(self) -> None:
-        """Save general settings without requiring preview or changing step enablement."""
+        """
+        Save general settings without requiring preview or changing step enablement.
+        """
         if self._session is None or self._thread is not None:
             return
         try:
             settings = self.settings_panel.settings()
             if self._general_adapter is not None and self._general_path is not None:
                 for key, value in {**settings.to_payload_dict(), "overwrite": settings.overwrite}.items():
-                    self._general_adapter.set_field_value(StepName.BG_SUB, key, "None" if value is None else value)
+                    self._general_adapter.set_field_value(StepName.BG_SUB,
+                                                          key,
+                                                          "None" if value is None else value,
+                                                          )
                 self._general_adapter.save(self._general_path)
             self.settings_applied.emit(settings)
         except Exception as error:
@@ -293,7 +345,9 @@ class BackgroundTunerWindow(ImageToolWindow):
         self.close()
 
     def _tool_keypress(self, event: QKeyEvent) -> bool:
-        """Run preview, save and close, or compare source and processed images."""
+        """
+        Run preview, save and close, or compare source and processed images.
+        """
         if event.modifiers() != Qt.KeyboardModifier.NoModifier:
             return False
         if event.key() == Qt.Key.Key_R:
@@ -307,14 +361,18 @@ class BackgroundTunerWindow(ImageToolWindow):
         return True
 
     def _clear_tools(self) -> None:
-        """Reset tool state before the shared base closes the current input."""
+        """
+        Reset tool state before the shared base closes the current input.
+        """
         self._preview_enabled = False
         self._session = None
         self.settings_panel.measurement.reset()
         self.settings_panel.means.setText("Enable the measurement box and draw a rectangle.")
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Wait for the single active SMO call before releasing its source and model."""
+        """
+        Wait for the single active SMO call before releasing its source and model.
+        """
         if self._thread is not None:
             self._closing = True
             self.status_label.setText("Closing after the current plane finishes…")

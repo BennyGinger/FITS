@@ -116,3 +116,11 @@ def test_scheduler_rejects_interactive_steps_before_submission(monkeypatch) -> N
     with pytest.raises(ValueError, match="require the FITS GUI"):
         run_workflow_scheduler(
             {"edit_track": {"enabled": True, "params": {}}}, [make_state()])
+
+
+@pytest.fixture(autouse=True)
+def isolate_profile_configuration(monkeypatch):
+    # These orchestration tests supply fake profiles; real input resolution is
+    # exercised by test_fits4_execution with actual TIFF artifacts.
+    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.replace', lambda spec, **kwargs: spec)
+    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.configured_profile', lambda profile, config: profile)

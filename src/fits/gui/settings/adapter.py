@@ -11,7 +11,7 @@ from tomlkit import TOMLDocument
 
 from fits.environment.constant import WORKFLOW_ORDER, StepName
 from fits.workflows.definitions.registry import REGISTRY
-from fits.settings.loader import SAVED_SETTINGS_NAME, resolve_step_params, run_settings_path
+from fits.settings.loader import SAVED_SETTINGS_NAME, normalize_registration_algorithms, resolve_step_params, run_settings_path
 from fits.settings.models import SegmentSettings
 from fits.gui.settings.layouts import STEP_LAYOUTS
 
@@ -23,11 +23,17 @@ FIELD_LABELS: dict[str, str] = {
     "unlock_all_tabs": "Unlock all phase tabs",
     "draw_ref_mask": "Draw reference masks",
     "expected_ref_masks": "Expected reference masks",
+    "compartments": "Measure cell compartments",
+    "save_compartment_masks": "Save compartment masks",
+    "membrane_thickness": "Membrane thickness (pixels)",
+    "dilation_radius": "Cell expansion (pixels)",
     "draw_roi_mask": "Draw ROI masks",
     "expected_roi_masks": "Expected ROI masks",
     "bg_execution": "Frame execution",
     "bg_workers": "Frame workers",
-    "cellprob_threshold": "Cell probability threshold",
+    "cellprob_threshold": "Cell probability threshold (-6 to 6)",
+    "stitch_threshold": "Stitch threshold (0–1)",
+    "threshold": "Threshold (0–1)",
     "do_3D": "Process in 3D",
     "do_denoise": "Denoise",
     "export_channels": "Export channels",
@@ -35,7 +41,11 @@ FIELD_LABELS: dict[str, str] = {
     "minimum_appearances": "Minimum appearances",
     "extrapolate_start": "Complete track start",
     "extrapolate_end": "Complete track end",
-    "fit_channel": "Fitting channel",
+    "fit_channel": "Fitting channel (optional)",
+    "reference_channel": "Reference channel (required)",
+    "backend": "Algorithm",
+    "size": "Size (>=2)",
+    "flow_threshold": "Flow threshold (>=0)",
     "frame_workers": "Frame workers",
     "nuclear_channel": "Nuclear channel",
     "reference_frame": "Reference frame",
@@ -46,11 +56,35 @@ FIELD_LABELS: dict[str, str] = {
 }
 
 FIELD_PATH_LABELS: dict[str, str] = {
-    "postprocess.enabled": "Static-cell mask smoothing",
-    "postprocess.shape_similarity": "Shape similarity (0–1)",
-    "postprocess.minimum_appearances": "Minimum appearances",
-    "postprocess.extrapolate_start": "Complete track start",
-    "postprocess.extrapolate_end": "Complete track end",
+    "user_settings.pretrained_model": "Model type",
+    "postprocess.enabled": "Enable mask repair",
+    "postprocess.shape_similarity": "Minimum mask consistency (0–1)",
+    "postprocess.minimum_appearances": "Minimum reliable frames",
+    "postprocess.extrapolate_start": "Extend masks to the first frame",
+    "postprocess.extrapolate_end": "Extend masks to the last frame",
+}
+
+
+FIELD_HINTS: dict[str, str] = {
+    "channel_labels": "Choose any labels, in the same order as channels in the source image.",
+    "export_channels": "Select which channels to convert/export; multiple selections are allowed.",
+    "exclude_channel": "Select channels to leave unchanged; None excludes no channels.",
+    "context": "Choose a motion/alignment preset; hover for an explanation of each context.",
+    "fit_channel": "Optional: None estimates motion using the first image channel.",
+    "reference_channel": "Choose the fixed channel that the other channels align to.",
+    "user_settings.diameter": "Expected cell diameter in pixels; 0 uses automatic sizing.",
+    "user_settings.flow_threshold": "Higher accepts more masks; 0 disables flow-error filtering.",
+    "user_settings.cellprob_threshold": "Lower finds more/larger masks; higher suppresses dim detections.",
+    "user_settings.stitch_threshold": "0 disables stitching; higher requires closer overlap between Z planes.",
+    "user_settings.do_3D": "Segment the full Z volume; requires multiple Z planes.",
+    "algorithm": "Override the preset's algorithm, or leave None to follow the context.",
+    "method": "Override the preset's transform, or leave None to follow the context.",
+    "sigma": "Larger values blur over a wider area; 0 disables smoothing.",
+    "threshold": "Lower values select fewer pixels as background.",
+    "workers": "Parallel experiments; None selects automatically. Ignored in serial mode.",
+    "frame_workers": "Worker processes for frames within one experiment.",
+    "bg_workers": "Parallel background-subtraction frames; None selects automatically.",
+    "maximum_bins": "Limit the profile length; None keeps all distance bins.",
 }
 
 
@@ -101,8 +135,8 @@ STEP_FIELD_CHOICES: dict[tuple[StepName, str], tuple[str, ...]] = {
         "channel_shift_dual_cam",
         "channel_shift_complex",
     ),
-    (StepName.REGISTER_TIME, "backend"): ("None", "scikit", "pystackreg", "cv2"),
-    (StepName.REGISTER_CHANNEL, "backend"): (
+    (StepName.REGISTER_TIME, "algorithm"): ("None", "scikit", "pystackreg", "cv2"),
+    (StepName.REGISTER_CHANNEL, "algorithm"): (
         "None",
         "scikit",
         "pystackreg",
@@ -114,6 +148,7 @@ STEP_FIELD_CHOICES: dict[tuple[StepName, str], tuple[str, ...]] = {
 REQUIRED_USER_FIELDS: dict[StepName, tuple[tuple[str, str], ...]] = {
     StepName.CONVERT: (
         ("channel_labels", "Enter at least one channel label (channel_labels)."),
+        ("export_channels", "Select at least one channel to convert/export."),
     ),
     StepName.REGISTER_CHANNEL: (
         ("reference_channel", "Choose a reference channel (reference_channel)."),
@@ -124,13 +159,14 @@ REQUIRED_USER_FIELDS: dict[StepName, tuple[tuple[str, str], ...]] = {
 }
 
 STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
+    (StepName.SEGMENT, "user_settings.pretrained_model"): (
+        "Built-in model available in the installed Cellpose version."
+    ),
     (StepName.CONVERT, "channel_labels"): (
-        "Source-channel names in source order. The number of labels should match "
-        "the channels in each input image."
+        "Labels can be any names you choose. Enter one label per source channel, in exactly the same order as the channels in the source image."
     ),
     (StepName.CONVERT, "export_channels"): (
-        'Channels to keep in the converted image. Use "all", one channel label, '
-        "or a comma-separated list of labels."
+        "Select which source channels to convert/export. Multiple channels may be selected; all source channels are selected by default."
     ),
     (StepName.CONVERT, "z_projection"): (
         "Projection applied across Z while loading: max, mean, sum, or standard "
@@ -151,8 +187,7 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
         "setting is ignored during serial execution."
     ),
     (StepName.REGISTER_TIME, "context"): (
-        "Registration scenario used to choose suitable default backend and transform "
-        "method settings."
+        "Choose the motion to correct:\nlinear_drift: X/Y shifts (translation).\nrotational_drift: translation and rotation (rigid-body).\ncomplex_drift: translation and rotation, plus scaling/shear (affine)."
     ),
     (StepName.REGISTER_TIME, "reference_strategy"): (
         "Frame used as the registration reference: the previous frame, the first "
@@ -165,8 +200,8 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
     (StepName.REGISTER_TIME, "overwrite"): (
         "Repeat time registration even when an up-to-date registered artifact exists."
     ),
-    (StepName.REGISTER_TIME, "backend"): (
-        "Registration implementation. None uses the backend selected by the context."
+    (StepName.REGISTER_TIME, "algorithm"): (
+        "Registration algorithm. None uses the algorithm selected by the context."
     ),
     (StepName.REGISTER_TIME, "method"): (
         "Transform model fitted between frames. None uses the method selected by the "
@@ -179,8 +214,7 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
         "Maximum experiment workers. This setting is ignored during serial execution."
     ),
     (StepName.REGISTER_CHANNEL, "context"): (
-        "Registration scenario used to choose suitable default backend and transform "
-        "method settings for cross-channel alignment."
+        "Choose the alignment between channels:\nchannel_shift: X/Y offset only (translation).\nchannel_shift_dual_cam: offset and rotation, for example between cameras (rigid-body).\nchannel_shift_complex: offset and rotation, plus scaling/shear (affine)."
     ),
     (StepName.REGISTER_CHANNEL, "reference_channel"): (
         "Channel index or label held fixed while the other channels are aligned."
@@ -194,8 +228,8 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
     (StepName.REGISTER_CHANNEL, "overwrite"): (
         "Repeat channel registration even when an up-to-date registered artifact exists."
     ),
-    (StepName.REGISTER_CHANNEL, "backend"): (
-        "Registration implementation. None uses the backend selected by the context."
+    (StepName.REGISTER_CHANNEL, "algorithm"): (
+        "Registration algorithm. None uses the algorithm selected by the context."
     ),
     (StepName.REGISTER_CHANNEL, "method"): (
         "Transform model fitted between channels. None uses the method selected by "
@@ -256,17 +290,18 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
         "Expected object diameter in pixels. Set 0 to let Cellpose estimate it."
     ),
     (StepName.SEGMENT, "user_settings.flow_threshold"): (
-        "Cellpose flow-error cutoff. Lower values keep fewer masks; higher values "
-        "accept more masks."
+        "Cellpose flow-error cutoff. Higher values accept more masks. This is squared error, so values above 1 are meaningful. 0 disables filtering. Negative values also bypass the filter; use 0 instead. Ignored during native 3D segmentation."
     ),
     (StepName.SEGMENT, "user_settings.cellprob_threshold"): (
-        "Minimum Cellpose cell probability for a pixel to be included in a mask."
+        "Minimum Cellpose cell probability for a pixel to be included in a mask. "
+        "Cellpose suggests a working range of -6 to 6; this is not a hard limit."
     ),
     (StepName.SEGMENT, "user_settings.do_3D"): (
         "Run Cellpose on image volumes instead of processing each Z plane separately."
     ),
     (StepName.SEGMENT, "user_settings.stitch_threshold"): (
-        "Threshold for stitching 2D masks across Z planes. It is ignored when "
+        "Minimum overlap (0–1) for stitching 2D masks across Z planes. "
+        "0 disables stitching. It is ignored when "
         "Process in 3D is enabled."
     ),
     (StepName.SEGMENT, "overwrite"): (
@@ -282,14 +317,19 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
         "Segmentation channel labels whose masks are linked into tracks."
     ),
     (StepName.TRACK, "postprocess.enabled"): (
-        "Remove inconsistent masks and complete missing masks for static-cell tracks."
+        "Repair masks for cells that remain in approximately the same position. "
+        "Leave off for migrating cells."
     ),
     (StepName.TRACK, "postprocess.shape_similarity"): (
         "Minimum Dice similarity between an observed mask and its track's temporal "
-        "consensus, expressed as a proportion from 0 to 1."
+        "consensus, expressed as a proportion from 0 to 1. "
+        "Also controls identity matching and how much of a reconstructed mask must "
+        "survive collisions with other cells. Higher values reject more doubtful masks; "
+        "identity matching and reconstruction always require at least 50% IoU."
     ),
     (StepName.TRACK, "postprocess.minimum_appearances"): (
-        "Minimum number of valid masks required to retain and complete a track."
+        "Number of consistent observations needed to keep a track. "
+        "Tracks with fewer reliable frames are removed."
     ),
     (StepName.TRACK, "postprocess.extrapolate_start"): (
         "Copy the first valid mask into preceding frames."
@@ -329,6 +369,22 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
     (StepName.EXTRACT, "additional_properties"): (
         "Extra scikit-image region properties to add to the default quantification "
         "measurements. Use None for no extras."
+    ),
+    (StepName.EXTRACT, "compartments"): (
+        "Measure full cells, membrane (mb) and cytoplasm (cyto). All compartments "
+        "share the full-cell centroid and cell identity."
+    ),
+    (StepName.EXTRACT, "save_compartment_masks"): (
+        "Save labelled mb/cyto TIFFs alongside the source mask. Compaction removes "
+        "them; rebuilding regenerates them when this option remains enabled."
+    ),
+    (StepName.EXTRACT, "membrane_thickness"): (
+        "Membrane thickness in pixels. An eroded-away cytoplasm retains the cell "
+        "pixel nearest the full-cell centroid."
+    ),
+    (StepName.EXTRACT, "dilation_radius"): (
+        "Expand labels without overlap before compartment extraction. The expanded "
+        "cell defines full and its centroid. Zero disables expansion."
     ),
     (StepName.EXTRACT, "overwrite"): (
         "Repeat quantification even when an up-to-date measurement output exists."
@@ -394,6 +450,13 @@ def field_tooltip(step: StepName, path: str) -> str:
     return STEP_FIELD_TOOLTIPS.get((step, path), path)
 
 
+def field_hint(step: StepName, path: str) -> str:
+    """
+    Return a practical inline hint while leaving complete help in the tooltip.
+    """
+    return FIELD_HINTS.get(path, field_tooltip(step, path).split(". ", 1)[0].rstrip(".") + ".")
+
+
 def runtime_field_tooltip(name: str) -> str:
     """Return explanatory help for a runtime settings field."""
     return RUNTIME_FIELD_TOOLTIPS.get(name, name)
@@ -419,10 +482,16 @@ class SettingsAdapter:
         self.template_path = template_path
         self.document = self._parse(template_path)
         self.source_path: Path | None = None
+        self.saved_image_channels: list[str] = []
 
     @staticmethod
     def _parse(path: Path) -> TOMLDocument:
-        return tomlkit.parse(path.read_text(encoding="utf-8"))
+        """
+        Read a settings document using the current registration field names.
+        """
+        document = tomlkit.parse(path.read_text(encoding="utf-8"))
+        normalize_registration_algorithms(document)
+        return document
 
     def reset(self) -> None:
         self.document = self._parse(self.template_path)
@@ -521,6 +590,25 @@ class SettingsAdapter:
             except ValidationError as error:
                 errors[step] = error
         return errors
+
+    def source_channel_labels(self) -> list[str]:
+        """
+        Return user-defined source labels in their original channel order.
+        """
+        value = self.field_value(StepName.CONVERT, "channel_labels")
+        entries = value.split(",") if isinstance(value, str) else value
+        return list(dict.fromkeys(str(label).strip() for label in entries if str(label).strip()))
+
+    def exported_channel_labels(self) -> list[str]:
+        """
+        Return the image channels available to registration and segmentation.
+        """
+        channels = self.source_channel_labels() or self.saved_image_channels
+        selected = self.field_value(StepName.CONVERT, "export_channels")
+        if selected == "all":
+            return list(channels)
+        requested = [selected] if isinstance(selected, str) else selected
+        return [channel for channel in channels if channel in requested]
 
     def segment_channels(self) -> list[dict[str, Any]]:
         return deepcopy(self.as_mapping()["segment"].get("channels", []))

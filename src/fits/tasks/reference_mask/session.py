@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections.abc import Callable
-
 import numpy as np
 from numpy.typing import NDArray
-
 from fits.environment.constant import ARTI_REF, DIST_FITS
 from fits.interaction import BinaryMaskSession
 from fits.interaction.planes import PlaneState, disk_copy
 from fits.tasks.reference_mask.artifact import build_reference_path, load_reference_artifact, merge_reference_channels, saved_reference_channels, validate_reference_label
+from fits.workflows.artifacts.provenance import require_writable
+from mask_interpolation import fill_missing_masks
+
 
 class ReferenceMaskSession(BinaryMaskSession):
     """
@@ -21,25 +22,28 @@ class ReferenceMaskSession(BinaryMaskSession):
     copy, preserving the original user-drawn anchors.
     """
 
-    def __init__(self,
-                 source_path: str | Path,
-                 *,
-                 reference_path: str | Path | None = None,
-                 ) -> None:
+    def __init__(self, source_path: str | Path, *, reference_path: str | Path | None = None) -> None:
+        """
+        Initialize the ReferenceMaskSession state and dependencies.
+        """
         super().__init__(source_path)
         self._reference_label: str | None = None
         self._loaded_channels: tuple[str, ...] = ()
         self._edit_history: dict[tuple[int, int, int], list[NDArray[np.uint8] | PlaneState]] = {}
         if reference_path is not None:
             self._mask, self._reference_label, self._loaded_channels = (
-                load_reference_artifact(
-                    reference_path,
-                    source_path=self.source_path,
-                    source_axes=self._axes,
-                    source_shape=self.shape,
-                    source_channels=self._channel_labels, lazy=True))
+                load_reference_artifact(reference_path,
+                                        source_path=self.source_path,
+                                        source_axes=self._axes,
+                                        source_shape=self.shape,
+                                        source_channels=self._channel_labels,
+                                        lazy=True,
+                                        ))
 
     def close(self) -> None:
+        """
+        Close.
+        """
         self._edit_history.clear()
         super().close()
 
@@ -81,44 +85,49 @@ class ReferenceMaskSession(BinaryMaskSession):
         channel_index = self._resolve_channel(channel)
         channel_label = self._channel_labels[channel_index]
         output_path = build_reference_path(self.source_path, normalized_label)
+        require_writable(self.source_path)
+        require_writable(output_path)
         output_mask = (self._channel_mask(channel_index) if interpolation_axis is None else
                        self._completed_channel(
                            channel_index, interpolation_axis, extrapolate_start, extrapolate_end,
-                           lambda sequence: self._complete_channel_mask(
-                               sequence, interpolation_axis + "YX", interpolation_axis,
-                               extrapolate_start, extrapolate_end)))
+                           lambda sequence: self._complete_channel_mask(sequence,
+                                                                        interpolation_axis + "YX",
+                                                                        interpolation_axis,
+                                                                        extrapolate_start,
+                                                                        extrapolate_end,
+                                                                        )))
         output_axes = self._axes.replace("C", "")
         if not np.any(output_mask):
-            raise ValueError(
-                f"Cannot save reference channel {channel_label!r} without any drawn planes.")
-        output_mask, output_labels = merge_reference_channels(
-            output_path,
-            output_mask,
-            channel_axes=output_axes,
-            source_axes=self._axes,
-            channel_label=channel_label,
-            overwrite=overwrite,)
+            raise ValueError(f"Cannot save reference channel {channel_label!r} without any drawn planes.")
+        output_mask, output_labels = merge_reference_channels(output_path,
+                                                              output_mask,
+                                                              channel_axes=output_axes,
+                                                              source_axes=self._axes,
+                                                              channel_label=channel_label,
+                                                              overwrite=overwrite,
+                                                              )
 
         self._mask.preserve_source(output_path)
-        return self._reader.save_array(
-            disk_copy(output_mask, dtype=np.uint16),
-            channel_labels=self._channel_labels,
-            export_channels=output_labels,
-            artifact_kind=ARTI_REF,
-            created_by=DIST_FITS,
-            output_path=output_path,
-            compressionargs={"level": 1} if compression in {"zlib", "deflate"} else None,
-            compression=compression,)
+        return self._reader.save_array(disk_copy(output_mask, dtype=np.uint16),
+                                       channel_labels=self._channel_labels,
+                                       export_channels=output_labels,
+                                       artifact_kind=ARTI_REF,
+                                       created_by=DIST_FITS,
+                                       output_path=output_path,
+                                       compressionargs={"level": 1} if compression in {"zlib", "deflate"} else None,
+                                       compression=compression,
+                                       )
 
     def saved_channels(self, label: str) -> tuple[str, ...]:
         """
         Return channel labels already stored in one reference artifact.
         """
-        output_path = build_reference_path(
-            self.source_path, validate_reference_label(label))
+        output_path = build_reference_path(self.source_path, validate_reference_label(label))
         return saved_reference_channels(output_path)
 
-    def interpolated_mask_plane(self, interpolation_axis: str, *,
+    def interpolated_mask_plane(self,
+                                interpolation_axis: str,
+                                *,
                                 frame_index: int = 0,
                                 channel: int | str = 0,
                                 z_index: int = 0,
@@ -133,14 +142,21 @@ class ReferenceMaskSession(BinaryMaskSession):
         return self._preview_plane(
             interpolation_axis, frame_index=frame_index, channel=channel, z_index=z_index,
             extrapolate_start=extrapolate_start, extrapolate_end=extrapolate_end,
-            complete=lambda anchors: self._complete_channel_mask(
-                anchors, interpolation_axis + "YX", interpolation_axis,
-                extrapolate_start, extrapolate_end), cancelled=cancelled, progress=progress)
+            complete=lambda anchors: self._complete_channel_mask(anchors,
+                                                                 interpolation_axis + "YX",
+                                                                 interpolation_axis,
+                                                                 extrapolate_start,
+                                                                 extrapolate_end,
+                                                                 ), cancelled=cancelled, progress=progress)
 
-    def apply_display_edit(self, mask: NDArray[np.generic], *,
+    def apply_display_edit(self,
+                           mask: NDArray[np.generic],
+                           *,
                            comparison_mask: NDArray[np.generic],
-                           frame_index: int = 0, channel: int | str = 0,
-                           z_index: int = 0) -> None:
+                           frame_index: int = 0,
+                           channel: int | str = 0,
+                           z_index: int = 0,
+                           ) -> None:
         """
         Commit only pixels changed relative to a possibly interpolated view.
         """
@@ -154,25 +170,30 @@ class ReferenceMaskSession(BinaryMaskSession):
         del self._edit_history[key][:-50]
         changed = visible != comparison
         current[changed] = visible[changed]
-        self.set_mask_plane(current, frame_index=frame_index,
-                            channel=channel, z_index=z_index)
+        self.set_mask_plane(current, frame_index=frame_index, channel=channel, z_index=z_index)
 
-    def replace_display_mask(self, mask: NDArray[np.generic], *,
-                             frame_index: int = 0, channel: int | str = 0,
-                             z_index: int = 0) -> None:
+    def replace_display_mask(self,
+                             mask: NDArray[np.generic],
+                             *,
+                             frame_index: int = 0,
+                             channel: int | str = 0,
+                             z_index: int = 0,
+                             ) -> None:
         """
         Replace a plane while retaining the previous plane for Undo.
         """
         key = frame_index, self._resolve_channel(channel), z_index
-        self._edit_history.setdefault(key, []).append(
-            disk_copy(self.mask_plane(frame_index, channel, z_index)))
+        self._edit_history.setdefault(key, []).append(disk_copy(self.mask_plane(frame_index, channel, z_index)),
+                                                      )
         del self._edit_history[key][:-50]
-        self.set_mask_plane(mask, frame_index=frame_index,
-                            channel=channel, z_index=z_index)
+        self.set_mask_plane(mask, frame_index=frame_index, channel=channel, z_index=z_index)
 
-    def undo_display_edit(self, *, frame_index: int = 0,
+    def undo_display_edit(self,
+                          *,
+                          frame_index: int = 0,
                           channel: int | str = 0,
-                          z_index: int = 0) -> NDArray[np.uint8] | None:
+                          z_index: int = 0,
+                          ) -> NDArray[np.uint8] | None:
         """
         Undo the last display edit for the specified plane.
 
@@ -186,32 +207,31 @@ class ReferenceMaskSession(BinaryMaskSession):
         if isinstance(restored, PlaneState):
             self._mask.restore_plane(key, restored)
             return self.mask_plane(frame_index, channel, z_index)
-        self.set_mask_plane(restored, frame_index=frame_index,
-                            channel=channel, z_index=z_index)
+        self.set_mask_plane(restored, frame_index=frame_index, channel=channel, z_index=z_index)
         return restored.copy()
 
-    def clear_mask_plane(self, *, frame_index: int = 0,
-                         channel: int | str = 0, z_index: int = 0) -> None:
+    def clear_mask_plane(self, *, frame_index: int = 0, channel: int | str = 0, z_index: int = 0) -> None:
         """
         Clear the specified mask plane while retaining the previous plane for Undo.
         """
         key = frame_index, self._resolve_channel(channel), z_index
-        self._edit_history.setdefault(key, []).append(
-            self._mask.snapshot_plane(key))
+        self._edit_history.setdefault(key, []).append(self._mask.snapshot_plane(key))
         del self._edit_history[key][:-50]
-        super().clear_mask_plane(
-            frame_index=frame_index, channel=channel, z_index=z_index)
+        super().clear_mask_plane(frame_index=frame_index, channel=channel, z_index=z_index)
 
     @staticmethod
-    def _complete_channel_mask(mask: NDArray[np.uint8], axes: str,
+    def _complete_channel_mask(mask: NDArray[np.uint8],
+                               axes: str,
                                interpolation_axis: str,
                                extrapolate_start: bool,
-                               extrapolate_end: bool) -> NDArray[np.uint8]:
+                               extrapolate_end: bool,
+                               ) -> NDArray[np.uint8]:
         """
         Complete the channel mask by filling missing masks along the specified interpolation axis.
         """
-        from mask_interpolation import fill_missing_masks
-        return np.asarray(fill_missing_masks(
-            mask, axes=axes, interpolation_axis=interpolation_axis,
-            extrapolate_start=extrapolate_start,
-            extrapolate_end=extrapolate_end), dtype=np.uint8)
+        return np.asarray(fill_missing_masks(mask,
+                                             axes=axes,
+                                             interpolation_axis=interpolation_axis,
+                                             extrapolate_start=extrapolate_start,
+                                             extrapolate_end=extrapolate_end,
+                                             ), dtype=np.uint8)

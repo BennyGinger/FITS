@@ -18,10 +18,12 @@ from fits.workflows.definitions.models import StepProfile
 def test_distance_profile_task_saves_and_registers_artifact(
         tmp_path: Path, monkeypatch,) -> None:
     image_path = tmp_path / "fits_array.tif"
-    image_path.touch()
+    import numpy as np
+    import tifffile
+    tifffile.imwrite(image_path, np.ones((8, 8), dtype=np.uint16), photometric="minisblack")
     state = ExperimentState(
         workdir=tmp_path,
-        artifacts={ARTI_IMG: image_path},)
+        artifacts={ARTI_IMG: image_path, "raw_image": image_path},)
     expected = pd.DataFrame({
         "experiment_id": [state.experiment_id],
         "frame": [1],
@@ -47,4 +49,5 @@ def test_distance_profile_task_saves_and_registers_artifact(
     assert result.artifact(ARTI_DIST_PROF) == output_path
     assert StepName.DISTANCE_PROFILE in result.completed_steps
     pd.testing.assert_frame_equal(pd.read_parquet(output_path), expected)
-    assert (tmp_path / "experiment_state.json").is_file()
+    from fits.environment.paths import experiment_state_path
+    assert experiment_state_path(tmp_path).is_file()

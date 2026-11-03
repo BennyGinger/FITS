@@ -8,6 +8,7 @@ import importlib
 import numpy as np
 import pytest
 
+from fits_io.metadata.models import FitsIOMeta
 from fits.environment.constant import StepName
 from fits.workflows.experiments import ExperimentState
 from fits.settings.models import ConvertSettings
@@ -22,6 +23,7 @@ convert_module = importlib.import_module("fits.tasks.convert")
 class DummySeriesReader:
     def __init__(self, output_path: Path) -> None:
         self.output_path = output_path
+        self.reader = SimpleNamespace(metadata=FitsIOMeta())
         self.prepare_calls: list[dict[str, Any]] = []
         self.save_calls: list[dict[str, Any]] = []
 
@@ -29,15 +31,16 @@ class DummySeriesReader:
         self.prepare_calls.append(kwargs)
         return SimpleNamespace(
             array=np.ones((4, 4), dtype=np.uint16),
-            metadata=SimpleNamespace(),
+            metadata=FitsIOMeta(),
             output_path=self.output_path,
         )
 
     def save_array(self, **kwargs: Any) -> Path:
         self.save_calls.append(kwargs)
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        self.output_path.write_bytes(b"")
-        return self.output_path
+        destination = kwargs["output_path"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"")
+        return destination
 
 
 class DummySource:
@@ -73,9 +76,9 @@ def test_convert_builds_each_series_branch(monkeypatch, tmp_path: Path) -> None:
     )
 
     assert source.selection_calls == [{"channel_labels": ["GFP", "RFP"], "export_channels": ["RFP"]}]
-    assert [result.artifact("image") for result in results] == [reader.output_path for reader in series]
+    assert [result.artifact("image") for result in results] == [tmp_path / f"input/input_s{index}/fits_array_raw.tif" for index in (1, 2)]
     assert all(result.last_step == StepName.CONVERT for result in results)
-    assert all(result.original_image == raw for result in results)
+    assert all(result.original_image == tmp_path / "input/input.nd2" for result in results)
     assert all(reader.prepare_calls[0]["selection"] is source.selection for reader in series)
     assert all(reader.prepare_calls[0]["z_projection"] == "max" for reader in series)
     assert all(reader.save_calls[0]["compression"] == "zlib" for reader in series)

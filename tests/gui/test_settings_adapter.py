@@ -44,6 +44,28 @@ def test_adapter_load_fills_fields_missing_from_older_settings(tmp_path: Path) -
     assert adapter.validate_steps() == {}
 
 
+def test_adapter_migrates_registration_algorithms_before_defaults(tmp_path: Path) -> None:
+    """
+    Keep legacy overrides when merging defaults and save only the new keys.
+    """
+    source = tmp_path / "old.toml"
+    source.write_text('[register_time.params]\nbackend = "cv2" # time override\n'
+                      '[register_channel.params]\nbackend = "scikit"\n',
+                      encoding="utf-8",
+                      )
+    adapter = SettingsAdapter()
+    adapter.load(source)
+    assert adapter.field_value(StepName.REGISTER_TIME, "algorithm") == "cv2"
+    assert adapter.field_value(StepName.REGISTER_CHANNEL, "algorithm") == "scikit"
+    adapter.set_field_value(StepName.REGISTER_TIME, "algorithm", "pystackreg")
+    text = adapter.save(tmp_path / "current.toml").read_text(encoding="utf-8")
+    saved = tomllib.loads(text)
+    assert saved["register_time"]["params"]["algorithm"] == "pystackreg"
+    assert "backend" not in saved["register_time"]["params"]
+    assert "backend" not in saved["register_channel"]["params"]
+    assert "# time override" in text
+
+
 def test_run_validation_requires_identity_and_existing_directory(tmp_path: Path) -> None:
     adapter = SettingsAdapter()
     assert "Select a run directory." in adapter.validate_for_run()

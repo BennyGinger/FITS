@@ -1,18 +1,19 @@
 # Analysis identifiers
 
 FITS adds portable `experiment_id` values to quantification and distance-profile
-Parquets. The value includes the run directory's name and the complete relative
-experiment path beneath it, using `/` separators. For example:
+Parquets. The value is the complete experiment path relative to the run directory,
+using `/` separators. For example:
 
 ```text
-260729_fits_analysis/control/sample_s1
-260729_fits_analysis/treated/sample_s1
+control/sample/sample_s1
+treated/sample/sample_s1
 ```
 
-Moving the complete run folder leaves these identifiers unchanged, provided its
-name and internal folder layout stay the same. Renaming the run or an experiment
-folder changes its identifier. Different runs with identical names and internal
-layouts share this namespace; choose distinct run names when combining them.
+Moving or renaming the complete run folder leaves these identifiers unchanged.
+Changing the relative condition/acquisition/series path changes the identifier.
+Different runs with identical relative layouts share this namespace; retain a
+separate run identifier when combining them. Condition tags exclude the structural
+acquisition folder: `control/sample/sample_s1` has the condition `control`.
 
 Quantification also includes `cell_id`, built from `experiment_id`, `object_name`,
 `object_channel`, and the numeric object `label`. Segmentation observations also
@@ -21,8 +22,8 @@ different frames. Tracking identifiers omit frame and represent the same track
 through time. They do not assert biological continuity beyond the tracking result.
 
 ```text
-260729_fits_analysis/control/sample_s1|object=tracking|channel=iRed|label=24
-260729_fits_analysis/control/sample_s1|object=segmentation|channel=iRed|label=24|frame=3
+control/sample/sample_s1|object=tracking|channel=iRed|label=24
+control/sample/sample_s1|object=segmentation|channel=iRed|label=24|frame=3
 ```
 
 The measured `intensity_channel` is excluded: several intensity measurements of
@@ -31,6 +32,13 @@ ID components escape reserved characters with percent encoding; use `cell_id` as
 an opaque grouping/join key and keep the original columns for analysis. A missing
 object-channel label uses `|channel` without `=`, distinct from an empty label.
 Changing object-channel labels or reprocessing masks can change cell IDs.
+
+New quantification tables always include `compartment`: `full` when compartment
+extraction is disabled, or `full`, `mb` and `cyto` when enabled. Compartment and
+intensity channel are excluded from cell identity; all measurements of one
+parent cell share its `cell_id`. Optional dilation defines the full-cell region
+before centroid measurement. All compartment rows share that full-cell centroid
+and reference distances, so motion remains a property of the full cell.
 
 Quantification also includes three nullable integer columns for tracking rows:
 
@@ -103,9 +111,12 @@ coordinate must not be used as its identity.
 
 New extractions save both identifiers in each experiment's quantification file.
 Aggregation rebuilds identifiers from the current run layout for the master
-tables, including reused older quantification files with the required object
-columns. It does not rewrite individual experiment files. Rerun extraction with
-overwrite to update those individual files. Already-running Python processes
+tables, including reused quantification files with the required object columns.
+After reorganizing folders, **Manage files → Update paths and condition tags**
+rewrites identifiers, known paths and tags in individual experiment files and
+regenerates masters without changing measurements or data revisions. This does
+not refresh measurements after image/mask changes; rerun extraction for those.
+Already-running Python processes
 need restarting to use updated code; existing Parquets are not changed simply
 by updating FITS.
 

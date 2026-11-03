@@ -3,15 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 from collections.abc import Callable
 from typing import cast
-
 import numpy as np
 from numpy.typing import NDArray
-
 from fits.environment.constant import ARTI_ROI, DIST_FITS
 from fits.interaction import BinaryMaskSession
 from fits.interaction.planes import disk_copy
 from fits.tasks.reference_mask.artifact import validate_reference_label
 from fits.tasks.roi_mask.artifact import ROI_MASK_ENCODING, ROI_MASK_VALUE_TABLE, build_roi_path, load_roi_artifact, merge_roi_channels, saved_roi_channels
+from scipy.ndimage import binary_fill_holes
+from scipy.ndimage import label
+from mask_interpolation import SequenceInterpolator
+from fits.workflows.artifacts.provenance import require_writable
+from mask_interpolation import fill_missing_masks
 
 
 class RoiSession(BinaryMaskSession):
@@ -29,35 +32,50 @@ class RoiSession(BinaryMaskSession):
     THRESHOLD_INCLUDED_MANUALLY_INCLUDED = np.uint8(5)
 
     def __init__(self, source_path: str | Path, *, roi_path: str | Path | None = None) -> None:
+        """
+        Initialize the RoiSession state and dependencies.
+        """
         super().__init__(source_path)
         self._roi_label: str | None = None
         self._loaded_channels: tuple[str, ...] = ()
         self._threshold_ranges: dict[tuple[int, int, int], tuple[float, float]] = {}
         self._edit_history: dict[tuple[int, int, int], list[NDArray[np.uint8]]] = {}
         if roi_path is not None:
-            self._mask, self._roi_label, self._loaded_channels = load_roi_artifact(
-                roi_path, source_path=self.source_path,
-                source_axes=self._axes, source_shape=self.shape,
-                source_channels=self._channel_labels, lazy=True)
+            self._mask, self._roi_label, self._loaded_channels = load_roi_artifact(roi_path,
+                                                                                   source_path=self.source_path,
+                                                                                   source_axes=self._axes,
+                                                                                   source_shape=self.shape,
+                                                                                   source_channels=self._channel_labels,
+                                                                                   lazy=True,
+                                                                                   )
 
     def close(self) -> None:
+        """
+        Close.
+        """
         self._edit_history.clear()
         super().close()
 
-    def display_mask_plane(self, frame_index: int = 0,
+    def display_mask_plane(self,
+                           frame_index: int = 0,
                            channel: int | str = 0,
-                           z_index: int = 0) -> NDArray[np.uint8]:
+                           z_index: int = 0,
+                           ) -> NDArray[np.uint8]:
         """
         Return the final binary ROI after applying manual threshold overrides.
         """
         return self._included(self.mask_plane(frame_index, channel, z_index))
 
-    def apply_display_edit(self, mask: NDArray[np.generic], *,
-                           frame_index: int = 0, channel: int | str = 0,
+    def apply_display_edit(self,
+                           mask: NDArray[np.generic],
+                           *,
+                           frame_index: int = 0,
+                           channel: int | str = 0,
                            z_index: int = 0,
                            comparison_mask: NDArray[np.generic] | None = None,
                            edited_pixels: NDArray[np.generic] | None = None,
-                           operation: str | None = None) -> None:
+                           operation: str | None = None,
+                           ) -> None:
         """
         Translate an edited binary canvas into persistent manual ROI states.
         """
@@ -66,33 +84,32 @@ class RoiSession(BinaryMaskSession):
         if visible.shape != current.shape:
             raise ValueError(f"ROI drawing shape {visible.shape} does not match image plane "
                             f"shape {current.shape}.")
-        
+
         if not np.all((visible == 0) | (visible == 1)):
             raise ValueError("The editable ROI canvas must contain only 0 and 1.")
-        
+
         key = self._plane_key(frame_index, channel, z_index)
         self._edit_history.setdefault(key, []).append(disk_copy(current))
         del self._edit_history[key][:-50]
-        
+
         updated = current.copy()
         if edited_pixels is not None:
             selected = np.asarray(edited_pixels, dtype=bool)
             if selected.shape != current.shape:
                 raise ValueError("ROI edited-pixel selection does not match the image plane.")
             if operation == "add":
-                updated[selected] = np.where(
-                    self._threshold_included(updated[selected]),
-                    self.THRESHOLD_INCLUDED_MANUALLY_INCLUDED,
-                    self.MANUALLY_INCLUDED)
+                updated[selected] = np.where(self._threshold_included(updated[selected]),
+                                             self.THRESHOLD_INCLUDED_MANUALLY_INCLUDED,
+                                             self.MANUALLY_INCLUDED,
+                                             )
             elif operation == "erase":
-                updated[selected] = np.where(
-                    self._threshold_included(updated[selected]),
-                    self.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED,
-                    self.MANUALLY_EXCLUDED)
+                updated[selected] = np.where(self._threshold_included(updated[selected]),
+                                             self.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED,
+                                             self.MANUALLY_EXCLUDED,
+                                             )
             else:
                 raise ValueError("ROI drawing operation must be 'add' or 'erase'.")
-            self._set_roi_plane(updated, frame_index=frame_index,
-                                channel=channel, z_index=z_index)
+            self._set_roi_plane(updated, frame_index=frame_index, channel=channel, z_index=z_index)
             return
         was_visible = (self._included(current).astype(bool)
                        if comparison_mask is None
@@ -101,20 +118,22 @@ class RoiSession(BinaryMaskSession):
             raise ValueError("ROI comparison mask shape does not match the image plane.")
         additions = (visible != 0) & ~was_visible
         exclusions = (visible == 0) & was_visible
-        updated[additions] = np.where(
-            self._threshold_included(updated[additions]),
-            self.THRESHOLD_INCLUDED_MANUALLY_INCLUDED,
-            self.MANUALLY_INCLUDED)
-        updated[exclusions] = np.where(
-            self._threshold_included(updated[exclusions]),
-            self.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED,
-            self.MANUALLY_EXCLUDED)
-        self._set_roi_plane(updated, frame_index=frame_index,
-                            channel=channel, z_index=z_index)
+        updated[additions] = np.where(self._threshold_included(updated[additions]),
+                                      self.THRESHOLD_INCLUDED_MANUALLY_INCLUDED,
+                                      self.MANUALLY_INCLUDED,
+                                      )
+        updated[exclusions] = np.where(self._threshold_included(updated[exclusions]),
+                                       self.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED,
+                                       self.MANUALLY_EXCLUDED,
+                                       )
+        self._set_roi_plane(updated, frame_index=frame_index, channel=channel, z_index=z_index)
 
-    def undo_display_edit(self, *, frame_index: int = 0,
+    def undo_display_edit(self,
+                          *,
+                          frame_index: int = 0,
                           channel: int | str = 0,
-                          z_index: int = 0) -> NDArray[np.uint8] | None:
+                          z_index: int = 0,
+                          ) -> NDArray[np.uint8] | None:
         """
         Restore the ordered-state plane from before the latest drawing gesture.
         """
@@ -122,17 +141,13 @@ class RoiSession(BinaryMaskSession):
         history = self._edit_history.get(key)
         if not history:
             return None
-        self._set_roi_plane(history.pop(), frame_index=frame_index,
-                            channel=channel, z_index=z_index)
+        self._set_roi_plane(history.pop(), frame_index=frame_index, channel=channel, z_index=z_index)
         return self.display_mask_plane(frame_index, channel, z_index)
 
-    def fill_holes(self, *, frame_index: int = 0,
-                   channel: int | str = 0,
-                   z_index: int = 0) -> bool:
+    def fill_holes(self, *, frame_index: int = 0, channel: int | str = 0, z_index: int = 0) -> bool:
         """
         Fill enclosed holes on one plane, preserving manual exclusions.
         """
-        from scipy.ndimage import binary_fill_holes
 
         current = self.mask_plane(frame_index, channel, z_index)
         visible = self._included(current).astype(bool)
@@ -141,30 +156,32 @@ class RoiSession(BinaryMaskSession):
         if not np.any(additions):
             return False
         self._remember_edit(current, frame_index, channel, z_index)
-        current[additions] = np.where(
-            self._threshold_included(current[additions]),
-            self.THRESHOLD_INCLUDED_MANUALLY_INCLUDED,
-            self.MANUALLY_INCLUDED)
-        self._set_roi_plane(current, frame_index=frame_index,
-                            channel=channel, z_index=z_index)
+        current[additions] = np.where(self._threshold_included(current[additions]),
+                                      self.THRESHOLD_INCLUDED_MANUALLY_INCLUDED,
+                                      self.MANUALLY_INCLUDED,
+                                      )
+        self._set_roi_plane(current, frame_index=frame_index, channel=channel, z_index=z_index)
         return True
 
-    def remove_small_objects(self, minimum_size: int, *,
+    def remove_small_objects(self,
+                             minimum_size: int,
+                             *,
                              frame_index: int = 0,
                              channel: int | str = 0,
-                             z_index: int = 0) -> bool:
+                             z_index: int = 0,
+                             ) -> bool:
         """
         Manually exclude 8-connected objects smaller than ``minimum_size``.
         """
-        from scipy.ndimage import label
 
         if minimum_size < 1:
             raise ValueError("Minimum ROI object size must be at least 1 pixel.")
         current = self.mask_plane(frame_index, channel, z_index)
-        components, count = cast(
-            tuple[NDArray[np.int32], int],
-            label(self._included(current).astype(bool),
-                  structure=np.ones((3, 3), dtype=np.uint8)))
+        components, count = cast(tuple[NDArray[np.int32], int],
+                                 label(self._included(current).astype(bool),
+                                       structure=np.ones((3, 3), dtype=np.uint8),
+                                       ),
+                                 )
         if count == 0:
             return False
         sizes = np.bincount(components.ravel())
@@ -173,36 +190,43 @@ class RoiSession(BinaryMaskSession):
         if not np.any(exclusions):
             return False
         self._remember_edit(current, frame_index, channel, z_index)
-        current[exclusions] = np.where(
-            self._threshold_included(current[exclusions]),
-            self.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED,
-            self.MANUALLY_EXCLUDED)
-        self._set_roi_plane(current, frame_index=frame_index,
-                            channel=channel, z_index=z_index)
+        current[exclusions] = np.where(self._threshold_included(current[exclusions]),
+                                       self.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED,
+                                       self.MANUALLY_EXCLUDED,
+                                       )
+        self._set_roi_plane(current, frame_index=frame_index, channel=channel, z_index=z_index)
         return True
 
     def fill_holes_stack(self, *, channel: int | str = 0) -> int:
-        """Fill holes independently on every T/Z plane of one channel."""
+        """
+        Fill holes independently on every T/Z plane of one channel.
+        """
         changed = 0
         for frame_index in range(self.frame_count):
             for z_index in range(self.plane_count):
-                changed += self.fill_holes(
-                    frame_index=frame_index, channel=channel, z_index=z_index)
+                changed += self.fill_holes(frame_index=frame_index, channel=channel, z_index=z_index)
         return changed
 
-    def remove_small_objects_stack(self, minimum_size: int, *,
-                                   channel: int | str = 0) -> int:
-        """Remove small 2D objects on every T/Z plane of one channel."""
+    def remove_small_objects_stack(self, minimum_size: int, *, channel: int | str = 0) -> int:
+        """
+        Remove small 2D objects on every T/Z plane of one channel.
+        """
         changed = 0
         for frame_index in range(self.frame_count):
             for z_index in range(self.plane_count):
-                changed += self.remove_small_objects(
-                    minimum_size, frame_index=frame_index,
-                    channel=channel, z_index=z_index)
+                changed += self.remove_small_objects(minimum_size,
+                                                     frame_index=frame_index,
+                                                     channel=channel,
+                                                     z_index=z_index,
+                                                     )
         return changed
 
-    def _remember_edit(self, current: NDArray[np.uint8], frame_index: int,
-                       channel: int | str, z_index: int) -> None:
+    def _remember_edit(self,
+                       current: NDArray[np.uint8],
+                       frame_index: int,
+                       channel: int | str,
+                       z_index: int,
+                       ) -> None:
         """
         Record the current state of a plane in the edit history.
         """
@@ -210,21 +234,29 @@ class RoiSession(BinaryMaskSession):
         self._edit_history.setdefault(key, []).append(disk_copy(current))
         del self._edit_history[key][:-50]
 
-    def _prepare_preview_sequence(self, anchors: NDArray[np.uint8],
-                                  extrapolate_start: bool, extrapolate_end: bool
+    def _prepare_preview_sequence(self,
+                                  anchors: NDArray[np.uint8],
+                                  extrapolate_start: bool,
+                                  extrapolate_end: bool,
                                   ) -> Callable[[int], NDArray]:
-        from mask_interpolation import SequenceInterpolator
+        """
+        Prepare preview sequence.
+        """
         additions = SequenceInterpolator(self._manually_added(anchors).astype(np.uint8),
                                          extrapolate_start=extrapolate_start,
-                                         extrapolate_end=extrapolate_end)
+                                         extrapolate_end=extrapolate_end,
+                                         )
         exclusions = SequenceInterpolator(self._manually_excluded(anchors).astype(np.uint8),
                                           extrapolate_start=extrapolate_start,
-                                          extrapolate_end=extrapolate_end)
+                                          extrapolate_end=extrapolate_end,
+                                          )
         def plane(index: int) -> NDArray[np.uint8]:
+            """
+            Return the current plane.
+            """
             threshold = self._threshold_included(anchors[index])
             add, exclude = additions(index).astype(bool), exclusions(index).astype(bool)
-            completed = np.where(threshold, self.THRESHOLD_INCLUDED,
-                                 self.THRESHOLD_EXCLUDED).astype(np.uint8)
+            completed = np.where(threshold, self.THRESHOLD_INCLUDED, self.THRESHOLD_EXCLUDED).astype(np.uint8)
             completed[add & ~threshold] = self.MANUALLY_INCLUDED
             completed[add & threshold] = self.THRESHOLD_INCLUDED_MANUALLY_INCLUDED
             completed[exclude & ~threshold] = self.MANUALLY_EXCLUDED
@@ -232,44 +264,65 @@ class RoiSession(BinaryMaskSession):
             return completed
         return plane
 
-    def interpolated_display_mask_plane(
-            self, interpolation_axis: str, *, frame_index: int = 0,
-            channel: int | str = 0, z_index: int = 0,
-            extrapolate_start: bool = True,
-            extrapolate_end: bool = True,
-            cancelled: Callable[[], bool] | None = None,
-            progress: Callable[[str], None] | None = None) -> NDArray[np.uint8]:
+    def interpolated_display_mask_plane(self,
+                                        interpolation_axis: str,
+                                        *,
+                                        frame_index: int = 0,
+                                        channel: int | str = 0,
+                                        z_index: int = 0,
+                                        extrapolate_start: bool = True,
+                                        extrapolate_end: bool = True,
+                                        cancelled: Callable[[], bool] | None = None,
+                                        progress: Callable[[str], None] | None = None,
+                                        ) -> NDArray[np.uint8]:
         """
         Return a binary display plane from interpolated manual corrections.
         """
         completed = self._preview_plane(
             interpolation_axis, frame_index=frame_index, channel=channel, z_index=z_index,
             extrapolate_start=extrapolate_start, extrapolate_end=extrapolate_end,
-            complete=lambda anchors: self._complete_manual_corrections(
-                anchors, interpolation_axis + "YX", interpolation_axis,
-                extrapolate_start, extrapolate_end), cancelled=cancelled, progress=progress)
+            complete=lambda anchors: self._complete_manual_corrections(anchors,
+                                                                       interpolation_axis + "YX",
+                                                                       interpolation_axis,
+                                                                       extrapolate_start,
+                                                                       extrapolate_end,
+                                                                       ), cancelled=cancelled, progress=progress)
         return self._included(completed)
 
     @property
     def roi_label(self) -> str | None:
+        """
+        Roi label.
+        """
         return self._roi_label
 
     @property
     def loaded_channels(self) -> tuple[str, ...]:
+        """
+        Loaded channels.
+        """
         return self._loaded_channels
 
-    def set_mask_plane(self, mask: NDArray[np.generic], *,
-                       frame_index: int = 0, channel: int | str = 0,
-                       z_index: int = 0) -> None:
+    def set_mask_plane(self,
+                       mask: NDArray[np.generic],
+                       *,
+                       frame_index: int = 0,
+                       channel: int | str = 0,
+                       z_index: int = 0,
+                       ) -> None:
         """
         Store an ordered ROI-state plane with threshold/manual provenance.
         """
-        self._set_roi_plane(mask, frame_index=frame_index,
-                            channel=channel, z_index=z_index)
+        self._set_roi_plane(mask, frame_index=frame_index, channel=channel, z_index=z_index)
 
-    def threshold_plane(self, minimum: float, maximum: float, *,
-                        frame_index: int = 0, channel: int | str = 0,
-                        z_index: int = 0) -> NDArray[np.uint8]:
+    def threshold_plane(self,
+                        minimum: float,
+                        maximum: float,
+                        *,
+                        frame_index: int = 0,
+                        channel: int | str = 0,
+                        z_index: int = 0,
+                        ) -> NDArray[np.uint8]:
         """
         Apply a threshold to one plane and return the updated mask.
         """
@@ -278,29 +331,29 @@ class RoiSession(BinaryMaskSession):
         current = self.mask_plane(frame_index, channel, z_index)
         manually_added = self._manually_added(current)
         manually_excluded = self._manually_excluded(current)
-        current[:] = np.where(
-            selected, self.THRESHOLD_INCLUDED, self.THRESHOLD_EXCLUDED)
+        current[:] = np.where(selected, self.THRESHOLD_INCLUDED, self.THRESHOLD_EXCLUDED)
         current[manually_added & ~selected] = self.MANUALLY_INCLUDED
         current[manually_added & selected] = (
             self.THRESHOLD_INCLUDED_MANUALLY_INCLUDED)
         current[manually_excluded & ~selected] = self.MANUALLY_EXCLUDED
         current[manually_excluded & selected] = (
             self.THRESHOLD_INCLUDED_MANUALLY_EXCLUDED)
-        self._set_roi_plane(current, frame_index=frame_index,
-                            channel=channel, z_index=z_index)
+        self._set_roi_plane(current, frame_index=frame_index, channel=channel, z_index=z_index)
         self._threshold_ranges[
             self._plane_key(frame_index, channel, z_index)] = (
                 float(minimum), float(maximum))
         return current.copy()
 
-    def threshold_range(self, *, frame_index: int = 0,
+    def threshold_range(self,
+                        *,
+                        frame_index: int = 0,
                         channel: int | str = 0,
-                        z_index: int = 0) -> tuple[float, float] | None:
+                        z_index: int = 0,
+                        ) -> tuple[float, float] | None:
         """
         Return the threshold range last applied to one plane, if available.
         """
-        return self._threshold_ranges.get(
-            self._plane_key(frame_index, channel, z_index))
+        return self._threshold_ranges.get(self._plane_key(frame_index, channel, z_index))
 
     def otsu_threshold(self, *, frame_index: int = 0, channel: int | str = 0, z_index: int = 0) -> float:
         """
@@ -328,21 +381,25 @@ class RoiSession(BinaryMaskSession):
         Apply Otsu to one plane, clearing planes without intensity contrast.
         """
         try:
-            threshold = self.otsu_threshold(
-                frame_index=frame_index, channel=channel, z_index=z_index)
+            threshold = self.otsu_threshold(frame_index=frame_index, channel=channel, z_index=z_index)
         except ValueError:
-            self._clear_threshold_plane(
-                frame_index=frame_index, channel=channel, z_index=z_index)
+            self._clear_threshold_plane(frame_index=frame_index, channel=channel, z_index=z_index)
             return None
         image = self.display_frame(frame_index, channel, z_index)
-        self.threshold_plane(
-            threshold, float(np.nanmax(image)), frame_index=frame_index,
-            channel=channel, z_index=z_index)
+        self.threshold_plane(threshold,
+                             float(np.nanmax(image)),
+                             frame_index=frame_index,
+                             channel=channel,
+                             z_index=z_index,
+                             )
         return threshold
 
-    def _clear_threshold_plane(self, *, frame_index: int = 0,
+    def _clear_threshold_plane(self,
+                               *,
+                               frame_index: int = 0,
                                channel: int | str = 0,
-                               z_index: int = 0) -> None:
+                               z_index: int = 0,
+                               ) -> None:
         """
         Clear the thresholded mask for one plane, preserving manual edits.
         """
@@ -351,8 +408,7 @@ class RoiSession(BinaryMaskSession):
         current[self._manually_added(current)] = self.MANUALLY_INCLUDED
         current[self._manually_excluded(current)] = self.MANUALLY_EXCLUDED
         current[current == self.THRESHOLD_INCLUDED] = self.THRESHOLD_EXCLUDED
-        self._threshold_ranges.pop(
-            self._plane_key(frame_index, channel, z_index), None)
+        self._threshold_ranges.pop(self._plane_key(frame_index, channel, z_index), None)
 
     def threshold_stack(self, *, channel: int | str = 0) -> int:
         """
@@ -361,9 +417,7 @@ class RoiSession(BinaryMaskSession):
         empty_planes = 0
         for frame_index in range(self.frame_count):
             for z_index in range(self.plane_count):
-                if self.apply_otsu(
-                        frame_index=frame_index, channel=channel,
-                        z_index=z_index) is None:
+                if self.apply_otsu(frame_index=frame_index, channel=channel, z_index=z_index) is None:
                     empty_planes += 1
         return empty_planes
 
@@ -375,9 +429,12 @@ class RoiSession(BinaryMaskSession):
             raise ValueError("ROI threshold minimum cannot exceed its maximum.")
         for frame_index in range(self.frame_count):
             for z_index in range(self.plane_count):
-                self.threshold_plane(
-                    minimum, maximum, frame_index=frame_index,
-                    channel=channel, z_index=z_index)
+                self.threshold_plane(minimum,
+                                     maximum,
+                                     frame_index=frame_index,
+                                     channel=channel,
+                                     z_index=z_index,
+                                     )
 
     def clear_mask_plane(self, *, frame_index: int = 0, channel: int | str = 0, z_index: int = 0) -> None:
         """
@@ -388,9 +445,13 @@ class RoiSession(BinaryMaskSession):
         self._threshold_ranges.pop(key, None)
         self._edit_history.pop(key, None)
 
-    def _set_roi_plane(self, mask: NDArray[np.generic], *,
-                       frame_index: int = 0, channel: int | str = 0,
-                       z_index: int = 0) -> None:
+    def _set_roi_plane(self,
+                       mask: NDArray[np.generic],
+                       *,
+                       frame_index: int = 0,
+                       channel: int | str = 0,
+                       z_index: int = 0,
+                       ) -> None:
         """
         Set the ROI mask for one plane, replacing any existing mask.
         """
@@ -399,8 +460,7 @@ class RoiSession(BinaryMaskSession):
         if array.shape != expected:
             raise ValueError(f"ROI plane shape {array.shape} does not match {expected}.")
         if not np.all(np.isin(array, (0, 1, 2, 3, 4, 5))):
-            raise ValueError(
-                "ROI planes must contain ordered threshold/manual states 0 to 5.")
+            raise ValueError("ROI planes must contain ordered threshold/manual states 0 to 5.")
         self._plane_selection(frame_index, channel, z_index)
         self._mask.set_plane(self._plane_key(frame_index, channel, z_index), array)
 
@@ -410,11 +470,15 @@ class RoiSession(BinaryMaskSession):
         """
         return frame_index, self._resolve_channel(channel), z_index
 
-    def save(self, label: str, *, channel: int | str = 0,
+    def save(self,
+             label: str,
+             *,
+             channel: int | str = 0,
              interpolation_axis: str | None = None,
              extrapolate_start: bool = True,
              extrapolate_end: bool = True,
-             overwrite: bool = False, compression: str | None = "zlib"
+             overwrite: bool = False,
+             compression: str | None = "zlib",
              ) -> Path:
         """
         Save the ROI mask for a specific channel and reference label.
@@ -423,19 +487,27 @@ class RoiSession(BinaryMaskSession):
         channel_index = self._resolve_channel(channel)
         channel_label = self._channel_labels[channel_index]
         output_path = build_roi_path(self.source_path, normalized)
+        require_writable(self.source_path)
+        require_writable(output_path)
         output_mask = (self._channel_mask(channel_index) if interpolation_axis is None else
                        self._completed_channel(
                            channel_index, interpolation_axis, extrapolate_start, extrapolate_end,
-                           lambda sequence: self._complete_manual_corrections(
-                               sequence, interpolation_axis + "YX", interpolation_axis,
-                               extrapolate_start, extrapolate_end)))
+                           lambda sequence: self._complete_manual_corrections(sequence,
+                                                                              interpolation_axis + "YX",
+                                                                              interpolation_axis,
+                                                                              extrapolate_start,
+                                                                              extrapolate_end,
+                                                                              )))
         if not np.any(self._included(output_mask)):
             raise ValueError(f"Cannot save ROI channel {channel_label!r} without selected pixels.")
         output_axes = self._axes.replace("C", "")
-        output_mask, output_labels = merge_roi_channels(
-            output_path, output_mask, channel_axes=output_axes,
-            source_axes=self._axes, channel_label=channel_label,
-            overwrite=overwrite)
+        output_mask, output_labels = merge_roi_channels(output_path,
+                                                        output_mask,
+                                                        channel_axes=output_axes,
+                                                        source_axes=self._axes,
+                                                        channel_label=channel_label,
+                                                        overwrite=overwrite,
+                                                        )
         self._mask.preserve_source(output_path)
         return self._reader.save_array(
             disk_copy(output_mask, dtype=np.uint16),
@@ -451,34 +523,38 @@ class RoiSession(BinaryMaskSession):
         """
         Get the saved ROI channels for a specific reference label.
         """
-        return saved_roi_channels(build_roi_path(
-            self.source_path, validate_reference_label(label)))
+        return saved_roi_channels(build_roi_path(self.source_path, validate_reference_label(label)))
 
     @classmethod
-    def _complete_manual_corrections(cls, mask: NDArray[np.uint8], axes: str,
+    def _complete_manual_corrections(cls,
+                                     mask: NDArray[np.uint8],
+                                     axes: str,
                                      interpolation_axis: str,
                                      extrapolate_start: bool,
-                                     extrapolate_end: bool) -> NDArray[np.uint8]:
+                                     extrapolate_end: bool,
+                                     ) -> NDArray[np.uint8]:
         """
         Interpolate manual states while retaining each plane's own threshold.
         """
-        from mask_interpolation import fill_missing_masks
 
         def complete(correction: NDArray[np.bool_]) -> NDArray[np.bool_]:
+            """
+            Complete.
+            """
             encoded_correction = correction.astype(np.uint8)
             if not np.any(encoded_correction):
                 return encoded_correction.astype(bool)
-            return np.asarray(fill_missing_masks(
-                encoded_correction, axes=axes, interpolation_axis=interpolation_axis,
-                extrapolate_start=extrapolate_start,
-                extrapolate_end=extrapolate_end), dtype=bool)
+            return np.asarray(fill_missing_masks(encoded_correction,
+                                                 axes=axes,
+                                                 interpolation_axis=interpolation_axis,
+                                                 extrapolate_start=extrapolate_start,
+                                                 extrapolate_end=extrapolate_end,
+                                                 ), dtype=bool)
 
         manual_additions = complete(cls._manually_added(mask))
         manual_exclusions = complete(cls._manually_excluded(mask))
         threshold = cls._threshold_included(mask)
-        completed = np.where(
-            threshold, cls.THRESHOLD_INCLUDED,
-            cls.THRESHOLD_EXCLUDED).astype(np.uint8)
+        completed = np.where(threshold, cls.THRESHOLD_INCLUDED, cls.THRESHOLD_EXCLUDED).astype(np.uint8)
         completed[manual_additions & ~threshold] = cls.MANUALLY_INCLUDED
         completed[manual_additions & threshold] = (
             cls.THRESHOLD_INCLUDED_MANUALLY_INCLUDED)
@@ -489,16 +565,28 @@ class RoiSession(BinaryMaskSession):
 
     @classmethod
     def _included(cls, mask: NDArray[np.generic]) -> NDArray[np.uint8]:
+        """
+        Return the current included.
+        """
         return (np.asarray(mask) >= cls.MANUALLY_INCLUDED).astype(np.uint8)
 
     @staticmethod
     def _threshold_included(mask: NDArray[np.generic]) -> NDArray[np.bool_]:
+        """
+        Threshold included.
+        """
         return np.isin(mask, (2, 4, 5))
 
     @staticmethod
     def _manually_added(mask: NDArray[np.generic]) -> NDArray[np.bool_]:
+        """
+        Manually added.
+        """
         return np.isin(mask, (3, 5))
 
     @staticmethod
     def _manually_excluded(mask: NDArray[np.generic]) -> NDArray[np.bool_]:
+        """
+        Manually excluded.
+        """
         return np.isin(mask, (1, 2))

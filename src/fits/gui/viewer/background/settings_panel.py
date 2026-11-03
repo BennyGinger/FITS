@@ -38,7 +38,7 @@ class BackgroundSettingsPanel(QWidget):
         self.window_size.setRange(2, 100000)
         self.window_size.setToolTip("SMO neighborhood size in pixels; at least 2, usually 3 or larger. "
                                    "Size 1 cannot distinguish background from foreground.")
-        form.addRow("Window size", self.window_size)
+        form.addRow("Window size (>=2)", self.window_size)
         self.sigma = FocusWheelDoubleSpinBox()
         self.sigma.setRange(0, 10000)
         self.sigma.setDecimals(3)
@@ -49,7 +49,7 @@ class BackgroundSettingsPanel(QWidget):
         self.threshold.setDecimals(6)
         self.threshold.setSingleStep(0.01)
         self.threshold.setToolTip("SMO background decision threshold, matching the pipeline parameter.")
-        form.addRow("Threshold", self.threshold)
+        form.addRow("Threshold (0–1)", self.threshold)
         self.statistic = FocusWheelComboBox()
         self.statistic.addItems(["median", "mean"])
         form.addRow("Statistic", self.statistic)

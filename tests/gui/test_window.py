@@ -71,7 +71,7 @@ def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
     register_editor._update_worker_state()
     assert register_editor.widgets["workers"].isEnabled() is False
 
-    segment_editor.channel_widgets[0]["channel"].setText("GFP")
+    segment_editor.channel_widgets[0]["channel"].setCurrentText("GFP")
     segment_editor.sync_to_adapter()
     assert adapter.segment_channels()[0]["channel"] == "GFP"
 
@@ -82,6 +82,7 @@ def test_tracking_channels_follow_segmentation_multi_selection(tmp_path) -> None
     _application()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["BFP", "GFP", "RFP"])
     adapter.set_segment_channels([{"channel": "BFP"}, {"channel": "GFP"}])
     adapter.set_field_value(StepName.TRACK, "channel_to_track", [])
     window = FitsMainWindow(adapter)
@@ -91,14 +92,13 @@ def test_tracking_channels_follow_segmentation_multi_selection(tmp_path) -> None
 
     assert isinstance(selector, ChannelSelectionWidget)
     assert selector.value() == ["BFP", "GFP"]
-    assert selector.height() < selector.sizeHintForRow(0) * 3
+    assert selector.sizeHint().height() < selector.fontMetrics().height() * 3
 
-    selector.item(0).setSelected(False)
+    selector.set_channel_selected(0, False)
     assert adapter.field_value(StepName.TRACK, "channel_to_track") == ["GFP"]
-    segment_editor.channel_widgets[1]["channel"].setText("RFP")
-    segment_editor.channel_widgets[1]["channel"].editingFinished.emit()
+    segment_editor.channel_widgets[1]["channel"].setCurrentText("RFP")
 
-    assert [selector.item(index).text() for index in range(selector.count())] == [
+    assert [selector.itemText(index) for index in range(selector.count())] == [
         "BFP", "RFP"]
     assert selector.value() == ["RFP"]
     assert adapter.field_value(StepName.TRACK, "channel_to_track") == ["RFP"]
@@ -590,9 +590,8 @@ def test_missing_results_buttons_explain_what_to_do_next(
         assert len(messages) == 1
         title, message = messages[0]
         if selected_folder:
-            assert title == ("No tracking file found" if tool == "tracking_viewer_button" else "No report found")
-            assert "Next" in message
-            assert "Run pipeline" in message
+            assert title == ("No image or mask found" if tool == "tracking_viewer_button" else "No report found")
+            assert ("Next" if tool == "tracking_viewer_button" else "Run pipeline") in message
         else:
             assert title == "Choose a run folder"
             assert "Browse" in message
@@ -662,17 +661,20 @@ def test_completion_opens_report_only_for_run_errors(
     adapter.run_dir = str(tmp_path)
     window = FitsMainWindow(adapter)
     progress = RunProgress()
-    progress.add("experiment", WorkflowStage)
+    progress.add("experiment", [WorkflowStage.PROCESS, WorkflowStage.ANALYSIS])
     progress.update("experiment", WorkflowStage.PROCESS, status, error=error)
     progress.update("experiment", WorkflowStage.ANALYSIS, StageStatus.SKIPPED)
     window._run_progress = progress
     opened = []
     monkeypatch.setattr(window, "_show_report", opened.append)
+    outcomes = []
+    monkeypatch.setattr("fits.gui.main_window.window.show_run_result", lambda result, *args, **kwargs: outcomes.append(result))
 
     window._pipeline_finished()
     window._thread_finished()
 
-    assert opened == ([report] if opens_report else [])
+    assert opened == []
+    assert len(outcomes) == 1 and outcomes[0].successful == (not opens_report)
     assert window.report_button.isEnabled()
     assert ("completed with errors" in window.console.toPlainText()) == opens_report
     if not opens_report:
@@ -696,10 +698,14 @@ def test_pipeline_failure_opens_available_run_report(tmp_path, monkeypatch) -> N
         "experiment", WorkflowStage.PROCESS, StageStatus.FAILED, error="Failed")
     opened = []
     monkeypatch.setattr(window, "_show_report", opened.append)
+    outcomes = []
+    monkeypatch.setattr("fits.gui.main_window.window.show_run_result", lambda result, *args, **kwargs: outcomes.append(result))
 
     window._pipeline_failed("Failed", "Failure traceback")
 
-    assert opened == [report]
+    window._thread_finished()
+    assert len(outcomes) == 1 and not outcomes[0].successful
+    assert "Failure traceback" in outcomes[0].report
     assert "Failure traceback" in window.console.toPlainText()
     window.close()
 
@@ -715,7 +721,10 @@ def test_advanced_settings_collapse_their_space_and_conveyor_is_default():
         before = group.sizeHint()
         group.setChecked(True)
         app.processEvents()
-        assert group.sizeHint().height() > before.height()
+        if editor is window.runtime_editor:
+            assert group.sizeHint().height() == before.height()
+        else:
+            assert group.sizeHint().height() > before.height()
         group.setChecked(False)
         app.processEvents()
         assert group.sizeHint() == before
@@ -893,7 +902,7 @@ def test_save_and_reload_settings_with_unassigned_segmentation_channel(
 
     assert window.adapter.segment_channels()[0]["channel"] == ""
     assert window.adapter.step_enabled(StepName.SEGMENT) == enabled
-    assert window._editors[StepName.SEGMENT].channel_widgets[0]["channel"].text() == ""
+    assert window._editors[StepName.SEGMENT].channel_widgets[0]["channel"].currentText() == ""
     window.close()
 
 
@@ -906,7 +915,7 @@ def test_blank_default_segmentation_channel_blocks_run_until_selected(tmp_path) 
     window = FitsMainWindow(adapter)
     app.processEvents()
     field = window._editors[StepName.SEGMENT].channel_widgets[0]["channel"]
-    assert field.text() == ""
+    assert field.currentText() == ""
     assert window.run_button.isEnabled()
 
     window._select_step(StepName.SEGMENT)
@@ -914,13 +923,11 @@ def test_blank_default_segmentation_channel_blocks_run_until_selected(tmp_path) 
     assert not window.run_button.isEnabled()
     assert "Segmentation: Choose a target channel" in window.run_button.toolTip()
 
-    field.setText("RFP")
-    field.editingFinished.emit()
+    field.setCurrentText("RFP")
     assert adapter.segmentation_settings().channels[0].channel == "RFP"
     assert window.run_button.isEnabled()
 
-    field.clear()
-    field.editingFinished.emit()
+    field.setCurrentIndex(0)
     assert not window.run_button.isEnabled()
     window._editors[StepName.SEGMENT].enable_group.setChecked(False)
     assert window.run_button.isEnabled()
@@ -953,8 +960,7 @@ def test_run_button_tracks_missing_enabled_inputs(tmp_path: Path) -> None:
     reference_channel = window._editors[StepName.REGISTER_CHANNEL].widgets[
         "reference_channel"
     ]
-    reference_channel.setText("GFP")
-    reference_channel.editingFinished.emit()
+    reference_channel.setCurrentText("GFP")
     assert window.run_button.isEnabled()
     window.close()
 
@@ -994,3 +1000,13 @@ def test_segmentation_tuner_does_not_warn_about_missing_target_channel(
     assert isinstance(window._segmentation_tuner, DummyTuner)
     window._segmentation_tuner.close()
     window.close()
+
+
+@pytest.fixture(autouse=True)
+def isolate_settings_navigation_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Isolate navigation/settings tests from metadata checks on empty image fixtures.
+    """
+    from fits.workflows.checks.models import RunCompatibility
+    monkeypatch.setattr('fits.gui.main_window.window.inspect_run_compatibility',
+        lambda root: RunCompatibility(Path(root).resolve(), (), (), (), ()))

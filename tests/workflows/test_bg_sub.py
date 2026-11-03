@@ -14,6 +14,7 @@ from fits.workflows.experiments import ExperimentState
 from fits.settings.models import BGSubSettings
 from fits.tasks.bg_sub import remove_bg
 from fits.workflows.definitions.registry import REGISTRY
+from fits.workflows.definitions.inputs import configured_profile
 from fits.workflows.runtime.errors import StepExecutionError
 
 
@@ -63,7 +64,7 @@ def _image_state(tmp_path: Path) -> ExperimentState:
     image.write_bytes(b"")
     return ExperimentState.init(tmp_path, raw).with_complete_step(
         step_name=StepName.CONVERT,
-        artifact_kind="image",
+        artifact_kind="image_raw",
         artifact_path=image,
     )
 
@@ -101,7 +102,7 @@ def test_remove_bg_processes_only_included_channels(monkeypatch, tmp_path: Path)
     result = remove_bg(
         BGSubSettings.model_validate({"exclude_channel": "RFP", "statistic": "median", "bg_execution": "sequential"}),
         _image_state(tmp_path),
-        REGISTRY[StepName.BG_SUB].profile,
+        configured_profile(REGISTRY[StepName.BG_SUB].profile, {"convert": {"enabled": True}}),
     )
 
     assert len(result) == 1
@@ -111,7 +112,7 @@ def test_remove_bg_processes_only_included_channels(monkeypatch, tmp_path: Path)
     assert np.all(saved[0] == 3)
     assert np.all(saved[1] == 5)
     assert seen["statistic"] is np.median
-    channel_meta = reader.save_calls[0]["custom_metadata"]["steps"]["bg_sub"]["channels"]["0"]
+    channel_meta = reader.save_calls[0]["metadata"].custom_metadata["steps"]["bg_sub"]["channels"]["0"]
     assert channel_meta["statistic"] == "median"
 
 
@@ -127,15 +128,15 @@ def test_remove_bg_saves_signed_float32_and_restores_excluded_channels(monkeypat
     raw = tmp_path / "raw.nd2"
     raw.write_bytes(b"raw")
     state = ExperimentState.init(tmp_path, raw).with_complete_step(
-        step_name=StepName.CONVERT, artifact_kind="image", artifact_path=source)
+        step_name=StepName.CONVERT, artifact_kind="image_raw", artifact_path=source)
 
     def subtract(array, **kwargs):
         """Supply known signed fractional results independently of background estimation."""
         return array.astype(np.float32) - 106.5
 
     monkeypatch.setattr("fits.tasks.bg_sub.bg_sub", subtract)
-    remove_bg(BGSubSettings(exclude_channel=exclude), state, REGISTRY[StepName.BG_SUB].profile)
-    saved = FitsIO.from_path(source).get_array().array
+    remove_bg(BGSubSettings(exclude_channel=exclude), state, configured_profile(REGISTRY[StepName.BG_SUB].profile, {"convert": {"enabled": True}}))
+    saved = FitsIO.from_path(tmp_path / "fits_array_bgsub.tif").get_array().array
     assert saved.dtype == np.float32
     np.testing.assert_array_equal(saved[0], original[0].astype(np.float32) - 106.5)
     expected_second = original[1] if exclude else original[1].astype(np.float32) - 106.5
@@ -153,7 +154,7 @@ def test_remove_bg_skips_completed_step(monkeypatch, tmp_path: Path) -> None:
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("background subtraction should not run")),
     )
 
-    assert remove_bg(BGSubSettings(), state, REGISTRY[StepName.BG_SUB].profile) == [state]
+    assert remove_bg(BGSubSettings(), state, configured_profile(REGISTRY[StepName.BG_SUB].profile, {"convert": {"enabled": True}})) == [state]
     assert reader.save_calls == []
 
 
@@ -166,5 +167,18 @@ def test_remove_bg_wraps_reader_errors(monkeypatch, tmp_path: Path) -> None:
         remove_bg(
             BGSubSettings.model_validate({"exclude_channel": "DAPI"}),
             _image_state(tmp_path),
-            REGISTRY[StepName.BG_SUB].profile,
+            configured_profile(REGISTRY[StepName.BG_SUB].profile, {"convert": {"enabled": True}}),
         )
+
+
+@pytest.fixture(autouse=True)
+def isolate_revision_payload_for_fake_readers(monkeypatch):
+    from fits_io.metadata.models import FitsIOMeta
+    from fits.workflows.artifacts.provenance import revision_payload
+    def payload(reader, state, profile, *, export_channels):
+        if hasattr(reader, 'build_payload'):
+            return revision_payload(reader, state, profile, export_channels=export_channels)
+        return FitsIOMeta().with_fitsio(
+            artifact_type=profile.output_artifact, channel_labels=list(export_channels)
+        ).with_custom_metadata(state.metadata_dump).new_revision()
+    monkeypatch.setattr('fits.tasks.common.artifact_results.revision_payload', payload)

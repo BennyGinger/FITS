@@ -25,7 +25,7 @@ def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> N
     pixels = np.zeros((2, 8, 9), dtype=np.uint8)
     tifffile.imwrite(source, pixels, imagej=True, metadata={"axes": "TYX"})
     FitsIO.from_path(source).save_array(
-        pixels, channel_labels="GFP", output_path=experiment / "fits_array.tif")
+        pixels, channel_labels="GFP", custom_metadata={"pipeline_meta": {"version": "4.0.0"}}, output_path=experiment / "fits_array.tif")
     settings = run_settings_path(tmp_path)
     settings.parent.mkdir()
     settings.write_text('[convert.params]\nchannel_labels = ["GFP"]\n')
@@ -43,7 +43,7 @@ def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> N
             assert isinstance(button, QPushButton)
             labels.append(button.text())
         assert labels == [
-            "Tracking Viewer", "Edit Channel Labels", "Full Report"]
+            "Image / Mask Viewer", "Edit Channel Labels", "Full Report"]
         window.run_dir_edit.setText(str(tmp_path))
         assert window.channel_labels_button.isEnabled()
         window.channel_labels_button.click()

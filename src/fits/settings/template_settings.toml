@@ -48,7 +48,7 @@ enabled = false
 context = "linear_drift" # linear_drift | rotational_drift | complex_drift
 reference_strategy = "previous" # previous | first | mean
 fit_channel = "None" # Channel index, channel label, or "None".
-backend = "None" # scikit | pystackreg | cv2 | "None"
+algorithm = "None" # scikit | pystackreg | cv2 | "None"
 method = "None" # translation | rigid_body | affine | "None"
 overwrite = false
 execution = "serial" # serial | thread | process
@@ -63,10 +63,10 @@ enabled = false
 
 [register_channel.params]
 context = "channel_shift" # channel_shift | channel_shift_dual_cam | channel_shift_complex
-reference_channel = "None" # Channel index, channel label, or "None".
+reference_channel = "" # Required channel index or label; choose before enabling channel registration.
 exclude_channel = "None" # One label, a list of labels, or "None".
 reference_frame = 0
-backend = "None" # scikit | pystackreg | cv2 | "None"
+algorithm = "None" # scikit | pystackreg | cv2 | "None"
 method = "None" # translation | rigid_body | affine | "None"
 overwrite = false
 execution = "thread" # serial | thread | process
@@ -199,6 +199,10 @@ enabled = false
 draw_ref_mask = false # Request interactive reference drawing; existing masks are still discovered.
 expected_ref_masks = 1 # Initial reference-mask request count when drawing is enabled.
 additional_properties = "None" # A property, list of properties, or "None".
+save_compartment_masks = false # Optional TIFF exports; removed by compaction.
+compartments = false # Add mb and cyto rows alongside full; preserve cell identity.
+membrane_thickness = 6.0 # Positive Euclidean distance in pixels.
+dilation_radius = 0.0 # Optional label-preserving expansion in pixels; expanded cells define full.
 overwrite = false
 execution = "serial" # Experiment-level execution mode.
 workers = "None" # "None" lets the executor select the worker count; ignored when execution = "serial".

@@ -79,3 +79,10 @@ def test_manager_automatically_loads_all_reference_artifacts(
     assert extractor.array_data.references["needle"].axes == "TYX"
 
     assert extractor.pixel_size == 0.5
+
+
+import pytest
+@pytest.fixture(autouse=True)
+def isolate_geometry_metadata(monkeypatch):
+    # Readers in this numerical test are in-memory arrays, not TIFF files.
+    monkeypatch.setattr('fits.tasks.analysis.manager.refresh_branch', lambda *args: None)

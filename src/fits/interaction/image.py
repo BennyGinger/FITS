@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-
 from numpy.typing import NDArray
-
-from fits.environment.constant import FITS_ARRAY_NAME
+from fits.workflows.artifacts.paths import image_for, first_image
+from fits.environment.constant import IMAGE_NAMES, FITS_ARRAY_NAME
 from fits_io import FitsIO
 from fits.interaction.planes import PlaneStore
 
@@ -19,11 +18,14 @@ class FitsImageSession:
     """
 
     def __init__(self, source_path: str | Path) -> None:
+        """
+        Initialize the FitsImageSession state and dependencies.
+        """
         self.source_path = Path(source_path).expanduser().resolve()
         if not self.source_path.is_file():
             raise FileNotFoundError(f"FITS image session source does not exist: {self.source_path}")
-        
-        if self.source_path.name != FITS_ARRAY_NAME:
+
+        if self.source_path.name not in IMAGE_NAMES:
             raise ValueError("FITS image sessions only accept the normalized image artifact "
                             f"named {FITS_ARRAY_NAME!r}; got {self.source_path.name!r}.")
 
@@ -35,10 +37,10 @@ class FitsImageSession:
 
         if len(self._axes) != len(self._shape):
             raise ValueError(f"Image axes {self._axes!r} do not match shape {self._shape}.")
-        
+
         if "Y" not in self._axes or "X" not in self._axes:
             raise ValueError(f"FITS image sessions require YX axes; got {self._axes!r}.")
-        
+
         expected_channels = self._shape[self._axes.index("C")] if "C" in self._axes else 1
         if len(self._channel_labels) != expected_channels:
             raise ValueError(f"Image has {expected_channels} channels but "
@@ -46,29 +48,40 @@ class FitsImageSession:
 
     @property
     def axes(self) -> str:
+        """
+        Return the current image axis order.
+        """
         return self._axes
 
     @property
     def shape(self) -> tuple[int, ...]:
+        """
+        Return the current image dimensions.
+        """
         return self._shape
 
     @property
     def channel_labels(self) -> tuple[str, ...]:
+        """
+        Channel labels.
+        """
         return self._channel_labels
 
     @property
     def frame_count(self) -> int:
+        """
+        Frame count.
+        """
         return self._axis_size("T")
 
     @property
     def plane_count(self) -> int:
+        """
+        Plane count.
+        """
         return self._axis_size("Z")
 
-    def display_frame(self,
-                      frame_index: int = 0,
-                      channel: int | str = 0,
-                      z_index: int = 0,
-                      ) -> NDArray[Any]:
+    def display_frame(self, frame_index: int = 0, channel: int | str = 0, z_index: int = 0) -> NDArray[Any]:
         """
         Read one selected ``YX`` plane through the bounded display cache.
         """
@@ -91,11 +104,7 @@ class FitsImageSession:
             raise ValueError(f"A selected image plane must resolve to YX; got {remaining_axes!r}.")
         return plane
 
-    def _plane_selection(self,
-                         frame_index: int,
-                         channel: int | str,
-                         z_index: int,
-                         ) -> tuple[int | slice, ...]:
+    def _plane_selection(self, frame_index: int, channel: int | str, z_index: int) -> tuple[int | slice, ...]:
         """
         Build an index selecting one time, channel, and Z position.
         """
@@ -124,10 +133,10 @@ class FitsImageSession:
             except ValueError as error:
                 raise ValueError( f"Unknown channel {channel!r}; available channels: "
                                 f"{self._channel_labels}.") from error
-        
+
         if index < 0 or index >= len(self._channel_labels):
             raise IndexError(f"Channel index {index} is outside 0..{len(self._channel_labels) - 1}.")
-        
+
         if "C" not in self._axes and index != 0:
             raise IndexError("An image without a C axis only has channel index 0.")
         return index
@@ -140,7 +149,7 @@ class FitsImageSession:
             if index != 0:
                 raise IndexError(f"An image without a {axis} axis only has index 0.")
             return
-        
+
         axis_size = self._shape[self._axes.index(axis)]
         if index < 0 or index >= axis_size:
             raise IndexError(f"{label} index {index} is outside 0..{axis_size - 1}.")
@@ -154,4 +163,7 @@ class FitsImageSession:
         return self._shape[self._axes.index(axis)]
 
     def close(self) -> None:
+        """
+        Close.
+        """
         self._planes.close()

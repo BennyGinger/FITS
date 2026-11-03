@@ -40,7 +40,7 @@ def _run_gui(arguments: argparse.Namespace, qt_arguments: list[str]) -> None:
         app = QApplication([sys.argv[0], *qt_arguments])
     app.setApplicationName("FITS")
     app.setDesktopFileName("fits")
-    icon = Path(__file__).resolve().parents[3] / "assets" / "fits_logo.png"
+    icon = Path(__file__).resolve().parents[3] / "assets" / "fits_icon.png"
     if icon.is_file():
         app.setWindowIcon(QIcon(str(icon)))
     apply_dark_theme(app)

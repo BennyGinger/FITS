@@ -44,7 +44,7 @@ def register_time(settings: RegisterTimeSettings,
             settings = settings.model_copy(update=tuned.settings.to_payload_dict())
 
         plan = resolve_registration_plan(settings.context, 
-                                         backend=settings.backend, 
+                                         algorithm=settings.algorithm,
                                          method=settings.method)
         if plan.mode != "time":
             raise ValueError(f"Registration context {settings.context!r} resolves to "
@@ -62,11 +62,11 @@ def register_time(settings: RegisterTimeSettings,
             else:
                 fit_channel = reader.resolve_channel_positions(settings.fit_channel)[0]
         
-        logger.debug("%s will be executed | context=%s backend=%s method=%s "
+        logger.debug("%s will be executed | context=%s algorithm=%s method=%s "
                      "reference_strategy=%s fit_channel=%s input_shape=%s input_axes=%s",
                      step_profile.step_name,
                      settings.context,
-                     plan.backend,
+                     plan.algorithm,
                      plan.method,
                      settings.reference_strategy,
                      fit_channel,
@@ -77,7 +77,7 @@ def register_time(settings: RegisterTimeSettings,
                                   labels=tuple(reader.channel_labels or ()), settings=settings,
                                   fit_channel=fit_channel)
         if register is None:
-            register = RegisterModel(backend=plan.backend)
+            register = RegisterModel(backend=plan.algorithm)
             register.fit_time(array=input_array,
                               axes=input_axes,
                               method=plan.method,
@@ -88,7 +88,7 @@ def register_time(settings: RegisterTimeSettings,
                                           axes=input_axes)
         
         params = settings.to_payload_dict()
-        params.update({'backend': plan.backend, 'method': plan.method})
+        params.update({'algorithm': plan.algorithm, 'method': plan.method})
         updated_state = exp_state.with_metadata(step_name=step_profile.step_name,
                                                 created_by=step_profile.distribution,
                                                 exported_channel='all',

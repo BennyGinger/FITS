@@ -44,7 +44,7 @@ def register_channel(settings: RegisterChannelSettings,
             settings = settings.model_copy(update=tuned.settings.to_payload_dict())
         
         plan = resolve_registration_plan(settings.context,
-                                         backend=settings.backend,
+                                         algorithm=settings.algorithm,
                                          method=settings.method)
         if plan.mode != "channel":
             raise ValueError(f"Registration context {settings.context!r} resolves to "
@@ -58,11 +58,11 @@ def register_channel(settings: RegisterChannelSettings,
         if settings.reference_channel is not None:
             ref_channel = reader.resolve_channel_positions(settings.reference_channel)[0]
         
-        logger.debug("%s will be executed | context=%s backend=%s method=%s "
+        logger.debug("%s will be executed | context=%s algorithm=%s method=%s "
                      "reference_channel=%s reference_frame=%s input_shape=%s input_axes=%s",
                      step_profile.step_name,
                      settings.context,
-                     plan.backend,
+                     plan.algorithm,
                      plan.method,
                      ref_channel,
                      settings.reference_frame,
@@ -73,7 +73,7 @@ def register_channel(settings: RegisterChannelSettings,
                                   labels=tuple(reader.channel_labels or ()), settings=settings,
                                   reference_channel=ref_channel)
         if register is None:
-            register = RegisterModel(backend=plan.backend)
+            register = RegisterModel(backend=plan.algorithm)
             excluded = ([reader.resolve_channel_positions(label)[0] for label in settings.exclude_channel]
                         if settings.exclude_channel else None)
             register.fit_channel(array=input_array,
@@ -86,7 +86,7 @@ def register_channel(settings: RegisterChannelSettings,
         registered_array = register.apply(array=input_array, axes=input_axes)
         
         params = settings.to_payload_dict()
-        params.update({'backend': plan.backend, 'method': plan.method})
+        params.update({'algorithm': plan.algorithm, 'method': plan.method})
         updated_state = exp_state.with_metadata(step_name=step_profile.step_name,
                                                 created_by=step_profile.distribution,
                                                 exported_channel='all',

@@ -8,30 +8,40 @@ import tempfile
 from copy import deepcopy
 from collections.abc import Callable, Mapping
 from pathlib import Path
-
 from fits_io import FitsIO
-
 from fits.channel_labels.discovery import _fingerprint, files_to_update, validate_labels
-from fits.channel_labels.documents import (rename_workflow_meta, rename_table,
-                                           render_settings, render_state)
+from fits.channel_labels.documents import rename_workflow_meta, rename_table, render_settings, render_state
 from fits.channel_labels.lock import run_write_guard
 from fits.channel_labels.model import LabelPlan
 from fits.channel_labels.persistence import atomic_bytes, atomic_table
+from fits.workflows.artifacts.provenance import require_writable
 
 
-def apply_labels(plan: LabelPlan, proposed: Mapping[int, str],
-                 progress: Callable[[int, int, Path], None] | None = None) -> tuple[Path, ...]:
-    """Apply a validated rename, restoring completed files if a later file fails."""
+def apply_labels(plan: LabelPlan,
+                 proposed: Mapping[int, str],
+                 progress: Callable[[int, int, Path], None] | None = None,
+                 ) -> tuple[Path, ...]:
+    """
+    Apply a validated rename, restoring completed files if a later file fails.
+    """
     with run_write_guard(plan.run_dir):
         return _apply_unlocked(plan, proposed, progress)
 
 
-def _apply_unlocked(plan: LabelPlan, proposed: Mapping[int, str],
-                    progress: Callable[[int, int, Path], None] | None) -> tuple[Path, ...]:
+def _apply_unlocked(plan: LabelPlan,
+                    proposed: Mapping[int, str],
+                    progress: Callable[[int, int, Path], None] | None,
+                    ) -> tuple[Path, ...]:
+    """
+    Apply unlocked.
+    """
     labels = validate_labels(plan, proposed)
     targets = files_to_update(plan, labels)
     if not targets:
         return ()
+    for path in targets:
+        if path in plan.tiffs or (path in plan.tables and not path.name.startswith("master_")):
+            require_writable(path)
     for path, fingerprint in plan.fingerprints:
         if _fingerprint(path) != fingerprint:
             raise RuntimeError(f"{path} changed since inspection. Inspect the run again.")
@@ -62,7 +72,7 @@ def _apply_unlocked(plan: LabelPlan, proposed: Mapping[int, str],
                     if new != reader.channel_labels or custom != reader.metadata.custom_metadata:
                         reader.set_channel_labels(new, custom_metadata=custom)
                 elif path in plan.tables:
-                    atomic_table(rename_table(path, mapping), path)
+                    atomic_table(rename_table(path, mapping), path, mapping=mapping)
                 elif path in plan.settings:
                     atomic_bytes(path, render_settings(path, mapping))
                 else:

@@ -4,7 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QVBoxLayout
 
 from fits.environment.constant import StepName
 from fits.gui.main_window import FitsMainWindow
@@ -25,9 +25,17 @@ def _skip_background_model_initialization(monkeypatch):
     )
 
 
-def application():
+def application() -> None:
+    """
+    Finish model-choice discovery before testing synchronous tuner interactions.
+    """
     global _APP
     _APP = QApplication.instance() or QApplication([])
+    from fits.gui.segmentation_models.loader import model_options_loader
+    loader = model_options_loader()
+    loader.start()
+    loader.wait()
+    _APP.processEvents()
 
 
 def test_tuner_round_trip_and_close(monkeypatch, tmp_path):
@@ -35,21 +43,24 @@ def test_tuner_round_trip_and_close(monkeypatch, tmp_path):
     (tmp_path / "fits_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
+    adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     adapter.set_field_value(StepName.SEGMENT, "workers", 3)
     adapter.set_segment_channels([{"channel": "GFP", "user_settings": {"diameter": 19}}])
     window = FitsMainWindow(adapter)
     window.user_name_edit.setText("Unsaved user")
     window._open_segmentation_tuner()
     tuner = window._segmentation_tuner
+    assert isinstance(tuner, SegmentationTunerWindow)
+    assert tuner._provided_settings is not None
     assert tuner._provided_settings.channels[0].user_settings["diameter"] == 19
     assert tuner.directory_browser.root_path == tmp_path
     assert tuner.windowModality() == Qt.WindowModality.WindowModal
-    assert tuner.settings_panel.apply_button.text() == "Apply and close"
-    chosen = SegmentSettings(channels=[{"channel": "GFP", "nuclear_channel": None,
-                                         "do_denoise": False, "user_settings": {"diameter": 31}}])
+    assert tuner.settings_panel.apply_button.text() == "Save current settings"
+    chosen = SegmentSettings.model_validate({"channels": [{"channel": "GFP", "nuclear_channel": None,
+                                                            "do_denoise": False, "user_settings": {"diameter": 31}}]})
     monkeypatch.setattr(tuner, "current_settings", lambda: chosen)
     tuner._apply_settings()
-    assert not tuner.isVisible()
+    assert tuner.isVisible()
     assert adapter.segment_channels()[0]["channel"] == "GFP"
     assert adapter.segment_channels()[0]["nuclear_channel"] == "None"
     assert adapter.field_value(StepName.SEGMENT, "workers") == 3
@@ -72,8 +83,10 @@ def test_close_without_apply_leaves_settings_unchanged(tmp_path):
     window = FitsMainWindow(adapter)
     before = adapter.as_mapping()
     window._open_segmentation_tuner()
-    window._segmentation_tuner.settings_panel.denoise.setChecked(False)
-    window._segmentation_tuner.close()
+    active = window._segmentation_tuner
+    assert isinstance(active, SegmentationTunerWindow)
+    active.settings_panel.denoise.setChecked(False)
+    active.close()
     assert adapter.as_mapping() == before
     window.close()
 
@@ -82,14 +95,15 @@ def test_drawmask_exposes_both_mask_types():
     application()
     viewer = MaskDrawingWindow()
     assert [viewer.tool_tabs.tabText(i) for i in range(2)] == ["Reference", "ROI"]
+    from fits.environment.constant import IMAGE_NAMES
     assert viewer.directory_browser.model.nameFilters() == [
-        "fits_array.tif", "fits_ref_*.tif", "fits_roi_*.tif"]
+        *IMAGE_NAMES, "fits_ref_*.tif", "fits_roi_*.tif"]
     viewer.close()
 
 
 def test_invalid_apply_keeps_tuner_open():
     application()
-    viewer = SegmentationTunerWindow(close_on_apply=True)
+    viewer = SegmentationTunerWindow()
     applied = []
     viewer.settings_applied.connect(applied.append)
     viewer.show()
@@ -106,21 +120,27 @@ def test_tuner_styles_actions_and_preview_restores_overlay():
     assert viewer.width() >= 1500
     assert viewer.height() >= 950
     panel_layout = viewer.settings_panel.layout()
+    assert isinstance(panel_layout, QVBoxLayout)
     channel_list_index = panel_layout.indexOf(viewer.channel_settings_list)
     assert channel_list_index == panel_layout.count() - 1
     assert viewer.channel_settings_list.maximumHeight() == 300
     actions_layout = viewer.preview_actions.layout()
-    assert [actions_layout.itemAt(i).widget() for i in range(3)] == [
+    assert isinstance(actions_layout, QVBoxLayout)
+    actions = []
+    for index in range(3):
+        item = actions_layout.itemAt(index)
+        assert item is not None
+        actions.append(item.widget())
+    assert actions == [
         viewer.settings_panel.run_button,
-        viewer.add_channel_button,
         viewer.settings_panel.apply_button,
+        viewer.close_button,
     ]
     viewer.show()
     QApplication.processEvents()
     assert viewer.preview_actions.mapToGlobal(
         viewer.preview_actions.rect().topLeft()).x() > viewer.lut_controls.mapToGlobal(
             viewer.lut_controls.rect().topRight()).x()
-    assert viewer.settings_panel.run_button.width() == viewer.add_channel_button.width()
     assert viewer.settings_panel.run_button.width() == viewer.settings_panel.apply_button.width()
     assert "#d97706" in viewer.settings_panel.run_button.styleSheet()
     assert "#4f8f5b" in viewer.add_channel_button.styleSheet()

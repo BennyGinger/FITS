@@ -122,7 +122,7 @@ wheels = [
 
 [[package]]
 name = "bioimagequant"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "bioimagequant" }
 dependencies = [
     { name = "joblib" },
@@ -465,7 +465,7 @@ wheels = [
 
 [[package]]
 name = "fits"
-version = "3.3.0"
+version = "4.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "bg-sub" },
@@ -479,6 +479,7 @@ dependencies = [
     { name = "micro-sam" },
     { name = "mobile-sam" },
     { name = "progress-bar" },
+    { name = "psutil" },
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pyqtgraph" },
@@ -514,6 +515,7 @@ requires-dist = [
     { name = "micro-sam", editable = "micro-sam-headless" },
     { name = "mobile-sam", git = "https://github.com/ChaoningZhang/MobileSAM.git" },
     { name = "progress-bar", editable = "progress_bar" },
+    { name = "psutil", specifier = ">=7.2.2" },
     { name = "pyarrow", specifier = ">=20" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyqtgraph", specifier = ">=0.14.0" },

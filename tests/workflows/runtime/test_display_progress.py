@@ -98,3 +98,11 @@ def test_workflow_display_matches_rich_counters_with_output_branches(monkeypatch
     snapshot = progress.display.snapshot()
     assert snapshot is not None and not snapshot.active
     assert (snapshot.completed, snapshot.total) == (bars[-1].completed, bars[-1].total)
+
+
+@pytest.fixture(autouse=True)
+def isolate_profile_configuration(monkeypatch):
+    # These orchestration tests supply fake profiles; real input resolution is
+    # exercised by test_fits4_execution with actual TIFF artifacts.
+    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.replace', lambda spec, **kwargs: spec)
+    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.configured_profile', lambda profile, config: profile)

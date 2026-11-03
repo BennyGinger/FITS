@@ -119,9 +119,11 @@ def test_inspection_refuses_active_run_writer(tmp_path):
 
 def test_state_and_distance_table_references_follow_renamed_channels(tmp_path):
     _, array_path, _ = _run(tmp_path)
-    state_path = array_path.with_name("experiment_state.json")
-    state_path.write_text(json.dumps({
-        "meta": {"steps": {"segment": {
+    from fits.environment.paths import experiment_state_path
+    state_path = experiment_state_path(array_path.parent, acquisition=array_path.parent)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"series_path": ".", "artifacts": {"raw_image": "input.tif", "image": "fits_array.tif"},
+        "meta": {"steps": {"segment": {"step_name": "segment", "created_by": "fits",
             "params": {"reference_channel": "GFP"},
             "channels": {"1": {"channel": 1, "channel_label": "RFP"}},
         }}}}))
@@ -169,8 +171,10 @@ def test_only_files_referencing_changed_channel_are_written(tmp_path):
                   "object_name": ["tracking"], "object_channel": ["RFP"],
                   "intensity_channel": ["GFP"], "label": [1], "frame": [0],
                   "area": [17]}).to_parquet(table_path, index=False)
-    state_path = experiment / "experiment_state.json"
-    state_path.write_text(json.dumps({"meta": {"steps": {"track": {
+    from fits.environment.paths import experiment_state_path
+    state_path = experiment_state_path(experiment, acquisition=experiment)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"series_path": ".", "artifacts": {"raw_image": "input.tif", "image": "fits_array.tif"}, "meta": {"steps": {"track": {"step_name": "track", "created_by": "fits",
         "channels": {"2": {"channel": 2, "channel_label": "RFP"}}}}}}))
     settings_path = tmp_path / ".fits" / "fits_settings.toml"
     settings_path.parent.mkdir()
@@ -228,3 +232,21 @@ def test_intensity_only_rename_keeps_cell_identity(tmp_path):
     assert table.loc[0, "intensity_channel"] == "Green"
     assert table.loc[0, "object_channel"] == "RFP"
     assert table.loc[0, "cell_id"] == "old"
+
+
+@pytest.fixture(autouse=True)
+def write_current_format_fixtures(monkeypatch):
+    from fits_io.metadata.models import FitsIOMeta
+    from fits.tasks.common.table_results import save_parquet
+    original_save = FitsIO.save_array
+    def save(reader, *args, **kwargs):
+        if kwargs.get('metadata') is None:
+            custom = dict(kwargs.get('custom_metadata') or {})
+            custom['pipeline_meta'] = {'version': '4.0.0'}
+            kwargs['custom_metadata'] = custom
+        return original_save(reader, *args, **kwargs)
+    monkeypatch.setattr(FitsIO, 'save_array', save)
+    def table(frame, path, **kwargs):
+        metadata = FitsIOMeta().with_custom_metadata({'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+        return save_parquet(frame, path, metadata)
+    monkeypatch.setattr(pd.DataFrame, 'to_parquet', table)

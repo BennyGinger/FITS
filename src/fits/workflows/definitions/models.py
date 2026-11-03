@@ -1,7 +1,8 @@
+from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Generic, Literal, Mapping, TypeVar
-
 from fits.environment.constant import ArtifactType, FitsName, StepName
 from fits.workflows.experiments import ExperimentState
 from fits.settings.models import SettingsModel
@@ -17,6 +18,8 @@ class StepProfile:
     input_artifact: ArtifactType
     output_artifact: ArtifactType
     output_name: FitsName
+    input_alternatives: tuple[ArtifactType, ...] = ()
+    additional_artifacts: tuple[ArtifactType, ...] = ()
 
 
 FitsSettings = TypeVar("FitsSettings", bound=SettingsModel)
@@ -38,6 +41,9 @@ class StepSpec(Generic[FitsSettings]):
     max_concurrency: int | None = None
 
     def __post_init__(self) -> None:
+        """
+        Validate and normalize the initialized fields.
+        """
         if self.max_concurrency is not None and self.max_concurrency < 1:
             raise ValueError("max_concurrency must be at least 1")
         if self.kind == "automatic" and self.item_runner is None:
@@ -53,6 +59,9 @@ class StepSpec(Generic[FitsSettings]):
         return self.kind == "interactive"
 
     def model_validate(self, params: Mapping[str, Any]) -> FitsSettings:
+        """
+        Validate step parameters using the registered settings model.
+        """
         return self.settings_model.model_validate(params)
 
 
@@ -63,7 +72,26 @@ def item_runner_for(spec: StepSpec[FitsSettings]) -> ItemRunner[FitsSettings]:
     runner = spec.item_runner
     if runner is None:
         raise ValueError(f"Step {str(spec.profile.step_name)!r} requires the FITS GUI.")
-    return runner
+    return partial(_run_scoped, runner)
+
+
+def _run_scoped(runner: ItemRunner[FitsSettings],
+                settings: FitsSettings,
+                state: ExperimentState,
+                profile: StepProfile,
+                ) -> list[ExperimentState]:
+    """
+    Run scheduled work, bypassing imported stages only when they are not overwritten.
+    """
+    if state.execution_scope is not None:
+        steps = state.execution_scope.get(state.workdir, ())
+        if profile.step_name not in steps:
+            return [state]
+    # Migration depends on StepProfile through provenance/input resolution.
+    from fits.workflows.file_management.migration import checkpoint_complete
+    if checkpoint_complete(state, profile, getattr(settings, 'overwrite', False)):
+        return [state]
+    return runner(settings, state, profile)
 
 
 def require_automatic_specs(specs: Iterable[StepSpec[Any]]) -> None:

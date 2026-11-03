@@ -32,6 +32,8 @@ def test_collect_supported_files_recursive_and_filters(tmp_path: Path, touch) ->
     # excluded prefix
     touch(tmp_path / "fits_skip.tif")
     touch(tmp_path / "sub" / "fits_skip2.nd2")
+    touch(tmp_path / ".fits" / "viewer_cache" / "preview.tif")
+    touch(tmp_path / "sub" / ".fits" / "legacy" / "old.nd2")
 
     # unsupported files
     touch(tmp_path / "notes.csv")
@@ -76,7 +78,10 @@ def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCa
 
         bad_workdir = run_dir / "broken"
         bad_workdir.mkdir(parents=True, exist_ok=True)
-        (bad_workdir / "experiment_state.json").write_text("{ not json", encoding="utf-8")
+        from fits.environment.paths import experiment_state_path
+        bad_path = experiment_state_path(bad_workdir, acquisition=run_dir)
+        bad_path.parent.mkdir(parents=True)
+        bad_path.write_text("{ not json", encoding="utf-8")
 
         caplog.set_level("WARNING")
         loaded = discover_saved_states(run_dir)
@@ -84,3 +89,12 @@ def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCa
         assert len(loaded) == 1
         assert loaded[0].original_image == valid_raw.resolve()
         assert "Failed to load experiment state" in caplog.text
+
+
+def test_discover_saved_states_ignores_internal_snapshots(tmp_path: Path) -> None:
+    raw = tmp_path / "source.nd2"
+    raw.touch()
+    active = _saved_state(tmp_path / "source_s1", raw)
+    _saved_state(active.workdir / ".fits" / "legacy" / "revision", raw)
+    _saved_state(tmp_path / ".fits" / "snapshots" / "old", raw)
+    assert [state.workdir for state in discover_saved_states(tmp_path)] == [active.workdir]

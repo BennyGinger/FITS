@@ -22,14 +22,15 @@ def test_main_gui_runs_profile_after_drawing_finalization(tmp_path, monkeypatch,
     global _APP
     _APP = QApplication.instance() or QApplication([])
     monkeypatch.setattr(QDialog, 'exec', lambda self: QDialog.DialogCode.Accepted)
+    monkeypatch.setattr('fits.gui.main_window.window.choose_artifacts', lambda report, parent=None, **kwargs: 'continue')
     folder = tmp_path / 'experiment'
     folder.mkdir()
-    source = folder / 'fits_array.tif'
+    source = folder / 'fits_array_raw.tif'
     tifffile.imwrite(source, np.arange(64, dtype=np.uint16).reshape(8, 8), imagej=True, metadata={'axes': 'YX'})
     save_experiment_state(
         ExperimentState.init(folder, folder / "original.nd2").with_complete_step(
             step_name=StepName.CONVERT,
-            artifact_kind=ARTI_IMG,
+            artifact_kind="image_raw",
             artifact_path=source,
         )
     )
@@ -83,10 +84,11 @@ def test_main_gui_opens_tracking_editor_and_can_keep_original(tmp_path, monkeypa
     global _APP
     _APP = QApplication.instance() or QApplication([])
     monkeypatch.setattr(QDialog, 'exec', lambda self: QDialog.DialogCode.Accepted)
+    monkeypatch.setattr('fits.gui.main_window.window.choose_artifacts', lambda report, parent=None, **kwargs: 'continue')
     folder = tmp_path / 'experiment'
     folder.mkdir()
-    image = folder / 'fits_array.tif'
-    tracking = folder / 'fits_track.tif'
+    image = folder / 'fits_array_raw.tif'
+    tracking = folder / 'fits_masks_track.tif'
     tifffile.imwrite(image, np.arange(64, dtype=np.uint16).reshape(8, 8),
                      imagej=True, metadata={'axes': 'YX'})
     tifffile.imwrite(tracking, np.ones((8, 8), dtype=np.uint16),
@@ -94,7 +96,7 @@ def test_main_gui_opens_tracking_editor_and_can_keep_original(tmp_path, monkeypa
     current = ExperimentState.init(folder, folder / 'original.nd2')
     current = current.with_complete_step(
         step_name=StepName.CONVERT,
-        artifact_kind=ARTI_IMG,
+        artifact_kind="image_raw",
         artifact_path=image)
     current = current.with_complete_step(
         step_name=StepName.TRACK,
@@ -136,3 +138,6 @@ def test_main_gui_opens_tracking_editor_and_can_keep_original(tmp_path, monkeypa
             while window._thread is not None and monotonic() < deadline:
                 _APP.processEvents()
         window.close()
+
+
+pytestmark = pytest.mark.usefixtures("current_format_tiffs")

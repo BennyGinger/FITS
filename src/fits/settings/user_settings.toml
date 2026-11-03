@@ -47,7 +47,7 @@ reference_strategy = "previous" # Time-wise reference strategy: previous | first
 fit_channel = "None" # Time-wise fitting channel for mutlichannel only. Can be an int channel index, channel label string, or "None". "None" is for single-channel files. If None, and multiple channels are present, it will use the first channel as the fitting channel. If only one channel is present, it will be ignored.
 
 # Expert override settings
-backend = "None" # Optional expert override: scikit | pystackreg | cv2.
+algorithm = "None" # Optional expert override: scikit | pystackreg | cv2.
 method = "None" # Optional expert override: translation | rigid_body | affine.
 
 # ============================
@@ -59,12 +59,12 @@ enabled = false
 [register_channel.params]
 context = "channel_shift" # Channel-wise context. Supported: channel_shift, channel_shift_dual_cam, channel_shift_complex.
 overwrite = false # Whether to overwrite existing output files for this step.
-reference_channel = "RFP" # Channel-wise reference channel. Can be an int channel index, channel label string, or "None".
+reference_channel = "RFP" # Required reference channel for channel registration: index or label.
 exclude_channel = "None" # Channel label(s) to skip from registration. Can be a single label string, a list of labels, or "None".
 reference_frame = 0 # Channel-wise reference frame index.
 
 # Expert override settings
-backend = "None" # Optional expert override: scikit | pystackreg | cv2.
+algorithm = "None" # Optional expert override: scikit | pystackreg | cv2.
 method = "None" # Optional expert override: translation | rigid_body | affine.
 # ============================
 # Background Substraction step
@@ -172,6 +172,10 @@ overwrite = false # Whether to overwrite existing output files. If false, it wil
 enabled = false
 
 [extract.params]
+save_compartment_masks = false # Optional TIFF exports; removed by compaction.
+compartments = false # Add mb and cyto rows alongside full; preserve cell identity.
+membrane_thickness = 6.0 # Positive Euclidean distance in pixels.
+dilation_radius = 0.0 # Optional label-preserving expansion in pixels; expanded cells define full.
 draw_ref_mask = false # Request interactive reference drawing; existing masks are still discovered.
 expected_ref_masks = 1 # Initial reference-mask request count when drawing is enabled.
 overwrite = true # Whether to overwrite existing output files. If false, it will skip processing files that already have corresponding output files in the output directory. If true, it will overwrite existing output files.

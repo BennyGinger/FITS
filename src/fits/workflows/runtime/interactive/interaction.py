@@ -1,12 +1,14 @@
 """Thread-safe communication between the workflow and interactive GUIs."""
 
-import logging
-from queue import Queue
-from threading import Event
-from typing import Callable
+from __future__ import annotations
 
+from typing import Callable
+import logging
+from queue import Queue, Empty
+from threading import Event
 from fits.workflows.runtime.interactive.messages import MaskCollectionOutcome, MaskCollectionRequest, TrackEditOutcome, TrackEditRequest
 from fits.workflows.runtime.errors import PipelineCancelled, StepExecutionError
+from fits.workflows.checks.models import PreflightReport, PreflightRequired
 
 
 logger = logging.getLogger(__name__)
@@ -22,7 +24,11 @@ class PipelineInteraction:
                  mask_input_complete: Callable[[], None] = lambda: None,
                  mask_expected_count: Callable[[int], None] = lambda count: None,
                  track_edit_request: Callable[[TrackEditRequest], None] | None = None,
+                 decision_request: Callable | None = None,
                  ) -> None:
+        """
+        Initialize the PipelineInteraction state and dependencies.
+        """
         self.mask_request = mask_request
         self.mask_input_complete = mask_input_complete
         self.mask_expected_count = mask_expected_count
@@ -31,6 +37,22 @@ class PipelineInteraction:
         self.mask_finished = Event()
         self.mask_outcomes = Queue()
         self.track_edit_outcomes = Queue()
+        self.decision_request = decision_request
+        self.decisions = Queue()
+
+    def decide_artifacts(self, report: PreflightReport) -> str:
+        """
+        Ask the owning GUI thread and wait without importing Qt here.
+        """
+        if self.decision_request is None:
+            raise PreflightRequired(report)
+        self.decision_request(report)
+        while True:
+            self.check_cancelled()
+            try:
+                return self.decisions.get(timeout=0.1)
+            except Empty:
+                pass
 
     def resolve_mask(self, outcome: MaskCollectionOutcome) -> None:
         """
@@ -67,4 +89,7 @@ class PipelineInteraction:
 
     @staticmethod
     def _missing_track_editor(request: TrackEditRequest) -> None:
+        """
+        Missing track editor.
+        """
         raise StepExecutionError(f"Tracking edit for {request.experiment_id} requires the FITS GUI.")

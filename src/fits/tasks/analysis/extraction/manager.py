@@ -8,9 +8,21 @@ from bioimagequant import ExtractData
 
 from fits.environment import constant as cst
 from fits.tasks.analysis.manager import AnalysisManager, project_z
+from fits.workflows.experiments import ExperimentState
 
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_extraction_labels(state: ExperimentState) -> tuple[str, Path]:
+    """
+    Select the active tracking result, otherwise segmentation, for analysis/preview.
+    """
+    for kind in (cst.ARTI_TRACK, cst.ARTI_SEG):
+        path = state.artifact(kind)
+        if path is not None and path.is_file():
+            return kind, path
+    raise ValueError("Extraction requires a tracking or segmentation artifact.")
 
 
 @dataclass
@@ -24,17 +36,7 @@ class ExtractionManager(AnalysisManager):
         Returns a tuple of (label_name, label_path).
         """
         
-        tracking = self.state.artifact(cst.ARTI_TRACK)
-
-        if tracking is not None and tracking.exists():
-            return cst.ARTI_TRACK, tracking
-
-        segmentation = self.state.artifact(cst.ARTI_SEG)
-
-        if segmentation is not None and segmentation.exists():
-            return cst.ARTI_SEG, segmentation
-
-        raise ValueError("Extraction requires a tracking or segmentation artifact.")
+        return resolve_extraction_labels(self.state)
 
 
     def prepare_quantification(self) -> ExtractData:

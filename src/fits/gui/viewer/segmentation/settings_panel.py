@@ -23,7 +23,7 @@ from cellpose_kit.backend.versioning import get_cellpose_version
 from fits.gui.viewer.segmentation.model_options import installed_model_options
 from fits.settings.models import SegmentChannelSettings
 from fits.gui.settings.wheel_widgets import (
-    FocusWheelComboBox, FocusWheelDoubleSpinBox, FocusWheelSlider,
+    FocusWheelComboBox, FocusWheelDoubleSpinBox, FocusWheelSlider, FocusWheelSpinBox,
 )
 
 
@@ -95,40 +95,46 @@ class CellposeSettingsPanel(QWidget):
         settings_section, settings_layout = self._section("Segmentation")
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
-        self.diameter = self._double_spin(0.0, 10000.0, 15.0)
+        self.diameter = FocusWheelSpinBox()
+        self.diameter.setRange(0, 10000)
+        self.diameter.setValue(15)
         self.diameter.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
             "Diameter",
             self.diameter,
             "Expected object diameter in pixels. Use 0 for automatic estimation; incorrect values can split or merge objects.")
-        self.flow_threshold = self._double_spin(0.0, 10.0, 0.4)
+        self.flow_threshold = self._double_spin(0.0, 1_000_000_000.0, 0.4)
         self.flow_threshold.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
-            "Flow threshold",
+            "Flow threshold (>=0)",
             self.flow_threshold,
-            "Maximum permitted flow error. Increase it to retain more ROIs; decrease it to reject more ill-shaped ROIs.")
+            "Maximum permitted squared flow error; values above 1 are meaningful. "
+            "Increase it to retain more ROIs; decrease it to reject more irregular ROIs. "
+            "0 disables filtering. Ignored during native 3D segmentation.")
         self.cellprob_threshold = self._double_spin(-6.0, 6.0, 0.0)
         self.cellprob_threshold.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
-            "Cell probability",
+            "Cell probability (-6 to 6)",
             self.cellprob_threshold,
-            "Pixels above this threshold seed masks. Decrease it for more or larger ROIs; increase it to suppress dim detections.")
+            "Pixels above this threshold seed masks. Decrease it for more or larger ROIs; increase it to suppress dim detections. "
+            "Cellpose suggests -6 to 6 as a working range.")
         self.do_3d = QCheckBox()
         self._add_form_row(
             form,
             "Process in 3D",
             self.do_3d,
             "Run native 3D segmentation on the complete Z volume.")
-        self.stitch_threshold = self._double_spin(0.0, 100.0, 0.0)
+        self.stitch_threshold = self._double_spin(0.0, 1.0, 0.0)
         self.stitch_threshold.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
-            "Stitch threshold",
+            "Stitch threshold (0–1)",
             self.stitch_threshold,
-            "When greater than 0 and native 3D is disabled, stitch 2D masks across adjacent Z planes.")
+            "Minimum overlap for stitching 2D masks across adjacent Z planes when native 3D is disabled. "
+            "0 disables stitching.")
         self.anisotropy = self._double_spin(0.0, 100.0, 0.0)
         self.anisotropy.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
@@ -175,7 +181,7 @@ class CellposeSettingsPanel(QWidget):
         self.overlay_widget = QWidget()
         overlay_layout = QHBoxLayout(self.overlay_widget)
         overlay_layout.setContentsMargins(0, 0, 0, 0)
-        overlay_layout.addWidget(QLabel("Mask overlay"))
+        overlay_layout.addWidget(QLabel("Mask opacity (0–100%)"))
         self.show_mask = QCheckBox()
         self.show_mask.setChecked(True)
         self.show_mask.toggled.connect(self.mask_visibility_changed)
@@ -233,7 +239,7 @@ class CellposeSettingsPanel(QWidget):
             if isinstance(model_type, str) and model_type:
                 custom_model = model_type
         self.custom_model.setText(custom_model)
-        self.diameter.setValue(float(user.get("diameter", 15) or 0))
+        self.diameter.setValue(round(float(user.get("diameter", 15) or 0)))
         self.flow_threshold.setValue(float(user.get("flow_threshold", 0.4)))
         self.cellprob_threshold.setValue(float(user.get("cellprob_threshold", 0.0)))
         self.do_3d.setChecked(bool(user.get("do_3D", False)))

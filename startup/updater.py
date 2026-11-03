@@ -134,9 +134,12 @@ class Updater(Installer):
         self.pending.unlink()
 
     def synchronize(self) -> None:
+        """
+        Update FITS dependencies and shortcuts without prompting about optional tools.
+        """
         # Run the newly checked-out installer in independent Python. The GUI and
         # its Qt prompt have both exited before this process touches .venv.
-        self.run(sys.executable, str(self.root / "startup/setup.py"), "--no-shortcut")
+        self.run(sys.executable, str(self.root / "startup/setup.py"), "--no-shortcut", "--without-tad")
         self.run(sys.executable, str(self.root / "startup/shortcuts.py"), "--refresh-existing")
 
 

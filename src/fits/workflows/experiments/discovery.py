@@ -1,11 +1,12 @@
 """Discovery of supported raw experiment inputs."""
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
-
 from fits_io import SUPPORTED_EXTENSIONS
-
 from fits.environment.constant import EXCLUDED_PREFIXES
+from fits.environment.paths import INTERNAL_DIR_NAMES
 
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,8 @@ def collect_supported_files(directory: Path) -> list[Path]:
     extensions = {extension.lower() for extension in SUPPORTED_EXTENSIONS}
     supported_files: set[Path] = set()
     for path in directory.rglob("*"):
+        if any(part in INTERNAL_DIR_NAMES for part in path.relative_to(directory).parts):
+            continue
         if not path.is_file():
             continue
         if path.name.startswith(prefixes):

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-
 from fits.workflows.experiments import ExperimentState
 from fits.settings.models import DistanceProfileSettings
 from fits.tasks.analysis.dist_profile.manager import DistanceProfileManager
@@ -10,6 +9,9 @@ from fits.tasks.common.preparation import resolve_step_run
 from fits.tasks.common.table_results import save_parquet
 from fits.workflows.definitions.models import StepProfile
 from fits.workflows.runtime.errors import StepExecutionError
+from fits.workflows.artifacts.provenance import revision_payload
+from fits.tasks.analysis.identity import add_condition_tags
+from fits.tasks.analysis.aggregate import _condition_values
 
 
 logger = logging.getLogger(__name__)
@@ -19,23 +21,27 @@ def run_distance_profile(settings: DistanceProfileSettings,
                          exp_state: ExperimentState,
                          step_profile: StepProfile,
                          ) -> list[ExperimentState]:
-    """Calculate and save one experiment's binned distance profile."""
+    """
+    Calculate and save one experiment's binned distance profile.
+    """
     try:
         run = resolve_step_run(exp_state, step_profile, settings.overwrite)
         if run.is_complete:
             return [exp_state]
 
-        dataframe = DistanceProfileManager(exp_state, settings).calculate()
+        manager = DistanceProfileManager(exp_state, settings, profile=step_profile)
+        dataframe = manager.calculate()
+        if exp_state.run_dir is not None:
+            add_condition_tags(dataframe, _condition_values(exp_state, exp_state.run_dir))
         output_path = exp_state.workdir / step_profile.output_name
-
-        save_path = save_parquet(dataframe, output_path)
 
         updated_state = exp_state.with_metadata(step_name=step_profile.step_name,
                                                 created_by=step_profile.distribution,
-                                                channels_params=settings.model_dump(),)
-        new_state = complete_step_result(updated_state,
-                                        step_profile,
-                                        save_path,)
+                                                channels_params=settings.model_dump(),
+                                                )
+        payload = revision_payload(manager.image_reader, updated_state, step_profile, export_channels="all")
+        save_path = save_parquet(dataframe, output_path, payload)
+        new_state = complete_step_result(updated_state, step_profile, save_path)
         return [new_state]
 
     except Exception as exc:

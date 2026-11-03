@@ -87,7 +87,7 @@ class RegistrationTuningSession(FitsImageSession):
                 return self.preview_frame(preceding, frame, channel, z)
             return self.display_frame(frame, channel, z)
 
-        plan = resolve_registration_plan(settings.context, settings.backend, settings.method)
+        plan = resolve_registration_plan(settings.context, settings.algorithm, settings.method)
         if plan.mode != mode:
             raise ValueError("Settings do not match the requested registration mode.")
         reference_channel = None
@@ -123,10 +123,10 @@ class RegistrationTuningSession(FitsImageSession):
         else:
             excluded = ([self._resolve_channel(label) for label in settings.exclude_channel]
                         if isinstance(settings, RegisterChannelSettings) and settings.exclude_channel else [])
-            matrices = fit_planes(fitting, backend=plan.backend, method=plan.method,
+            matrices = fit_planes(fitting, backend=plan.algorithm, method=plan.method,
                                   reference=reference, cancelled=cancelled, excluded=excluded,
                                   progress=lambda done, total: update(f"Fitting {mode} transforms", done, total))
-            register = full_image_model(matrices, backend=plan.backend, mode=mode, method=plan.method,
+            register = full_image_model(matrices, algorithm=plan.algorithm, mode=mode, method=plan.method,
                                         reference_channel=reference_channel, crop=crop)
         update(f"{mode.capitalize()} transforms ready; preview applies on demand", 1, 1)
         stat = self.source_path.stat()

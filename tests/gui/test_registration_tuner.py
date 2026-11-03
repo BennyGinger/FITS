@@ -95,8 +95,8 @@ def window(source):
     _APP = QApplication.instance() or QApplication([])
     window = RegistrationTunerWindow(
         source.parent, mode='channel',
-        time_settings=RegisterTimeSettings(backend='scikit', fit_channel=0),
-        channel_settings=RegisterChannelSettings(backend='scikit', reference_channel=0))
+        time_settings=RegisterTimeSettings(algorithm='scikit', fit_channel=0),
+        channel_settings=RegisterChannelSettings(algorithm='scikit', reference_channel=0))
     window.show()
     window._open_source(source)
     yield window
@@ -180,10 +180,10 @@ def test_complete_without_preview_saves_both_tabs_and_closes(window, source):
 
 
 def test_gui_settings_take_priority_over_previous_experiment_tuning(window, source):
-    """Opening from GUI values preserves backend, method, reference and fit channel."""
+    """Opening from GUI values preserves algorithm, method, reference and fit channel."""
     assert window._session is not None
     window._session.save_settings(RegisterTimeSettings(context='complex_drift', fit_channel=0))
-    provided = RegisterTimeSettings(context='rotational_drift', backend='scikit',
+    provided = RegisterTimeSettings(context='rotational_drift', algorithm='scikit',
                                     method='translation', reference_strategy='first', fit_channel=1)
     tuner = RegistrationTunerWindow(source.parent, time_settings=provided)
     try:
@@ -191,7 +191,7 @@ def test_gui_settings_take_priority_over_previous_experiment_tuning(window, sour
         assert isinstance(current, RegisterTimeSettings)
         assert current.fit_channel == tuner.channel_combo.itemText(1)
         assert tuner.channel_combo.currentIndex() == 1
-        assert tuner.panels['time'].backend.currentText() == 'scikit'
+        assert tuner.panels['time'].algorithm.currentText() == 'scikit'
         assert tuner.panels['time'].method.currentText() == 'translation'
         assert tuner.panels['time'].strategy.currentText() == 'first'
         assert tuner.panels['time'].context.currentText() == 'Custom'
@@ -221,7 +221,7 @@ def test_display_channel_selects_time_fitting_channel_and_invalidates_preview(wi
     wait_for_preview(window)
     assert window.save_button.isEnabled()
     window.channel_combo.setCurrentIndex(1)
-    assert window.panels['time'].channel.currentIndex() == 1
+    assert window.panels['time'].channel.currentText() == window.channel_combo.currentText()
     assert window.current_settings().fit_channel == window.channel_combo.currentText()
     assert window.save_button.isEnabled()
     window._run_preview()
@@ -229,8 +229,8 @@ def test_display_channel_selects_time_fitting_channel_and_invalidates_preview(wi
     assert window.save_button.isEnabled(), window.status_label.text()
     window.tabs.setCurrentIndex(1)
     window.channel_combo.setCurrentIndex(0)
-    assert window.panels['channel'].channel.currentIndex() == 0
-    assert window.panels['time'].channel.currentIndex() == 1
+    assert window.panels['channel'].channel.currentText() == window.channel_combo.itemText(0)
+    assert window.panels['time'].channel.currentText() == window.channel_combo.itemText(1)
     window.tabs.setCurrentIndex(0)
     assert window.channel_combo.currentIndex() == 1
 
@@ -285,13 +285,13 @@ def test_standalone_saves_general_settings(source):
     window = RegistrationTunerWindow(source.parent)
     window.show()
     window._open_source(source)
-    window.panels['time'].backend.setCurrentText('scikit')
+    window.panels['time'].algorithm.setCurrentText('scikit')
     window.panels['time'].strategy.setCurrentText('first')
     window._run_preview()
     wait_for_preview(window)
     window._save_settings()
     saved = load_settings(run_settings_path(source.parent))
-    assert saved['register_time']['params']['backend'] == 'scikit'
+    assert saved['register_time']['params']['algorithm'] == 'scikit'
     assert saved['register_time']['params']['reference_strategy'] == 'first'
     assert load_tuning(source, 'time') is not None
     window.close()
@@ -380,14 +380,15 @@ def test_main_gui_opens_requested_tab_and_accepts_general_settings(source):
     assert tuner is not None
     assert tuner.mode() == 'channel'
     tuner._open_source(source)
-    tuner.panels['channel'].backend.setCurrentText('scikit')
+    tuner.panels['channel'].channel.setCurrentText(tuner.channel_combo.itemText(0))
+    tuner.panels['channel'].algorithm.setCurrentText('scikit')
     tuner._run_preview()
     wait_for_preview(tuner)
     tuner._save_settings()
-    assert main.adapter.field_value(StepName.REGISTER_CHANNEL, 'backend') == 'scikit'
+    assert main.adapter.field_value(StepName.REGISTER_CHANNEL, 'algorithm') == 'scikit'
     editor = main._editors[StepName.REGISTER_CHANNEL]
     assert editor._advanced_group.isChecked()
-    assert editor.widgets['backend'].value() == 'scikit'
+    assert editor.widgets['algorithm'].value() == 'scikit'
     assert editor.widgets['method'].value() == 'translation'
     assert load_tuning(source, 'channel') is not None
     main._open_registration_tuner('time')
@@ -397,11 +398,11 @@ def test_main_gui_opens_requested_tab_and_accepts_general_settings(source):
     from fits.gui.settings.field_widgets import ChoiceWidget
     assert isinstance(context_widget, ChoiceWidget)
     context_widget.setCurrentText('channel_shift_complex')
-    assert main.adapter.field_value(StepName.REGISTER_CHANNEL, 'backend') == 'cv2'
+    assert main.adapter.field_value(StepName.REGISTER_CHANNEL, 'algorithm') == 'cv2'
     assert main.adapter.field_value(StepName.REGISTER_CHANNEL, 'method') == 'affine'
-    assert editor.widgets['backend'].value() == 'cv2'
+    assert editor.widgets['algorithm'].value() == 'cv2'
     assert editor.widgets['method'].value() == 'affine'
-    tuner.panels['time'].backend.setCurrentText('scikit')
+    tuner.panels['time'].algorithm.setCurrentText('scikit')
     tuner.panels['time'].method.setCurrentText('translation')
     tuner._run_preview()
     wait_for_preview(tuner)
@@ -412,7 +413,7 @@ def test_main_gui_opens_requested_tab_and_accepts_general_settings(source):
     main.close()
 
 
-@pytest.mark.parametrize('mode,context,backend,method', [
+@pytest.mark.parametrize('mode,context,algorithm,method', [
     ('time', 'linear_drift', 'pystackreg', 'translation'),
     ('time', 'rotational_drift', 'pystackreg', 'rigid_body'),
     ('time', 'complex_drift', 'pystackreg', 'affine'),
@@ -420,28 +421,28 @@ def test_main_gui_opens_requested_tab_and_accepts_general_settings(source):
     ('channel', 'channel_shift_dual_cam', 'cv2', 'rigid_body'),
     ('channel', 'channel_shift_complex', 'cv2', 'affine'),
 ])
-def test_presets_fill_actual_choices_and_manual_edits_select_custom(window, mode, context, backend, method):
+def test_presets_fill_actual_choices_and_manual_edits_select_custom(window, mode, context, algorithm, method):
     """Keep preset display, explicit edits and CLI-compatible payloads consistent."""
     window.tabs.setCurrentIndex(0 if mode == 'time' else 1)
     panel = window.panels[mode]
     panel.context.setCurrentText(context)
-    assert panel.backend.currentText() == backend
+    assert panel.algorithm.currentText() == algorithm
     assert panel.method.currentText() == method
     assert panel.manual_status.text() == 'Set by context'
-    assert panel.resolved.text().startswith(f'{backend} / {method} / ')
-    panel.backend.setCurrentText('cv2' if backend == 'pystackreg' else 'pystackreg')
+    assert panel.resolved.text().startswith(f'{algorithm} / {method} / ')
+    panel.algorithm.setCurrentText('cv2' if algorithm == 'pystackreg' else 'pystackreg')
     assert panel.context.currentText() == 'Custom'
     assert panel.manual_status.text() == 'Manual settings'
     assert panel.method.currentText() == method
     assert panel.settings().context == context
     panel.context.setCurrentText(context)
-    assert panel.backend.currentText() == backend
+    assert panel.algorithm.currentText() == algorithm
     alternative = 'affine' if method != 'affine' else 'translation'
     panel.method.setCurrentText(alternative)
     expected = ('complex_drift' if mode == 'time' else 'channel_shift_complex') if alternative == 'affine' else ('linear_drift' if mode == 'time' else 'channel_shift')
     assert panel.context.currentText() == expected
     assert panel.settings().context == expected
-    assert panel.settings().backend == backend
+    assert panel.settings().algorithm == algorithm
     panel.method.setCurrentText(method)
     assert panel.context.currentText() == context
 
@@ -494,13 +495,13 @@ def test_loading_overrides_shows_custom_with_resolved_unspecified_fields(window)
     session = window._session
     assert session is not None
     panel = window.panels['time']
-    panel.load(RegisterTimeSettings(context='rotational_drift', backend='cv2', fit_channel=0),
+    panel.load(RegisterTimeSettings(context='rotational_drift', algorithm='cv2', fit_channel=0),
                session.channel_labels, session.frame_count)
     assert panel.context.currentText() == 'Custom'
-    assert panel.backend.currentText() == 'cv2'
+    assert panel.algorithm.currentText() == 'cv2'
     assert panel.method.currentText() == 'rigid_body'
     assert panel.settings().context == 'rotational_drift'
-    panel.load(RegisterTimeSettings(context='linear_drift', backend='pystackreg', method='translation', fit_channel=0),
+    panel.load(RegisterTimeSettings(context='linear_drift', algorithm='pystackreg', method='translation', fit_channel=0),
                session.channel_labels, session.frame_count)
     assert panel.context.currentText() == 'linear_drift'
     assert panel.manual_status.text() == 'Set by context'

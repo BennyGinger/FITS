@@ -1,27 +1,11 @@
 from __future__ import annotations
 
 from typing import Any
-
 import fits.environment.constant as cst
 from fits.environment.constant import StepName
-from fits.settings.models import (BGSubSettings,
-                                  ConvertSettings,
-                                  RegisterChannelSettings,
-                                  RegisterTimeSettings,
-                                  SegmentSettings,
-                                  TrackSettings,
-                                  EditTrackSettings,
-                                  ExtractSettings,
-                                  DistanceProfileSettings)
+from fits.settings.models import BGSubSettings, ConvertSettings, RegisterChannelSettings, RegisterTimeSettings, SegmentSettings, TrackSettings, EditTrackSettings, ExtractSettings, DistanceProfileSettings
 from fits.workflows.definitions.models import StepProfile, StepSpec
-from fits.tasks import (convert,
-                        segment,
-                        remove_bg,
-                        register_channel,
-                        register_time,
-                        track,
-                        extract,
-                        run_distance_profile)
+from fits.tasks import convert, segment, remove_bg, register_channel, register_time, track, extract, run_distance_profile
 
 
 REGISTRY: dict[str, StepSpec[Any]] = {
@@ -29,8 +13,9 @@ REGISTRY: dict[str, StepSpec[Any]] = {
         profile=StepProfile(step_name=StepName.CONVERT,
                             distribution=cst.DIST_IO,
                             input_artifact=cst.ARTI_RAW,
-                            output_artifact=cst.ARTI_IMG,
-                            output_name=cst.FITS_ARRAY_NAME,),
+                            output_artifact=cst.ARTI_IMG_RAW,
+                            output_name=cst.FITS_ARRAY_RAW,
+                            ),
         settings_model=ConvertSettings,
         item_runner=convert,
         pool="cpu"
@@ -38,9 +23,11 @@ REGISTRY: dict[str, StepSpec[Any]] = {
     StepName.BG_SUB: StepSpec(
         profile=StepProfile(step_name=StepName.BG_SUB,
                             distribution=cst.DIST_BG_SUB,
-                            input_artifact=cst.ARTI_IMG,
-                            output_artifact=cst.ARTI_IMG,
-                            output_name=cst.FITS_ARRAY_NAME,),
+                            input_artifact=cst.ARTI_IMG_TIME,
+                            input_alternatives=(cst.ARTI_IMG_CHANNEL,cst.ARTI_IMG_RAW,),
+                            output_artifact=cst.ARTI_IMG_BGSUB,
+                            output_name=cst.FITS_ARRAY_BGSUB,
+                            ),
         settings_model=BGSubSettings,
         item_runner=remove_bg,
         pool="cpu"
@@ -48,9 +35,11 @@ REGISTRY: dict[str, StepSpec[Any]] = {
     StepName.REGISTER_TIME: StepSpec(
         profile=StepProfile(step_name=StepName.REGISTER_TIME,
                             distribution=cst.DIST_REGISTER,
-                            input_artifact=cst.ARTI_IMG,
-                            output_artifact=cst.ARTI_IMG,
-                            output_name=cst.FITS_ARRAY_NAME,),
+                            input_artifact=cst.ARTI_IMG_CHANNEL,
+                            input_alternatives=(cst.ARTI_IMG_RAW,),
+                            output_artifact=cst.ARTI_IMG_TIME,
+                            output_name=cst.FITS_ARRAY_REG_TIME,
+                            ),
         settings_model=RegisterTimeSettings,
         item_runner=register_time,
         pool="cpu",
@@ -59,9 +48,11 @@ REGISTRY: dict[str, StepSpec[Any]] = {
     StepName.REGISTER_CHANNEL: StepSpec(
         profile=StepProfile(step_name=StepName.REGISTER_CHANNEL,
                             distribution=cst.DIST_REGISTER,
-                            input_artifact=cst.ARTI_IMG,
-                            output_artifact=cst.ARTI_IMG,
-                            output_name=cst.FITS_ARRAY_NAME,),
+                            input_artifact=cst.ARTI_IMG_RAW,
+                            input_alternatives=(),
+                            output_artifact=cst.ARTI_IMG_CHANNEL,
+                            output_name=cst.FITS_ARRAY_REG_CHANNEL,
+                            ),
         settings_model=RegisterChannelSettings,
         item_runner=register_channel,
         pool="cpu"
@@ -69,9 +60,11 @@ REGISTRY: dict[str, StepSpec[Any]] = {
     StepName.SEGMENT: StepSpec(
         profile=StepProfile(step_name=StepName.SEGMENT,
                             distribution=cst.DIST_SEG,
-                            input_artifact=cst.ARTI_IMG,
+                            input_artifact=cst.ARTI_IMG_BGSUB,
+                            input_alternatives=(cst.ARTI_IMG_TIME, cst.ARTI_IMG_CHANNEL, cst.ARTI_IMG_RAW),
                             output_artifact=cst.ARTI_SEG,
-                            output_name=cst.FITS_MASK_SEG,),
+                            output_name=cst.FITS_MASK_SEG,
+                            ),
         settings_model=SegmentSettings,
         item_runner=segment,
         pool="gpu"
@@ -80,8 +73,10 @@ REGISTRY: dict[str, StepSpec[Any]] = {
         profile=StepProfile(step_name=StepName.TRACK,
                             distribution=cst.DIST_TRACK,
                             input_artifact=cst.ARTI_SEG,
+                            additional_artifacts=(cst.ARTI_IMG,),
                             output_artifact=cst.ARTI_TRACK,
-                            output_name=cst.FITS_MASK_TRACK,),
+                            output_name=cst.FITS_MASK_TRACK,
+                            ),
         settings_model=TrackSettings,
         item_runner=track,
         pool="gpu"
@@ -90,8 +85,10 @@ REGISTRY: dict[str, StepSpec[Any]] = {
         profile=StepProfile(step_name=StepName.EDIT_TRACK,
                             distribution=cst.DIST_FITS,
                             input_artifact=cst.ARTI_TRACK,
+                            additional_artifacts=(cst.ARTI_IMG,),
                             output_artifact=cst.ARTI_TRACK,
-                            output_name=cst.FITS_MASK_TRACK_EDITED,),
+                            output_name=cst.FITS_MASK_TRACK_EDITED,
+                            ),
         settings_model=EditTrackSettings,
         item_runner=None,
         pool="cpu",
@@ -103,7 +100,8 @@ REGISTRY: dict[str, StepSpec[Any]] = {
                             distribution=cst.DIST_EXTRACT,
                             input_artifact=cst.ARTI_IMG,
                             output_artifact=cst.ARTI_QUANTI,
-                            output_name=cst.FITS_QUANTI_NAME,),
+                            output_name=cst.FITS_QUANTI_NAME,
+                            ),
         settings_model=ExtractSettings,
         item_runner=extract,
         pool="cpu",
@@ -114,7 +112,8 @@ REGISTRY: dict[str, StepSpec[Any]] = {
                             distribution=cst.DIST_DISTANCE_PROFILE,
                             input_artifact=cst.ARTI_IMG,
                             output_artifact=cst.ARTI_DIST_PROF,
-                            output_name=cst.FITS_DISTANCE_PROFILE_NAME,),
+                            output_name=cst.FITS_DISTANCE_PROFILE_NAME,
+                            ),
         settings_model=DistanceProfileSettings,
         item_runner=run_distance_profile,
         pool="cpu",

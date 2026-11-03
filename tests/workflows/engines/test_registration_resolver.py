@@ -9,21 +9,21 @@ def test_resolve_registration_plan_uses_context_preset() -> None:
     plan = resolve_registration_plan("linear_drift")
 
     assert plan.mode == "time"
-    assert plan.backend == "pystackreg"
+    assert plan.algorithm == "pystackreg"
     assert plan.method == "translation"
 
 
 def test_resolve_registration_plan_allows_expert_overrides() -> None:
-    plan = resolve_registration_plan("channel_shift", backend="pystackreg", method="affine")
+    plan = resolve_registration_plan("channel_shift", algorithm="pystackreg", method="affine")
 
     assert plan.mode == "channel"
-    assert plan.backend == "pystackreg"
+    assert plan.algorithm == "pystackreg"
     assert plan.method == "affine"
 
 
-def test_resolve_registration_plan_rejects_invalid_backend() -> None:
-    with pytest.raises(ValueError, match="Unsupported backend"):
-        resolve_registration_plan("linear_drift", backend="bad_backend")
+def test_resolve_registration_plan_rejects_invalid_algorithm() -> None:
+    with pytest.raises(ValueError, match="Unsupported algorithm"):
+        resolve_registration_plan("linear_drift", algorithm="bad_algorithm")
 
 
 def test_resolve_registration_plan_rejects_invalid_method() -> None:

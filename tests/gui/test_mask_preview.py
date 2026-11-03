@@ -427,3 +427,6 @@ def test_saving_during_partial_preview_writes_complete_mask(tmp_path: Path):
         np.testing.assert_array_equal(FitsIO.from_path(saved[0]).get_array().array, expected)
     finally:
         session.close()
+
+
+pytestmark = pytest.mark.usefixtures("current_format_tiffs")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bootstrap with uv's Python; FITS and its environment need not exist yet.
 set -euo pipefail
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 if ! command -v uv >/dev/null 2>&1; then
     echo "uv is required. Install it from https://docs.astral.sh/uv/getting-started/installation/"
     exit 1

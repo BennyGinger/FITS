@@ -1,4 +1,10 @@
-# FITS
+<p align="center">
+  <img src="assets/fits_logo.png" alt="FITS logo: fluorescent cells and tracking trajectories forming a fish" width="480">
+</p>
+
+<p align="center">
+  <img src="assets/fits_title.svg" alt="Fluorescent Image Tracking Software" width="900">
+</p>
 
 FITS—Fluorescent Image Tracking Software—is a reproducible workflow for
 processing and quantifying fluorescence-microscopy experiments. It brings image
@@ -27,6 +33,12 @@ and can also be used independently:
 - `bioimagequant` performs object extraction and distance-profile analysis.
 - `progress_bar` provides terminal progress and controlled log display.
 
+`fits.pipeline` is the top-level processing entry point. Supporting workflow code
+is grouped into definitions, experiments, metadata, artifacts, file management
+and runtime execution. See the [workflow responsibility map](docs/workflow_architecture.md)
+for module locations; `fits.workflows.file_management.api` exposes file actions
+and compacting.
+
 ## Pipeline operation
 
 `fits.pipeline.start_pipeline()` loads the TOML settings, discovers supported
@@ -38,7 +50,7 @@ Convert → Preprocess → Process → Analysis
            |              |         |
            |              |         └─ distance profile, quantification
            |              └─ segmentation, tracking
-           └─ time registration, channel registration, background subtraction
+           └─ channel registration, time registration, background subtraction
 ```
 
 Every launch saves the input configuration, including its comments, as
@@ -47,15 +59,171 @@ applies when running `pipeline.py` with the packaged `user_settings.toml`,
 so the GUI can later load the run's settings. The saved copy reflects the
 latest launch and remains available if processing fails.
 
-Each experiment has an `experiment_state.json` file containing its artifacts,
-completed steps, metadata, and provenance. Artifact paths, rather than a second
+Each series has an `experiment_state.json` file containing its artifacts,
+completed steps, metadata, and provenance, stored inside its acquisition's
+`.fits_experiment/experiment_state/<series>/` directory. Artifact paths, rather than a second
 workflow manifest, are the durable evidence used to resume work. Conversion can
 split a raw file into several experiment branches. Re-running an unchanged step
-reuses completed output; enabling overwrite rebuilds that step and requests
-overwrite for later enabled steps. Conversion and preprocessing currently share
-`fits_array.tif`: overwriting preprocessing does not automatically reconvert
-the original source. Separate intermediate artifacts and provenance-based
-archive selection remain planned in [the TODO list](docs/todos.txt).
+reuses completed output. FITS 4 keeps each preprocessing result independently:
+
+| Step | Output |
+| --- | --- |
+| Convert | `fits_array_raw.tif` |
+| Channel-shift | `fits_array_reg_channel.tif` |
+| Frame-shift | `fits_array_reg.tif` |
+| Background subtraction | `fits_array_bgsub.tif` |
+| Segmentation | `fits_masks_seg.tif` |
+| Tracking | `fits_masks_track.tif` |
+
+Execution runs channel registration before time registration; the GUI tab order
+is unchanged. Disabled preprocessing steps are bypassed even if their old files
+remain. Overwriting reads the preceding enabled stage and preserves its pixels.
+Each artifact records its own UTC `created_at` revision and the paths/revisions
+of its actual inputs in `derived_from`; existing step timestamps keep their
+previous meaning. Analysis Parquets carry the same provenance.
+
+Before a GUI or CLI run, FITS compares recorded input revisions with current
+files and propagates conflicts downstream. The shared dialog lists affected
+files and offers **selected step and downstream**, **selected step only**, or
+**cancel** for an overwrite. Selecting only that step suppresses dependent work
+for this launch. A later launch warns about remaining conflicts and offers
+rebuilding, continuing with existing results, or cancelling. These checks use
+embedded revisions, not filesystem modification times. Plain Python callers
+can pass `artifact_decision(report)` to `start_pipeline`; without a callback,
+a required decision raises `PreflightRequired` instead of opening Qt.
+
+Use **Manage files… → Compact experiment…**, or `uv run fits compact /path/to/run`, to
+preview the exact retained and removed files. Compacting keeps the furthest
+image as `fits_array.tif` and the active final object mask as `fits_masks.tif`,
+including edited/filtered tracking when active. Original acquisitions, REF/ROI,
+measurements, settings and reports remain. Superseded intermediates and viewer
+caches are removed only after publishing and verifying the retained files and
+state; publication failures roll back. If conflicts exist, choose rebuilding
+first, deliberately retaining the existing downstream results, or cancelling.
+Accepted conflicts remain recorded alongside the original provenance.
+
+Files from FITS versions before 4, or files lacking revision provenance, remain
+viewable but read-only until explicitly migrated through **Manage files**.
+Migration updates folder structure, metadata, paths, identifiers and condition
+tags without rerunning processing or changing pixels/measurements. It retains
+the original producer metadata and records that historical lineage is unavailable.
+A saved final image becomes an accepted checkpoint: an experiment stopped after
+background subtraction can proceed to segmentation without recreating earlier
+intermediates. Migration itself remains metadata/layout-only by default. Its
+optional **Rebuild all experiment results** choice reruns the complete workflow
+from original acquisitions, including final images, masks and measurements.
+**This can take a long time, and final results may change**, even with the same
+settings. Existing experiment results and state are backed up before processing
+starts; their original scientific files are retained in that backup. Compacted experiments require rebuilding missing inputs when needed
+for an upstream processing change.
+REF/ROI drawings keep their pixels; compatible metadata can be refreshed without
+redrawing. Changed registration revisions require reviewing their geometry.
+Intensity-only changes do not invalidate their geometry. The full-rebuild policy is documented in [the rebuild plan](docs/full_rebuild_plan.md).
+The earlier implementation plan is [the five-phase plan](docs/fits4_artifacts_plan.md).
+
+### Portable acquisitions and Manage files
+
+Conversion groups the original file and all its series into one portable folder:
+
+```text
+run/
+  .fits/                         # settings, logs and reports
+  control/image/
+    image.nd2                    # original acquisition
+    image_s1/                    # active scientific outputs
+    image_s2/
+    .fits_experiment/
+      experiment_state/image_s1/experiment_state.json
+      tuning/image_s1/
+      cache/image_s1/
+      backup/image_s1/<revision>/
+```
+
+The metadata directory is hidden on Linux and marked hidden on Windows. Moving
+the complete acquisition carries its original, outputs, state, cache and history.
+Selecting a processed series or acquisition in the GUI opens its containing run
+automatically. FITS recognizes run roots by `.fits/fits_settings.toml` or
+`.fits/logs/`; a detached processed folder needs its containing run restored.
+The current run root takes precedence over a saved absolute `run_dir`.
+
+The browser status panel shows a coloured compatibility summary, followed by
+image channels and the total run-directory size, including retained backups. **Details…**, beside **Manage files…**, opens a scrollable
+explanation with read-only/upgrade guidance and retained-history size. Compatible
+experiment folders appear green; outdated folders and their parents appear orange
+with warning icons. If any active experiment has older metadata or layout, the
+**Upgrade to FITS v4 required - read-only**. Viewers and settings remain available.
+In read-only runs, **Back** and **Next** let you inspect both Convert and
+processing settings; **Next** never starts conversion in this mode.
+**Manage files…** groups current-file actions separately from **Manage backups**.
+Current-file actions check the whole run:
+
+- **Migrate to FITS 4…** updates older metadata/layout while preserving results.
+  The review dialog offers an optional **full rebuild**, unchecked by default.
+  Once migrated, this button becomes **Rebuild all experiment results…**.
+  It reruns conversion, the previously completed/currently enabled workflow and
+  required prerequisites for the run. It can take a long time and may change
+  final results; a backup is retained first. The rebuilt workflow is saved so
+  later checks use the same enabled steps.
+  Migrated final arrays receive their actual stage filename, such as
+  `fits_array_bgsub.tif`; canonical `fits_array.tif` is reserved for compaction.
+- **Update paths and condition tags…** refreshes an already migrated run after
+  moving experiments or changing condition folders, without processing.
+- **Rebuild outdated results…** previews and reruns results whose inputs are missing or
+  have changed revisions. Unaffected series and upstream results are preserved.
+
+A slightly separated **Compact experiment…** action removes intermediate files
+and caches while keeping essential files. It creates no persistent backup.
+The actions stay clickable and explain when there is nothing to do.
+**Manage backups** shows availability, saved versions and their total size, with
+**Restore selected backup…** and **Delete selected backups…** actions.
+The same manager is available with `uv run fits manage /path/to/run`.
+The checker also runs when the GUI loads a run, showing orange folder/status
+warnings and Details only when attention is needed. It runs again immediately
+before GUI/CLI processing, where the shared rebuild/continue/cancel choices apply.
+Checks do not claim to verify missing historical lineage of migrated outputs.
+
+After moving an acquisition or changing condition folders, use **Update paths
+and condition tags…**. Like the other two actions, it checks the entire run regardless of the
+browser selection. It updates known paths,
+identifiers and tags in existing per-series Parquets and regenerates master
+tables, preserving measurement values and data revision timestamps. A numerical
+rebuild reruns affected measurements instead. Folder names outside the acquisition
+wrapper supply condition tags; see [analysis identifiers](docs/analysis_identifiers.md).
+
+Retained backups are never deleted automatically by compaction. A storage hint
+appears only when backups exist; delete reviewed snapshots through Manage
+files to reclaim that space. Before migration or path/tag updates, FITS retains a complete original
+run folder under `.fits/backup/<revision>/run/`, including original files,
+metadata, settings and tables. This copy uses additional disk space; FITS checks
+free space before migration and stops if the backup and working files will not fit. Restoring a
+**Whole run** backup restores the original folder structure and file contents,
+and retains the current run as another backup. Rebuilding existing results retains a per-experiment backup under
+`.fits_experiment/backup/<series>/<revision>/`. A full rebuild replaces final
+results as well as intermediates; it does not keep an old final image active
+beside a new upstream chain. Per-experiment backups restore coherent outputs
+and state. REF/ROI drawings are preserved;
+if registration changes, inspect their alignment in the viewer before explicitly
+accepting it through Manage files or recreating the drawings.
+
+After a full run, the main GUI and interactive CLI show the same completion
+dialog with the outcome and **Full report…**. Intentional drawing skips do not
+turn successful runs into failures. Successful runs that can be compacted also
+offer **Manage files…** with a space-saving hint. Convert → Next and nested
+maintenance processing do not show a duplicate full-run completion dialog.
+
+Runtime Advanced settings reserve their expansion space to keep the file browser
+usable. Advanced sections in step tabs still expand and collapse normally.
+GUI and CLI pipelines check free disk space before processing and before pending
+steps. File-management actions use the same checker. Processing estimates use
+the raw FITS array or current final array size multiplied by the number of outputs
+to build, with additional headroom. If space is insufficient, the action stops
+and explains how much space is needed and available. Retained-history deletion
+remains available to reclaim space.
+Implementation phases and validation are recorded in the
+[portable experiments plan](docs/portable_experiments_plan.md).
+The revised migration/processing boundary and module API are documented in the
+[file management actions plan](docs/file_management_actions_plan.md).
+
 
 The default conveyor execution lets prepared experiments advance while other
 experiments are still upstream. In the interactive conveyor, reference/ROI
@@ -78,6 +246,28 @@ grouping measurements across intensity channels and time. See
 [analysis identifiers](docs/analysis_identifiers.md) for their format, segmentation
 behavior, and the deferred handling of independent Z planes.
 
+Quantification can optionally measure cell compartments. Enable **Measure cell
+compartments**, choose **Membrane thickness (pixels)** and optionally **Cell
+expansion (pixels)**. Expansion preserves neighbouring labels without overlap
+and defines the full-cell region before centroid measurement. Each cell is then
+processed separately using a cropped distance transform, including where cells
+touch. The `compartment` column contains `full`, `mb` and `cyto`; when disabled,
+it contains only `full`. All compartments retain the parent cell identity,
+full-cell centroid and reference distances. A fully eroded cytoplasm retains
+one cell pixel nearest the full-cell centroid, excluded from the membrane.
+Compartment masks are generated in memory during extraction. Enable **Save
+compartment masks** to export `_mb.tif` and `_cyto.tif` beside the selected
+segmentation/tracking mask using the FITS TIFF protocol. The source mask is
+unchanged, including when dilation is enabled. Compaction removes these exports
+while retaining source masks, measurements and settings. Rebuilding regenerates
+them only when compartment measurement and saving remain enabled. Rerun extraction with overwrite to update existing
+measurements.
+
+The corresponding `[extract.params]` settings are `compartments = false`,
+`membrane_thickness = 6.0` (finite and positive), `dilation_radius = 0.0`
+(finite and non-negative), and `save_compartment_masks = false`. Both distances
+are in pixels.
+
 ## Installation
 
 Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/),
@@ -88,9 +278,29 @@ git clone https://github.com/BennyGinger/FITS.git fits
 cd fits
 ```
 
-On Linux, run `bash install_linux.sh`. On Windows, open `install_win.bat`
+On Linux, open `install_linux.desktop` or run `bash startup/install_linux.sh`.
+On Windows, open `install_win.bat`
 (or run it in a terminal). No globally installed Python or GPU is required:
 uv obtains Python 3.12 and creates this checkout's single `.venv`.
+
+For `install_linux.desktop`, allow launching/trust the file if your desktop
+asks, then open it to run installation in a terminal. Keep it at the top of
+the FITS checkout; its shell installer lives in `startup/`. Windows and this Linux launcher keep the final result
+visible until you press Enter.
+
+After FITS installs, the terminal offers to install **Tad**, an optional,
+independently maintained third-party Parquet table viewer. Existing discoverable
+installations are reused. FITS does not manage Tad updates. A Tad installation
+failure does not prevent FITS installation or operation; the final message
+confirms that FITS is ready. Use `--with-tad` or `--without-tad` to choose without
+the prompt (noninteractive installations skip Tad by default). Automatic FITS
+updates skip this optional setup. Automatic Tad installation currently supports
+x86-64 Linux and Windows, using the official Tad 0.14.0 distribution; its files
+and bundled licence notices are retained under `startup/tools/Tad`. Install
+elsewhere from [Tad's website](https://www.tadviewer.com/) if preferred.
+Double-click a Parquet file in the FITS run browser to open it in Tad. If Tad is
+unavailable, FITS shows its installation link and suggests VS Code Data Wrangler
+as an alternative. This does not affect pipeline execution.
 
 The installer initializes the recorded submodules, runs ordinary `uv sync`,
 checks GUI/backend imports and model-cache write access, and creates a per-user
@@ -116,7 +326,7 @@ installer to stop before changing their checkouts. No pull, reset, cleanup, or
 automatic dependency upgrade is performed. If `uv sync` changes the lockfile,
 the installer reports it for review.
 
-Use `bash install_linux.sh --no-shortcut` or `install_win.bat --no-shortcut`
+Use `bash startup/install_linux.sh --no-shortcut` or `install_win.bat --no-shortcut`
 to omit shortcuts. If an existing FITS shortcut points to another checkout,
 the installer asks before replacing it, after the new installation passes its
 checks. The old folder is left untouched. Rerunning in the same location
@@ -250,11 +460,11 @@ uv run fits-segtune
 uv run fits-drawmask
 uv run fits-regtune
 uv run fits-trackviewer --experiments-dir /path/to/run
-uv run fits-trackedit /path/to/experiment/fits_track.tif
+uv run fits-trackedit /path/to/experiment/fits_masks_track.tif
 uv run fits-channel-labels /path/to/run
 ```
 
-In the main GUI, **Edit Channel Labels** sits between **Tracking Viewer** and
+In the main GUI, **Edit Channel Labels** sits between **Image / Mask Viewer** and
 **Full Report**. It inspects every FITS artifact in the run directory, then
 lets you rename labels by original source channel index. It maps channel
 references in FITS TIFFs, measurement Parquets, experiment states, and saved
@@ -303,24 +513,51 @@ the pipeline is active.
 
 Click **Preview** in the segmentation settings to preview Cellpose with those settings.
 SegTune and RegTune open the experiment selected in the main GUI, or the first
-available `fits_array.tif` when the run folder or no experiment is selected.
+available image when the run folder or no experiment is selected. For current
+experiments, tuners resolve the preceding enabled stage through StepProfile.
 The opened file is highlighted in the tuner's browser. Choosing an experiments
 directory in a standalone tuner also opens its first available image.
-SegTune shows a selectable list of channel configurations below its controls.
-**Apply and add another channel** retains the current settings and selects
-the next unused image channel. Click a row to revisit its settings, or its
-trash button to remove it; the last row cannot be removed. Channels assigned
-to other rows are excluded from the target selector. **Apply and close**
-copies the entire channel list back to the main GUI. Closing the tuner without
-applying leaves the main settings unchanged. Use Save settings or Run pipeline
-in the main GUI to save the changes. Converted `fits_array.tif` images are
-required for previewing. When an image is opened, SegTune initializes and caches
-the selected Cellpose model in the background without running an automatic
-preview. The tuning controls remain editable while it loads, but **Run preview**
-stays disabled until the model is ready. Changing the built-in model, custom
-model path, or denoising option queues the latest model for initialization.
-Different initialized models remain cached in the Python process, so switching
-back reuses the model. Keeping multiple models also uses more CPU/GPU memory.
+SegTune combines **Segmentation** and **Compartment** tabs, styled like the
+main workflow's step tabs, with blue/green backgrounds and titles above the
+image. Segmentation Preview opens the Segmentation tab; Quantification's
+Compartments Preview opens Compartment. The segmentation tab loads the saved
+segmentation mask. Compartment loads the active tracking result (including
+accepted edits/filtering), otherwise segmentation. A source indicator identifies
+the saved mask or temporary segmentation preview. If no suitable mask exists,
+an initial segmentation preview is generated.
+
+Both tabs have **Run preview**, **Save current settings**, and a red **Close**
+button. Run preview generates/reuses segmentation using its current settings;
+Compartment then displays membrane rings. These previews never overwrite saved
+source masks. Membrane thickness reuses cached distance maps; dilation or a new
+mask revision rebuilds the geometry. Changed segmentation settings mark a
+previous result as out of date until previewed again.
+
+Segmentation retains a selectable channel-settings list. **Add channel**, beside
+its heading, creates an entry for the next unused image channel. Each row's bin
+removes that entry from both the tuner and main GUI without applying unrelated
+pending edits; the last entry cannot be removed. **Save current settings** saves
+all segmentation channel entries and keeps the window open. Compartment's
+**Mask channels** list selects the mask geometry without add/remove controls.
+The image-channel selector independently changes the fluorescence background:
+for example, red-derived masks can be inspected over the green image channel.
+Thickness and dilation are shared across mask channels. Saving the Compartment
+tab copies only its options into Quantification.
+
+Each tab remembers its display colour: **Palette**, a preset solid colour, or
+**Custom…**. Opacity and visibility remain adjustable. Colours affect display
+only, without changing labels or processing settings. Closing warns about
+unsaved processing settings in either tab. Already saved settings and immediate
+channel deletions remain applied. In the main GUI, use Save settings or Run
+pipeline to persist the updated settings. Standalone saves update the run's
+normal settings file; `fits-segtune [image-or-folder] --tab compartment` selects
+the Compartment tab directly.
+
+When segmentation is needed, the selected Cellpose model initializes in the
+background. Changing model or denoising options queues the latest model for
+initialization. Initialized models remain cached in the Python process, so
+switching back reuses them; retaining several models uses additional CPU/GPU
+memory.
 
 Click **Preview** in the background-subtraction settings
 section to open BGTune. It loads the GUI's current settings and selected
@@ -374,18 +611,22 @@ maximum projection for fitting, and the resulting 2D transforms apply to all Z
 planes. OpenCV and pystackreg support translation, rigid-body, and affine;
 scikit supports translation. Excluded channels stay unchanged and are not fitted.
 
-Selecting a **Context** preset fills in its actual backend and method. They are
-grouped under **Backend and method**, labelled **Set by context**. Editing either
+Selecting a **Context** preset fills in its actual algorithm and method. They are
+grouped under **Algorithm and method**, labelled **Set by context**. Editing either
 selects the matching named context when one exists, otherwise **Custom** and
-**Manual settings**. Returning to a preset's backend/method restores its context;
+**Manual settings**. Returning to a preset's algorithm/method restores its context;
 choosing a preset also restores its values. Custom is a viewer label only: saved settings
-retain the last named context and explicit backend/method values, with no CLI
-schema change. Changing a registration context in the main settings panel also
-updates its backend and method.
+retain the last named context and explicit algorithm/method values.
+Changing a registration context in the main settings panel also
+updates its algorithm and method.
+
+Registration TOML settings use `algorithm` for the implementation choice
+(`scikit`, `pystackreg`, or `cv2`). Older `backend` keys are accepted when loading
+settings and renamed to `algorithm` when saved.
 
 Both tabs use three separate panels in the SegTune style: **Registration settings**,
 **Fitting crop**, and **Resolved registration**. The first retains the registration
-fields and backend/method group. Registration and crop settings scroll, while
+fields and algorithm/method group. Registration and crop settings scroll, while
 the resolved panel stays fixed at the bottom of each tab. It shows the effective plan, for
 example `pystackreg / translation / previous / full image` or `... / from crop`.
 Channel registration shows its reference channel and frame instead of a time
@@ -423,7 +664,7 @@ directly on the source image; the Channel tab does not run time registration fir
 **Save current settings** works with or without a preview. It updates the
 general settings in the main GUI and saves the accepted experiment's settings,
 crop and any matching fitted matrices in `<experiment>/.fits/registration/time.npz` or `channel.npz`.
-Accepting changed manual backend/method overrides opens **Advanced settings**
+Accepting changed manual algorithm/method overrides opens **Advanced settings**
 in the main panel. Unchanged saves and named preset selections leave it
 collapsed. All tuners preserve advanced sections the user already opened.
 Save settings or Run pipeline in the main GUI persists the general settings,
@@ -433,8 +674,7 @@ both tabs, then closes the tuner; a save failure keeps the viewer open.
 Without a matching preview, saving stores settings and the fitting rectangle
 without matrices, replacing any older accepted transforms. The pipeline fits
 those settings later. Saving never applies the whole stack. Preview caches are released when
-the experiment changes or the viewer closes; the original `fits_array.tif` is
-not modified.
+the experiment changes or the viewer closes; the source image is not modified.
 
 Both pipeline registration tasks check accepted models before fitting. Tuned
 experiments keep their accepted settings when general settings change. Matching
@@ -457,10 +697,44 @@ settings found within the browser root. Without one, it creates
 
 The main interface has two pages. An unconverted run opens on **Convert**;
 **Next** performs conversion only and moves to the processing page after it
-finishes successfully. Reopening a run containing `fits_array.tif` opens the
+finishes successfully. Reopening a run containing converted FITS images opens the
 processing page directly, with **Preprocess** selected. **Back** returns to
 Convert. An unchanged **Next** returns to processing without another conversion;
 changed conversion settings, including overwrite, request a fresh conversion.
+
+Conversion channel labels can be any names, but must follow the source image's
+channel order. The GUI selects all channels for export by default; select a
+subset to convert/export only those channels. Registration and segmentation
+channel menus follow that export selection. Fitting and nuclear channels have
+an optional **None** choice, while the required registration reference and
+segmentation target start blank. Tracking offers only segmentation targets.
+Multi-channel controls collapse to a one-line list of selected labels, with an
+ellipsis when needed. Click to open the checked choices and toggle several
+channels; click outside or press Escape to close. Hover shows the complete
+selection alongside the parameter help. Exclusion controls keep **None**
+exclusive of actual channel selections.
+
+Tracking's optional **Enable mask repair** is for static or nearly static cells.
+It builds a reference from consistently occupied pixels and rejects weak,
+ambiguous, or unmatched observations before interpolating the resulting gaps.
+**Minimum mask consistency** controls observed-mask Dice similarity and its
+equivalent IoU for identity matching and reconstructed masks; the minimum IoU
+is always at least 0.5. After collision clipping, a reconstructed mask must still
+overlap its intended shape sufficiently. Tiny fragments do not count as completed
+cells. Tracks that cannot be completed over the requested interval are removed.
+Existing tracking files require rerunning Tracking with overwrite to apply these
+rules; downstream measurements must then be regenerated.
+
+Segmentation's main settings use the installed Cellpose built-in model list,
+matching SegTune. FITS opens before loading Cellpose; model choices are discovered
+once in a background thread while other settings remain editable. Saved model
+selections stay visible; empty model controls show **Loading models…** until
+discovery finishes. An early segmentation **Preview** request waits for that
+same task, and Preview reuses its cached model choices and imported backend.
+This discovery does not load model weights or change CLI pipeline behavior.
+Diameter is entered as an integer. Flow threshold is a
+nonnegative squared-error cutoff: values above 1 are meaningful, and 0 disables
+flow-error filtering. Native 3D segmentation ignores this filter.
 Settings changed while conversion is running apply to the next conversion.
 
 The processing page has **Preprocess**, **Process**, and **Analysis** tabs,
@@ -487,17 +761,17 @@ invalid channel names and other data-dependent validation.
 
 Enable **Edit tracking** in the Process phase to review each active tracking
 artifact after automatic tracking and before analysis. FITS opens the full
-tracking editor with the experiment's `fits_array.tif`; the displayed image
+tracking editor with the experiment's configured input image; the displayed image
 channel can be changed independently from the mask channel and is the channel
 used by local mask prediction. **Save edited tracking** writes
 `fits_track_edited.tif`, or `fits_track_edited_filtered.tif` when track-length
 filtering is enabled, and makes that copy the experiment's active tracking
-artifact. The original `fits_track.tif` remains in place. **Use original
+artifact. The original `fits_masks_track.tif` remains in place. **Use original
 tracking** completes the optional step without replacing it. Quantification
 then consumes only the active tracking artifact. Enable overwrite to reopen a
 previously completed edit.
 
-Standalone `fits-trackedit /path/to/experiment/fits_array.tif` starts an empty
+Standalone `fits-trackedit /path/to/experiment/fits_array_raw.tif` starts an empty
 tracking session without an existing tracking mask. Add/Edit uses headless
 micro-SAM with positive/negative prompts and an expected cell diameter defining
 the local crop. Predict, inspect or brush-correct the proposal, then accept it;
@@ -511,13 +785,19 @@ static-only temporal policy remain pending; see the
 
 `fits-drawmask` opens a dedicated mask editor with **Reference** and **ROI**
 tabs sharing the same experiment and image controls. `fits-segtune` opens its
-own segmentation window; standalone **Apply and close** ends the tuning
-session without writing a pipeline settings file. Launch the tuner from
-`fits-gui` to transfer its settings back and save them.
+combined segmentation/compartment window. **Save current settings** keeps the
+tuner open and updates the main GUI, or the run settings file when launched
+standalone. **Close** leaves pending edits unsaved and asks before discarding them.
 Opening an image also loads the first reference and ROI masks beside it, in
 filename order. Selecting a mask file opens its sibling image and that specific
 mask in the matching tab.
 The former `fits-viewer` command has been removed.
+
+**Image / Mask Viewer** loads current intermediates, canonical compacted images
+and masks, supported older FITS files, and REF/ROI masks. Trajectories and track-length
+filtering appear for tracked masks. Segmentation and branch masks offer image/mask
+display without tracking-only tools. Earlier-version files cannot be edited.
+The existing `fits-trackviewer` command also opens these supported files.
 
 Segmentation tuning, Reference/ROI, and tracking viewers read image and mask
 planes on demand through `fits_io`, as does registration tuning. Each plane cache holds at most eight planes
@@ -594,7 +874,7 @@ and do not rebuild the base drawing.
 
 In the read-only tracking viewer, **Save current display** writes a new
 `fits_track_overlay[_filtered][_label].tif`: all channels, Z planes, and frames
-from `fits_array.tif`, with their original pixel values, plus an embedded ImageJ
+from the associated image artifact, with their original pixel values, plus an embedded ImageJ
 overlay. The current mask channel, Z plane, filtering, path/ID selection,
 colours, and mask opacity determine the annotations across time. Annotations
 appear over any raw channel at the selected Z plane. The source files remain
@@ -634,7 +914,7 @@ reopening a matching cached drawing only loads metadata and maps its pixels.
 Edits and undo invalidate only affected centroid frames. Compressed
 `.fits/viewer_cache/<mask filename>.centroids-c*-z*.npz` files inside each
 experiment store centroid tables and all track lengths. They load automatically;
-changed source files invalidate them. Valid legacy hidden caches beside masks
+changed source files invalidate them. Valid older hidden caches beside masks
 migrate to this folder on use. On read-only folders the viewer keeps its
 in-memory cache if it cannot write the persistent cache.
 Length filters use inclusive first-to-last frame spans, including gaps, matching
@@ -657,7 +937,7 @@ uv run fits-drawmask --tool pipeline
 ```
 
 Click **Load test experiments…** and choose a folder containing prepared
-`fits_array.tif` images. The panel starts in Reference mode. **Go to ROI** /
+FITS image artifacts. The panel starts in Reference mode. **Go to ROI** /
 **Go to ref** switches between Reference and ROI; unsaved changes require confirmation before
 being discarded. New experiments join the waiting list without replacing the
 current drawing. **Complete ref masks** or **Complete ROI masks** finalizes that

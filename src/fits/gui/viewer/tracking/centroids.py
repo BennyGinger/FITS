@@ -1,4 +1,6 @@
 """Thread-safe, frame-local centroid caching for interactive tracking."""
+
+from __future__ import annotations
 from collections.abc import Callable, Iterable
 from collections import OrderedDict
 from threading import RLock
@@ -6,12 +8,10 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 import json
 import logging
-from zipfile import BadZipFile
-
 import numpy as np
+from zipfile import BadZipFile
 from numpy.typing import NDArray
-
-from fits.environment.paths import ensure_fits_directory, fits_dir
+from fits.environment.paths import ensure_fits_directory, experiment_cache
 from fits.gui.viewer.tracking.trajectories import calculate_track_centroids
 
 
@@ -19,22 +19,36 @@ logger = logging.getLogger(__name__)
 
 
 def _signature(source: Path) -> str:
+    """
+    Return the current signature.
+    """
     stat = source.stat()
     return json.dumps([1, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns])
 
 
 def _cache_path(source: Path, channel: int, z: int) -> Path:
-    return fits_dir(source.parent) / "viewer_cache" / f"{source.name}.centroids-c{channel}-z{z}.npz"
+    """
+    Cache path.
+    """
+    return experiment_cache(source.parent) / f"{source.name}.centroids-c{channel}-z{z}.npz"
 
 
 def _track_lengths(tracks: dict[int, NDArray[np.float64]]) -> dict[int, int]:
-    """Inclusive frame spans, including gaps, consistent with extraction."""
+    """
+    Inclusive frame spans, including gaps, consistent with extraction.
+    """
     return {track: int(points[:, 0].max() - points[:, 0].min()) + 1
             for track, points in tracks.items() if len(points)}
 
 
-def _load(source: Path, channel: int, z: int, count: int,
+def _load(source: Path,
+          channel: int,
+          z: int,
+          count: int,
           ) -> tuple[dict[int, NDArray[np.float64]], dict[int, int]] | None:
+    """
+    Load.
+    """
     try:
         target = _cache_path(source, channel, z)
         legacy = source.with_name(f".{source.name}.centroids-c{channel}-z{z}.npz")
@@ -80,8 +94,16 @@ def _load(source: Path, channel: int, z: int, count: int,
         return None
 
 
-def _save(source: Path, channel: int, z: int, signature: str,
-          tracks: dict[int, NDArray[np.float64]], lengths: dict[int, int]) -> bool:
+def _save(source: Path,
+          channel: int,
+          z: int,
+          signature: str,
+          tracks: dict[int, NDArray[np.float64]],
+          lengths: dict[int, int],
+          ) -> bool:
+    """
+    Save.
+    """
     temporary: Path | None = None
     try:
         if _signature(source) != signature:
@@ -93,9 +115,13 @@ def _save(source: Path, channel: int, z: int, signature: str,
         points = np.concatenate(list(tracks.values())) if tracks else np.empty((0, 3))
         with NamedTemporaryFile(dir=target.parent, prefix=target.name, suffix=".tmp", delete=False) as file:
             temporary = Path(file.name)
-            np.savez_compressed(file, signature=signature, ids=ids, points=points,
+            np.savez_compressed(file,
+                                signature=signature,
+                                ids=ids,
+                                points=points,
                                 track_ids=np.asarray(list(lengths), dtype=np.int64),
-                                track_lengths=np.asarray(list(lengths.values()), dtype=np.int64))
+                                track_lengths=np.asarray(list(lengths.values()), dtype=np.int64),
+                                )
         temporary.replace(target)
         return True
     except OSError:
@@ -111,6 +137,9 @@ def _save(source: Path, channel: int, z: int, signature: str,
 
 class CentroidCache:
     def __init__(self) -> None:
+        """
+        Initialize the CentroidCache state and dependencies.
+        """
         self.lock = RLock()
         self.revision = 0
         self.planes: dict[tuple[int, int, int], dict[int, NDArray[np.float64]]] = {}
@@ -119,6 +148,9 @@ class CentroidCache:
         self.matches: OrderedDict[tuple, frozenset[int]] = OrderedDict()
 
     def clear(self) -> None:
+        """
+        Clear.
+        """
         with self.lock:
             self.revision += 1
             self.planes.clear()
@@ -127,6 +159,9 @@ class CentroidCache:
             self.matches.clear()
 
     def invalidate(self, channel: int, z: int, frames: Iterable[int]) -> None:
+        """
+        Return the current invalidate.
+        """
         with self.lock:
             self.revision += 1
             self.tracks.pop((channel, z), None)
@@ -137,12 +172,16 @@ class CentroidCache:
                 self.planes.pop((frame, channel, z), None)
 
     def cached(self, channel: int, z: int) -> dict[int, NDArray[np.float64]] | None:
+        """
+        Return the current cached.
+        """
         with self.lock:
             return self.tracks.get((channel, z))
 
-    def remove_label(self, channel: int, z: int, label: int,
-                     frames: Iterable[int]) -> None:
-        """Update known coordinates after deletion without scanning mask pixels."""
+    def remove_label(self, channel: int, z: int, label: int, frames: Iterable[int]) -> None:
+        """
+        Update known coordinates after deletion without scanning mask pixels.
+        """
         removed_frames = frozenset(frames)
         with self.lock:
             self.revision += 1
@@ -167,9 +206,16 @@ class CentroidCache:
             self.matches = OrderedDict((key, value) for key, value in self.matches.items()
                                        if key[:2] != (channel, z))
 
-    def matching(self, channel: int, z: int, operator: str, value: int,
-                 maximum: int | None = None) -> frozenset[int]:
-        """Reuse lengths and recent filter results without rescanning observations."""
+    def matching(self,
+                 channel: int,
+                 z: int,
+                 operator: str,
+                 value: int,
+                 maximum: int | None = None,
+                 ) -> frozenset[int]:
+        """
+        Reuse lengths and recent filter results without rescanning observations.
+        """
         comparisons: dict[str, Callable[[int], bool]] = {
             "lt": lambda length: length < value,
             "le": lambda length: length <= value,
@@ -197,11 +243,19 @@ class CentroidCache:
                 self.matches.popitem(last=False)
             return result
 
-    def calculate(self, read: Callable[[int, int, int], NDArray], *, count: int,
-                  channel: int, z: int, source: Path | None = None,
+    def calculate(self,
+                  read: Callable[[int, int, int], NDArray],
+                  *,
+                  count: int,
+                  channel: int,
+                  z: int,
+                  source: Path | None = None,
                   progress: Callable[[int, int], None] | None = None,
                   cancelled: Callable[[], bool] | None = None,
                   ) -> dict[int, NDArray[np.float64]] | None:
+        """
+        Calculate.
+        """
         cached = self.cached(channel, z)
         if cached is not None:
             return cached
@@ -243,9 +297,11 @@ class CentroidCache:
                 plane = self.planes.get(key)
             if plane is None:
                 # A single frame uses the same centroid definition as exports.
-                plane = calculate_track_centroids(
-                    lambda _frame, c, depth: read(frame, c, depth),
-                    frame_count=1, channel_index=channel, z_index=z)
+                plane = calculate_track_centroids(lambda _frame, c, depth: read(frame, c, depth),
+                                                  frame_count=1,
+                                                  channel_index=channel,
+                                                  z_index=z,
+                                                  )
                 for points in plane.values():
                     points[:, 0] = frame
                 with self.lock:

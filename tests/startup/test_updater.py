@@ -328,7 +328,7 @@ def test_update_runs_real_installer_with_simulated_dependencies(modules, reposit
     remote, root = repositories
     shutil.copytree(STARTUP, remote / "startup", ignore=shutil.ignore_patterns("logs", "__pycache__"))
     (remote / "assets").mkdir()
-    (remote / "assets/fits_logo.png").touch()
+    (remote / "assets/fits_icon.png").touch()
     (remote / "startup/verify.py").write_text("print('Backend verification reached')\n")
     target = commit(remote, "include installer")
     tools = tmp_path / "tools"

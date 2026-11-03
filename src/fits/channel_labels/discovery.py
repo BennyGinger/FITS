@@ -6,22 +6,25 @@ import json
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
-
+from fits.environment.paths import is_internal_path
 from fits_io import FitsIO
-
 from fits.channel_labels.lock import run_write_guard
 from fits.channel_labels.model import LabelPlan
-from fits.channel_labels.documents import (labels_in_settings, labels_in_state,
-                                           labels_in_table, labels_in_workflow_meta)
+from fits.channel_labels.documents import labels_in_settings, labels_in_state, labels_in_table, labels_in_workflow_meta
 from fits.environment import constant as cst
 from fits.settings.loader import run_settings_path
+from fits.environment.paths import experiment_state_path
+from fits.workflows.experiments import discover_saved_states
 
 
-_TIFF_NAMES = {name for name in cst.FITS_FILES if name.endswith(".tif")}
+_TIFF_NAMES = {name for name in cst.MANAGED_NAMES if name.endswith(".tif")}
 _TABLE_NAMES = {cst.FITS_QUANTI_NAME, "master_quantification.parquet",
                 cst.FITS_DISTANCE_PROFILE_NAME, "master_distance_profile.parquet"}
 
 def _tiff_name(name: str) -> bool:
+    """
+    Tiff name.
+    """
     prefixes = (cst.FITS_REFERENCE_TEMPLATE.split("{", 1)[0],
                 cst.FITS_ROI_TEMPLATE.split("{", 1)[0],
                 cst.FITS_TRACK_OVERLAY_PREFIX)
@@ -29,12 +32,17 @@ def _tiff_name(name: str) -> bool:
 
 
 def _fingerprint(path: Path) -> tuple[int, int]:
+    """
+    Return the current fingerprint.
+    """
     stat = path.stat()
     return stat.st_size, stat.st_mtime_ns
 
 
 def inspect_run(run_dir: str | Path) -> LabelPlan:
-    """Validate all known FITS TIFFs against their original source indices."""
+    """
+    Validate all known FITS TIFFs against their original source indices.
+    """
     root = Path(run_dir).expanduser().resolve()
     if not root.is_dir():
         raise ValueError(f"Run directory does not exist: {root}")
@@ -43,12 +51,16 @@ def inspect_run(run_dir: str | Path) -> LabelPlan:
 
 
 def _inspect_unlocked(root: Path) -> LabelPlan:
+    """
+    Inspect unlocked.
+    """
     tiffs = sorted(p for p in root.rglob("*.tif") if _tiff_name(p.name)
-                   and ".fits" not in p.relative_to(root).parts)
-    tables = sorted(p for p in root.rglob("*.parquet") if p.name in _TABLE_NAMES)
+                   and not is_internal_path(p, root))
+    tables = sorted(p for p in root.rglob("*.parquet") if p.name in _TABLE_NAMES
+                    and not is_internal_path(p, root))
     settings_path = run_settings_path(root)
     settings = (settings_path,) if settings_path.is_file() else ()
-    states = tuple(sorted(root.rglob("experiment_state.json")))
+    states = tuple(experiment_state_path(state.workdir) for state in discover_saved_states(root))
     labels: dict[int, str] = {}
     origins: dict[int, Path] = {}
     reverse: dict[str, int] = {}
@@ -70,8 +82,7 @@ def _inspect_unlocked(root: Path) -> LabelPlan:
                 raise ValueError(f"Label {label!r} maps to both source channel "
                                  f"{reverse[label]} and {index} ({path}).")
             labels[index], origins[index], reverse[label] = label, path, index
-        file_labels[path] = frozenset(current) | labels_in_workflow_meta(
-            reader.metadata.custom_metadata)
+        file_labels[path] = frozenset(current) | labels_in_workflow_meta(reader.metadata.custom_metadata)
     if not labels:
         raise ValueError(f"No FITS TIFFs with channel lineage were found in {root}.")
     for path in settings:
@@ -98,12 +109,21 @@ def _inspect_unlocked(root: Path) -> LabelPlan:
     for path in tables:
         file_labels[path] = labels_in_table(path)
     files = (*tiffs, *tables, *settings, *states)
-    return LabelPlan(root, tuple(sorted(labels.items())), tuple(tiffs), tuple(tables),
-                     settings, states, tuple((p, file_labels[p]) for p in files),
-                     tuple((p, _fingerprint(p)) for p in files))
+    return LabelPlan(root,
+                     tuple(sorted(labels.items())),
+                     tuple(tiffs),
+                     tuple(tables),
+                     settings,
+                     states,
+                     tuple((p, file_labels[p]) for p in files),
+                     tuple((p, _fingerprint(p)) for p in files),
+                     )
 
 
 def validate_labels(plan: LabelPlan, proposed: Mapping[int, str]) -> dict[int, str]:
+    """
+    Validate labels.
+    """
     expected = dict(plan.labels)
     if set(proposed) != set(expected):
         raise ValueError("Provide exactly one label for each discovered source channel.")
@@ -116,7 +136,9 @@ def validate_labels(plan: LabelPlan, proposed: Mapping[int, str]) -> dict[int, s
 
 
 def files_to_update(plan: LabelPlan, proposed: Mapping[int, str]) -> tuple[Path, ...]:
-    """Return only files referencing a source channel whose label will change."""
+    """
+    Return only files referencing a source channel whose label will change.
+    """
     labels = validate_labels(plan, proposed)
     changed = {old for index, old in plan.labels if labels[index] != old}
     return tuple(path for path, present in plan.file_labels if changed.intersection(present))

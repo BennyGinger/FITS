@@ -1,6 +1,7 @@
 """Convert/processing navigation uses successful conversion settings only."""
 
 import os
+from pathlib import Path
 from time import monotonic
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -28,6 +29,7 @@ def window(tmp_path, monkeypatch):
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "Test"
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["Red"])
+    monkeypatch.setattr("fits.gui.main_window.window.choose_artifacts", lambda report, parent=None, **kwargs: "rebuild")
     main = FitsMainWindow(adapter)
     _APP.processEvents()
     yield main
@@ -61,7 +63,7 @@ def test_next_converts_once_then_unchanged_back_next_only_navigates(window, tmp_
     assert not window.back_button.isEnabled()
     wait_for_run(window)
     assert not failures
-    assert list(tmp_path.rglob("fits_array.tif"))
+    assert list(tmp_path.rglob("fits_array_raw.tif"))
     assert window.workflow_pages.currentIndex() == 1
     assert window._current_step == StepName.REGISTER_TIME
     assert window.adapter.step_enabled(StepName.SEGMENT)
@@ -178,3 +180,13 @@ def test_selecting_saved_converted_run_opens_processing_with_loaded_settings(win
     window._next_from_convert()
     assert window.workflow_pages.currentIndex() == 1
     assert window._thread is None
+
+
+@pytest.fixture(autouse=True)
+def isolate_settings_navigation_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Isolate navigation/settings tests from metadata checks on empty image fixtures.
+    """
+    from fits.workflows.checks.models import RunCompatibility
+    monkeypatch.setattr('fits.gui.main_window.window.inspect_run_compatibility',
+        lambda root: RunCompatibility(Path(root).resolve(), (), (), (), ()))

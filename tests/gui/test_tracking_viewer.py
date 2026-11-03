@@ -142,14 +142,17 @@ def test_delete_track_removes_all_masks_and_is_undoable() -> None:
     assert np.count_nonzero(tracks == 7) == 8
 
 def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
+    monkeypatch.setattr("fits.gui.viewer.tracking.session.input_references", lambda *args: [])
     tracks = np.zeros((3, 2, 5, 5), dtype=np.uint16)
     tracks[:, 0, 1, 1] = 1
     tracks[0, 0, 2, 2] = 2
     tracks[0, 1, 3, 3] = 9
     session = object.__new__(TrackingViewerSession)
     session.source_path = tmp_path / FITS_MASK_TRACK
+    session.is_tracking = True
+    session.image_session = None
     session._tracks = tracks
     session._axes = "TCYX"
     session._channel_labels = ("Blue mask", "Red mask")
@@ -165,6 +168,9 @@ def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
         def __init__(self, custom_metadata):
             self.custom_metadata = custom_metadata
             self.axes = None
+
+        def new_revision(self, refs):
+            return self
 
         def with_fitsio(self, *, axes):
             self.axes = axes
@@ -457,6 +463,9 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
         def __init__(self, custom_metadata):
             self.custom_metadata = custom_metadata
             self.axes = None
+        def new_revision(self, refs):
+            return self
+
         def with_fitsio(self, *, axes):
             self.axes = axes
             return self
@@ -478,7 +487,9 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     for path, array in ((image_path, image), (track_path, tracks)):
         reader = readers[path]
         reader.axes = "TCYX"
-        reader.reader = SimpleNamespace(shape=array.shape, dtype=array.dtype, img_path=path)
+        from fits_io.metadata.models import FitsIOMeta
+        metadata = FitsIOMeta().with_custom_metadata({'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+        reader.reader = SimpleNamespace(shape=array.shape, dtype=array.dtype, img_path=path, metadata=metadata)
         reader.get_plane = lambda frame_index=0, channel=0, z_index=0, array=array: (
             SimpleNamespace(array=array[frame_index, channel], axes="YX"))
     monkeypatch.setattr(
@@ -498,7 +509,7 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
 
     assert window._source_path == track_path
     assert window.frame_slider.maximum() == 1
-    assert window.overlay_label.text() == "Mask overlay"
+    assert window.overlay_label.text() == "Mask opacity (0–100%)"
     assert window.raw_image_toggle.text() == "Display raw image"
     assert window.channel_combo.currentText() == "GFP"
     assert window.mask_channel_combo.currentText() == "GFP"
@@ -719,8 +730,8 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert view_only_window.track_edit_section.isHidden()
     assert view_only_window.mask_edit_section.isHidden()
     assert view_only_window.local_cell_diameter.isHidden()
-    assert view_only_window.file_filters == (
-        FITS_MASK_TRACK, "fits_track_edited.tif", "fits_track_edited_filtered.tif")
+    assert FITS_MASK_TRACK in view_only_window.file_filters
+    assert FITS_ARRAY_NAME in view_only_window.file_filters
     assert view_only_window.display_label_edit.placeholderText() == "Optional"
     assert view_only_window.save_display_button.text() == "Save current display"
     assert view_only_window.save_display_button.isEnabled()
@@ -848,8 +859,8 @@ def test_main_window_tracking_viewer_loads_selected_experiment(
         assert window.run_browser.select_path(empty)
         window.tracking_viewer_button.click()
         assert len(launches) == 2
-        assert messages[-1][0] == "No tracking file found"
-        assert "Segmentation" in messages[-1][1]
+        assert messages[-1][0] == "No image or mask found"
+        assert "Convert" in messages[-1][1]
         assert window.run_browser.select_path(tmp_path)
         window.tracking_viewer_button.click()
         assert launches[-1]["tracking_path"] == edited

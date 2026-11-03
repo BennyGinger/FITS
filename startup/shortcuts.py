@@ -24,7 +24,7 @@ def desktop_entry(root: Path) -> str:
         "Comment=Fluorescent Image Tracking Software\n"
         f"Exec={desktop_value(quoted_command)}\n"
         f"Path={desktop_value(str(root))}\n"
-        f"Icon={desktop_value(str(root / 'assets' / 'fits_logo.png'))}\n"
+        f"Icon={desktop_value(str(root / 'assets' / 'fits_icon.png'))}\n"
         "Terminal=false\nStartupNotify=true\nCategories=Science;\n"
         "Keywords=microscopy;fluorescence;tracking;images;\n"
     )
@@ -44,8 +44,8 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
         return
     if not (root / ".venv" / "bin" / "python").is_file():
         raise RuntimeError("Create the FITS environment before installing a shortcut.")
-    if not (root / "assets" / "fits_logo.png").is_file():
-        raise RuntimeError("Missing FITS logo.")
+    if not (root / "assets" / "fits_icon.png").is_file():
+        raise RuntimeError("Missing FITS icon.")
     data_home = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
     destination_dir = output_dir or data_home / "applications"
     destination = destination_dir / "fits.desktop"

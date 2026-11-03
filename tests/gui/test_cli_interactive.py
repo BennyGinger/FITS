@@ -44,7 +44,7 @@ def test_cli_supplies_interactive_mask_bridge(tmp_path: Path, monkeypatch) -> No
         lambda _: {"run_dir": str(tmp_path)},
     )
 
-    def fake_start_pipeline(*, settings_path, interaction, run_progress):
+    def fake_start_pipeline(*, settings_path, interaction, run_progress, upgrading=False):
         captured["settings_path"] = settings_path
         captured["interaction"] = interaction
         captured["progress"] = run_progress

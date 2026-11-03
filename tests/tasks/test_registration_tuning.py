@@ -1,4 +1,7 @@
 import numpy as np
+import json
+from contextlib import closing
+from pathlib import Path
 import pytest
 import tifffile
 from fits_io import FitsIO
@@ -11,12 +14,14 @@ from fits.tasks.registration.register_time import register_time
 from fits.tasks.registration.tuned import load_tuning, tuning_path
 from fits.tasks.registration.tuning import RegistrationTuningSession
 from fits.workflows.definitions.registry import REGISTRY
+from fits.workflows.definitions.inputs import configured_profile
 from fits.workflows.experiments import ExperimentState
 
 
 @pytest.fixture
 def source(tmp_path):
     """Write a small multichannel Z stack with known time and channel shifts."""
+    (tmp_path / '.fits_experiment').mkdir(exist_ok=True)
     path = tmp_path / 'fits_array.tif'
     first = np.zeros((32, 32), dtype=np.uint16)
     first[8:13, 9:15] = 1000
@@ -26,14 +31,18 @@ def source(tmp_path):
     return path
 
 
-def time_settings():
-    """Use translation fitting against adjacent original frames."""
-    return RegisterTimeSettings(backend='scikit', reference_strategy='previous', fit_channel=0)
+def time_settings() -> RegisterTimeSettings:
+    """
+    Use translation fitting against adjacent original frames.
+    """
+    return RegisterTimeSettings(algorithm='scikit', reference_strategy='previous', fit_channel=0)
 
 
-def channel_settings():
-    """Use one reference frame and the first reference channel."""
-    return RegisterChannelSettings(backend='scikit', reference_channel=0, reference_frame=1)
+def channel_settings() -> RegisterChannelSettings:
+    """
+    Use one reference frame and the first reference channel.
+    """
+    return RegisterChannelSettings(algorithm='scikit', reference_channel=0, reference_frame=1)
 
 
 def materialize_preview(session, preview):
@@ -42,6 +51,38 @@ def materialize_preview(session, preview):
     for frame, channel, z in session._planes.keys():
         output[session._plane_selection(frame, channel, z)] = session.preview_frame(preview, frame, channel, z)
     return output
+
+
+def test_legacy_tuning_keeps_its_transforms(source: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Load old backend-named metadata and reuse its unchanged fitting signature.
+    """
+    with closing(RegistrationTuningSession(source)) as session:
+        preview = session.run_preview("time", time_settings())
+        path = session.save_preview(preview)
+        with np.load(path, allow_pickle=False) as stored:
+            metadata = json.loads(str(stored["metadata"].item()))
+            transform = stored["transform"].copy()
+        assert metadata["algorithm"] == "scikit"
+        assert "backend" not in metadata
+        metadata["backend"] = metadata.pop("algorithm")
+        metadata["settings"]["backend"] = metadata["settings"].pop("algorithm")
+        np.savez_compressed(path, metadata=np.asarray(json.dumps(metadata)), transform=transform)
+
+    restored = load_tuning(source, "time")
+    assert restored is not None
+    assert restored.settings.algorithm == "scikit"
+
+    def unexpected_fit(*args: object, **kwargs: object) -> None:
+        """
+        Fail if a field rename causes existing transforms to be fitted again.
+        """
+        pytest.fail("The algorithm rename invalidated saved fitting transforms.")
+
+    monkeypatch.setattr("fits.tasks.registration.tuning.fit_planes", unexpected_fit)
+    with closing(RegistrationTuningSession(source)) as session:
+        reused = session.run_preview("time", time_settings())
+        assert reused.result.signature == restored.signature
 
 
 def test_preview_is_virtual_cached_and_does_not_modify_source(source, monkeypatch):
@@ -72,7 +113,7 @@ def test_crop_limits_fit_and_preserves_full_image_preview(source, monkeypatch, m
     fitted_shapes = []
 
     def capture_fit(array, **kwargs):
-        """Record the actual fitting shape before running the backend."""
+        """Record the actual fitting shape before running the algorithm."""
         fitted_shapes.append(array.shape)
         return real_fit(array, **kwargs)
 
@@ -98,12 +139,12 @@ def test_crop_limits_fit_and_preserves_full_image_preview(source, monkeypatch, m
     restored.close()
 
 
-@pytest.mark.parametrize('backend,method', [('scikit', 'translation'), ('cv2', 'translation'),
+@pytest.mark.parametrize('algorithm,method', [('scikit', 'translation'), ('cv2', 'translation'),
                                          ('cv2', 'rigid_body'), ('cv2', 'affine'),
                                          ('pystackreg', 'translation'), ('pystackreg', 'rigid_body'),
                                          ('pystackreg', 'affine')])
-def test_crop_origin_conversion_matches_local_warp(backend, method):
-    """Verify translation, rotation and affine crop origins using each real backend."""
+def test_crop_origin_conversion_matches_local_warp(algorithm, method):
+    """Verify translation, rotation and affine crop origins using each real algorithm."""
     from scipy.ndimage import gaussian_filter
     from fits.tasks.registration.tuned import full_image_model
     crop = (30, 20, 110, 100)
@@ -120,9 +161,9 @@ def test_crop_origin_conversion_matches_local_warp(backend, method):
         # table rounding differently after an otherwise equivalent origin shift.
         matrix[:2, :2] = [[1, 0.125], [0.0625, 1]]
         matrix[:2, 2] = (2, -1)
-    local_register = full_image_model(matrix[None], backend=backend, mode='time', method=method,
+    local_register = full_image_model(matrix[None], algorithm=algorithm, mode='time', method=method,
                                       reference_channel=None, crop=None)
-    lifted = full_image_model(matrix[None], backend=backend, mode='time', method=method,
+    lifted = full_image_model(matrix[None], algorithm=algorithm, mode='time', method=method,
                               reference_channel=None, crop=crop)
     expected = local_register.apply_plane(local)
     actual = lifted.apply_plane(full)[20:100, 30:110]
@@ -171,14 +212,15 @@ def test_settings_only_save_is_fitted_by_pipeline(source, tmp_path, mode, croppe
     raw = tmp_path / 'raw.nd2'
     raw.write_bytes(b'raw')
     state = ExperimentState.init(tmp_path, raw).with_complete_step(
-        step_name=StepName.CONVERT, artifact_kind='image', artifact_path=source)
+        step_name=StepName.CONVERT, artifact_kind='image_raw', artifact_path=source)
     if mode == 'time':
         register_time(RegisterTimeSettings(context='complex_drift'), state,
-                      REGISTRY[StepName.REGISTER_TIME].profile)
+                      configured_profile(REGISTRY[StepName.REGISTER_TIME].profile, {"convert": {"enabled": True}}))
     else:
         register_channel(RegisterChannelSettings(reference_channel=1), state,
-                         REGISTRY[StepName.REGISTER_CHANNEL].profile)
-    np.testing.assert_array_equal(FitsIO.from_path(source).get_array().array, expected)
+                         configured_profile(REGISTRY[StepName.REGISTER_CHANNEL].profile, {"convert": {"enabled": True}}))
+    output_name = 'fits_array_reg.tif' if mode == 'time' else 'fits_array_reg_channel.tif'
+    np.testing.assert_array_equal(FitsIO.from_path(source.with_name(output_name)).get_array().array, expected)
 
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])
@@ -217,13 +259,16 @@ def test_pipeline_reuses_both_modes_in_order_even_after_general_settings_change(
     raw = tmp_path / 'raw.nd2'
     raw.write_bytes(b'raw')
     state = ExperimentState.init(tmp_path, raw).with_complete_step(
-        step_name=StepName.CONVERT, artifact_kind='image', artifact_path=source)
+        step_name=StepName.CONVERT, artifact_kind='image_raw', artifact_path=source)
     state = register_time(RegisterTimeSettings(context='complex_drift'), state,
-                          REGISTRY[StepName.REGISTER_TIME].profile)[0]
-    state = register_channel(RegisterChannelSettings(reference_channel=1), state,
-                             REGISTRY[StepName.REGISTER_CHANNEL].profile)[0]
+                          configured_profile(REGISTRY[StepName.REGISTER_TIME].profile, {"convert": {"enabled": True}}))[0]
+    from dataclasses import replace
+    profile = replace(REGISTRY[StepName.REGISTER_CHANNEL].profile, input_artifact='image_time_registered', input_alternatives=())
+    state = register_channel(RegisterChannelSettings(reference_channel=1), state, profile)[0]
     assert state.last_step == StepName.REGISTER_CHANNEL
-    np.testing.assert_array_equal(FitsIO.from_path(source).get_array().array, expected)
+    output = state.artifact('image_channel_registered')
+    assert output is not None
+    np.testing.assert_array_equal(FitsIO.from_path(output).get_array().array, expected)
 
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])
@@ -315,9 +360,9 @@ def test_excluded_channel_is_not_fitted_or_changed(source, monkeypatch):
     from fits.tasks.registration import tuning
     from stackalign.planes import plane_functions
     original = plane_functions
-    def functions(backend, method):
+    def functions(algorithm, method):
         """Replace the fitting kernel with a failure to detect unexpected work."""
-        fit, apply = original(backend, method)
+        fit, apply = original(algorithm, method)
         def unexpected(*args, **kwargs):
             """Fail if an excluded channel is fitted."""
             pytest.fail('Excluded channel was fitted')
@@ -325,7 +370,7 @@ def test_excluded_channel_is_not_fitted_or_changed(source, monkeypatch):
     monkeypatch.setattr('stackalign.planes.plane_functions', functions)
     session = RegistrationTuningSession(source)
     labels = session.channel_labels
-    settings = RegisterChannelSettings(backend='scikit', reference_channel=labels[0],
+    settings = RegisterChannelSettings(algorithm='scikit', reference_channel=labels[0],
                                        exclude_channel=[labels[1]])
     preview = session.run_preview('channel', settings)
     np.testing.assert_array_equal(materialize_preview(session, preview), FitsIO.from_path(source).get_array().array)

@@ -112,7 +112,9 @@ def test_explicit_labels_match_source_channels_and_empty_labels_use_defaults(tmp
     Check source counts without mistaking a selected export subset for all inputs.
     """
     _write_tiff(tmp_path / "sample.tif", 2)
-    assert not inspect_raw_inputs(tmp_path, channel_labels=[]).problems
+    defaults = inspect_raw_inputs(tmp_path, channel_labels=[])
+    assert not defaults.problems
+    assert not defaults.warnings
     assert not inspect_raw_inputs(tmp_path, channel_labels=["Green", "Red"]).problems
     report = inspect_raw_inputs(tmp_path, channel_labels=["Green", "Red", "Blue"])
     assert not report.problems

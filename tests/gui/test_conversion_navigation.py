@@ -292,6 +292,7 @@ def test_processing_run_uses_normal_pipeline(window, tmp_path, monkeypatch):
 def test_selecting_saved_converted_run_opens_processing_with_loaded_settings(window, tmp_path):
     root = tmp_path / "saved_run"
     root.mkdir()
+    tifffile.imwrite(root / "input.tif", np.zeros((8, 8), dtype=np.uint16), metadata={"axes": "YX"})
     (root / "fits_array.tif").touch()
     saved = SettingsAdapter()
     saved.run_dir = str(root)
@@ -301,6 +302,7 @@ def test_selecting_saved_converted_run_opens_processing_with_loaded_settings(win
 
     window._switch_run_dir(str(root))
     QApplication.processEvents()
+    assert "channel labels" not in window.console.toPlainText()
     assert window.workflow_pages.currentIndex() == 1
     assert window._current_step == StepName.REGISTER_TIME
     assert window._conversion_is_current()
@@ -308,6 +310,15 @@ def test_selecting_saved_converted_run_opens_processing_with_loaded_settings(win
     window._next_from_convert()
     assert window.workflow_pages.currentIndex() == 1
     assert window._thread is None
+
+
+def test_empty_channel_labels_use_defaults_without_warning(window: FitsMainWindow, tmp_path: Path) -> None:
+    tifffile.imwrite(tmp_path / "input.tif", np.zeros((2, 8, 8), dtype=np.uint16),
+                     imagej=True, metadata={"axes": "CYX"})
+    window.adapter.set_field_value(StepName.CONVERT, "channel_labels", [])
+    window._refresh_run_inventory()
+    assert not window._channel_label_warning()
+    assert "channel labels" not in window.console.toPlainText()
 
 
 @pytest.fixture(autouse=True)

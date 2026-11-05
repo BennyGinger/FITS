@@ -60,7 +60,7 @@ def channel_label_warnings(counts: dict[Path, int], labels: Sequence[str] | None
     Warn about label counts without blocking conversion or duplicating mixed-input errors.
     """
     expected = set(counts.values())
-    if labels is None or len(expected) != 1:
+    if not labels or len(expected) != 1:
         return ()
     warning = channel_label_warning(next(iter(expected)), len(labels))
     return (warning,) if warning else ()

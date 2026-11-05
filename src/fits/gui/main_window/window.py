@@ -528,6 +528,7 @@ class FitsMainWindow(QMainWindow):
         """
         if generation == self._settings_population_generation:
             self._populating_settings = False
+            self._update_run_button_text()
 
     @Slot()
     def _open_background_tuner(self) -> None:
@@ -1799,7 +1800,7 @@ class FitsMainWindow(QMainWindow):
             if self._raw_input_report.problems and len(counts) <= 1:
                 counts.clear()
             self._editors[cst.StepName.CONVERT].set_expected_channel_counts(counts, label_warning)
-        if converting and label_warning != self._last_channel_label_warning:
+        if converting and not self._populating_settings and label_warning != self._last_channel_label_warning:
             self._last_channel_label_warning = label_warning
             if label_warning:
                 self._append_log("WARNING | " + label_warning)

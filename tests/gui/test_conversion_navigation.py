@@ -49,6 +49,55 @@ def wait_for_run(window):
     assert window._thread is None, "Pipeline worker did not finish"
 
 
+@pytest.mark.parametrize("channels", [1, 2])
+def test_expected_channels_uses_all_raw_files(window: FitsMainWindow, tmp_path: Path, channels: int) -> None:
+    """
+    Show the raw channel count independently of user labels and exported channels.
+    """
+    for name in ("first.tif", "second.tiff"):
+        tifffile.imwrite(tmp_path / name, np.zeros((channels, 8, 8), dtype=np.uint16),
+                         imagej=True, metadata={"axes": "CYX"})
+    window._refresh_run_inventory()
+    hint = window._editors[StepName.CONVERT].expected_channels_label
+    noun = "channel" if channels == 1 else "channels"
+    assert hint.text() == f"({channels} expected {noun})"
+    assert hint.font().italic()
+    assert not window._conversion_channel_error()
+    assert window.run_button.isEnabled()
+    for path in tmp_path.glob("*.tif*"):
+        path.unlink()
+    window._refresh_run_inventory()
+    assert hint.isHidden()
+
+
+def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
+                                                  tmp_path: Path,
+                                                  monkeypatch: pytest.MonkeyPatch,
+                                                  ) -> None:
+    """
+    Warn and prevent pipeline launch when raw acquisitions have different channel counts.
+    """
+    for channels in (1, 2):
+        tifffile.imwrite(tmp_path / f"input_{channels}.tif", np.zeros((channels, 8, 8), dtype=np.uint16),
+                         imagej=True, metadata={"axes": "CYX"})
+    window._refresh_run_inventory()
+    hint = window._editors[StepName.CONVERT].expected_channels_label
+    assert hint.text() == "(different channel counts: 1 or 2)"
+    assert not window.run_button.isEnabled()
+    assert "Cannot convert" in window.navigation_status.text()
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
+    monkeypatch.setattr(window, "_save_settings", lambda: pytest.fail("Mixed channel counts reached pipeline setup"))
+    window._launch_pipeline(convert_only=True)
+    assert len(warnings) == 1
+    assert "different numbers of channels (1, 2)" in warnings[0]
+    assert window._thread is None
+    (tmp_path / "input_2.tif").unlink()
+    window._refresh_run_inventory()
+    assert hint.text() == "(1 expected channel)"
+    assert window.run_button.isEnabled()
+
+
 def test_next_converts_once_then_unchanged_back_next_only_navigates(window, tmp_path, monkeypatch):
     tifffile.imwrite(tmp_path / "acquisition.tif", np.arange(64, dtype=np.uint16).reshape(8, 8),
                      photometric="minisblack", metadata={"axes": "YX"})

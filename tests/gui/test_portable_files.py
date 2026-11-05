@@ -151,29 +151,39 @@ def test_manage_refresh_runs_after_review_and_cancel_preserves_files(current_win
     assert other_image.read_bytes() == before
 
 
-def test_manage_actions_stay_enabled_and_explain_no_work(current_window, tmp_path, monkeypatch):
+def test_manage_actions_disable_unavailable_work(current_window: tuple[FitsMainWindow, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Keep useful actions enabled and place guidance to their left.
+    """
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QDialog, QLabel, QPushButton
     from fits.gui.file_management.manager import manage_files
     window, series = current_window
     previews = []
     monkeypatch.setattr('fits.gui.file_management.manager.confirm_files', lambda *args: previews.append(args[1]) or False)
-    def inspect():
-        dialog = _APP.activeModalWidget()
+    def inspect() -> None:
+        """
+        Check current-run action states and the two-column file layout.
+        """
+        dialog = QApplication.activeModalWidget()
         assert isinstance(dialog, QDialog)
-        buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
-        titles = ('Rebuild all experiment results…', 'Update paths and condition tags…', 'Rebuild outdated results…',
-                  'Restore selected backup…', 'Delete selected backups…')
-        assert all(buttons[title].isEnabled() for title in titles)
-        assert 'Migrate to FITS 4…' not in buttons
-        buttons['Rebuild all experiment results…'].click()
-        assert previews and 'can take a long time' in previews[-1]
-        assert 'backed up before' in previews[-1]
-        buttons['Rebuild outdated results…'].click()
-        assert any('no outdated results to rebuild' in label.text() for label in dialog.findChildren(QLabel))
-        buttons['Delete selected backups…'].click()
-        assert any('no backups' in label.text() for label in dialog.findChildren(QLabel))
-        dialog.reject()
+        try:
+            buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+            assert buttons['Rebuild all experiment results…'].isEnabled()
+            assert buttons['Update paths and condition tags…'].isEnabled()
+            assert buttons['Compact experiment…'].isEnabled()
+            for title in ('Rebuild outdated results…', 'Restore selected backup…', 'Delete selected backups…'):
+                assert not buttons[title].isEnabled()
+            assert 'Migrate to FITS 4…' not in buttons
+            notice = dialog.findChild(QLabel, 'file_action_notice')
+            assert notice is not None
+            rebuild = buttons['Rebuild all experiment results…']
+            assert notice.mapTo(dialog, notice.rect().topRight()).x() < rebuild.mapTo(dialog, rebuild.rect().topLeft()).x()
+            rebuild.click()
+            assert previews and 'can take a long time' in previews[-1]
+            assert 'backed up before' in previews[-1]
+        finally:
+            dialog.reject()
     QTimer.singleShot(0, inspect)
     assert not manage_files(tmp_path, series, window)
 
@@ -236,7 +246,11 @@ def test_manager_migrates_real_legacy_run_without_launching_processing(tmp_path:
     def choose():
         dialog = _APP.activeModalWidget()
         assert isinstance(dialog, QDialog)
-        next(button for button in dialog.findChildren(QPushButton) if button.text() == 'Migrate to FITS 4…').click()
+        buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+        for title in ('Update paths and condition tags…', 'Rebuild outdated results…', 'Compact experiment…'):
+            assert not buttons[title].isEnabled()
+        assert buttons['Migrate to FITS 4…'].isEnabled()
+        buttons['Migrate to FITS 4…'].click()
     QTimer.singleShot(0, choose)
     assert manage_files(tmp_path, old.workdir, run_processing=lambda plan: calls.append(plan))
     assert not calls
@@ -247,7 +261,7 @@ def test_manager_migrates_real_legacy_run_without_launching_processing(tmp_path:
         """
         Show the whole-run backup even when a single migrated series is selected.
         """
-        dialog = _APP.activeModalWidget()
+        dialog = QApplication.activeModalWidget()
         assert isinstance(dialog, QDialog)
         try:
             history = dialog.findChild(QListWidget)
@@ -256,11 +270,16 @@ def test_manager_migrates_real_legacy_run_without_launching_processing(tmp_path:
             labels = dialog.findChildren(QLabel)
             assert any('Select one backup to restore' in label.text() for label in labels)
             assert any('No backup selected.' in label.text() for label in labels)
-            next(button for button in dialog.findChildren(QPushButton) if button.text() == 'Restore selected backup…').click()
-            assert any('Select a backup in the list above first.' == label.text() for label in labels)
-            assert history.hasFocus()
+            buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+            assert not buttons['Restore selected backup…'].isEnabled()
+            assert not buttons['Delete selected backups…'].isEnabled()
             history.setCurrentRow(0)
+            assert buttons['Restore selected backup…'].isEnabled()
+            assert buttons['Delete selected backups…'].isEnabled()
             assert any('1 backup selected.' == label.text() for label in labels)
+            history.clearSelection()
+            assert not buttons['Restore selected backup…'].isEnabled()
+            assert not buttons['Delete selected backups…'].isEnabled()
         finally:
             dialog.reject()
 
@@ -356,3 +375,59 @@ def test_optional_migration_rebuild_runs_the_complete_workflow(tmp_path: Path, m
     np.testing.assert_array_equal(FitsIO.from_path(state.artifact(cst.ARTI_IMG)).get_array().array, pixels + 1)
     assert not inspect_run(tmp_path, load_settings(run_settings_path(tmp_path)), for_execution=False).conflicts
     assert len(snapshots(tmp_path)) == 2
+
+
+def test_empty_run_disables_file_actions(current_window: tuple[FitsMainWindow, Path], tmp_path: Path) -> None:
+    """
+    Keep every data action unavailable until an experiment has been converted.
+    """
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QDialog, QLabel, QPushButton
+    from fits.gui.file_management.manager import manage_files
+
+    empty = tmp_path / 'empty'
+    empty.mkdir()
+
+    def inspect() -> None:
+        """
+        Check the explanatory panel and leave Close usable.
+        """
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, QDialog)
+        try:
+            buttons = dialog.findChildren(QPushButton)
+            assert all(not button.isEnabled() for button in buttons if button.text() != 'Close')
+            notice = dialog.findChild(QLabel, 'file_action_notice')
+            assert notice is not None and 'Convert your inputs' in notice.text()
+        finally:
+            dialog.reject()
+
+    QTimer.singleShot(0, inspect)
+    assert not manage_files(empty)
+
+
+def test_backup_buttons_follow_selection_count(current_window: tuple[FitsMainWindow, Path], tmp_path: Path) -> None:
+    """
+    Offer restoring exactly one snapshot and deleting one or multiple snapshots.
+    """
+    from PySide6.QtCore import QItemSelectionModel
+    from PySide6.QtWidgets import QPushButton
+    from fits.gui.file_management.manager import _history_panel
+    from fits.workflows.file_management.history import Snapshot
+
+    entries = tuple(Snapshot(tmp_path / str(index), tmp_path, (), ()) for index in range(2))
+    group, history, _ = _history_panel(entries, tmp_path, lambda action: None)
+    try:
+        buttons = {button.text(): button for button in group.findChildren(QPushButton)}
+        restore = buttons['Restore selected backup…']
+        delete = buttons['Delete selected backups…']
+        assert not restore.isEnabled() and not delete.isEnabled()
+        history.setCurrentRow(0)
+        assert restore.isEnabled() and delete.isEnabled()
+        history.setCurrentRow(1, QItemSelectionModel.SelectionFlag.Select)
+        assert not restore.isEnabled() and delete.isEnabled()
+        history.clearSelection()
+        assert not restore.isEnabled() and not delete.isEnabled()
+    finally:
+        group.close()
+        group.deleteLater()

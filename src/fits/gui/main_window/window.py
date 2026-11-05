@@ -31,6 +31,7 @@ from fits.settings.models import BGSubSettings, RegisterChannelSettings, Registe
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
 from fits.settings.loader import run_settings_path
 from fits.workflows.experiments.roots import resolve_run_root
+from fits.workflows.experiments import collect_supported_files
 from fits.gui.artifact_decisions import choose_artifacts
 from fits.workflows.checks.compatibility import inspect_run_compatibility
 from fits_io import FitsIO
@@ -88,6 +89,7 @@ class FitsMainWindow(QMainWindow):
         self._run_status = None
         self._artifact_report = None
         self._file_channel_cache = {}
+        self._expected_channel_counts: set[int] = set()
         self._current_step = cst.StepName.CONVERT
         self._conversion_root: str | None = None
         self._converted_settings: dict | None = None
@@ -1134,6 +1136,14 @@ class FitsMainWindow(QMainWindow):
         """
         Launch pipeline.
         """
+        if convert_only or self.adapter.step_enabled(cst.StepName.CONVERT):
+            root = Path(self.adapter.run_dir).expanduser() if self.adapter.run_dir else None
+            self._refresh_expected_channels(root)
+            channel_error = self._conversion_channel_error()
+            if channel_error:
+                self._update_run_button_text()
+                QMessageBox.warning(self, "Cannot convert images", channel_error)
+                return
         label_window = self._channel_labels_window
         if (label_window is not None and label_window._job is not None
                 and label_window._job.isRunning()):
@@ -1213,9 +1223,38 @@ class FitsMainWindow(QMainWindow):
                                                 for_execution=False,
                                                 )
         self._file_channel_cache.clear()
+        self._refresh_expected_channels(root)
         conflicts = {record.path.parent for record in self._artifact_report.conflicts} if self._artifact_report is not None else set()
         self.run_browser.set_experiment_status(self._run_status, conflicts)
         self._selection_status_changed(self.run_browser.selected_path)
+
+    def _refresh_expected_channels(self, root: Path | None) -> None:
+        """
+        Read raw acquisition channel counts for the conversion label hint.
+        """
+        counts: set[int] = set()
+        unreadable = False
+        if root is not None and root.is_dir():
+            for path in collect_supported_files(root):
+                try:
+                    counts.add(FitsIO.from_path(path).reader.channel_count)
+                except Exception:
+                    logging.getLogger(__name__).debug("Cannot read channel count from %s", path, exc_info=True)
+                    unreadable = True
+        self._expected_channel_counts = counts
+        visible_counts = counts if not unreadable or len(counts) > 1 else set()
+        self._editors[cst.StepName.CONVERT].set_expected_channel_counts(visible_counts)
+
+    def _conversion_channel_error(self) -> str:
+        """
+        Explain why acquisitions with different channel counts cannot share conversion settings.
+        """
+        if len(self._expected_channel_counts) <= 1:
+            return ""
+        values = ", ".join(str(count) for count in sorted(self._expected_channel_counts))
+        return (f"Cannot convert files with different numbers of channels ({values}). "
+                "All raw ND2/TIFF files in the run directory must have the same number of channels. "
+                "Place files with different channel counts in separate run directories.")
 
     @Slot(object)
     def _selection_status_changed(self, selected: Path | None = None) -> None:
@@ -1636,6 +1675,9 @@ class FitsMainWindow(QMainWindow):
         self.run_button.setText("Next" if converting else "Run pipeline")
         steps = (cst.StepName.CONVERT,) if converting else cst.WORKFLOW_ORDER
         missing = [error for step in steps for error in self.adapter.missing_user_fields(step)]
+        channel_error = self._conversion_channel_error()
+        if channel_error and (converting or self.adapter.step_enabled(cst.StepName.CONVERT)):
+            missing.append(channel_error)
         if converting and not self.adapter.step_enabled(cst.StepName.CONVERT) and not self._conversion_is_current():
             missing.append("Enable Convert before continuing.")
         label_job = (self._channel_labels_window is not None
@@ -1658,6 +1700,7 @@ class FitsMainWindow(QMainWindow):
         self.run_button.setToolTip(action_help + ("\n\nBefore continuing:\n" + "\n".join(missing) if missing else ""),
                                    )
         self.navigation_status.setText(
+            channel_error if channel_error and converting else
             ("Converted images are ready." if self._conversion_is_current()
              else "Next converts your images before processing.") if converting else "")
 

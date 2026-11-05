@@ -30,6 +30,7 @@ def _add_parameter_row(form: QFormLayout,
                        tooltip: str,
                        label_width: int,
                        hint: str | None = None,
+                       trailing: QWidget | None = None,
                        ) -> QWidget:
     """
     Place a compact parameter and a practical hint in balanced left/right columns.
@@ -52,7 +53,15 @@ def _add_parameter_row(form: QFormLayout,
         widget.setFixedWidth(110)
     else:
         widget.setMaximumWidth(220)
-    controls_form.addRow(label, widget)
+    if trailing is None:
+        controls_form.addRow(label, widget)
+    else:
+        field = QWidget()
+        field_layout = QHBoxLayout(field)
+        field_layout.setContentsMargins(0, 0, 0, 0)
+        field_layout.addWidget(widget)
+        field_layout.addWidget(trailing)
+        controls_form.addRow(label, field)
     layout.addWidget(controls, 1)
     description = QLabel(hint or tooltip.split(". ", 1)[0].rstrip(".") + ".")
     description.setWordWrap(True)
@@ -199,6 +208,14 @@ class StepSettingsEditor(QWidget):
             else:
                 widget = self._create_parameter_widget(path, value)
             tooltip = field_tooltip(self.step, path)
+            trailing = None
+            if self.step == StepName.CONVERT and path == "channel_labels":
+                self.expected_channels_label = QLabel()
+                font = QFont(self.font())
+                font.setItalic(True)
+                self.expected_channels_label.setFont(font)
+                self.expected_channels_label.hide()
+                trailing = self.expected_channels_label
             widget.setToolTip(tooltip)
             if path in ("expected_ref_masks", "expected_roi_masks") and isinstance(widget, IntWidget):
                 widget.setMinimum(1 if path == "expected_ref_masks" else 0)
@@ -208,9 +225,23 @@ class StepSettingsEditor(QWidget):
                                          )
             row = _add_parameter_row(form, field_label(path), widget, tooltip, label_width,
                                      hint=hints.get(path, field_hint(self.step, path)) if hints else field_hint(self.step, path),
+                                     trailing=trailing,
                                      )
             self._field_rows.append(row)
             self.widgets[path] = widget
+
+    def set_expected_channel_counts(self, counts: set[int]) -> None:
+        """
+        Show the channel counts found in the run's raw acquisition metadata.
+        """
+        values = " or ".join(str(count) for count in sorted(counts))
+        noun = "channel" if counts == {1} else "channels"
+        text = f"({values} expected {noun})" if counts else ""
+        if len(counts) > 1:
+            text = f"(different channel counts: {values})"
+        self.expected_channels_label.setText(text)
+        self.expected_channels_label.setStyleSheet("color: #e57373;" if len(counts) > 1 else "")
+        self.expected_channels_label.setVisible(bool(counts))
 
     def _create_parameter_widget(self, path: str, value: Any) -> ValueWidget | ChannelChoiceWidget | ChannelSelectionWidget:
         """

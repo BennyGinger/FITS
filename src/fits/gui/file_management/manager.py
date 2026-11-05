@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any
 from pathlib import Path
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFrame, QGroupBox, QLabel, QListWidget, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 from fits.gui.dialogs import size_resizable_dialog
 from fits.workflows.file_management.relocation import PortablePlan
 from fits.workflows.file_management.rebuild import ProcessingPlan, geometry_reviews, accept_reviewed_geometry
@@ -17,9 +17,20 @@ from fits.workflows.file_management import api
 from fits.workflows.file_management.history import Snapshot, snapshots, restore_history, delete_history
 from fits.workflows.checks.compatibility import inspect_run_compatibility
 from fits.gui.file_management.compaction import run_compaction_ui
-from fits.workflows.checks.models import PreflightReport
+from fits.workflows.checks.models import PreflightReport, RunCompatibility
 from fits.workflows.runtime.errors import PipelineCancelled
 from fits.gui.file_management.tasks import run_file_task
+
+
+def _fit_manager_height(dialog: QDialog) -> None:
+    """
+    Fit both columns and the backups section at the dialog's current width.
+    """
+    layout = dialog.layout()
+    assert layout is not None
+    layout.invalidate()
+    height = max(layout.minimumSize().height(), layout.totalHeightForWidth(dialog.width()))
+    size_resizable_dialog(dialog, dialog.width(), height)
 
 
 def _set_notice(notice: QLabel, text: str) -> None:
@@ -28,6 +39,9 @@ def _set_notice(notice: QLabel, text: str) -> None:
     """
     notice.setText(text)
     notice.setVisible(bool(text))
+    dialog = notice.window()
+    if isinstance(dialog, QDialog) and dialog.isVisible():
+        _fit_manager_height(dialog)
 
 
 def confirm_files(title: str, text: str, parent: QWidget | None = None, action: str = 'Apply listed changes') -> bool:
@@ -308,6 +322,7 @@ def _history_panel(entries: Sequence[Snapshot],
     selection.setWordWrap(True)
     selection.setVisible(bool(entries))
     layout.addWidget(selection)
+    buttons: dict[str, QPushButton] = {}
 
     def _selection_changed() -> None:
         """
@@ -316,17 +331,78 @@ def _history_panel(entries: Sequence[Snapshot],
         count = len(history.selectedIndexes())
         noun = 'backup' if count == 1 else 'backups'
         selection.setText(f'{count} {noun} selected.' if count else 'No backup selected. Choose a backup in the list before continuing.')
+        buttons['restore'].setEnabled(count == 1)
+        buttons['delete'].setEnabled(count > 0)
 
-    history.itemSelectionChanged.connect(_selection_changed)
-    _selection_changed()
     for title, action, tooltip in (
         ('Restore selected backup…', 'restore', 'Restore the selected saved version and retain the current version. Whole-run backups also restore its original folders and metadata.'),
         ('Delete selected backups…', 'delete', 'Permanently delete only the selected backups to free disk space. Current experiment files are kept.')):
         button = QPushButton(title)
+        buttons[action] = button
         button.setToolTip(tooltip)
         button.clicked.connect(lambda checked=False, action=action: choose(action))
         layout.addWidget(button)
+    history.itemSelectionChanged.connect(_selection_changed)
+    _selection_changed()
     return group, history, selection
+
+
+def _unavailable_actions(status: RunCompatibility, report: PreflightReport | None) -> dict[str, str]:
+    """
+    Explain actions that cannot apply to the inspected run without planning file writes.
+    """
+    actions = ('rebuild', 'update', 'downstream', 'compact', 'geometry')
+    if status.outdated:
+        return dict.fromkeys(actions, 'Migrate this run to FITS v4 first.')
+    if not status.states:
+        return dict.fromkeys(actions, 'Convert your inputs first; this run has no processed experiments.')
+    unavailable: dict[str, str] = {}
+    if any(not state.original_image.is_file() for state in status.states):
+        unavailable['rebuild'] = 'Restore the missing original acquisitions or update their paths before a full rebuild.'
+    if report is None or not any(record.problem and record.step is not None for record in report.records):
+        unavailable['downstream'] = 'No outdated results were found to rebuild.'
+    if not api.can_compact(status.root):
+        unavailable['compact'] = 'No uncompacted compatible image results are available.'
+    return unavailable
+
+
+def _file_actions_panel(notice: QLabel,
+                        primary_action: tuple[str, str, str],
+                        choose: Callable[[str], None],
+                        unavailable: dict[str, str],
+                        has_geometry_reviews: bool,
+                        ) -> QGroupBox:
+    """
+    Place run guidance on the left and applicable file actions on the right.
+    """
+    group = QGroupBox('Experiment files')
+    row = QHBoxLayout(group)
+    row.setSpacing(24)
+    notice.setObjectName('file_action_notice')
+    row.addWidget(notice, 1, Qt.AlignmentFlag.AlignTop)
+    controls = QWidget()
+    controls.setMinimumWidth(320)
+    buttons = QVBoxLayout(controls)
+    buttons.setContentsMargins(0, 0, 0, 0)
+    buttons.setSpacing(10)
+    actions = [primary_action,
+               ('Update paths and condition tags…', 'update', 'Refresh paths, identifiers, condition tags and master tables throughout the run; preserve measurements and retain a restorable run backup.'),
+               ('Rebuild outdated results…', 'downstream', 'Review results affected by changed or missing inputs, retain a backup before replacing existing results, then rerun the affected processing.')]
+    if has_geometry_reviews:
+        actions.append(('Accept reviewed REF/ROI alignment…', 'geometry', 'Record that you checked these drawings against the current registration. Drawing pixels are kept.'))
+    actions.append(('Compact experiment…', 'compact', 'Free disk space by removing intermediate files and caches. Keep original acquisitions, final images and masks, REF/ROI masks, measurements and reports. No persistent backup is created.'))
+    for title, action, tooltip in actions:
+        if action == 'compact':
+            buttons.addSpacing(12)
+        button = QPushButton(title)
+        reason = unavailable.get(action)
+        button.setEnabled(reason is None)
+        button.setToolTip(f'{tooltip}\n\nUnavailable: {reason}' if reason else tooltip)
+        button.clicked.connect(lambda checked=False, action=action: choose(action))
+        buttons.addWidget(button)
+    buttons.addStretch()
+    row.addWidget(controls)
+    return group
 
 
 def manage_files(root: str | Path,
@@ -339,22 +415,27 @@ def manage_files(root: str | Path,
     """
     root = Path(root).resolve()
     status = inspect_run_compatibility(root)
+    report = inspect_run(root, run_config(root), for_execution=False) if not status.outdated else None
+    unavailable = _unavailable_actions(status, report)
     entries = snapshots(root, selected)
     reviews = geometry_reviews(root)
     processing_runner = run_processing or partial(_run_cli_processing, root)
     dialog = QDialog(parent)
     dialog.setWindowTitle('Manage experiment files')
+    dialog.setStyleSheet('QPushButton:disabled { color: #8a8a8a; background-color: #383838; border-color: #555555; }')
     layout = QVBoxLayout(dialog)
     layout.setSpacing(12)
     notice = QLabel(dialog)
     notice.setWordWrap(True)
     notice.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-    notice.hide()
     if status.outdated:
         _set_notice(notice, 'This run needs an upgrade to FITS v4. You can keep viewing its files read-only, or migrate without rerunning processing.')
-    elif inspect_run(root, run_config(root), for_execution=False).conflicts:
+    elif report is not None and report.conflicts:
         _set_notice(notice, 'This run has outdated results because their inputs changed or are missing. Choose Rebuild outdated results to review what needs to run again. Existing files remain viewable.')
-    layout.addWidget(notice)
+    elif not status.states:
+        _set_notice(notice, 'No processed experiments were found. Convert your inputs before using these file actions.')
+    else:
+        _set_notice(notice, 'Choose an available action to review its changes before applying them.')
     pending: list[Callable[[], Any] | None] = [None]
 
     def choose(action: str) -> None:
@@ -388,27 +469,7 @@ def manage_files(root: str | Path,
         primary_action = ('Rebuild all experiment results…', 'rebuild',
                           'Rebuild the complete workflow from original acquisitions, including final images, masks and measurements. '
                           'This can take a long time and may change results. A backup is retained first.')
-    active_group = QGroupBox('Experiment files')
-    active_layout = QVBoxLayout(active_group)
-    layout.addWidget(active_group)
-    for title, action, tooltip in (
-        primary_action,
-        ('Update paths and condition tags…', 'update', 'Refresh paths, identifiers, condition tags and master tables throughout the run; preserve measurements and retain a restorable run backup.'),
-        ('Rebuild outdated results…', 'downstream', 'Review results affected by changed or missing inputs, retain a backup before replacing existing results, then rerun the affected processing.')):
-        button = QPushButton(title)
-        button.setToolTip(tooltip)
-        button.clicked.connect(lambda checked=False, action=action: choose(action))
-        active_layout.addWidget(button)
-    if reviews:
-        review = QPushButton('Accept reviewed REF/ROI alignment…')
-        review.setToolTip('Record that you checked these drawings against the current registration. Drawing pixels are kept.')
-        review.clicked.connect(lambda: choose('geometry'))
-        active_layout.addWidget(review)
-    active_layout.addSpacing(12)
-    compact = QPushButton('Compact experiment…')
-    compact.setToolTip('Free disk space by removing intermediate files and caches. Keep original acquisitions, final images and masks, REF/ROI masks, measurements and reports. No persistent backup is created.')
-    compact.clicked.connect(lambda: choose('compact'))
-    active_layout.addWidget(compact)
+    layout.addWidget(_file_actions_panel(notice, primary_action, choose, unavailable, bool(reviews)))
     group, history, backup_notice = _history_panel(entries, root, choose)
     layout.addWidget(group)
     close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -416,7 +477,8 @@ def manage_files(root: str | Path,
     layout.addWidget(close)
     for button in dialog.findChildren(QPushButton):
         button.setMinimumHeight(38)
-    size_resizable_dialog(dialog, 960, 720)
+    size_resizable_dialog(dialog, 960, 300)
+    _fit_manager_height(dialog)
     dialog.exec()
     action = pending[0]
     if action is None:

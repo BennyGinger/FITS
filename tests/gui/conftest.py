@@ -1,11 +1,25 @@
 """Keep unrelated GUI tests from waiting on the new completion modal."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QWidget
+from fits.gui.segmentation_models.loader import ModelOptionsLoader
 from fits.workflows.runtime.progress.outcome import RunResult
+
+
+@pytest.fixture(scope='session', autouse=True)
+def finish_background_model_discovery() -> Iterator[None]:
+    """
+    Wait for GUI workers when tests finish without entering QApplication.exec().
+    """
+    yield
+    app = QApplication.instance()
+    if app is not None:
+        loader = app.findChild(ModelOptionsLoader, 'fits-cellpose-model-options')
+        if loader is not None:
+            loader.wait()
 
 
 @pytest.fixture(autouse=True)

@@ -173,7 +173,9 @@ Current-file actions check the whole run:
 
 A slightly separated **Compact experiment…** action removes intermediate files
 and caches while keeping essential files. It creates no persistent backup.
-The actions stay clickable and explain when there is nothing to do.
+In Manage files, run guidance appears on the left and file-action buttons on the
+right. Actions that do not apply are greyed out; their tooltips explain why.
+Other GUI windows retain their existing button behavior.
 **Manage backups** shows availability, saved versions and their total size, with
 **Restore selected backup…** and **Delete selected backups…** actions.
 The same manager is available with `uv run fits manage /path/to/run`.

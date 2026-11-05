@@ -705,7 +705,17 @@ Convert. An unchanged **Next** returns to processing without another conversion;
 changed conversion settings, including overwrite, request a fresh conversion.
 
 Conversion channel labels can be any names, but must follow the source image's
-channel order. The GUI selects all channels for export by default; select a
+channel order. Raw ND2 and TIFF files can share a run, but must have the same
+number of channels. Shared input checks run when the GUI loads a run directory
+and before pipeline conversion; blocking problems appear in red in the GUI,
+with affected files and corrective guidance in the warning and **Details**.
+The channel-label input shows the expected raw channel count in italic.
+Files with the same stem in the same folder receive extension-specific
+acquisition folders (for example, `sample_nd2/sample.nd2` and
+`sample_tif/sample.tif`), with a console log message and no popup. Original
+filenames are preserved. Matching stems in different subfolders do not need
+this adjustment. Existing or conflicting destination folders block conversion.
+The GUI selects all channels for export by default; select a
 subset to convert/export only those channels. Registration and segmentation
 channel menus follow that export selection. Fitting and nuclear channels have
 an optional **None** choice, while the required registration reference and

@@ -8,6 +8,7 @@ from collections.abc import Callable
 from fits.workflows.checks.models import PreflightReport, PreflightRequired
 from fits.workflows.checks.artifacts import inspect_run
 from fits.workflows.checks.pipeline import require_pipeline_space
+from fits.workflows.checks.raw_inputs import inspect_raw_inputs
 from fits.workflows.file_management.snapshots import rebuild_backup_size, replacement_states, retain_rebuild_backups
 from fits.workflows.checks.decisions import apply_decision
 from fits.workflows.runtime.interactive.interaction import PipelineInteraction
@@ -84,6 +85,7 @@ def start_pipeline(settings_path: Path | None = None,
 
     # --- discover images ---
     supported_files = collect_supported_files(run_dir)
+    all_supported_files = supported_files
 
     # --- optimization ---
     optimize_raw = user_cfg.get("optimize", None)
@@ -153,6 +155,12 @@ def start_pipeline(settings_path: Path | None = None,
     else:
         effective_cfg = apply_overwrite_cascade(scoped_cfg, WORKFLOW_ORDER)
 
+    raw_report = None
+    if effective_cfg.get("convert", {}).get("enabled", False):
+        raw_report = inspect_raw_inputs(run_dir, sorted(set(all_supported_files) | set(supported_files)))
+        if raw_report.problems:
+            raise ValueError(raw_report.describe())
+
     # --- build ExperimentState list from saved states + newly discovered raw files ---
     if maintenance is not None:
         states = [replace(state, execution_scope=maintenance.scope)
@@ -175,6 +183,9 @@ def start_pipeline(settings_path: Path | None = None,
     if upgrade_states is not None:
         origins = {state.original_image for state in upgrade_states}
         states = [state for state in states if state.original_image in origins]
+    if raw_report is not None:
+        states = [replace(state, acquisition_directory=raw_report.acquisition_directories.get(state.original_image))
+                  for state in states]
     # Manual drawing and older tools consume the generic image alias. Bind it
     # to the same enabled chain as the configured StepProfiles, including when
     # every preprocessing step is bypassed and no image step runs this launch.

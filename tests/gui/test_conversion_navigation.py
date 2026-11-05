@@ -62,7 +62,7 @@ def test_expected_channels_uses_all_raw_files(window: FitsMainWindow, tmp_path: 
     noun = "channel" if channels == 1 else "channels"
     assert hint.text() == f"({channels} expected {noun})"
     assert hint.font().italic()
-    assert not window._conversion_channel_error()
+    assert not window._raw_input_error()
     assert window.run_button.isEnabled()
     for path in tmp_path.glob("*.tif*"):
         path.unlink()
@@ -85,6 +85,10 @@ def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
     assert hint.text() == "(different channel counts: 1 or 2)"
     assert not window.run_button.isEnabled()
     assert "Cannot convert" in window.navigation_status.text()
+    assert "input_1.tif: 1 channel" in window.file_status_label.toolTip()
+    assert "input_2.tif: 2 channels" in window._file_details_text()
+    assert "#e57373" in window.file_status_label.styleSheet()
+    assert "#e57373" in window.navigation_status.styleSheet()
     warnings: list[str] = []
     monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
     monkeypatch.setattr(window, "_save_settings", lambda: pytest.fail("Mixed channel counts reached pipeline setup"))
@@ -96,6 +100,38 @@ def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
     window._refresh_run_inventory()
     assert hint.text() == "(1 expected channel)"
     assert window.run_button.isEnabled()
+
+
+def test_duplicate_stems_load_without_popup(window: FitsMainWindow,
+                                           tmp_path: Path,
+                                           monkeypatch: pytest.MonkeyPatch,
+                                           ) -> None:
+    """
+    Treat automatically resolved same-folder stems as valid inputs without a popup.
+    """
+    for extension in ("tif", "tiff"):
+        tifffile.imwrite(tmp_path / f"sample.{extension}", np.zeros((2, 8, 8), dtype=np.uint16),
+                         imagej=True, metadata={"axes": "CYX"})
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: pytest.fail("Unexpected input warning popup"))
+    window._refresh_run_inventory()
+    assert not window._raw_input_error()
+    assert window.run_button.isEnabled()
+    assert not (tmp_path / "sample_tif").exists()
+    assert window._raw_input_report is not None
+    assert window._raw_input_report.acquisition_directories[tmp_path / "sample.tif"] == tmp_path / "sample_tif"
+
+
+def test_destination_conflict_identifies_input_in_red(window: FitsMainWindow, tmp_path: Path) -> None:
+    """
+    Show a blocking destination conflict and its source file through shared inspection.
+    """
+    tifffile.imwrite(tmp_path / "sample.tif", np.zeros((8, 8), dtype=np.uint16), metadata={"axes": "YX"})
+    (tmp_path / "sample").mkdir()
+    window._refresh_run_inventory()
+    assert not window.run_button.isEnabled()
+    assert "Cannot create acquisition folder: sample" in window.navigation_status.text()
+    assert "sample.tif" in window._file_details_text()
+    assert "#e57373" in window.file_status_label.styleSheet()
 
 
 def test_next_converts_once_then_unchanged_back_next_only_navigates(window, tmp_path, monkeypatch):

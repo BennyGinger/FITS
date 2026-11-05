@@ -2,7 +2,8 @@ from __future__ import annotations
 from fits.settings.models import ExtractSettings
 from fits.gui.theme import STEP_TAB_BAR_STYLE
 
-from fits.workflows.checks.models import PreflightReport
+from fits.workflows.checks.models import PreflightReport, RawInputReport
+from fits.workflows.checks.raw_inputs import inspect_raw_inputs
 from fits.workflows.file_management.rebuild import ProcessingPlan
 from fits.workflows.runtime.interactive.messages import MaskCollectionRequest, TrackEditRequest, TrackEditOutcome
 import logging
@@ -31,7 +32,6 @@ from fits.settings.models import BGSubSettings, RegisterChannelSettings, Registe
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
 from fits.settings.loader import run_settings_path
 from fits.workflows.experiments.roots import resolve_run_root
-from fits.workflows.experiments import collect_supported_files
 from fits.gui.artifact_decisions import choose_artifacts
 from fits.workflows.checks.compatibility import inspect_run_compatibility
 from fits_io import FitsIO
@@ -89,7 +89,7 @@ class FitsMainWindow(QMainWindow):
         self._run_status = None
         self._artifact_report = None
         self._file_channel_cache = {}
-        self._expected_channel_counts: set[int] = set()
+        self._raw_input_report: RawInputReport | None = None
         self._current_step = cst.StepName.CONVERT
         self._conversion_root: str | None = None
         self._converted_settings: dict | None = None
@@ -351,6 +351,7 @@ class FitsMainWindow(QMainWindow):
         buttons.addWidget(self.save_button)
         buttons.addStretch()
         self.navigation_status = QLabel()
+        self.navigation_status.setWordWrap(True)
         self.navigation_status.setStyleSheet("color: #b8b8b8;")
         buttons.addWidget(self.navigation_status)
         self.back_button = QPushButton("Back")
@@ -1138,11 +1139,11 @@ class FitsMainWindow(QMainWindow):
         """
         if convert_only or self.adapter.step_enabled(cst.StepName.CONVERT):
             root = Path(self.adapter.run_dir).expanduser() if self.adapter.run_dir else None
-            self._refresh_expected_channels(root)
-            channel_error = self._conversion_channel_error()
-            if channel_error:
+            self._refresh_raw_inputs(root)
+            input_error = self._raw_input_error()
+            if input_error:
                 self._update_run_button_text()
-                QMessageBox.warning(self, "Cannot convert images", channel_error)
+                QMessageBox.warning(self, "Cannot convert images", input_error)
                 return
         label_window = self._channel_labels_window
         if (label_window is not None and label_window._job is not None
@@ -1223,38 +1224,26 @@ class FitsMainWindow(QMainWindow):
                                                 for_execution=False,
                                                 )
         self._file_channel_cache.clear()
-        self._refresh_expected_channels(root)
+        self._refresh_raw_inputs(root)
         conflicts = {record.path.parent for record in self._artifact_report.conflicts} if self._artifact_report is not None else set()
         self.run_browser.set_experiment_status(self._run_status, conflicts)
         self._selection_status_changed(self.run_browser.selected_path)
 
-    def _refresh_expected_channels(self, root: Path | None) -> None:
+    def _refresh_raw_inputs(self, root: Path | None) -> None:
         """
-        Read raw acquisition channel counts for the conversion label hint.
+        Reuse shared raw-input checks for channel hints and blocking run problems.
         """
-        counts: set[int] = set()
-        unreadable = False
-        if root is not None and root.is_dir():
-            for path in collect_supported_files(root):
-                try:
-                    counts.add(FitsIO.from_path(path).reader.channel_count)
-                except Exception:
-                    logging.getLogger(__name__).debug("Cannot read channel count from %s", path, exc_info=True)
-                    unreadable = True
-        self._expected_channel_counts = counts
-        visible_counts = counts if not unreadable or len(counts) > 1 else set()
-        self._editors[cst.StepName.CONVERT].set_expected_channel_counts(visible_counts)
+        self._raw_input_report = inspect_raw_inputs(root) if root is not None and root.is_dir() else None
+        counts = set(self._raw_input_report.channel_counts.values()) if self._raw_input_report is not None else set()
+        if self._raw_input_report is not None and self._raw_input_report.problems and len(counts) <= 1:
+            counts.clear()
+        self._editors[cst.StepName.CONVERT].set_expected_channel_counts(counts)
 
-    def _conversion_channel_error(self) -> str:
+    def _raw_input_error(self) -> str:
         """
-        Explain why acquisitions with different channel counts cannot share conversion settings.
+        Return the shared raw-input report's actionable error description.
         """
-        if len(self._expected_channel_counts) <= 1:
-            return ""
-        values = ", ".join(str(count) for count in sorted(self._expected_channel_counts))
-        return (f"Cannot convert files with different numbers of channels ({values}). "
-                "All raw ND2/TIFF files in the run directory must have the same number of channels. "
-                "Place files with different channel counts in separate run directories.")
+        return self._raw_input_report.describe() if self._raw_input_report is not None else ""
 
     @Slot(object)
     def _selection_status_changed(self, selected: Path | None = None) -> None:
@@ -1277,12 +1266,15 @@ class FitsMainWindow(QMainWindow):
             scope = scope.parent
         files = [path for path in status.files if path.parent == scope or scope in path.parents]
         conflicts = self._artifact_report is not None and bool(self._artifact_report.conflicts)
-        self.file_status_label.setText('Upgrade to FITS v4 required - read-only' if status.outdated else
+        input_error = self._raw_input_error()
+        self.file_status_label.setText('Raw inputs need attention — cannot convert' if input_error else
+                                       'Upgrade to FITS v4 required - read-only' if status.outdated else
                                        'Outdated downstream results' if conflicts else
                                        ('Current — editable' if status.states else 'Fresh inputs — conversion available'))
-        color = OUTDATED_COLOR if status.outdated or conflicts else COMPATIBLE_COLOR
+        color = '#e57373' if input_error else OUTDATED_COLOR if status.outdated or conflicts else COMPATIBLE_COLOR
         self.file_status_label.setStyleSheet(f'color: {color}; font-weight: bold;')
-        self.file_status_label.setToolTip('See Details for migration or downstream-update guidance.' if status.outdated or conflicts else '')
+        self.file_status_label.setToolTip(input_error or ('See Details for migration or downstream-update guidance.'
+                                                         if status.outdated or conflicts else ''))
         count = f'{len(files)} result ' + ('file' if len(files) == 1 else 'files')
         self.file_size_label.setText(f"Run size: {self._run_size_bytes / 1024**3:.2f} GiB" if self._run_size_bytes >= 1024**3 else
                                      f"Run size: {self._run_size_bytes / 1024**2:.1f} MiB")
@@ -1317,6 +1309,9 @@ class FitsMainWindow(QMainWindow):
         scope = selected.parent if selected.is_file() else selected
         files = [path for path in status.files if path.parent == scope or scope in path.parents]
         lines = []
+        input_error = self._raw_input_error()
+        if input_error:
+            lines.append(input_error)
         if status.outdated:
             lines.append('This run contains files or an experiment layout incompatible with the current FITS version. The entire run is read-only.')
             lines.append('You can keep viewing the existing images and masks, or use Manage files → Migrate to FITS 4.')
@@ -1675,9 +1670,10 @@ class FitsMainWindow(QMainWindow):
         self.run_button.setText("Next" if converting else "Run pipeline")
         steps = (cst.StepName.CONVERT,) if converting else cst.WORKFLOW_ORDER
         missing = [error for step in steps for error in self.adapter.missing_user_fields(step)]
-        channel_error = self._conversion_channel_error()
-        if channel_error and (converting or self.adapter.step_enabled(cst.StepName.CONVERT)):
-            missing.append(channel_error)
+        input_error = self._raw_input_error()
+        if input_error and (converting or self.adapter.step_enabled(cst.StepName.CONVERT)):
+            missing.append(input_error)
+        self.navigation_status.setStyleSheet("color: #e57373;" if input_error else "color: #b8b8b8;")
         if converting and not self.adapter.step_enabled(cst.StepName.CONVERT) and not self._conversion_is_current():
             missing.append("Enable Convert before continuing.")
         label_job = (self._channel_labels_window is not None
@@ -1700,7 +1696,7 @@ class FitsMainWindow(QMainWindow):
         self.run_button.setToolTip(action_help + ("\n\nBefore continuing:\n" + "\n".join(missing) if missing else ""),
                                    )
         self.navigation_status.setText(
-            channel_error if channel_error and converting else
+            input_error.split("\n", 1)[0] + " See Details for affected files." if input_error and converting else
             ("Converted images are ready." if self._conversion_is_current()
              else "Next converts your images before processing.") if converting else "")
 

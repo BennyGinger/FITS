@@ -10,6 +10,22 @@ from fits_io.metadata.models import FitsIOMeta
 
 
 @dataclass(frozen=True)
+class RawInputReport:
+    """
+    Describe raw channel counts, planned acquisition folders and blocking input problems.
+    """
+    channel_counts: dict[Path, int]
+    acquisition_directories: dict[Path, Path]
+    problems: tuple[str, ...]
+
+    def describe(self) -> str:
+        """
+        Format input problems with affected paths and corrective guidance.
+        """
+        return "\n\n".join(self.problems)
+
+
+@dataclass(frozen=True)
 class RunCompatibility:
     """
     Describe format and layout problems independently of execution completion.

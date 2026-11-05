@@ -1,18 +1,19 @@
 """FITS-owned grouping of original acquisitions and their series."""
 
 from __future__ import annotations
+import logging
 from pathlib import Path
 from fits.environment.paths import EXPERIMENT_DIR_NAME, ensure_fits_directory
 
 
-def group_acquisition(source: Path) -> Path:
+def group_acquisition(source: Path, target: Path | None = None) -> Path:
     """
-    Group acquisition.
+    Move the original into its planned acquisition folder while preserving its filename.
     """
     source = source.expanduser().resolve()
     if (source.parent / EXPERIMENT_DIR_NAME).is_dir():
         return source
-    target = source.parent / source.stem
+    target = target if target is not None else source.parent / source.stem
     if target.exists():
         raise ValueError(f'Acquisition destination already exists: {target}. Use Manage files to review its structure.')
     target.mkdir()
@@ -26,4 +27,6 @@ def group_acquisition(source: Path) -> Path:
         if not any(target.iterdir()):
             target.rmdir()
         raise
+    if target.name != source.stem:
+        logging.getLogger(__name__).info("Duplicate acquisition stem: %s grouped in %s", source.name, target)
     return moved

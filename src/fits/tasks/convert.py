@@ -52,7 +52,7 @@ def convert(settings: ConvertSettings,
     # Run the conversion step
     logger.debug("%s will be executed with settings: %s", step_profile.step_name, settings.model_dump())
     try:
-        grouped = group_acquisition(exp_state.original_image)
+        grouped = group_acquisition(exp_state.original_image, exp_state.acquisition_directory)
         exp_state = replace(exp_state, artifacts={**exp_state.artifacts,
             ARTI_RAW: Path(os.path.relpath(grouped, exp_state.workdir))})
         source = FitsIO.from_path(grouped)

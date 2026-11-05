@@ -226,7 +226,10 @@ def test_upgrade_rebuild_is_explicit_and_cancellation_stays_read_only(tmp_path):
     assert not inspect_run_compatibility(tmp_path).outdated
 
 
-def test_two_series_share_original_and_metadata_owner(tmp_path, monkeypatch):
+def test_two_series_share_original_and_metadata_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Keep multiseries outputs bound to one original acquisition and metadata owner.
+    """
     import importlib
     module = importlib.import_module('fits.tasks.convert')
     from_path = FitsIO.from_path
@@ -234,8 +237,12 @@ def test_two_series_share_original_and_metadata_owner(tmp_path, monkeypatch):
     alt.parent.mkdir()
     tifffile.imwrite(alt, np.full((8, 8), 99, dtype=np.uint16), photometric='minisblack')
     class TwoSeries:
-        def __init__(self, path):
+        def __init__(self, path: Path) -> None:
+            """
+            Expose source metadata as well as the synthetic series split.
+            """
             self.first = from_path(path)
+            self.reader = self.first.reader
         def resolve_channel_selection(self, **kwargs):
             return self.first.resolve_channel_selection(**kwargs)
         def split_series(self):
@@ -250,7 +257,9 @@ def test_two_series_share_original_and_metadata_owner(tmp_path, monkeypatch):
     assert {state.workdir.name for state in states} == {'image_s1', 'image_s2'}
     assert len({state.original_image for state in states}) == 1
     second = next(state for state in states if state.workdir.name == 'image_s2')
-    np.testing.assert_array_equal(from_path(second.artifact(cst.ARTI_IMG_RAW)).get_array().array, np.full((8, 8), 99))
+    image = second.artifact(cst.ARTI_IMG_RAW)
+    assert image is not None
+    np.testing.assert_array_equal(from_path(image).get_array().array, np.full((8, 8), 99))
     assert experiment_state_path(first.workdir).parents[2] == experiment_state_path(second.workdir).parents[2]
 
 

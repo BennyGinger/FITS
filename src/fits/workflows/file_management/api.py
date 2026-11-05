@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from fits.workflows.file_management.relocation import PortablePlan, plan_portable_update, apply_portable_update
 from fits.workflows.experiments import ExperimentState
+from fits.workflows.checks.locations import inspect_locations
 from fits.workflows.checks.compatibility import inspect_run_compatibility, require_current_run
 from . import rebuild
 from .rebuild import ProcessingPlan
@@ -35,7 +36,7 @@ def plan_update(root: Path) -> PortablePlan | None:
     Use the same relocation/table executor for already migrated experiments.
     """
     require_current_run(root)
-    if not inspect_run_compatibility(root).states:
+    if not inspect_locations(root).needs_update:
         return None
     return plan_portable_update(root)
 
@@ -63,6 +64,14 @@ def plan_full_rebuild(root: Path) -> ProcessingPlan | None:
     """
     require_current_run(root)
     return rebuild.plan_full_rebuild(root)
+
+
+def plan_required_rebuild(root: Path) -> ProcessingPlan | None:
+    """
+    Plan only complete reconstruction or stale results that need rebuilding.
+    """
+    require_current_run(root)
+    return rebuild.plan_required_rebuild(root)
 
 
 def update_downstream(plan: ProcessingPlan, run: Callable[[ProcessingPlan], None]) -> None:

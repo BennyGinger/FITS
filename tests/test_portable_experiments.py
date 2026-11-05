@@ -133,8 +133,8 @@ def test_layout_upgrade_and_tag_refresh_preserve_measurements(tmp_path):
     assert not inspect_run_compatibility(tmp_path).outdated
     table = pd.read_parquet(state.artifact(cst.ARTI_QUANTI))
     assert table['intensity_mean'].tolist() == [123.25]
-    assert table['experiment_id'].tolist() == ['control/image/image_s1']
-    assert table['condition_level_1'].tolist() == ['control']
+    assert table['experiment_id'].tolist() == ['image/image_s1']
+    assert 'condition_level_1' not in table
     moved = tmp_path / 'treated' / 'image'
     moved.parent.mkdir()
     shutil.move(state.original_image.parent, moved)
@@ -142,8 +142,8 @@ def test_layout_upgrade_and_tag_refresh_preserve_measurements(tmp_path):
     apply_portable_update(refresh)
     table = pd.read_parquet(moved / 'image_s1' / cst.FITS_QUANTI_NAME)
     assert table['intensity_mean'].tolist() == [123.25]
-    assert table['experiment_id'].tolist() == ['treated/image/image_s1']
-    assert table['condition_level_1'].tolist() == ['treated']
+    assert table['experiment_id'].tolist() == ['image/image_s1']
+    assert 'condition_level_1' not in table
 
 
 def test_layout_failure_rolls_back_moves_and_state(tmp_path, monkeypatch):

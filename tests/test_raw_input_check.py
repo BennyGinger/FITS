@@ -107,6 +107,54 @@ def test_unreadable_metadata_blocks_instead_of_guessing(tmp_path: Path) -> None:
     assert "Cannot read raw input metadata: broken.nd2" in report.describe()
 
 
+def test_explicit_labels_match_source_channels_and_empty_labels_use_defaults(tmp_path: Path) -> None:
+    """
+    Check source counts without mistaking a selected export subset for all inputs.
+    """
+    _write_tiff(tmp_path / "sample.tif", 2)
+    assert not inspect_raw_inputs(tmp_path, channel_labels=[]).problems
+    assert not inspect_raw_inputs(tmp_path, channel_labels=["Green", "Red"]).problems
+    report = inspect_raw_inputs(tmp_path, channel_labels=["Green", "Red", "Blue"])
+    assert not report.problems
+    assert len(report.warnings) == 1
+    assert "Expected 2 channels, got 3 channel labels" in report.warnings[0]
+    assert "default names: C_1, C_2." in report.warnings[0]
+
+
+def test_pipeline_warns_and_uses_defaults_for_label_count_mismatch(tmp_path: Path) -> None:
+    """
+    Convert with the exact default labels and log the mismatch instead of rejecting the run.
+    """
+    run = tmp_path / "run"
+    _write_tiff(run / "input.tif", 3)
+    settings = _settings(run)
+    from fits_io import FitsIO
+
+    start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
+    output = next(run.rglob("fits_array_raw.tif"))
+    assert FitsIO.from_path(output).channel_labels == ["C_1", "C_2", "C_3"]
+    log = next((run / ".fits" / "logs").glob("*.log")).read_text()
+    assert "Expected 3 channels, got 2 channel labels" in log
+    assert "default names: C_1, C_2, C_3." in log
+
+
+def test_pipeline_empty_labels_uses_reader_defaults(tmp_path: Path) -> None:
+    """
+    Convert unnamed source channels without requiring user-defined labels.
+    """
+    from fits_io import FitsIO
+
+    run = tmp_path / "run"
+    _write_tiff(run / "input.tif", 2)
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(run)
+    adapter.user_name = "Test"
+    settings = adapter.save(tmp_path / "settings.toml")
+    start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
+    output = next(run.rglob("fits_array_raw.tif"))
+    assert FitsIO.from_path(output).channel_labels == ["C_1", "C_2"]
+
+
 def test_duplicates_inside_existing_acquisition_require_resolution(tmp_path: Path) -> None:
     """
     Preserve existing acquisition paths instead of allowing two originals to overwrite the same series.

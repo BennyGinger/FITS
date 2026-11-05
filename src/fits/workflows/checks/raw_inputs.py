@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from fits_io import FitsIO
+from fits_io.metadata.resolve import channel_label_warning
 from fits.environment.paths import EXPERIMENT_DIR_NAME
 from fits.workflows.checks.models import RawInputReport
 from fits.workflows.experiments import collect_supported_files
@@ -54,7 +55,22 @@ def _plan_acquisition_directories(files: Sequence[Path], root: Path) -> tuple[di
     return directories, problems
 
 
-def inspect_raw_inputs(root: Path, files: Sequence[Path] | None = None) -> RawInputReport:
+def channel_label_warnings(counts: dict[Path, int], labels: Sequence[str] | None) -> tuple[str, ...]:
+    """
+    Warn about label counts without blocking conversion or duplicating mixed-input errors.
+    """
+    expected = set(counts.values())
+    if labels is None or len(expected) != 1:
+        return ()
+    warning = channel_label_warning(next(iter(expected)), len(labels))
+    return (warning,) if warning else ()
+
+
+def inspect_raw_inputs(root: Path,
+                       files: Sequence[Path] | None = None,
+                       *,
+                       channel_labels: Sequence[str] | None = None,
+                       ) -> RawInputReport:
     """
     Check raw channel counts and acquisition destinations without reading image pixels or changing files.
     """
@@ -75,4 +91,6 @@ def inspect_raw_inputs(root: Path, files: Sequence[Path] | None = None) -> RawIn
         problems.append(f"Cannot convert files with different numbers of channels ({values}).\n{inputs}\n"
                         "Place acquisitions with different channel counts in separate run directories.")
     directories, destination_problems = _plan_acquisition_directories(sources, root)
-    return RawInputReport(counts, directories, tuple(problems + destination_problems))
+    return RawInputReport(counts, directories, tuple(problems + destination_problems),
+                          channel_label_warnings(counts, channel_labels),
+                          )

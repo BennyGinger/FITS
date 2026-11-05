@@ -12,11 +12,12 @@ from fits_io.metadata.models import FitsIOMeta
 @dataclass(frozen=True)
 class RawInputReport:
     """
-    Describe raw channel counts, planned acquisition folders and blocking input problems.
+    Describe raw channel counts, planned acquisition folders, blocking problems and informational warnings.
     """
     channel_counts: dict[Path, int]
     acquisition_directories: dict[Path, Path]
     problems: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
 
     def describe(self) -> str:
         """

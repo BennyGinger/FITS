@@ -154,7 +154,7 @@ def test_settings_remain_editable_during_run(tmp_path) -> None:
     saved_path = adapter.save_to_run_dir()
     saved_settings = saved_path.read_bytes()
     window._set_running(True)
-    for button in (window.run_button, window.load_button, window.save_button,
+    for button in (window.run_button, window.load_protocol_button, window.save_protocol_button, window.save_button,
                    window.browse_button, window.back_button,
                    window.report_button, window.tracking_viewer_button):
         assert not button.isEnabled()
@@ -616,8 +616,8 @@ def test_main_action_buttons_describe_their_behavior(tmp_path) -> None:
         window._back_to_convert()
         assert window.run_button.text() == "Next"
         assert "unchanged" in window.run_button.toolTip()
-        # Missing-field guidance supplements the action description.
-        assert "channel_labels" in window.run_button.toolTip()
+        # Empty channel labels now use the reader defaults.
+        assert window.run_button.isEnabled()
     finally:
         window.close()
 
@@ -762,7 +762,7 @@ def test_convert_projection_none_can_be_selected() -> None:
 
 
 @pytest.mark.parametrize("navigation", ["step", "phase"])
-@pytest.mark.parametrize("step", [StepName.CONVERT, StepName.SEGMENT])
+@pytest.mark.parametrize("step", [StepName.SEGMENT])
 def test_leaving_enabled_step_warns_when_user_input_is_missing(
     tmp_path: Path, monkeypatch, navigation: str, step: StepName,
 ) -> None:
@@ -789,9 +789,7 @@ def test_leaving_enabled_step_warns_when_user_input_is_missing(
     else:
         window.phase_tabs.setCurrentIndex(2) if step == StepName.SEGMENT else window._select_step(StepName.REGISTER_TIME)
 
-    message = ("Segmentation: Choose a target channel for every section."
-               if step == StepName.SEGMENT else
-               "Convert: Enter at least one channel label (channel_labels).")
+    message = "Segmentation: Choose a target channel for every section."
     assert warnings == [(
         "Missing required setting",
         message,
@@ -875,7 +873,6 @@ def test_run_warns_for_all_missing_enabled_step_inputs(
     assert len(warnings) == 1
     title, message = warnings[0]
     assert title == "Cannot run FITS"
-    assert "Convert: Enter at least one channel label (channel_labels)." in message
     assert "Channel-shift: Choose a reference channel (reference_channel)." in message
     assert "Segmentation: Choose a target channel for every section." in message
     assert "Tracking: Choose at least one channel to track (channel_to_track)." in message
@@ -941,8 +938,8 @@ def test_run_button_tracks_missing_enabled_inputs(tmp_path: Path) -> None:
     window = FitsMainWindow(adapter)
     app.processEvents()
 
-    assert not window.run_button.isEnabled()
-    assert "channel_labels" in window.run_button.toolTip()
+    assert window.run_button.isEnabled()
+    assert "Before continuing:" not in window.run_button.toolTip()
 
     channel_labels = window._editors[StepName.CONVERT].widgets["channel_labels"]
     channel_labels.setText("GFP")

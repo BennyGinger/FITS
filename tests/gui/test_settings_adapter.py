@@ -73,9 +73,7 @@ def test_run_validation_requires_identity_and_existing_directory(tmp_path: Path)
 
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "User"
-    assert adapter.validate_for_run() == [
-        "Convert: Enter at least one channel label (channel_labels)."
-    ]
+    assert adapter.validate_for_run() == []
 
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     assert adapter.validate_for_run() == []
@@ -85,15 +83,12 @@ def test_missing_user_fields_only_checks_enabled_steps() -> None:
     adapter = SettingsAdapter()
     adapter.set_segment_channels([])
 
-    assert adapter.missing_user_fields() == [
-        "Convert: Enter at least one channel label (channel_labels)."
-    ]
+    assert adapter.missing_user_fields() == []
 
     adapter.set_step_enabled(StepName.REGISTER_CHANNEL, True)
     adapter.set_step_enabled(StepName.SEGMENT, True)
     adapter.set_step_enabled(StepName.TRACK, True)
     assert adapter.missing_user_fields() == [
-        "Convert: Enter at least one channel label (channel_labels).",
         "Channel-shift: Choose a reference channel (reference_channel).",
         "Segmentation: Choose a target channel for every section.",
         "Tracking: Choose at least one channel to track (channel_to_track).",

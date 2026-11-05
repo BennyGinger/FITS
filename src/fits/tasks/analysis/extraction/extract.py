@@ -5,7 +5,7 @@ from fits.workflows.experiments import ExperimentState
 from fits.settings.models import ExtractSettings
 from fits.tasks.analysis.extraction.manager import ExtractionManager
 from fits.tasks.analysis.extraction.compartment_export import export_compartments
-from fits.tasks.analysis.identity import add_quantification_ids, add_condition_tags
+from fits.tasks.analysis.identity import add_quantification_ids
 from fits.tasks.analysis.tracking_summary import add_track_statistics
 from fits.tasks.analysis.tracking_motion import add_track_motion
 from fits.tasks.common.artifact_results import complete_step_result
@@ -14,7 +14,6 @@ from fits.tasks.common.table_results import save_parquet
 from fits.workflows.definitions.models import StepProfile
 from fits.workflows.runtime.errors import StepExecutionError
 from fits.workflows.artifacts.provenance import revision_payload
-from fits.tasks.analysis.aggregate import _condition_values
 
 
 logger = logging.getLogger(__name__)
@@ -58,9 +57,7 @@ def extract(settings: ExtractSettings,
                                        )
 
         # Add FITS-specific provenance to the extracted measurements.
-        dataframe = add_quantification_ids(dataframe, exp_state.analysis_experiment_id)
-        if exp_state.run_dir is not None:
-            add_condition_tags(dataframe, _condition_values(exp_state, exp_state.run_dir))
+        dataframe = add_quantification_ids(dataframe, exp_state.portable_experiment_id)
         add_track_statistics(dataframe)
         add_track_motion(dataframe, pixel_size=extractor.pixel_size)
 
@@ -69,6 +66,8 @@ def extract(settings: ExtractSettings,
 
         updated_state = exp_state.with_metadata(step_name=step_profile.step_name,
                                                 created_by=step_profile.distribution,
+                                                exported_channel="all",
+                                                channels_params=settings.model_dump(),
                                                 )
         payload = revision_payload(manager.image_reader, updated_state, step_profile, export_channels="all")
         save_path = save_parquet(dataframe, output_path, payload)

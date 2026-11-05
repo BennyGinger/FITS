@@ -115,7 +115,7 @@ def test_migrate_preserves_legacy_pixels_measurements_and_producer_history(tmp_p
             assert payload.custom_metadata['migration']['original_pipeline_meta']['version'] == '3.3.0'
     table = pd.read_parquet(state.artifact(cst.ARTI_QUANTI))
     assert table['intensity_mean'].tolist() == [123.25]
-    assert table['experiment_id'].tolist() == ['control/image/image_s1']
+    assert table['experiment_id'].tolist() == ['image/image_s1']
     assert not inspect_run_compatibility(tmp_path).outdated
     assert not inspect_run(tmp_path, adapter.as_mapping()).conflicts
     assert plan_migration(tmp_path) is None
@@ -291,8 +291,12 @@ def test_full_rebuild_merges_all_series_from_one_original(tmp_path: Path, monkey
     from_path = FitsIO.from_path
     source = first.original_image
     class TwoSeries:
-        def __init__(self, path):
+        def __init__(self, path: Path) -> None:
+            """
+            Expose the real reader metadata used by conversion preflight.
+            """
             self.first = from_path(path)
+            self.reader = self.first.reader
         def resolve_channel_selection(self, **kwargs):
             return self.first.resolve_channel_selection(**kwargs)
         def split_series(self):
@@ -495,6 +499,10 @@ def test_update_backup_is_not_discovered_as_active_experiment(tmp_path: Path) ->
     original = state.artifact(cst.ARTI_IMG)
     assert original is not None
     before = original.read_bytes()
+    master = tmp_path / cst.MASTER_QUANTI_NAME
+    frame = pd.read_parquet(master)
+    frame['condition_level_1'] = 'old condition'
+    frame.to_parquet(master, index=False)
     plan = plan_update(tmp_path)
     assert plan is not None
     update(plan)

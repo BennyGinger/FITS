@@ -128,6 +128,11 @@ def test_manage_refresh_runs_after_review_and_cancel_preserves_files(current_win
     shutil.copy2(source, other_image)
     save_experiment_state(ExperimentState.init(other, series.parent / 'image.tif', run_dir=tmp_path).with_complete_step(
         step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=other_image))
+    import json
+    state_path = next((series.parent / '.fits_experiment/experiment_state').glob('*/experiment_state.json'))
+    payload = json.loads(state_path.read_text())
+    payload['artifacts'][cst.ARTI_RAW] = str(series.parent / 'image.tif')
+    state_path.write_text(json.dumps(payload))
     previews = []
     def confirm(*args, **kwargs):
         previews.append(args[1])
@@ -147,7 +152,7 @@ def test_manage_refresh_runs_after_review_and_cancel_preserves_files(current_win
     assert manage_files(tmp_path, series, window)
     assert source.read_bytes() == before
     assert read_metadata(source).fits_io.created_at == stamp
-    assert len(previews) == 2 and all(str(other_image.parent) in text for text in previews)
+    assert len(previews) == 2 and all('Saved artifact paths' in text for text in previews)
     assert other_image.read_bytes() == before
 
 
@@ -160,7 +165,7 @@ def test_manage_actions_disable_unavailable_work(current_window: tuple[FitsMainW
     from fits.gui.file_management.manager import manage_files
     window, series = current_window
     previews = []
-    monkeypatch.setattr('fits.gui.file_management.manager.confirm_files', lambda *args: previews.append(args[1]) or False)
+    monkeypatch.setattr('fits.gui.file_management.manager.confirm_files', lambda *args, **kwargs: previews.append(args[1]) or False)
     def inspect() -> None:
         """
         Check current-run action states and the two-column file layout.
@@ -169,19 +174,22 @@ def test_manage_actions_disable_unavailable_work(current_window: tuple[FitsMainW
         assert isinstance(dialog, QDialog)
         try:
             buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
-            assert buttons['Rebuild all experiment results…'].isEnabled()
-            assert buttons['Update paths and condition tags…'].isEnabled()
+            assert not buttons['Rebuild results…'].isEnabled()
+            assert not buttons['Update paths and condition tags…'].isEnabled()
             assert buttons['Compact experiment…'].isEnabled()
-            for title in ('Rebuild outdated results…', 'Restore selected backup…', 'Delete selected backups…'):
+            for title in ('Restore selected backup…', 'Delete selected backups…'):
                 assert not buttons[title].isEnabled()
             assert 'Migrate to FITS 4…' not in buttons
             notice = dialog.findChild(QLabel, 'file_action_notice')
             assert notice is not None
-            rebuild = buttons['Rebuild all experiment results…']
+            rebuild = buttons['Rebuild results…']
             assert notice.mapTo(dialog, notice.rect().topRight()).x() < rebuild.mapTo(dialog, rebuild.rect().topLeft()).x()
             rebuild.click()
-            assert previews and 'can take a long time' in previews[-1]
-            assert 'backed up before' in previews[-1]
+            assert not previews
+            assert 'current' in rebuild.toolTip()
+            from PySide6.QtWidgets import QGroupBox
+            panel = next(group for group in dialog.findChildren(QGroupBox) if group.title() == 'Experiment files')
+            assert len(panel.findChildren(QPushButton)) == 3
         finally:
             dialog.reject()
     QTimer.singleShot(0, inspect)
@@ -216,7 +224,7 @@ def test_loading_stale_results_warns_without_locking_current_format(current_wind
 
 @pytest.mark.parametrize('rebuild', [False, True])
 def test_migration_dialog_defaults_to_metadata_only(tmp_path, rebuild):
-    from types import SimpleNamespace
+    from fits.workflows.file_management.relocation import PortablePlan
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QCheckBox, QDialog
     from fits.gui.file_management.manager import confirm_migration
@@ -229,7 +237,7 @@ def test_migration_dialog_defaults_to_metadata_only(tmp_path, rebuild):
         checkbox.setChecked(rebuild)
         dialog.accept()
     QTimer.singleShot(0, inspect)
-    assert confirm_migration(SimpleNamespace(describe=lambda: 'Move reviewed files; preserve existing results.')) is rebuild
+    assert confirm_migration(PortablePlan(tmp_path, (), (), ())) is rebuild
 
 
 def test_manager_migrates_real_legacy_run_without_launching_processing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -247,7 +255,7 @@ def test_manager_migrates_real_legacy_run_without_launching_processing(tmp_path:
         dialog = _APP.activeModalWidget()
         assert isinstance(dialog, QDialog)
         buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
-        for title in ('Update paths and condition tags…', 'Rebuild outdated results…', 'Compact experiment…'):
+        for title in ('Update paths and condition tags…', 'Compact experiment…'):
             assert not buttons[title].isEnabled()
         assert buttons['Migrate to FITS 4…'].isEnabled()
         buttons['Migrate to FITS 4…'].click()
@@ -431,3 +439,116 @@ def test_backup_buttons_follow_selection_count(current_window: tuple[FitsMainWin
     finally:
         group.close()
         group.deleteLater()
+
+
+def test_moved_master_tags_warn_and_enable_only_location_update(current_window: tuple[FitsMainWindow, Path],
+                                                                 tmp_path: Path,
+                                                                 monkeypatch: pytest.MonkeyPatch,
+                                                                 ) -> None:
+    """
+    Show master location differences in the main GUI and clear them through Update.
+    """
+    import shutil
+    import pandas as pd
+    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtWidgets import QDialog, QGroupBox, QPushButton
+    from fits.gui.file_management.manager import manage_files
+    from fits.gui.main_window.run_browser import OUTDATED_COLOR
+    from fits.tasks.analysis.aggregate import save_master_analysis_table
+    from fits.tasks.common.table_results import save_parquet
+    from fits.workflows.artifacts.provenance import read_metadata
+
+    window, series = current_window
+    state = discover_saved_states(tmp_path)[0]
+    raw = series / cst.FITS_ARRAY_RAW
+    segmentation = series / cst.FITS_MASK_SEG
+    mask_payload = read_metadata(raw).with_fitsio(artifact_type=cst.ARTI_SEG).new_revision([
+        {'artifact_path': raw.name, 'created_at': read_metadata(raw).fits_io.created_at}])
+    FitsIO.from_path(raw).save_array(np.ones((8, 8), dtype=np.uint16), output_path=segmentation, metadata=mask_payload)
+    state = state.with_complete_step(step_name=cst.StepName.SEGMENT, artifact_kind=cst.ARTI_SEG, artifact_path=segmentation)
+    payload = read_metadata(raw).with_fitsio(artifact_type=cst.ARTI_QUANTI).new_revision([
+        {'artifact_path': raw.name, 'created_at': read_metadata(raw).fits_io.created_at},
+        {'artifact_path': segmentation.name, 'created_at': mask_payload.fits_io.created_at}])
+    table = series / cst.FITS_QUANTI_NAME
+    save_parquet(pd.DataFrame({'object_name': ['segmentation'], 'object_channel': ['Red'],
+                               'label': [1], 'frame': [0], 'intensity_mean': [5.0]}), table, payload)
+    state = state.with_complete_step(step_name=cst.StepName.EXTRACT, artifact_kind=cst.ARTI_QUANTI, artifact_path=table)
+    save_experiment_state(state)
+    save_master_analysis_table([state], tmp_path, artifact_kind=cst.ARTI_QUANTI, output_name=cst.MASTER_QUANTI_NAME)
+    before = table.read_bytes()
+    moved = tmp_path / 'treated' / 'image'
+    moved.parent.mkdir()
+    shutil.move(series.parent, moved)
+    window._refresh_run_inventory()
+    assert not window._run_status.outdated
+    assert not window._artifact_report.conflicts
+    assert window.file_status_label.text() == 'Paths or condition tags need updating'
+    assert OUTDATED_COLOR in window.file_status_label.styleSheet()
+    assert 'Update paths and condition tags' in window._file_details_text()
+    index = window.run_browser.model.index(str(moved / series.name))
+    assert window.run_browser.model.data(index, Qt.ItemDataRole.ForegroundRole).name() == OUTDATED_COLOR
+    monkeypatch.setattr('fits.gui.file_management.manager.confirm_files', lambda *args, **kwargs: True)
+
+    def choose() -> None:
+        """
+        Inspect the three action controls and accept the enabled location repair.
+        """
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, QDialog)
+        try:
+            panel = next(group for group in dialog.findChildren(QGroupBox) if group.title() == 'Experiment files')
+            buttons = {button.text(): button for button in panel.findChildren(QPushButton)}
+            assert len(buttons) == 3
+            assert not buttons['Rebuild results…'].isEnabled()
+            assert buttons['Update paths and condition tags…'].isEnabled()
+            buttons['Update paths and condition tags…'].click()
+        finally:
+            if dialog.isVisible():
+                dialog.reject()
+
+    QTimer.singleShot(0, choose)
+    assert manage_files(tmp_path, parent=window)
+    window._refresh_run_inventory()
+    assert not window._location_report.needs_update
+    assert window.file_status_label.text() == 'Current — editable'
+    assert (moved / series.name / table.name).read_bytes() == before
+
+
+def test_outdated_run_offers_one_targeted_rebuild(current_window: tuple[FitsMainWindow, Path], tmp_path: Path) -> None:
+    """
+    Offer only targeted rebuilding after overwriting one stage without downstream work.
+    """
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QDialog, QGroupBox, QPushButton
+    from fits.gui.file_management.manager import manage_files
+    from fits.workflows.artifacts.provenance import read_metadata
+    from fits_io.writers.metadata_update import rewrite_metadata
+
+    window, series = current_window
+    state = discover_saved_states(tmp_path)[0]
+    raw = series / cst.FITS_ARRAY_RAW
+    bg = series / cst.FITS_ARRAY_BGSUB
+    reader = FitsIO.from_path(raw)
+    payload = read_metadata(raw).with_fitsio(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
+        {'artifact_path': raw.name, 'created_at': read_metadata(raw).fits_io.created_at}])
+    reader.save_array(reader.get_array().array, metadata=payload, output_path=bg)
+    save_experiment_state(state.with_complete_step(step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG_BGSUB, artifact_path=bg))
+    rewrite_metadata(raw, read_metadata(raw).new_revision())
+
+    def inspect() -> None:
+        """
+        Check the dynamic title and prevent a second full-rebuild action.
+        """
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, QDialog)
+        try:
+            panel = next(group for group in dialog.findChildren(QGroupBox) if group.title() == 'Experiment files')
+            buttons = {button.text(): button for button in panel.findChildren(QPushButton)}
+            assert len(buttons) == 3
+            assert buttons['Rebuild outdated results…'].isEnabled()
+            assert not buttons['Update paths and condition tags…'].isEnabled()
+        finally:
+            dialog.reject()
+
+    QTimer.singleShot(0, inspect)
+    assert not manage_files(tmp_path, parent=window)

@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from PySide6.QtWidgets import QWidget, QDialog, QDialogButtonBox, QLabel, QPlainTextEdit, QVBoxLayout
+from PySide6.QtWidgets import QWidget, QDialog, QDialogButtonBox, QLabel, QVBoxLayout
 from fits.workflows.file_management.compaction import CompactionPlan
 from fits.workflows.checks.models import PreflightReport
 from pathlib import Path
 from fits.workflows.file_management.api import compact_run, apply_compaction
 from fits.gui.artifact_decisions import choose_artifacts
-from fits.gui.dialogs import size_resizable_dialog
 from fits.gui.file_management.tasks import run_file_task
+from fits.gui.file_preview.widget import FilePreviewWidget
+from fits.gui.file_preview.compaction import compaction_groups
+from fits.gui.file_preview.review import review_tabs, size_file_review
 
 
 def confirm_compaction(plan: CompactionPlan, parent: QWidget | None = None) -> bool:
@@ -23,9 +25,7 @@ def confirm_compaction(plan: CompactionPlan, parent: QWidget | None = None) -> b
     label = QLabel("Review the retained outputs and files to remove. Original acquisitions and REF/ROI masks are preserved. Intermediate files are removed without creating a backup.")
     label.setWordWrap(True)
     layout.addWidget(label)
-    details = QPlainTextEdit(plan.describe())
-    details.setReadOnly(True)
-    layout.addWidget(details)
+    layout.addWidget(review_tabs(FilePreviewWidget(compaction_groups(plan)), plan.describe()))
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
     accept = buttons.button(QDialogButtonBox.StandardButton.Ok)
     assert accept is not None
@@ -33,7 +33,7 @@ def confirm_compaction(plan: CompactionPlan, parent: QWidget | None = None) -> b
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)
-    size_resizable_dialog(dialog, 850, 550)
+    size_file_review(dialog)
     return dialog.exec() == QDialog.DialogCode.Accepted
 
 

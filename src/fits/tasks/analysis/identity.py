@@ -60,7 +60,7 @@ def add_quantification_ids(dataframe: pd.DataFrame, experiment_id: str) -> pd.Da
     return result
 
 
-def add_condition_tags(dataframe: pd.DataFrame, conditions: tuple[str, ...]) -> pd.DataFrame:
+def add_condition_tags(dataframe: pd.DataFrame, conditions: tuple[str | None, ...]) -> pd.DataFrame:
     """
     Refresh folder tags on an adapter-owned table without touching measurements.
     """

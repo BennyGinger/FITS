@@ -157,7 +157,10 @@ def start_pipeline(settings_path: Path | None = None,
 
     raw_report = None
     if effective_cfg.get("convert", {}).get("enabled", False):
-        raw_report = inspect_raw_inputs(run_dir, sorted(set(all_supported_files) | set(supported_files)))
+        labels = effective_cfg.get("convert", {}).get("params", {}).get("channel_labels") or ()
+        raw_report = inspect_raw_inputs(run_dir, sorted(set(all_supported_files) | set(supported_files)),
+                                       channel_labels=[labels] if isinstance(labels, str) else labels,
+                                       )
         if raw_report.problems:
             raise ValueError(raw_report.describe())
 

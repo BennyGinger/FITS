@@ -3,7 +3,7 @@ from fits.settings.models import ExtractSettings
 from fits.gui.theme import STEP_TAB_BAR_STYLE
 
 from fits.workflows.checks.models import PreflightReport, RawInputReport
-from fits.workflows.checks.raw_inputs import inspect_raw_inputs
+from fits.workflows.checks.raw_inputs import channel_label_warnings, inspect_raw_inputs
 from fits.workflows.file_management.rebuild import ProcessingPlan
 from fits.workflows.runtime.interactive.messages import MaskCollectionRequest, TrackEditRequest, TrackEditOutcome
 import logging
@@ -12,7 +12,7 @@ from copy import deepcopy
 from pathlib import Path
 from fits.environment.paths import is_internal_path, reports_dir
 from PySide6.QtCore import QEventLoop, QMimeData, Qt, QThread, QTimer, Slot
-from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QShowEvent
+from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QShowEvent, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 from fits.environment import constant as cst
 from fits.workflows.artifacts.paths import first_image
@@ -30,7 +30,8 @@ from fits.gui.main_window.emergency_stop import terminate_application
 from fits.gui.main_window.progress_display import PipelineProgressWidget
 from fits.settings.models import BGSubSettings, RegisterChannelSettings, RegisterTimeSettings, SegmentSettings
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
-from fits.settings.loader import run_settings_path
+from fits.settings.loader import run_settings_path, write_settings
+import tomlkit
 from fits.workflows.experiments.roots import resolve_run_root
 from fits.gui.artifact_decisions import choose_artifacts
 from fits.workflows.checks.compatibility import inspect_run_compatibility
@@ -46,6 +47,7 @@ from fits.channel_labels import rename_settings_document
 from fits.workflows.file_management.rebuild import execution_config
 from fits.workflows.runtime.scheduler.planning import resolve_runtime_steps
 from fits.workflows.checks.artifacts import inspect_run
+from fits.workflows.checks.locations import LocationReport, inspect_locations
 
 
 _PHASE_STEPS = (
@@ -88,8 +90,10 @@ class FitsMainWindow(QMainWindow):
         self._run_size_bytes = 0
         self._run_status = None
         self._artifact_report = None
+        self._location_report = LocationReport()
         self._file_channel_cache = {}
         self._raw_input_report: RawInputReport | None = None
+        self._last_channel_label_warning = ""
         self._current_step = cst.StepName.CONVERT
         self._conversion_root: str | None = None
         self._converted_settings: dict | None = None
@@ -327,8 +331,12 @@ class FitsMainWindow(QMainWindow):
         outer.addWidget(vertical_splitter)
 
         buttons = QHBoxLayout()
-        self.load_button = QPushButton("Load settings")
         self.save_button = QPushButton("Save settings")
+        self.save_protocol_button = QPushButton("Save protocol")
+        self.load_protocol_button = QPushButton("Load protocol")
+        self.save_button.setToolTip("Save current settings in the selected run directory without running processing.")
+        self.save_protocol_button.setToolTip("Save reusable processing settings to a TOML file; omit run identity and reset overwrite requests.")
+        self.load_protocol_button.setToolTip("Load a TOML protocol after validation and confirmation; keep the current run, user and log destination.")
         self.run_button = QPushButton("Run pipeline")
         self.run_button.setStyleSheet(
             "QPushButton { background-color: #16803b; color: white; "
@@ -344,11 +352,14 @@ class FitsMainWindow(QMainWindow):
             "QPushButton:pressed { background-color: #8d1d27; }")
         self.stop_button.setToolTip("Immediately stop all processing and exit FITS after confirmation.")
         self.stop_button.clicked.connect(self._confirm_emergency_stop)
-        self.load_button.clicked.connect(self._load_settings)
         self.save_button.clicked.connect(self._save_settings)
+        self.save_protocol_button.clicked.connect(self._save_protocol)
+        self.load_protocol_button.clicked.connect(self._load_protocol)
         self.run_button.clicked.connect(self._primary_action)
-        buttons.addWidget(self.load_button)
         buttons.addWidget(self.save_button)
+        buttons.addSpacing(28)
+        buttons.addWidget(self.save_protocol_button)
+        buttons.addWidget(self.load_protocol_button)
         buttons.addStretch()
         self.navigation_status = QLabel()
         self.navigation_status.setWordWrap(True)
@@ -984,6 +995,7 @@ class FitsMainWindow(QMainWindow):
                                                   )
             return
         self.adapter.run_dir = ""
+        self._refresh_protocol_buttons()
         self.run_browser.set_root("")
         self._refresh_report_button()
         self._refresh_phase_access()
@@ -1037,18 +1049,93 @@ class FitsMainWindow(QMainWindow):
             editor.sync_to_adapter()
 
     @Slot()
-    def _load_settings(self) -> None:
+    def _load_protocol(self) -> None:
         """
-        Load settings.
+        Validate and confirm a reusable protocol before replacing the GUI draft.
         """
+        if not self._protocol_available():
+            return
         path, _ = QFileDialog.getOpenFileName(self,
-                                              "Load FITS settings",
-                                              self.run_dir_edit.text() or str(Path.home()),
-                                              "TOML settings (*.toml)",
+                                              "Load FITS protocol",
+                                              self.adapter.run_dir,
+                                              "TOML protocols (*.toml)",
                                               )
         if not path:
             return
-        self._load_settings_path(Path(path))
+        self._sync_identity()
+        try:
+            candidate = self.adapter.protocol_candidate(Path(path))
+            errors = candidate.validate_steps()
+            if errors:
+                step, error = next(iter(errors.items()))
+                raise ValueError(f"{STEP_LAYOUTS[step].title}: {error}")
+            report = inspect_raw_inputs(Path(candidate.run_dir), channel_labels=candidate.source_channel_labels())
+            if report.problems:
+                QMessageBox.warning(self, "Cannot load protocol", report.describe())
+                return
+        except Exception as error:
+            QMessageBox.critical(self, "Cannot load protocol", str(error))
+            return
+        confirmation = QMessageBox(self)
+        confirmation.setWindowTitle("Load protocol")
+        confirmation.setIcon(QMessageBox.Icon.Warning)
+        confirmation.setText("Loading this protocol will overwrite your current processing settings. Continue?")
+        proceed = confirmation.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
+        cancel = confirmation.addButton(QMessageBox.StandardButton.Cancel)
+        confirmation.setDefaultButton(cancel)
+        confirmation.exec()
+        if confirmation.clickedButton() != proceed:
+            return
+        self.adapter = candidate
+        self._populate_from_adapter()
+        labels = candidate.source_channel_labels()
+        self._append_log(f"Loaded protocol from {path}; source channel order: "
+                         + (", ".join(labels) if labels else "reader defaults") + ".")
+
+    def _protocol_available(self) -> bool:
+        """
+        Return whether a run is selected and processing is idle.
+        """
+        return bool(not self._running and self.adapter.run_dir and Path(self.adapter.run_dir).is_dir())
+
+    def _refresh_protocol_buttons(self) -> None:
+        """
+        Enable protocol actions only for an idle selected run.
+        """
+        available = self._protocol_available()
+        self.save_protocol_button.setEnabled(available)
+        self.load_protocol_button.setEnabled(available)
+
+    @Slot()
+    def _save_protocol(self) -> None:
+        """
+        Export reusable processing settings to a user-named TOML file.
+        """
+        if not self._protocol_available():
+            return
+        self._sync_identity()
+        errors = self.adapter.validate_steps()
+        if errors:
+            step, error = next(iter(errors.items()))
+            QMessageBox.critical(self, "Cannot save protocol", f"{STEP_LAYOUTS[step].title}: {error}")
+            return
+        browser = QFileDialog(self, "Save FITS protocol", self.adapter.run_dir, "TOML protocols (*.toml)")
+        browser.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        browser.setFileMode(QFileDialog.FileMode.AnyFile)
+        browser.setDefaultSuffix("toml")
+        browser.selectFile("protocol.toml")
+        if browser.exec() != QDialog.DialogCode.Accepted:
+            return
+        destination = Path(browser.selectedFiles()[0])
+        if destination.resolve() == run_settings_path(Path(self.adapter.run_dir)).resolve():
+            QMessageBox.warning(self, "Choose a protocol filename", "Use Save settings to replace this run's settings file.")
+            return
+        try:
+            write_settings(destination, tomlkit.dumps(self.adapter.protocol_document()))
+        except OSError as error:
+            QMessageBox.critical(self, "Cannot save protocol", str(error))
+            return
+        self._append_log(f"Saved protocol to {destination}")
 
     def _load_settings_path(self, path: Path, *, run_dir: Path | None = None) -> None:
         """
@@ -1101,6 +1188,7 @@ class FitsMainWindow(QMainWindow):
             QMessageBox.critical(self, "Cannot save settings", str(error))
             return None
         self._append_log(f"Saved settings to {destination}")
+        self._refresh_run_inventory()
         return destination
 
     @Slot()
@@ -1217,15 +1305,19 @@ class FitsMainWindow(QMainWindow):
         root = Path(self.adapter.run_dir).expanduser() if self.adapter.run_dir else None
         self._run_status = inspect_run_compatibility(root) if root is not None and root.is_dir() else None
         self._artifact_report = None
+        self._location_report = LocationReport()
         self._run_size_bytes = file_bytes(root.rglob("*")) if root is not None and root.is_dir() else 0
         if self._run_status is not None and not self._run_status.outdated:
             self._artifact_report = inspect_run(self._run_status.root,
                                                 self.adapter.as_mapping(),
                                                 for_execution=False,
                                                 )
+        if self._run_status is not None and not self._run_status.outdated:
+            self._location_report = inspect_locations(self._run_status.root, self._run_status.states)
         self._file_channel_cache.clear()
         self._refresh_raw_inputs(root)
         conflicts = {record.path.parent for record in self._artifact_report.conflicts} if self._artifact_report is not None else set()
+        conflicts.update(self._location_report.folders)
         self.run_browser.set_experiment_status(self._run_status, conflicts)
         self._selection_status_changed(self.run_browser.selected_path)
 
@@ -1238,12 +1330,25 @@ class FitsMainWindow(QMainWindow):
         if self._raw_input_report is not None and self._raw_input_report.problems and len(counts) <= 1:
             counts.clear()
         self._editors[cst.StepName.CONVERT].set_expected_channel_counts(counts)
+        self._refresh_protocol_buttons()
 
     def _raw_input_error(self) -> str:
         """
         Return the shared raw-input report's actionable error description.
         """
-        return self._raw_input_report.describe() if self._raw_input_report is not None else ""
+        if self._raw_input_report is None:
+            return ""
+        return self._raw_input_report.describe()
+
+    def _channel_label_warning(self) -> str:
+        """
+        Compare current user labels against cached input counts without rereading files.
+        """
+        if self._raw_input_report is None or self._raw_input_report.problems:
+            return ""
+        return "\n".join(channel_label_warnings(self._raw_input_report.channel_counts,
+                                               self.adapter.source_channel_labels(),
+                                               ))
 
     @Slot(object)
     def _selection_status_changed(self, selected: Path | None = None) -> None:
@@ -1269,12 +1374,14 @@ class FitsMainWindow(QMainWindow):
         input_error = self._raw_input_error()
         self.file_status_label.setText('Raw inputs need attention — cannot convert' if input_error else
                                        'Upgrade to FITS v4 required - read-only' if status.outdated else
+                                       'Outdated results and paths/tags need updating' if conflicts and self._location_report.needs_update else
+                                       'Paths or condition tags need updating' if self._location_report.needs_update else
                                        'Outdated downstream results' if conflicts else
                                        ('Current — editable' if status.states else 'Fresh inputs — conversion available'))
-        color = '#e57373' if input_error else OUTDATED_COLOR if status.outdated or conflicts else COMPATIBLE_COLOR
+        color = '#e57373' if input_error else OUTDATED_COLOR if status.outdated or conflicts or self._location_report.needs_update else COMPATIBLE_COLOR
         self.file_status_label.setStyleSheet(f'color: {color}; font-weight: bold;')
-        self.file_status_label.setToolTip(input_error or ('See Details for migration or downstream-update guidance.'
-                                                         if status.outdated or conflicts else ''))
+        self.file_status_label.setToolTip(input_error or ('See Details and Manage files for migration, rebuilding or path/tag updates.'
+                                                         if status.outdated or conflicts or self._location_report.needs_update else ''))
         count = f'{len(files)} result ' + ('file' if len(files) == 1 else 'files')
         self.file_size_label.setText(f"Run size: {self._run_size_bytes / 1024**3:.2f} GiB" if self._run_size_bytes >= 1024**3 else
                                      f"Run size: {self._run_size_bytes / 1024**2:.1f} MiB")
@@ -1312,6 +1419,9 @@ class FitsMainWindow(QMainWindow):
         input_error = self._raw_input_error()
         if input_error:
             lines.append(input_error)
+        label_warning = self._channel_label_warning()
+        if label_warning:
+            lines.append(label_warning)
         if status.outdated:
             lines.append('This run contains files or an experiment layout incompatible with the current FITS version. The entire run is read-only.')
             lines.append('You can keep viewing the existing images and masks, or use Manage files → Migrate to FITS 4.')
@@ -1319,6 +1429,10 @@ class FitsMainWindow(QMainWindow):
         elif self._artifact_report is not None and self._artifact_report.conflicts:
             lines.append('Some saved results have missing inputs or no longer match their input revisions. Existing files remain viewable. Use Manage files → Rebuild outdated results… to review affected processing, or review the same choices when starting the pipeline.')
             lines.append(self._artifact_report.describe())
+        if self._location_report.needs_update:
+            lines.append('Saved paths or master-table condition tags differ from the current folder structure. '
+                         'Use Manage files → Update paths and condition tags…; existing measurements are preserved.')
+            lines.append(self._location_report.describe())
         count = f'{len(files)} result ' + ('file' if len(files) == 1 else 'files')
         lines += [f'Selection: {scope}', count + (' available for read-only use.' if status.outdated else '.'),
                   self.file_channels_label.text()]
@@ -1619,7 +1733,15 @@ class FitsMainWindow(QMainWindow):
         """
         Append log.
         """
-        self.console.appendPlainText(message)
+        cursor = self.console.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        text_format = QTextCharFormat()
+        if "| WARNING |" in message or message.startswith("WARNING |"):
+            text_format.setForeground(QColor(OUTDATED_COLOR))
+        separator = "" if self.console.document().isEmpty() else "\n"
+        cursor.insertText(separator + message, text_format)
+        self.console.setTextCursor(cursor)
+        self.console.ensureCursorVisible()
 
     def _set_running(self, running: bool) -> None:
         """
@@ -1636,7 +1758,7 @@ class FitsMainWindow(QMainWindow):
             self.pipeline_progress.finish()
         self._set_activity_active(running)
         self.run_button.setEnabled(not running)
-        self.load_button.setEnabled(not running)
+        self._refresh_protocol_buttons()
         self.save_button.setEnabled(not running)
         self.browse_button.setEnabled(not running)
         self.run_dir_edit.setEnabled(not running)
@@ -1671,9 +1793,20 @@ class FitsMainWindow(QMainWindow):
         steps = (cst.StepName.CONVERT,) if converting else cst.WORKFLOW_ORDER
         missing = [error for step in steps for error in self.adapter.missing_user_fields(step)]
         input_error = self._raw_input_error()
+        label_warning = self._channel_label_warning() if converting else ""
+        if self._raw_input_report is not None:
+            counts = set(self._raw_input_report.channel_counts.values())
+            if self._raw_input_report.problems and len(counts) <= 1:
+                counts.clear()
+            self._editors[cst.StepName.CONVERT].set_expected_channel_counts(counts, label_warning)
+        if converting and label_warning != self._last_channel_label_warning:
+            self._last_channel_label_warning = label_warning
+            if label_warning:
+                self._append_log("WARNING | " + label_warning)
         if input_error and (converting or self.adapter.step_enabled(cst.StepName.CONVERT)):
             missing.append(input_error)
-        self.navigation_status.setStyleSheet("color: #e57373;" if input_error else "color: #b8b8b8;")
+        color = "#e57373" if input_error else OUTDATED_COLOR if label_warning else "#b8b8b8"
+        self.navigation_status.setStyleSheet(f"color: {color};")
         if converting and not self.adapter.step_enabled(cst.StepName.CONVERT) and not self._conversion_is_current():
             missing.append("Enable Convert before continuing.")
         label_job = (self._channel_labels_window is not None
@@ -1697,6 +1830,7 @@ class FitsMainWindow(QMainWindow):
                                    )
         self.navigation_status.setText(
             input_error.split("\n", 1)[0] + " See Details for affected files." if input_error and converting else
+            label_warning if label_warning else
             ("Converted images are ready." if self._conversion_is_current()
              else "Next converts your images before processing.") if converting else "")
 

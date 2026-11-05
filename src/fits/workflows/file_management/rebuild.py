@@ -43,6 +43,13 @@ class ProcessingPlan:
     scope: dict[Path, tuple[str, ...]]
     fingerprints: tuple[tuple[Path, int, int], ...]
     explanation: str = ''
+    full_rebuild_series: tuple[Path, ...] = ()
+
+    def fully_rebuilds(self, folder: Path) -> bool:
+        """
+        Identify series whose complete chain and superseded outputs are replaced.
+        """
+        return self.action == 'rebuild' or folder in self.full_rebuild_series
 
     def describe(self) -> str:
         """
@@ -53,7 +60,7 @@ class ProcessingPlan:
                  'Different settings or processing versions can also change results.']
         for series, steps in self.scope.items():
             lines.append(f'{series}\n  ' + ', '.join(steps))
-        if self.action == 'rebuild':
+        if self.action == 'rebuild' or self.full_rebuild_series:
             lines.append('The complete processing chain is rebuilt from the original acquisition, including final results. '
                          'Existing results and experiment state are backed up before processing starts. '
                          'REF/ROI drawings are kept; review their alignment if registration changes.')
@@ -62,7 +69,12 @@ class ProcessingPlan:
         return '\n\n'.join(lines)
 
 
-def _processing_plan(root: Path, action: str, scope: dict[Path, tuple[str, ...]], explanation: str) -> ProcessingPlan:
+def _processing_plan(root: Path,
+                      action: str,
+                      scope: dict[Path, tuple[str, ...]],
+                      explanation: str,
+                      full_rebuild_series: tuple[Path, ...] = (),
+                      ) -> ProcessingPlan:
     """
     Capture the exact files and series/steps needed for a processing preview.
     """
@@ -77,7 +89,7 @@ def _processing_plan(root: Path, action: str, scope: dict[Path, tuple[str, ...]]
         files.add(state.original_image)
         files.update(path for path in state.workdir.glob('fits_*') if path.is_file())
     fingerprints = tuple((path, path.stat().st_size, path.stat().st_mtime_ns) for path in sorted(files))
-    plan = ProcessingPlan(Path(root), action, scope, fingerprints, explanation)
+    plan = ProcessingPlan(Path(root), action, scope, fingerprints, explanation, full_rebuild_series)
     _check_processing_space(plan)
     return plan
 
@@ -101,14 +113,10 @@ def plan_full_rebuild(root: Path) -> ProcessingPlan | None:
     states = discover_saved_states(root)
     if not states:
         return None
-    selected: set[str] = set()
     for state in states:
         if not state.original_image.is_file():
             raise ValueError(f'Full rebuilding requires the original acquisition: {state.original_image}. No results have been changed.')
-        selected.update(_full_rebuild_steps(state, config))
-    enabled = {str(step): {'enabled': step in selected} for step in cst.WORKFLOW_ORDER}
-    steps = _full_rebuild_steps(states[0], enabled)
-    scope = {state.workdir: steps for state in states}
+    scope = full_rebuild_scope(states, config)
     return _processing_plan(root,
                             'rebuild',
                             scope,
@@ -116,7 +124,26 @@ def plan_full_rebuild(root: Path) -> ProcessingPlan | None:
                             )
 
 
-def _full_rebuild_steps(state: ExperimentState, config: Mapping[str, Any]) -> tuple[str, ...]:
+def full_rebuild_scope(states: Sequence[ExperimentState],
+                       config: Mapping[str, Any],
+                       *,
+                       available: set[Path] | None = None,
+                       ) -> dict[Path, tuple[str, ...]]:
+    """
+    Share full-rebuild scope calculation with pre-migration reconstruction previews.
+    """
+    if not states:
+        return {}
+    selected = {step for state in states for step in _full_rebuild_steps(state, config, available)}
+    enabled = {str(step): {'enabled': step in selected} for step in cst.WORKFLOW_ORDER}
+    steps = _full_rebuild_steps(states[0], enabled, available)
+    return {state.workdir: steps for state in states}
+
+
+def _full_rebuild_steps(state: ExperimentState,
+                        config: Mapping[str, Any],
+                        available: set[Path] | None = None,
+                        ) -> tuple[str, ...]:
     """
     Include previous results, enabled work and the producers needed to rebuild them.
     """
@@ -124,7 +151,7 @@ def _full_rebuild_steps(state: ExperimentState, config: Mapping[str, Any]) -> tu
     for step in cst.WORKFLOW_ORDER:
         profile = REGISTRY[step].profile
         output = state.artifact(profile.output_artifact)
-        existing = output is not None and output.is_file()
+        existing = output is not None and (output in available if available is not None else output.is_file())
         if step == cst.StepName.EDIT_TRACK:
             existing = existing and output is not None and output.name in (cst.FITS_MASK_TRACK_EDITED, cst.FITS_MASK_TRACK_EDITED_FILTERED)
         if step in state.completed_steps or config.get(step, {}).get('enabled') or existing:
@@ -151,6 +178,14 @@ def plan_downstream_update(root: Path) -> ProcessingPlan | None:
     """
     config = run_config(root)
     report = inspect_run(root, config, for_execution=False)
+    scope = _downstream_scope(report, config)
+    return _processing_plan(root, 'downstream', scope, report.describe()) if scope else None
+
+
+def _downstream_scope(report: PreflightReport, config: Mapping[str, Any]) -> dict[Path, tuple[str, ...]]:
+    """
+    Resolve only stale outputs through the existing artifact-decision planner.
+    """
     scope = {}
     for state in report.states:
         records = tuple(record for record in report.records if record.path.parent == state.workdir)
@@ -165,7 +200,34 @@ def plan_downstream_update(root: Path) -> ProcessingPlan | None:
                       if resolved.get(step, {}).get('enabled') and resolved[step].get('params', {}).get('overwrite'))
         if steps:
             scope[state.workdir] = steps
-    return _processing_plan(root, 'downstream', scope, report.describe()) if scope else None
+    return scope
+
+
+def full_rebuild_folders(states: Sequence[ExperimentState]) -> tuple[Path, ...]:
+    """
+    Find compacted or migrated checkpoints that require complete reconstruction.
+    """
+    return tuple(state.workdir for state in states if state.compacted or state.migration_checkpoint is not None)
+
+
+def plan_required_rebuild(root: Path) -> ProcessingPlan | None:
+    """
+    Combine complete checkpoint reconstruction with other experiments' stale outputs.
+    """
+    config = run_config(root)
+    report = inspect_run(root, config, for_execution=False)
+    full = full_rebuild_folders(report.states)
+    scope = _downstream_scope(report, config)
+    targets = [state for state in report.states if state.workdir in full]
+    for state in targets:
+        if not state.original_image.is_file():
+            raise ValueError(f'Full rebuilding requires the original acquisition: {state.original_image}. No results have been changed.')
+    scope.update(full_rebuild_scope(targets, config))
+    if not scope:
+        return None
+    return _processing_plan(root, 'required', scope,
+                            'Rebuild the reviewed results. Compacted and migrated experiments are fully reconstructed; '
+                            'other experiments rebuild only outdated outputs.\n\n' + report.describe(), full)
 
 
 def execution_config(config: Mapping[str, Any], plan: ProcessingPlan) -> dict[str, Any]:
@@ -201,10 +263,10 @@ def execute_plan(plan: ProcessingPlan, run: Callable[[ProcessingPlan], None]) ->
     with run_write_guard(plan.root):
         states = {state.workdir: state for state in discover_saved_states(plan.root)}
         _verify_processing_outputs(plan, states)
-        if plan.action == 'rebuild':
-            _finish_full_rebuild(plan, states)
-        else:
-            _verify_processing_dependencies(plan)
+        full_scope = {folder: steps for folder, steps in plan.scope.items() if plan.fully_rebuilds(folder)}
+        if full_scope:
+            _finish_full_rebuild(replace(plan, scope=full_scope), states)
+        _verify_processing_dependencies(plan)
 
 
 def _verify_processing_outputs(plan: ProcessingPlan, states: Mapping[Path, ExperimentState]) -> None:
@@ -219,7 +281,7 @@ def _verify_processing_outputs(plan: ProcessingPlan, states: Mapping[Path, Exper
             path = expected if expected.is_file() else state.artifact(profile.output_artifact) if state is not None else None
             if path is None or not path.is_file() or not compatible(read_metadata(path)):
                 raise ValueError(f'Processing did not finish: {folder}, {step}. Completed files and backups are preserved; review Manage files to continue.')
-            if plan.action == 'rebuild' and read_metadata(path).custom_metadata.get('migration'):
+            if plan.fully_rebuilds(folder) and read_metadata(path).custom_metadata.get('migration'):
                 raise ValueError(f'Full rebuilding did not replace the migrated result: {path}. Your backup is preserved.')
 
 

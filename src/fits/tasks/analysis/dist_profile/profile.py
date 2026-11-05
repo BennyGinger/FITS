@@ -10,8 +10,6 @@ from fits.tasks.common.table_results import save_parquet
 from fits.workflows.definitions.models import StepProfile
 from fits.workflows.runtime.errors import StepExecutionError
 from fits.workflows.artifacts.provenance import revision_payload
-from fits.tasks.analysis.identity import add_condition_tags
-from fits.tasks.analysis.aggregate import _condition_values
 
 
 logger = logging.getLogger(__name__)
@@ -31,8 +29,6 @@ def run_distance_profile(settings: DistanceProfileSettings,
 
         manager = DistanceProfileManager(exp_state, settings, profile=step_profile)
         dataframe = manager.calculate()
-        if exp_state.run_dir is not None:
-            add_condition_tags(dataframe, _condition_values(exp_state, exp_state.run_dir))
         output_path = exp_state.workdir / step_profile.output_name
 
         updated_state = exp_state.with_metadata(step_name=step_profile.step_name,

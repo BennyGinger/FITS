@@ -124,6 +124,13 @@ class ExperimentState:
         return self.workdir.as_posix()
 
     @property
+    def portable_experiment_id(self) -> str:
+        """
+        Identify a series within its portable acquisition independently of condition folders.
+        """
+        return f'{self.workdir.parent.name}/{self.workdir.name}'
+
+    @property
     def analysis_experiment_id(self) -> str:
         """
         Identify a branch by its full path relative to the run folder.

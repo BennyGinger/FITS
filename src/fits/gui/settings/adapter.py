@@ -11,7 +11,7 @@ from tomlkit import TOMLDocument
 
 from fits.environment.constant import WORKFLOW_ORDER, StepName
 from fits.workflows.definitions.registry import REGISTRY
-from fits.settings.loader import SAVED_SETTINGS_NAME, normalize_registration_algorithms, resolve_step_params, run_settings_path
+from fits.settings.loader import SAVED_SETTINGS_NAME, normalize_registration_algorithms, resolve_step_params, run_settings_path, write_settings
 from fits.settings.models import SegmentSettings
 from fits.gui.settings.layouts import STEP_LAYOUTS
 
@@ -147,7 +147,6 @@ STEP_FIELD_CHOICES: dict[tuple[StepName, str], tuple[str, ...]] = {
 
 REQUIRED_USER_FIELDS: dict[StepName, tuple[tuple[str, str], ...]] = {
     StepName.CONVERT: (
-        ("channel_labels", "Enter at least one channel label (channel_labels)."),
         ("export_channels", "Select at least one channel to convert/export."),
     ),
     StepName.REGISTER_CHANNEL: (
@@ -596,7 +595,7 @@ class SettingsAdapter:
         Return user-defined source labels in their original channel order.
         """
         value = self.field_value(StepName.CONVERT, "channel_labels")
-        entries = value.split(",") if isinstance(value, str) else value
+        entries = value.split(",") if isinstance(value, str) else value or []
         return list(dict.fromkeys(str(label).strip() for label in entries if str(label).strip()))
 
     def exported_channel_labels(self) -> list[str]:
@@ -675,11 +674,41 @@ class SettingsAdapter:
         return errors
 
     def save(self, path: str | Path) -> Path:
+        """
+        Save current settings, backing up a changed canonical run snapshot.
+        """
         destination = Path(path).expanduser().resolve()
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(tomlkit.dumps(self.document), encoding="utf-8")
+        write_settings(destination, tomlkit.dumps(self.document),
+                       backup=destination == run_settings_path(Path(self.run_dir)).resolve(),
+                       )
         self.source_path = destination
         return destination
+
+    def protocol_document(self) -> TOMLDocument:
+        """
+        Copy reusable settings without run identity, output paths or overwrite requests.
+        """
+        document = deepcopy(self.document)
+        for key in ("user_name", "run_dir", "optimize"):
+            document.pop(key, None)
+        document["runtime"].pop("log_dir", None)
+        for step in WORKFLOW_ORDER:
+            document[step]["params"]["overwrite"] = False
+        return document
+
+    def protocol_candidate(self, path: Path) -> SettingsAdapter:
+        """
+        Load a separate draft preserving the current identity and log destination.
+        """
+        candidate = SettingsAdapter(self.template_path)
+        candidate.load(path)
+        candidate.document = candidate.protocol_document()
+        candidate.run_dir = self.run_dir
+        candidate.user_name = self.user_name
+        candidate.set_runtime_value("log_dir", self.runtime_value("log_dir"))
+        candidate.saved_image_channels = list(self.saved_image_channels)
+        candidate.source_path = self.source_path
+        return candidate
 
     def save_to_run_dir(self) -> Path:
         run_dir = Path(self.run_dir).expanduser().resolve()

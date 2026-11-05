@@ -146,15 +146,23 @@ class StepSettingsEditor(QWidget):
             self._add_fields(basic_form, layout_spec.basic)
         contents_layout.addWidget(basic)
         if step == StepName.EXTRACT:
-            self.compartment_group = QGroupBox("Compartments")
+            self.compartment_group = QGroupBox()
+            self.compartment_group.setAccessibleName("Compartments")
             compartment_form = QFormLayout(self.compartment_group)
+            header = QWidget()
+            header_layout = QHBoxLayout(header)
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.addWidget(QLabel("Compartments"))
+            header_layout.addStretch()
+            self.compartment_preview_button = QPushButton("Preview")
+            self.compartment_preview_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            header_layout.addWidget(self.compartment_preview_button)
+            compartment_form.addRow(header)
             explanation = QLabel("Measure membrane and cytoplasm separately. Masks are generated during quantification "
                                  "and can be regenerated with the same settings. Saving is optional; compaction removes exports.")
             explanation.setWordWrap(True)
             compartment_form.addRow(explanation)
             self._add_fields(compartment_form, COMPARTMENT_PARAMETERS)
-            self.compartment_preview_button = QPushButton("Preview")
-            compartment_form.addRow(self.compartment_preview_button)
             contents_layout.addWidget(self.compartment_group)
         if step == StepName.TRACK:
             self._add_track_postprocess_section(contents_layout)
@@ -230,7 +238,7 @@ class StepSettingsEditor(QWidget):
             self._field_rows.append(row)
             self.widgets[path] = widget
 
-    def set_expected_channel_counts(self, counts: set[int]) -> None:
+    def set_expected_channel_counts(self, counts: set[int], warning: str = "") -> None:
         """
         Show the channel counts found in the run's raw acquisition metadata.
         """
@@ -240,7 +248,9 @@ class StepSettingsEditor(QWidget):
         if len(counts) > 1:
             text = f"(different channel counts: {values})"
         self.expected_channels_label.setText(text)
-        self.expected_channels_label.setStyleSheet("color: #e57373;" if len(counts) > 1 else "")
+        color = "#e57373" if len(counts) > 1 else "#efb366" if warning else ""
+        self.expected_channels_label.setStyleSheet(f"color: {color};" if color else "")
+        self.expected_channels_label.setToolTip(warning)
         self.expected_channels_label.setVisible(bool(counts))
 
     def _create_parameter_widget(self, path: str, value: Any) -> ValueWidget | ChannelChoiceWidget | ChannelSelectionWidget:

@@ -59,6 +59,20 @@ applies when running `pipeline.py` with the packaged `user_settings.toml`,
 so the GUI can later load the run's settings. The saved copy reflects the
 latest launch and remains available if processing fails.
 
+In the GUI, **Save settings** saves the current draft into the selected run without
+starting processing. Changed snapshots are retained in `.fits/settings_history/`
+before replacement. **Save protocol** exports a reusable TOML file, and **Load
+protocol** validates it and asks before replacing the current GUI settings.
+Both protocol actions require a selected run and are disabled during processing.
+Protocols retain channel order, per-channel segmentation settings and custom model
+paths, while preserving the current run directory, user name and log destination
+on load. All protocol overwrite flags are reset to false. Loading does not save
+the run settings or change results; use Save settings or Run to persist the draft.
+When explicit channel labels do not match the source channel count, conversion
+warns and falls back to `C_1`, `C_2`, etc. Empty labels also use reader defaults.
+Named channel selections must match the resulting labels. Changed processing parameters flag
+existing results and their dependents for the usual rebuild/continue decision.
+
 Each series has an `experiment_state.json` file containing its artifacts,
 completed steps, metadata, and provenance, stored inside its acquisition's
 `.fits_experiment/experiment_state/<series>/` directory. Artifact paths, rather than a second
@@ -155,27 +169,45 @@ with warning icons. If any active experiment has older metadata or layout, the
 In read-only runs, **Back** and **Next** let you inspect both Convert and
 processing settings; **Next** never starts conversion in this mode.
 **Manage files…** groups current-file actions separately from **Manage backups**.
-Current-file actions check the whole run:
+Current-file actions check the whole run and use three controls:
 
-- **Migrate to FITS 4…** updates older metadata/layout while preserving results.
-  The review dialog offers an optional **full rebuild**, unchecked by default.
-  Once migrated, this button becomes **Rebuild all experiment results…**.
-  It reruns conversion, the previously completed/currently enabled workflow and
-  required prerequisites for the run. It can take a long time and may change
-  final results; a backup is retained first. The rebuilt workflow is saved so
-  later checks use the same enabled steps.
-  Migrated final arrays receive their actual stage filename, such as
-  `fits_array_bgsub.tif`; canonical `fits_array.tif` is reserved for compaction.
-- **Update paths and condition tags…** refreshes an already migrated run after
-  moving experiments or changing condition folders, without processing.
-- **Rebuild outdated results…** previews and reruns results whose inputs are missing or
-  have changed revisions. Unaffected series and upstream results are preserved.
+- **Rebuild** changes its name with the required work: **Rebuild all results…**
+  for migrated or compacted experiments, **Rebuild outdated results…** for stale
+  downstream outputs, or **Rebuild required results…** for a mixture. Current
+  experiments remain untouched. Complete reconstruction reruns final outputs as
+  well as intermediates; it can take a long time and may change results. A backup
+  is retained first. The button is disabled when no rebuilding is needed.
+  For pre-v4 runs this control initially reads **Migrate to FITS 4…**, with an
+  optional full rebuild, unchecked by default. Migrated arrays receive their
+  actual stage filename; canonical `fits_array.tif` is reserved for compaction.
+- **Update paths and condition tags…** is enabled only when saved state/settings
+  references or existing master-table identities/tags differ from the current
+  run. Condition tags belong to the master tables. Portable per-experiment
+  Parquets remain unchanged during a location-only update. Without a master and
+  with coherent saved paths, there is nothing to update. Location differences
+  appear as orange warnings in the main status, browser and Details.
+- **Compact experiment…**, slightly separated, removes intermediate files and
+  caches while keeping essential files. It creates no persistent backup.
 
-A slightly separated **Compact experiment…** action removes intermediate files
-and caches while keeping essential files. It creates no persistent backup.
 In Manage files, run guidance appears on the left and file-action buttons on the
 right. Actions that do not apply are greyed out; their tooltips explain why.
 Other GUI windows retain their existing button behavior.
+Conflict, migration, rebuild and compaction reviews share one schematic for the
+whole run. Each icon represents a workflow stage and shows its file count and
+actions. Originals have no filename in the diagram. Teal means all files are
+kept, purple marks outputs to overwrite/rebuild, orange marks affected or changed
+files, and blue dashed icons mark new files. Shared renames show the old name struck through, a downward arrow and the
+new name, even when other files already have the target name.
+Click a stage to list its actual files and individual actions, grouped by
+acquisition and series. The list scrolls for larger runs; clicking the diagram
+background clears it. Review windows open larger and retain readable icons.
+Use scrolling, zoom or Fit to inspect the complete sequence. Arrows distinguish
+workflow order from recorded provenance and REF/ROI geometry relationships.
+Path/tag-only updates list the affected files and explain each change.
+Migration summarizes those updates above its schematic, with the full plan under
+collapsed **Details**. Its optional full numerical rebuild checkbox switches
+between the move/rename overview and complete reconstruction. Switching the
+preview does not change any files.
 **Manage backups** shows availability, saved versions and their total size, with
 **Restore selected backup…** and **Delete selected backups…** actions.
 The same manager is available with `uv run fits manage /path/to/run`.
@@ -710,6 +742,10 @@ number of channels. Shared input checks run when the GUI loads a run directory
 and before pipeline conversion; blocking problems appear in red in the GUI,
 with affected files and corrective guidance in the warning and **Details**.
 The channel-label input shows the expected raw channel count in italic.
+A label-count mismatch shows a nonblocking orange warning, including the expected
+count, entered count and complete list of fallback names. The GUI console shows
+the warning in orange; correcting the labels clears the warning. Different raw
+channel counts between experiments remain a red, blocking error.
 Files with the same stem in the same folder receive extension-specific
 acquisition folders (for example, `sample_nd2/sample.nd2` and
 `sample_tif/sample.tif`), with a console log message and no popup. Original

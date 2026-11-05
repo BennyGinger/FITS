@@ -38,7 +38,7 @@ class _StatusFileSystemModel(QFileSystemModel):
                 if role == Qt.ItemDataRole.DecorationRole and outdated:
                     return QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
                 if role == Qt.ItemDataRole.ToolTipRole:
-                    return ('Experiment files need attention. See Details and Manage files for migration or downstream updates.' if outdated else
+                    return ('Experiment files need attention. See Details and Manage files for migration, rebuilding or path/tag updates.' if outdated else
                             'Compatible experiment files. Processing availability follows the whole run status.')
         return super().data(index, role)
 

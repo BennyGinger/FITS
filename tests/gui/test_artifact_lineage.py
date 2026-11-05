@@ -89,26 +89,35 @@ def test_experiment_scope_and_cyclic_metadata(tmp_path: Path) -> None:
     assert set(graph.edges) == {(a, b), (b, a)}
 
 
-def test_widget_experiment_selector_and_file_details(tmp_path: Path) -> None:
+def test_widget_aggregates_experiments_and_lists_file_details(tmp_path: Path) -> None:
     """
-    Expose exact paths and reasons when a user selects a file in the diagram.
+    Show one stage across experiments with exact file paths and conflict reasons.
     """
     _application()
     first, second = tmp_path / "first" / "raw.tif", tmp_path / "second" / "raw.tif"
     report = PreflightReport((_record(first, cst.StepName.CONVERT, problem="Changed input"),
                               _record(second, cst.StepName.CONVERT)), (), (), ())
     widget = ArtifactLineageWidget(report)
-    assert widget.experiments.count() == 2
-    card = next(item for item in widget.scene.items() if isinstance(item, QGraphicsRectItem))
-    labels = [item.toPlainText() for item in card.childItems() if isinstance(item, QGraphicsTextItem)]
-    assert any(first.name in label and "Existing conflict" in label for label in labels)
-    card.setSelected(True)
-    assert str(first) in widget.details.text()
-    assert "Changed input" in widget.details.text()
-    widget.experiments.setCurrentIndex(1)
-    cards = [item for item in widget.scene.items() if isinstance(item, QGraphicsRectItem)]
-    assert [card.data(0) for card in cards] == [second]
-    widget.close()
+    try:
+        assert not hasattr(widget, 'experiments')
+        cards = [item for item in widget.scene.items() if isinstance(item, QGraphicsRectItem)]
+        assert len(cards) == 1
+        assert {item.path for item in cards[0].data(1).files} == {first, second}
+        cards[0].setSelected(True)
+        assert widget.details.stage is not None
+        assert len(widget.details.stage.files) == 2
+        tree = widget.details.tree
+        acquisition = tree.topLevelItem(0)
+        assert acquisition is not None
+        assert acquisition.childCount() == 2
+        series = acquisition.child(0)
+        assert series is not None
+        row = series.child(0)
+        assert row is not None
+        assert 'Changed input' in row.toolTip(0)
+        assert str(first) in row.toolTip(0)
+    finally:
+        widget.close()
 
 
 def test_horizontal_flow_keeps_parallel_analysis_branches(tmp_path: Path) -> None:
@@ -126,7 +135,7 @@ def test_horizontal_flow_keeps_parallel_analysis_branches(tmp_path: Path) -> Non
         _record(distance, cst.StepName.DISTANCE_PROFILE, masks.name),
     ), (cst.StepName.BG_SUB,), (cst.StepName.SEGMENT, cst.StepName.EXTRACT, cst.StepName.DISTANCE_PROFILE), ())
     widget = ArtifactLineageWidget(report)
-    cards = {item.data(0): item for item in widget.scene.items() if isinstance(item, QGraphicsRectItem)}
+    cards = {member.path: item for item in widget.scene.items() if isinstance(item, QGraphicsRectItem) for member in item.data(1).files}
     chain = [tmp_path.parent / "source.nd2", raw, background, masks, extract]
     assert all(cards[source].x() < cards[target].x() for source, target in zip(chain, chain[1:]))
     assert len({cards[path].y() for path in chain[:-1]}) == 1
@@ -160,12 +169,12 @@ def test_manual_masks_branch_from_geometry_not_intensity(tmp_path: Path, rerun: 
     assert set(graph.geometry_edges) == {(registered, ref), (registered, roi)}
     assert all(target not in (ref, roi) for _, target in graph.edges)
     widget = ArtifactLineageWidget(report)
-    cards = {item.data(0): item for item in widget.scene.items() if isinstance(item, QGraphicsRectItem)}
+    cards = {member.path: item for item in widget.scene.items() if isinstance(item, QGraphicsRectItem) for member in item.data(1).files}
     for path in (ref, roi):
         assert cards[path].y() > cards[background].sceneBoundingRect().bottom()
         assert cards[path].x() > cards[registered].x()
     markers = [item.toPlainText() for item in widget.scene.items() if isinstance(item, QGraphicsTextItem)]
-    assert "↓ RERUN THIS FILE" in markers
+    assert '1 rebuilt' in markers
     widget.close()
 
 
@@ -198,3 +207,29 @@ def test_ctrl_wheel_zooms_but_ordinary_wheel_does_not(tmp_path: Path) -> None:
     wheel(120, Qt.KeyboardModifier.NoModifier)
     assert view.transform().m11() == pytest.approx(initial)
     widget.close()
+
+
+def test_overwrite_affected_created_and_kept_have_distinct_colors(tmp_path: Path) -> None:
+    """
+    Distinguish selected overwrites from downstream effects, new outputs and kept originals.
+    """
+    from fits.gui.file_preview.models import COLORS
+
+    _application()
+    raw = tmp_path / cst.FITS_ARRAY_RAW
+    bg = tmp_path / cst.FITS_ARRAY_BGSUB
+    masks = tmp_path / cst.FITS_MASK_SEG
+    report = PreflightReport((_record(raw, cst.StepName.CONVERT, '../source.nd2'),
+                              _record(bg, cst.StepName.BG_SUB, raw.name)),
+                             (cst.StepName.CONVERT,), (cst.StepName.BG_SUB, cst.StepName.SEGMENT), (),
+                             ((cst.StepName.SEGMENT, masks),))
+    widget = ArtifactLineageWidget(report)
+    try:
+        actions = {stage.title: stage.action for stage in widget.overview.stages}
+        assert actions['Original'] == 'keep'
+        assert actions['Converted'] == 'rebuild'
+        assert actions['Background-subtracted'] == 'update'
+        assert actions['Segmented'] == 'create'
+        assert len({COLORS[stage.action] for stage in widget.overview.stages}) == 4
+    finally:
+        widget.close()

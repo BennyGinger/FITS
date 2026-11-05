@@ -111,6 +111,8 @@ def test_file_actions_stop_on_full_disk(tmp_path: Path, monkeypatch: pytest.Monk
     before = image.read_bytes()
     entry = snapshots(tmp_path)[0]
     calls: list[ProcessingPlan] = []
+    if action == 'update':
+        (tmp_path / cst.MASTER_QUANTI_NAME).write_bytes(b'invalid master needing update')
     _full_disk(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match='Not enough disk space'):
         if action == 'update':

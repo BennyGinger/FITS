@@ -24,6 +24,10 @@ supporting implementations live in the responsibility packages below it.
   problems; `require_current_run()` enforces the read-only boundary before migration.
 - `checks/artifacts.py`: `inspect_run()` compares recorded input revisions with
   current files, propagates conflicts and builds the preflight report.
+- `checks/locations.py`: `inspect_locations()` checks portable state/settings
+  references and streams identity/tag columns from existing masters. It does not
+  classify location differences as scientific provenance conflicts. Missing
+  masters do not imply an update is needed.
 - `checks/decisions.py`: `apply_decision()` resolves explicit pre-run choices into
   a settings copy without modifying artifacts.
 - `checks/planning.py`: shared workflow ordering and rebuild-source selection.
@@ -56,12 +60,15 @@ is divided by responsibility:
 - `migration.py`: adopt existing results as compatible checkpoints while
   preserving original metadata and recording unavailable historical lineage.
 - `relocation.py`: shared folder moves, known-path rebinding, table identifiers,
-  condition tags and master-table refresh. It does not launch processing.
+  master-table condition tags and refresh. Location-only updates preserve portable
+  per-experiment Parquet bytes. It does not launch processing.
 - `transactions.py`: reversible file moves/replacements and failure rollback.
 - `rebuild.py`: reviewed numerical processing plans, series/step scope and
   execution verification, including optional complete rebuilding after migration.
   Full rebuilding retains backups, replaces final results, validates ordinary
-  provenance and removes superseded active filenames.
+  provenance and removes superseded active filenames. `plan_required_rebuild()`
+  combines full reconstruction for migrated/compacted series with downstream-only
+  scopes for other stale series, leaving current experiments untouched.
 - `snapshots.py`: preserve a coherent result/state set before an explicit rebuild.
 - `run_history.py`: retain a complete original run folder before migration or path/tag updates;
   restore its exact files, metadata and layout while retaining the displaced run.
@@ -80,6 +87,13 @@ set of module aliases at the workflow root.
   Experiment files and Manage backups sections.
 - `fits.gui.file_management.compaction`: conflict review and exact compaction preview.
 - `fits.gui.file_management.tasks`: shared responsive execution of reviewed file writes.
+- `fits.gui.file_preview`: reusable document-icon rendering, per-file change lists
+  and adapters for reviewed migration, processing, compaction and restore plans.
+  `overview.py` aggregates stages across the run, deduplicating shared originals;
+  `stage_files.py` lists exact per-file actions grouped by acquisition and series.
+  These are temporary presentation models, not another persisted artifact registry.
+- `fits.gui.artifact_lineage`: recorded conflict dependencies and geometry-only
+  REF/ROI relationships, adapted into the same file-preview renderer.
 - `fits.gui.run_result.dialog`: shared completion summary, full-report access and
   successful-run management navigation.
 - `fits.gui.run_result.report`: resizable, scrollable presentation of the full report.

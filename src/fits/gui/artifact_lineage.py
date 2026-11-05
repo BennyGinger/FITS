@@ -3,31 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from html import escape
 from pathlib import Path
 from typing import Literal
 
-from PySide6.QtCore import QPointF, Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QShowEvent, QWheelEvent
-from PySide6.QtWidgets import (
-    QComboBox, QGraphicsItem, QGraphicsRectItem, QGraphicsScene,
-    QGraphicsView, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
-)
+from PySide6.QtWidgets import QWidget
+from fits.gui.file_preview.models import Action, PreviewFile, PreviewGroup, STEP_ORDER as _STEP_ORDER, file_title
+from fits.gui.file_preview.widget import FilePreviewWidget
 
 from fits.environment import constant as cst
-from fits.gui.settings.layouts import STEP_LAYOUTS
 from fits.workflows.artifacts.branch_masks import geometry, is_branch
 from fits.workflows.checks.models import ArtifactRecord, PreflightReport
 
 
 Role = Literal["input", "selected", "affected", "conflict", "planned"]
-_COLORS: dict[Role, tuple[str, str]] = {
-    "input": ("#29323b", "#718191"),
-    "selected": ("#583311", "#ffad42"),
-    "affected": ("#4a4020", "#ebcb65"),
-    "conflict": ("#512930", "#ef8c98"),
-    "planned": ("#4a4020", "#ebcb65"),
-}
 _CAPTIONS: dict[Role, str] = {
     "input": "Input / unchanged",
     "selected": "Rerun / overwrite",
@@ -35,8 +23,8 @@ _CAPTIONS: dict[Role, str] = {
     "conflict": "Existing conflict",
     "planned": "Included if rebuilding",
 }
-_STEP_ORDER = {str(step): index for index, step in enumerate(cst.WORKFLOW_ORDER)}
-_STEP_LABELS = {str(step): layout.title for step, layout in STEP_LAYOUTS.items()}
+_ACTIONS: dict[Role, Action] = {'input': 'keep', 'selected': 'rebuild', 'affected': 'affected',
+                               'conflict': 'conflict', 'planned': 'rebuild'}
 
 
 @dataclass(frozen=True)
@@ -167,13 +155,6 @@ def file_lineage(report: PreflightReport, directory: Path) -> FileLineage:
     return FileLineage(tuple(nodes.values()), tuple(sorted(edges)), tuple(sorted(geometry_edges)))
 
 
-def _node_order(node: LineageNode) -> tuple[int, str]:
-    """
-    Arrange files by workflow stage without asserting any unrecorded dependency.
-    """
-    return (_STEP_ORDER.get(node.step or "", -1), str(node.path))
-
-
 def _node_caption(node: LineageNode) -> str:
     """
     Distinguish preserved older files and prospective outputs from current overwrites.
@@ -188,255 +169,42 @@ def _node_caption(node: LineageNode) -> str:
     return _CAPTIONS[node.role]
 
 
-def _add_node(scene: QGraphicsScene, node: LineageNode, x: float, y: float) -> QGraphicsRectItem:
+def _preview_group(report: PreflightReport, directory: Path) -> PreviewGroup:
     """
-    Draw a selectable file card with a textual status as well as impact colors.
+    Adapt recorded conflict relationships to the shared file-icon presentation.
     """
-    background, accent = _COLORS[node.role]
-    caption = _node_caption(node)
-    step = ("REF / ROI drawing (preserved)" if is_branch(node.path)
-            else _STEP_LABELS.get(node.step or "", "Recorded input"))
-    card = QGraphicsRectItem()
-    card.setPos(x, y)
-    card.setBrush(QColor(background))
-    pen = QPen(QColor(accent), 2 if node.role != "input" else 1)
-    if node.new_output:
-        pen.setStyle(Qt.PenStyle.DashLine)
-    card.setPen(pen)
-    card.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
-    card.setData(0, node.path)
-    card.setData(1, node)
-    card.setToolTip(f"{node.path}\n{caption}" + (f"\n{node.problem}" if node.problem else ""))
-    scene.addItem(card)
-    text = scene.addText("")
-    text.setParentItem(card)
-    font = text.font()
-    font.setPixelSize(16)
-    text.setFont(font)
-    text.setHtml(f'<b>{escape(node.path.name)}</b><br>'
-                 f'<span style="color:{accent}">{escape(caption)}</span><br>'
-                 f'<span style="color:#c5cbd0">{escape(step)}</span>')
-    text.setDefaultTextColor(QColor("#eeeeee"))
-    text.setTextWidth(204)
-    text.setPos(8, 6)
-    text.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-    card.setRect(0, 0, 220, max(78, text.boundingRect().height() + 12))
-    return card
+    graph = file_lineage(report, directory)
+    files = []
+    for node in graph.nodes:
+        action: Action = ('keep' if node.legacy else 'create' if node.new_output else
+                          'review' if is_branch(node.path) and node.role == 'affected' else
+                          _ACTIONS[node.role])
+        step = str(cst.StepName.EXTRACT) if node.step == cst.StepName.DISTANCE_PROFILE else node.step
+        files.append(PreviewFile(node.path, file_title(node.path, node.step), action,
+                                 _node_caption(node) + ('\n' + node.problem if node.problem else ''),
+                                 stage=_STEP_ORDER.get(step or '', -1), branch=is_branch(node.path)))
+    return PreviewGroup(directory, tuple(files), graph.edges, graph.geometry_edges)
 
 
-def _add_arrow(scene: QGraphicsScene, source: QGraphicsRectItem, target: QGraphicsRectItem,
-               *, geometry_only: bool = False,
-               ) -> None:
+class ArtifactLineageWidget(FilePreviewWidget):
     """
-    Connect neighboring stages directly and route longer links above the flow.
+    Show conflict-review semantics using the same icons as other file-action reviews.
     """
-    first, second = source.sceneBoundingRect(), target.sceneBoundingRect()
-    path = QPainterPath()
-    if geometry_only:
-        start, end = QPointF(first.center().x(), first.bottom()), QPointF(second.left(), second.center().y())
-        path.moveTo(start)
-        path.lineTo(start.x(), end.y())
-        path.lineTo(end)
-        direction = -1
-    elif first.left() < second.left():
-        start, end = QPointF(first.right(), first.center().y()), QPointF(second.left(), second.center().y())
-        path.moveTo(start)
-        if second.left() - first.right() > 100:
-            above = min(first.top(), second.top()) - 40
-            path.lineTo(start.x() + 20, start.y())
-            path.lineTo(start.x() + 20, above)
-            path.lineTo(end.x() - 20, above)
-            path.lineTo(end.x() - 20, end.y())
-            path.lineTo(end)
-        else:
-            middle = (start.x() + end.x()) / 2
-            path.cubicTo(middle, start.y(), middle, end.y(), end.x(), end.y())
-        direction = -1
-    else:
-        start, end = QPointF(first.right(), first.center().y()), QPointF(second.right(), second.center().y())
-        path.moveTo(start)
-        outside = max(start.x(), end.x()) + 40
-        path.cubicTo(outside, start.y(), outside, end.y(), end.x(), end.y())
-        direction = 1
-    node = target.data(1)
-    color = (_COLORS[node.role][1] if isinstance(node, LineageNode) and node.role in ("selected", "affected")
-             else "#78bdb4" if geometry_only else "#91a7bb")
-    pen = QPen(QColor(color), 2 if geometry_only else 1.5)
-    if geometry_only:
-        pen.setStyle(Qt.PenStyle.DashLine)
-    line = scene.addPath(path, pen)
-    line.setZValue(-1)
-    line.setToolTip("Geometry dependency only; intensity changes do not affect this drawing" if geometry_only
-                    else "Saved input relationship")
-    head = QPolygonF([end, end + QPointF(direction * 8, -4), end + QPointF(direction * 8, 4)])
-    scene.addPolygon(head, QPen(QColor(color)), QColor(color)).setZValue(-1)
 
-
-class _LineageView(QGraphicsView):
-    """Keep ordinary scrolling and support Ctrl+scroll zoom around the cursor."""
-
-    def wheelEvent(self, event: QWheelEvent) -> None:
+    def __init__(self, report: PreflightReport, parent: QWidget | None = None, *, compact: bool = False) -> None:
         """
-        Zoom with Ctrl and leave ordinary wheel movement to the scroll bars.
+        Preserve saved dependencies, conditional rebuilds and manual-mask review warnings.
         """
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            delta = event.angleDelta().y() or event.pixelDelta().y()
-            if delta:
-                factor = 1.25 ** (delta / 120)
-                self.scale(factor, factor)
-            event.accept()
-            return
-        super().wheelEvent(event)
-
-
-class ArtifactLineageWidget(QWidget):
-    """Show recorded lineage and proposed file impact for one experiment at a time."""
-
-    def __init__(self,
-                 report: PreflightReport,
-                 parent: QWidget | None = None,
-                 *,
-                 compact: bool = False,
-                 ) -> None:
-        """
-        Build an experiment selector, zoomable impact map and file-detail area.
-        """
-        super().__init__(parent)
-        self._report = report
-        self._nodes: dict[Path, LineageNode] = {}
-        self._initial_fit_done = False
-        layout = QVBoxLayout(self)
-        toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel("Experiment"))
-        self.experiments = QComboBox()
-        self.experiments.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.experiments.setMinimumContentsLength(20)
         directories = {record.path.resolve().parent for record in report.records}
         directories.update(path.resolve().parent for _, path in report.rebuild_outputs)
-        for directory in sorted(directories):
-            self.experiments.addItem(str(directory), directory)
-            self.experiments.setItemData(self.experiments.count() - 1, str(directory), Qt.ItemDataRole.ToolTipRole)
-        toolbar.addWidget(self.experiments, 1)
-        self.scene = QGraphicsScene(self)
-        self.view = _LineageView(self.scene)
-        self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.view.setToolTip("Ctrl+scroll to zoom; drag to pan.")
-        self.view.setBackgroundBrush(QColor("#20262d"))
-        self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        for title, action in (("−", lambda: self.view.scale(.8, .8)),
-                              ("Fit", self._fit),
-                              ("+", lambda: self.view.scale(1.25, 1.25))):
-            button = QPushButton(title)
-            button.setToolTip("Fit the complete diagram" if title == "Fit" else "Zoom the file diagram")
-            button.clicked.connect(action)
-            toolbar.addWidget(button)
-        layout.addLayout(toolbar)
+        groups = tuple(_preview_group(report, directory) for directory in sorted(directories))
         if report.legacy:
-            guidance = "Earlier-version results are preserved. Rebuilding creates current-version results from the original acquisitions."
+            guidance = 'Earlier-version results are preserved. Rebuilding creates current-version results from the original acquisitions.'
         elif compact:
-            guidance = "Affected results are updated only if you choose rebuild before compacting; choosing keep retains them."
+            guidance = 'Affected results are updated only if you choose rebuild before compacting; choosing keep retains them.'
         elif report.overwritten:
-            guidance = ("Orange files are selected for overwrite. Amber downstream files are rebuilt only with "
-                        "‘Selected step and downstream’; ‘Selected step only’ keeps them and can leave conflicts.")
+            guidance = ('Selected files will be overwritten. Affected downstream files are rebuilt only with '
+                        '“Selected step and downstream”; “Selected step only” keeps them and can leave conflicts.')
         else:
-            guidance = "Highlighted files have conflicts or are included in the rebuild plan. Continuing without rebuilding retains existing results."
-        explanation = QLabel(guidance)
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
-        layout.addWidget(self.view, 1)
-        note = QLabel("Solid arrows show saved inputs; dashed arrows show REF/ROI geometry dependencies. "
-                      "Intensity changes leave these drawings unchanged; registration reruns require review. "
-                      "Dashed boxes are planned outputs. Ctrl+scroll to zoom; drag to pan.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self.details = QLabel("Click a file to see its full path and conflict reason.")
-        self.details.setWordWrap(True)
-        self.details.setTextFormat(Qt.TextFormat.PlainText)
-        self.details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.details)
-        self.scene.selectionChanged.connect(self._selection_changed)
-        self.experiments.currentIndexChanged.connect(self._show_experiment)
-        self._show_experiment()
-
-    def showEvent(self, event: QShowEvent) -> None:
-        """
-        Fit the first overview once the dialog has assigned its actual view size.
-        """
-        super().showEvent(event)
-        if not self._initial_fit_done:
-            self._initial_fit_done = True
-            QTimer.singleShot(0, self._fit)
-
-    def _show_experiment(self) -> None:
-        """
-        Arrange workflow stages from left to right, stacking parallel files vertically.
-        """
-        self.scene.clear()
-        directory = self.experiments.currentData()
-        if not isinstance(directory, Path):
-            self.scene.addText("No file lineage is available in this report.")
-            return
-        graph = file_lineage(self._report, directory)
-        self._nodes = {node.path: node for node in graph.nodes}
-        stages: dict[int, list[LineageNode]] = {}
-        for node in graph.nodes:
-            if is_branch(node.path):
-                continue
-            # Independent analyses branch from their inputs rather than each other.
-            step = str(cst.StepName.EXTRACT) if node.step == cst.StepName.DISTANCE_PROFILE else node.step
-            stage = _STEP_ORDER.get(step or "", -1)
-            stages.setdefault(stage, []).append(node)
-        cards: dict[Path, QGraphicsRectItem] = {}
-        for column, stage in enumerate(sorted(stages)):
-            x, y = column * 280.0, 0.0
-            for node in sorted(stages[stage], key=_node_order):
-                card = _add_node(self.scene, node, x, y)
-                cards[node.path] = card
-                y += card.rect().height() + 28
-        branch_y = max((card.sceneBoundingRect().bottom() for card in cards.values()), default=0) + 120
-        geometry_inputs = {target: source for source, target in graph.geometry_edges}
-        for node in sorted((node for node in graph.nodes if is_branch(node.path)), key=_node_order):
-            source_path = geometry_inputs.get(node.path)
-            source_card = cards.get(source_path) if source_path is not None else None
-            x = source_card.x() + 280 if source_card is not None else 280
-            card = _add_node(self.scene, node, x, branch_y)
-            cards[node.path] = card
-            branch_y += card.rect().height() + 50
-        for source, target in graph.edges:
-            _add_arrow(self.scene, cards[source], cards[target])
-        for source, target in graph.geometry_edges:
-            _add_arrow(self.scene, cards[source], cards[target], geometry_only=True)
-        for node in graph.nodes:
-            if node.role == "selected":
-                card = cards[node.path]
-                marker = self.scene.addText("↓ RERUN THIS FILE")
-                font = marker.font()
-                font.setPixelSize(18)
-                font.setBold(True)
-                marker.setFont(font)
-                marker.setDefaultTextColor(QColor(_COLORS["selected"][1]))
-                marker.setPos(card.x(), card.y() - marker.boundingRect().height() - 12)
-        self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-16, -12, 56, 16))
-        self.details.setText("Click a file to see its full path and conflict reason.")
-        self._fit()
-
-    def _fit(self) -> None:
-        """
-        Fit the diagram into the view; zoom buttons retain access to longer filenames.
-        """
-        self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-
-    def _selection_changed(self) -> None:
-        """
-        Show the selected file's exact path, impact and diagnostic message.
-        """
-        selected = self.scene.selectedItems()
-        if not selected:
-            return
-        node = self._nodes.get(selected[0].data(0))
-        if node is not None:
-            message = f"{node.path}\n{_node_caption(node)}"
-            if node.problem:
-                message += "\n" + node.problem
-            self.details.setText(message)
+            guidance = 'Highlighted files have conflicts or are included in the rebuild plan. Continuing without rebuilding retains existing results.'
+        super().__init__(groups, guidance, parent)

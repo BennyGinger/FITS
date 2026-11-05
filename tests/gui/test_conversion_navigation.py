@@ -2,7 +2,8 @@
 
 import os
 from pathlib import Path
-from time import monotonic
+from typing import cast
+from time import monotonic, sleep
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,7 +11,7 @@ import numpy as np
 import pytest
 import tifffile
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
 
 from fits.environment.constant import StepName
 from fits.gui.main_window.window import FitsMainWindow
@@ -41,11 +42,15 @@ def window(tmp_path, monkeypatch):
     _APP.processEvents()
 
 
-def wait_for_run(window):
+def wait_for_run(window: FitsMainWindow) -> None:
+    """
+    Pump GUI events while giving the Python pipeline worker time to execute.
+    """
     deadline = monotonic() + 15
     while window._thread is not None and monotonic() < deadline:
         QApplication.processEvents()
         QTest.qWait(5)
+        sleep(0.001)
     assert window._thread is None, "Pipeline worker did not finish"
 
 
@@ -64,6 +69,7 @@ def test_expected_channels_uses_all_raw_files(window: FitsMainWindow, tmp_path: 
     assert hint.font().italic()
     assert not window._raw_input_error()
     assert window.run_button.isEnabled()
+    assert bool(window._channel_label_warning()) == (channels != 1)
     for path in tmp_path.glob("*.tif*"):
         path.unlink()
     window._refresh_run_inventory()
@@ -89,6 +95,7 @@ def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
     assert "input_2.tif: 2 channels" in window._file_details_text()
     assert "#e57373" in window.file_status_label.styleSheet()
     assert "#e57373" in window.navigation_status.styleSheet()
+    assert not window._channel_label_warning()
     warnings: list[str] = []
     monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
     monkeypatch.setattr(window, "_save_settings", lambda: pytest.fail("Mixed channel counts reached pipeline setup"))
@@ -102,6 +109,41 @@ def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
     assert window.run_button.isEnabled()
 
 
+def test_label_count_warning_is_orange_nonblocking_and_clears_after_edit(window: FitsMainWindow,
+                                                                        tmp_path: Path,
+                                                                        ) -> None:
+    """
+    Show exact fallback labels in orange without blocking conversion or repeating unchanged warnings.
+    """
+    tifffile.imwrite(tmp_path / "input.tif", np.zeros((3, 8, 8), dtype=np.uint16),
+                     imagej=True, metadata={"axes": "CYX"})
+    window._refresh_run_inventory()
+    editor = window._editors[StepName.CONVERT]
+    field = cast(QLineEdit, editor.widgets["channel_labels"])
+    field.setText("Red, Green")
+    field.editingFinished.emit()
+    message = window._channel_label_warning()
+    assert "Expected 3 channels, got 2 channel labels" in message
+    assert "default names: C_1, C_2, C_3." in message
+    assert not window._raw_input_error()
+    assert window.run_button.isEnabled()
+    assert "#efb366" in window.navigation_status.styleSheet()
+    assert "#efb366" in editor.expected_channels_label.styleSheet()
+    assert message in window._file_details_text()
+    assert window.console.toPlainText().count(message) == 1
+    assert window.console.textCursor().charFormat().foreground().color().name() == "#efb366"
+    window._update_run_button_text()
+    assert window.console.toPlainText().count(message) == 1
+    window._append_log("Normal log message")
+    assert window.console.textCursor().charFormat().foreground().color().name() != "#efb366"
+    field.setText("Red, Green, Blue")
+    field.editingFinished.emit()
+    assert not window._channel_label_warning()
+    assert "#efb366" not in window.navigation_status.styleSheet()
+    assert not editor.expected_channels_label.styleSheet()
+    assert window.run_button.isEnabled()
+
+
 def test_duplicate_stems_load_without_popup(window: FitsMainWindow,
                                            tmp_path: Path,
                                            monkeypatch: pytest.MonkeyPatch,
@@ -112,6 +154,7 @@ def test_duplicate_stems_load_without_popup(window: FitsMainWindow,
     for extension in ("tif", "tiff"):
         tifffile.imwrite(tmp_path / f"sample.{extension}", np.zeros((2, 8, 8), dtype=np.uint16),
                          imagej=True, metadata={"axes": "CYX"})
+    window.adapter.set_field_value(StepName.CONVERT, "channel_labels", ["Red", "Green"])
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: pytest.fail("Unexpected input warning popup"))
     window._refresh_run_inventory()
     assert not window._raw_input_error()

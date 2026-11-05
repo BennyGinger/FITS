@@ -9,9 +9,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 from fits.gui.dialogs import size_resizable_dialog
 from fits.workflows.file_management.relocation import PortablePlan
-from fits.workflows.file_management.rebuild import ProcessingPlan, geometry_reviews, accept_reviewed_geometry
+from fits.workflows.file_management.rebuild import ProcessingPlan, geometry_reviews, accept_reviewed_geometry, full_rebuild_folders
 from fits.workflows.file_management.compaction import run_config
 from fits.workflows.checks.artifacts import inspect_run
+from fits.workflows.checks.locations import LocationReport, inspect_locations
 from fits.settings.loader import run_settings_path
 from fits.workflows.file_management import api
 from fits.workflows.file_management.history import Snapshot, snapshots, restore_history, delete_history
@@ -20,6 +21,13 @@ from fits.gui.file_management.compaction import run_compaction_ui
 from fits.workflows.checks.models import PreflightReport, RunCompatibility
 from fits.workflows.runtime.errors import PipelineCancelled
 from fits.gui.file_management.tasks import run_file_task
+from fits.gui.file_preview.widget import FilePreviewWidget
+from fits.gui.file_preview.changes import FileChangesWidget
+from fits.gui.file_preview.processing import processing_groups
+from fits.gui.file_preview.portable import portable_changes
+from fits.gui.file_preview.backups import restoration_changes
+from fits.gui.file_preview.review import review_tabs, size_file_review
+from fits.gui.file_preview.migration import MigrationPreviewWidget
 
 
 def _fit_manager_height(dialog: QDialog) -> None:
@@ -44,16 +52,25 @@ def _set_notice(notice: QLabel, text: str) -> None:
         _fit_manager_height(dialog)
 
 
-def confirm_files(title: str, text: str, parent: QWidget | None = None, action: str = 'Apply listed changes') -> bool:
+def confirm_files(title: str,
+                  text: str,
+                  parent: QWidget | None = None,
+                  action: str = 'Apply listed changes',
+                  *,
+                  preview: QWidget | None = None,
+                  ) -> bool:
     """
     Display a scrollable preview and return whether the listed changes were accepted.
     """
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
     layout = QVBoxLayout(dialog)
-    details = QPlainTextEdit(text)
-    details.setReadOnly(True)
-    layout.addWidget(details)
+    if preview is not None:
+        layout.addWidget(review_tabs(preview, text, 'File changes' if isinstance(preview, FileChangesWidget) else 'Run overview'))
+    else:
+        details = QPlainTextEdit(text)
+        details.setReadOnly(True)
+        layout.addWidget(details)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
     button = buttons.button(QDialogButtonBox.StandardButton.Ok)
     if button is not None:
@@ -61,7 +78,10 @@ def confirm_files(title: str, text: str, parent: QWidget | None = None, action: 
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)
-    size_resizable_dialog(dialog, 900, 600)
+    if preview is not None:
+        size_file_review(dialog)
+    else:
+        size_resizable_dialog(dialog, 900, 600)
     return dialog.exec() == QDialog.DialogCode.Accepted
 
 
@@ -110,13 +130,16 @@ def confirm_migration(plan: PortablePlan, parent: QWidget | None = None) -> bool
     content_layout = QVBoxLayout(content)
     content_layout.setContentsMargins(0, 0, 0, 0)
     content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-    explanation = QLabel('Migration updates folders, metadata and paths/tags while preserving image pixels and measurements. A complete original run copy is retained under backup so its folders, files and metadata can be restored. Historical input lineage cannot be verified and will be recorded as unavailable.')
+    explanation = QLabel('Migration updates folders, metadata, saved paths and condition tags. Pixels and measurements are preserved unless rebuilding is selected. A complete backup is retained first.')
     explanation.setWordWrap(True)
     content_layout.addWidget(explanation)
-    content_layout.addWidget(_migration_details(plan.describe()))
+    previews = MigrationPreviewWidget(plan)
+    content_layout.addWidget(previews)
+    content_layout.addWidget(_migration_details('Historical input lineage cannot be verified and will be recorded as unavailable.\n\n' + plan.describe()))
     content_layout.addSpacing(12)
     rebuild = QCheckBox('Also rebuild all experiment results from the original acquisition')
     rebuild.setToolTip('Optional full processing: recreate intermediate files, final images, masks and measurements. This can take a long time and change results. A backup is retained first.')
+    rebuild.toggled.connect(previews.show_rebuild)
     content_layout.addWidget(rebuild)
     warning = QLabel('Full rebuilding is optional and can take a long time. Final results may change slightly, even with the same settings; different processing versions or settings can also change results. A backup is retained before any existing results are replaced.')
     warning.setStyleSheet('color: #f0b66a;')
@@ -129,7 +152,7 @@ def confirm_migration(plan: PortablePlan, parent: QWidget | None = None) -> bool
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)
-    size_resizable_dialog(dialog, 840, 340)
+    size_file_review(dialog)
     return rebuild.isChecked() if dialog.exec() == QDialog.DialogCode.Accepted else None
 
 
@@ -178,14 +201,18 @@ def _rebuild_action(root: Path,
     """
     Review full processing, with a backup and explicit time/result-change warnings.
     """
-    plan = api.plan_full_rebuild(root)
+    plan = api.plan_required_rebuild(root)
     if plan is None:
-        _set_notice(notice, 'There are no processed experiments to rebuild. Convert your inputs first.')
+        reviews = geometry_reviews(root)
+        if reviews and parent is not None:
+            return _geometry_action(root, parent, reviews)
+        _set_notice(notice, 'All results are current; no rebuilding is needed.')
         return None
-    if not confirm_files('Review full experiment rebuild',
+    if not confirm_files('Review required experiment rebuilding',
                          plan.describe(),
                          parent,
-                         'Rebuild all experiment results',
+                         'Rebuild listed results',
+                         preview=FilePreviewWidget(processing_groups(plan), 'Rebuilding can take a long time and may change final results. Existing results are backed up before processing starts.'),
                          ):
         return None
     return lambda: api.update_downstream(plan, run_processing)
@@ -197,30 +224,13 @@ def _update_action(root: Path, parent: QWidget, notice: QLabel) -> Callable[[], 
     """
     plan = api.plan_update(root)
     if plan is None:
-        _set_notice(notice, 'There are no processed experiments to update. Convert your inputs first.')
+        _set_notice(notice, 'Saved paths and master-table tags already match this run. Nothing needs updating.')
         return None
-    if not confirm_files('Update run paths and condition tags', plan.describe(), parent):
+    if not confirm_files('Update run paths and condition tags', plan.describe(), parent,
+                         preview=FileChangesWidget(portable_changes(plan)),
+                         ):
         return None
     return lambda: run_file_task(lambda: api.update(plan), parent.parentWidget())
-
-
-def _downstream_action(root: Path,
-                       parent: QWidget,
-                       notice: QLabel,
-                       reviews: Sequence[tuple[Path, Path]],
-                       run_processing: Callable[[ProcessingPlan], None],
-                       ) -> Callable[[], Any] | None:
-    """
-    Review actual revision conflicts or explain why no processing is needed.
-    """
-    plan = api.plan_downstream_update(root)
-    if plan is None:
-        _set_notice(notice, 'REF/ROI drawings need alignment review. Inspect them in the viewer and use Accept reviewed alignment below. There are no outdated results to rebuild automatically.' if reviews else
-                       'There are no outdated results to rebuild. No missing inputs or changed inputs were found.')
-        return None
-    if not confirm_files('Review rebuilding outdated results', plan.describe(), parent, 'Rebuild listed results'):
-        return None
-    return lambda: api.update_downstream(plan, run_processing)
 
 
 def _geometry_action(root: Path, parent: QWidget, reviews: Sequence[tuple[Path, Path]]) -> Callable[[], Any] | None:
@@ -288,6 +298,7 @@ def _history_action(root: Path,
                          text,
                          parent,
                          'Restore backup' if action == 'restore' else 'Delete selected backups',
+                         preview=FileChangesWidget(restoration_changes(root, picked[0])) if action == 'restore' else None,
                          ):
         return None
     if action == 'restore':
@@ -347,30 +358,59 @@ def _history_panel(entries: Sequence[Snapshot],
     return group, history, selection
 
 
-def _unavailable_actions(status: RunCompatibility, report: PreflightReport | None) -> dict[str, str]:
+def _unavailable_actions(status: RunCompatibility,
+                          report: PreflightReport | None,
+                          locations: LocationReport,
+                          reviews: Sequence[tuple[Path, Path]],
+                          ) -> dict[str, str]:
     """
-    Explain actions that cannot apply to the inspected run without planning file writes.
+    Enable only file actions supported by actual reconstruction or location differences.
     """
-    actions = ('rebuild', 'update', 'downstream', 'compact', 'geometry')
+    actions = ('rebuild', 'update', 'compact')
     if status.outdated:
         return dict.fromkeys(actions, 'Migrate this run to FITS v4 first.')
     if not status.states:
-        return dict.fromkeys(actions, 'Convert your inputs first; this run has no processed experiments.')
+        unavailable = dict.fromkeys(('rebuild', 'compact'), 'Convert your inputs first; this run has no processed experiments.')
+        if not locations.needs_update:
+            unavailable['update'] = 'There are no saved location differences to update.'
+        return unavailable
     unavailable: dict[str, str] = {}
-    if any(not state.original_image.is_file() for state in status.states):
+    full = full_rebuild_folders(status.states)
+    stale = report is not None and any(record.problem and record.step is not None for record in report.records)
+    if not full and not stale and not reviews:
+        unavailable['rebuild'] = 'All existing results are current. No reconstruction or outdated results need rebuilding.'
+    elif any(not state.original_image.is_file() for state in status.states if state.workdir in full):
         unavailable['rebuild'] = 'Restore the missing original acquisitions or update their paths before a full rebuild.'
-    if report is None or not any(record.problem and record.step is not None for record in report.records):
-        unavailable['downstream'] = 'No outdated results were found to rebuild.'
+    if not locations.needs_update:
+        unavailable['update'] = 'Saved paths and master-table identities/tags match the current folder structure.'
     if not api.can_compact(status.root):
         unavailable['compact'] = 'No uncompacted compatible image results are available.'
     return unavailable
+
+
+def _primary_action(status: RunCompatibility, report: PreflightReport | None) -> tuple[str, str, str]:
+    """
+    Name the single reconstruction action according to the run's actual needs.
+    """
+    if status.outdated:
+        return ('Migrate to FITS 4…', 'migrate',
+                'Migrate folders and metadata without rerunning processing. Optionally rebuild all results; '
+                'this can take a long time and may change results. Backups are retained.')
+    full = full_rebuild_folders(status.states)
+    stale_elsewhere = report is not None and any(record.problem and record.step is not None
+                                                and record.path.parent not in full for record in report.records)
+    title = ('Rebuild required results…' if full and stale_elsewhere else
+             'Rebuild all results…' if full else 'Rebuild outdated results…' if report is not None and report.conflicts else
+             'Rebuild results…')
+    return (title, 'rebuild', 'Review the required rebuilding. Compacted or migrated experiments are rebuilt completely; '
+            'other experiments rebuild only outdated results. This can take a long time and may change results. '
+            'Existing results are backed up first. REF/ROI alignment can be reviewed when needed.')
 
 
 def _file_actions_panel(notice: QLabel,
                         primary_action: tuple[str, str, str],
                         choose: Callable[[str], None],
                         unavailable: dict[str, str],
-                        has_geometry_reviews: bool,
                         ) -> QGroupBox:
     """
     Place run guidance on the left and applicable file actions on the right.
@@ -386,10 +426,7 @@ def _file_actions_panel(notice: QLabel,
     buttons.setContentsMargins(0, 0, 0, 0)
     buttons.setSpacing(10)
     actions = [primary_action,
-               ('Update paths and condition tags…', 'update', 'Refresh paths, identifiers, condition tags and master tables throughout the run; preserve measurements and retain a restorable run backup.'),
-               ('Rebuild outdated results…', 'downstream', 'Review results affected by changed or missing inputs, retain a backup before replacing existing results, then rerun the affected processing.')]
-    if has_geometry_reviews:
-        actions.append(('Accept reviewed REF/ROI alignment…', 'geometry', 'Record that you checked these drawings against the current registration. Drawing pixels are kept.'))
+               ('Update paths and condition tags…', 'update', 'Refresh displaced state references and master-table identifiers and condition tags. Portable per-experiment measurements are preserved; a restorable run backup is retained.')]
     actions.append(('Compact experiment…', 'compact', 'Free disk space by removing intermediate files and caches. Keep original acquisitions, final images and masks, REF/ROI masks, measurements and reports. No persistent backup is created.'))
     for title, action, tooltip in actions:
         if action == 'compact':
@@ -416,9 +453,10 @@ def manage_files(root: str | Path,
     root = Path(root).resolve()
     status = inspect_run_compatibility(root)
     report = inspect_run(root, run_config(root), for_execution=False) if not status.outdated else None
-    unavailable = _unavailable_actions(status, report)
+    locations = inspect_locations(root, status.states) if not status.outdated else LocationReport()
     entries = snapshots(root, selected)
     reviews = geometry_reviews(root)
+    unavailable = _unavailable_actions(status, report, locations, reviews)
     processing_runner = run_processing or partial(_run_cli_processing, root)
     dialog = QDialog(parent)
     dialog.setWindowTitle('Manage experiment files')
@@ -431,7 +469,9 @@ def manage_files(root: str | Path,
     if status.outdated:
         _set_notice(notice, 'This run needs an upgrade to FITS v4. You can keep viewing its files read-only, or migrate without rerunning processing.')
     elif report is not None and report.conflicts:
-        _set_notice(notice, 'This run has outdated results because their inputs changed or are missing. Choose Rebuild outdated results to review what needs to run again. Existing files remain viewable.')
+        _set_notice(notice, 'This run has outdated results because their inputs changed or are missing. Choose Rebuild outdated results to review what needs to run again. Existing files remain viewable.' + ('\n\nSaved paths or master-table tags also need updating.' if locations.needs_update else ''))
+    elif locations.needs_update:
+        _set_notice(notice, 'Saved paths or master-table tags differ from the current run. Choose Update paths and condition tags.\n\n' + locations.describe())
     elif not status.states:
         _set_notice(notice, 'No processed experiments were found. Convert your inputs before using these file actions.')
     else:
@@ -449,10 +489,6 @@ def manage_files(root: str | Path,
                 pending[0] = _rebuild_action(root, dialog, notice, processing_runner)
             elif action == 'update':
                 pending[0] = _update_action(root, dialog, notice)
-            elif action == 'downstream':
-                pending[0] = _downstream_action(root, dialog, notice, reviews, processing_runner)
-            elif action == 'geometry':
-                pending[0] = _geometry_action(root, dialog, reviews)
             elif action == 'compact':
                 pending[0] = _compact_action(root, dialog, notice, processing_runner)
             else:
@@ -462,14 +498,7 @@ def manage_files(root: str | Path,
         except Exception as error:
             _set_notice(notice, str(error))
 
-    if status.outdated:
-        primary_action = ('Migrate to FITS 4…', 'migrate',
-                          'Migrate folders and metadata without rerunning processing. Optionally rebuild all results; this can take a long time and may change results. Backups are retained.')
-    else:
-        primary_action = ('Rebuild all experiment results…', 'rebuild',
-                          'Rebuild the complete workflow from original acquisitions, including final images, masks and measurements. '
-                          'This can take a long time and may change results. A backup is retained first.')
-    layout.addWidget(_file_actions_panel(notice, primary_action, choose, unavailable, bool(reviews)))
+    layout.addWidget(_file_actions_panel(notice, _primary_action(status, report), choose, unavailable))
     group, history, backup_notice = _history_panel(entries, root, choose)
     layout.addWidget(group)
     close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)

@@ -20,8 +20,9 @@ from fits.workflows.file_management.transactions import FileUpdate
 from fits.workflows.file_management.run_history import require_run_backup_space, stage_run_snapshot, publish_run_snapshot
 from fits.workflows.definitions.inputs import IMAGE_OUTPUTS
 from fits.workflows.checks.compatibility import inspect_run_compatibility
-from fits.tasks.analysis.aggregate import _condition_values, save_master_analysis_table
-from fits.tasks.analysis.identity import add_quantification_ids, add_condition_tags
+from fits.workflows.checks.locations import LocationReport, inspect_locations
+from fits.tasks.analysis.aggregate import save_master_analysis_table
+from fits.tasks.analysis.identity import add_quantification_ids
 from fits.workflows.artifacts.provenance import compatible, read_metadata
 from fits_io.writers.metadata_update import rewrite_metadata
 from fits.workflows.file_management.migration import prepare_state, migrate_payload, accepted_inputs
@@ -38,18 +39,23 @@ class PortablePlan:
     series_moves: tuple[tuple[Path, Path], ...] = ()
     rebuild_series: tuple[Path, ...] = ()
     migrate: bool = False
+    locations: LocationReport | None = None
 
     def describe(self) -> str:
         """
         Describe the exact move, metadata and table operations for review.
         """
+        if self.locations is not None:
+            return (self.locations.describe() + '\n\nUpdate saved references and regenerate affected master tables. '
+                    'Portable experiment tables, pixels and measurements are preserved. '
+                    'A complete run backup is retained before applying changes.')
         lines = ['Update the selected experiments using the current run directory.',
                  'Image pixels and measurement values are preserved during relocation/table refresh.']
         lines += [f'MOVE {source}\n  -> {target}' for source, target in self.moves]
         for state in self.states:
             lines.append(f'STATE {experiment_state_path(state.workdir)}')
             for name in (cst.FITS_QUANTI_NAME, cst.FITS_DISTANCE_PROFILE_NAME):
-                lines.append(f'REFRESH identifiers, paths and condition tags if present: {state.workdir / name}')
+                lines.append(f'REFRESH portable identifiers and relative paths if present: {state.workdir / name}')
         lines.append('REGENERATE run master tables from existing measurements.')
         lines.append('RETAIN a complete original run folder under .fits/backup before applying these changes. '
                      'This uses additional disk space and allows restoring the original layout, files and metadata.')
@@ -105,7 +111,7 @@ def plan_portable_update(root: Path,
     if upgrade and status.outdated:
         selected = None  # A mixed run must be upgraded as one coherent run.
     states = scoped_states(states, selected)
-    if not states:
+    if not states and (selected is not None or upgrade or migrate or not inspect_locations(root, ()).needs_update):
         raise ValueError('No experiment states were found for this selection. Unknown/orphan outputs require their matching state and original acquisition.')
     moves: list[tuple[Path, Path]] = []
     new_states: list[ExperimentState] = []
@@ -115,6 +121,7 @@ def plan_portable_update(root: Path,
     settings = root / '.fits/fits_settings.toml'
     if settings.is_file():
         watched.add(settings)
+    watched.update(root / name for _, name in cst.MASTER_TABLES if (root / name).is_file())
     rebuild = False
     rebuild_parents = set()
     for path in status.files:
@@ -151,6 +158,7 @@ def plan_portable_update(root: Path,
                         tuple(series_moves),
                         numerical,
                         migrate,
+                        inspect_locations(root) if not migrate and not moves and not rebuild else None,
                         )
     _check_update_space(plan)
     return plan
@@ -250,6 +258,8 @@ def _plan_artifact_paths(state: ExperimentState,
                 relative = Path(original.name)
                 if not (state.workdir / relative).is_file():
                     raise ValueError(f'Artifact cannot be safely rebound: {original}')
+            if not (state.workdir / relative).is_file() and (state.workdir / original.name).is_file():
+                relative = Path(original.name)
             target = new_workdir / relative
             actual = state.workdir / relative
             if actual.is_file():
@@ -340,10 +350,10 @@ def _refresh_table(path: Path, state: ExperimentState, old_base: Path, plan: Por
     """
     frame = pd.read_parquet(path)
     if path.name == cst.FITS_QUANTI_NAME:
-        frame = add_quantification_ids(frame, state.analysis_experiment_id)
+        frame = add_quantification_ids(frame, state.portable_experiment_id)
     else:
-        frame['experiment_id'] = state.analysis_experiment_id
-    add_condition_tags(frame, _condition_values(state, plan.root))
+        frame['experiment_id'] = state.portable_experiment_id
+    frame = frame.drop(columns=[name for name in frame if name.startswith('condition_level_')])
     for column in ('image_path', 'mask_path', 'artifact_path', 'source_path', 'experiment_path'):
         if column in frame:
             frame[column] = frame[column].map(lambda value: _relocated(value, old_base, state.workdir, plan))
@@ -393,8 +403,12 @@ def apply_portable_update(plan: PortablePlan) -> tuple[ExperimentState, ...]:
             for kind, name in cst.MASTER_TABLES:
                 if plan.rebuild:
                     continue
+                if plan.locations is not None and not any(issue.path == plan.root / name for issue in plan.locations.issues):
+                    continue
                 transaction.protect(plan.root / name)
-                save_master_analysis_table(states, plan.root, artifact_kind=kind, output_name=name)
+                master = save_master_analysis_table(states, plan.root, artifact_kind=kind, output_name=name)
+                if master is None:
+                    (plan.root / name).unlink(missing_ok=True)
             if len([state for state in states if state.workdir in {item.workdir for item in plan.states}]) != len(plan.states):
                 raise ValueError('State verification failed after relocation.')
             if plan.migrate:
@@ -413,9 +427,13 @@ def _apply_state_update(state: ExperimentState, old_base: Path, plan: PortablePl
     """
     needs_rebuild = plan.rebuild and state.workdir in plan.rebuild_series
     target = experiment_state_path(state.workdir, acquisition=state.original_image.parent)
+    if plan.locations is not None and not any(issue.path == target for issue in plan.locations.issues):
+        return
     transaction.parents(target.parent)
     transaction.protect(target)
     save_experiment_state(state)
+    if plan.locations is not None:
+        return
     # TIFF pixels/revision times stay unchanged. Rewrite private
     # provenance only when actual path references need rebinding.
     paths = [state.workdir / name for name in (*cst.IMAGE_STAGE_NAMES, cst.FITS_ARRAY_NAME, *cst.MASK_NAMES)]
@@ -437,7 +455,7 @@ def _apply_state_update(state: ExperimentState, old_base: Path, plan: PortablePl
             rewrite_metadata(path, FitsIOMeta.from_dict(after))
     for name in (cst.FITS_QUANTI_NAME, cst.FITS_DISTANCE_PROFILE_NAME):
         path = state.workdir / name
-        if path.is_file() and not needs_rebuild:
+        if path.is_file() and not needs_rebuild and (plan.migrate or old_base != state.workdir):
             transaction.protect(path)
             _refresh_table(path, state, old_base, plan)
 

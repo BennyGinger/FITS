@@ -57,7 +57,7 @@ def convert(settings: ConvertSettings,
             ARTI_RAW: Path(os.path.relpath(grouped, exp_state.workdir))})
         source = FitsIO.from_path(grouped)
 
-        selection = source.resolve_channel_selection(channel_labels=settings.channel_labels,
+        selection = source.resolve_channel_selection(channel_labels=settings.channel_labels or None,
                                                      export_channels=settings.export_channels,
                                                      )
 
@@ -65,6 +65,8 @@ def convert(settings: ConvertSettings,
 
         pending_state = exp_state.with_metadata(step_name=step_profile.step_name,
                                                 created_by=step_profile.distribution,
+                                                exported_channel="all",
+                                                channels_params=settings.model_dump(),
                                                 )
 
         out_states: list[ExperimentState] = []
@@ -84,6 +86,8 @@ def convert(settings: ConvertSettings,
                 if old is not None:
                     branch_base = old.with_metadata(step_name=step_profile.step_name,
                                                     created_by=step_profile.distribution,
+                                                    exported_channel="all",
+                                                    channels_params=settings.model_dump(),
                                                     )
             conversion_meta = pending_state.metadata_dump
             conversion_meta['steps'] = {step_profile.step_name: conversion_meta['steps'][step_profile.step_name]}

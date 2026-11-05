@@ -33,7 +33,8 @@ def inspect_run_compatibility(root: Path) -> RunCompatibility:
         except (OSError, ValueError):
             outdated_folders.update(state.workdir for state in states)
     for state in states:
-        if state.workdir.parent != state.original_image.parent:
+        local_original = state.workdir.parent / state.original_image.name
+        if state.workdir.parent != state.original_image.parent and not local_original.is_file():
             problems.append(f'Acquisition grouping needs updating: {state.workdir}')
             outdated_folders.add(state.workdir)
     for path in files:

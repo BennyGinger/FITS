@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget, QDialog, QDialogButtonBox, QLabel, QPlainTextEdit, QTabWidget, QVBoxLayout
 from fits.workflows.checks.models import PreflightReport
-from fits.gui.dialogs import size_resizable_dialog
+from fits.gui.file_preview.review import size_file_review
 from fits.gui.artifact_lineage import ArtifactLineageWidget
 
 
@@ -30,7 +30,7 @@ def choose_artifacts(report: PreflightReport, parent: QWidget | None = None, *, 
     details = QPlainTextEdit(report.describe())
     details.setReadOnly(True)
     tabs = QTabWidget()
-    tabs.addTab(ArtifactLineageWidget(report, compact=compact), "File lineage")
+    tabs.addTab(ArtifactLineageWidget(report, compact=compact), "Run overview")
     tabs.addTab(details, "Full details")
     layout.addWidget(tabs, 1)
     buttons = QDialogButtonBox()
@@ -55,6 +55,6 @@ def choose_artifacts(report: PreflightReport, parent: QWidget | None = None, *, 
     cancel = buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
     cancel.clicked.connect(dialog.reject)
     layout.addWidget(buttons)
-    size_resizable_dialog(dialog, 1080, 680)
+    size_file_review(dialog)
     dialog.exec()
     return decision[0]

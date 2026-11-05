@@ -13,6 +13,7 @@ from fits.workflows.artifacts.branch_masks import geometry, is_branch
 from fits.workflows.artifacts.provenance import compatible, read_metadata
 from fits.workflows.checks.decisions import apply_decision
 from fits.workflows.checks.models import ArtifactRecord, PreflightReport
+from fits.workflows.checks.settings import settings_problem
 from fits.workflows.checks.planning import downstream_steps, overwrite_steps, rebuild_sources
 from fits.workflows.definitions.inputs import configured_profile, resolve_inputs
 from fits.workflows.definitions.registry import REGISTRY
@@ -133,6 +134,9 @@ def _missing_input_records(states: Sequence[ExperimentState],
             output = state.artifact(profile.output_artifact)
             if output is not None and output.is_file():
                 continue
+            if not for_execution and output is None and step not in state.completed_steps:
+                # Future enabled work has no saved result to mark as outdated.
+                continue
             try:
                 resolve_inputs(state, profile)
             except ValueError as error:
@@ -164,7 +168,8 @@ def _propagate_conflicts(records: list[ArtifactRecord],
                 continue
             reason = record.problem
             if not reason:
-                reason = (_reference_problem(record, state, problems, for_execution=for_execution)
+                reason = (settings_problem(record, config)
+                          or _reference_problem(record, state, problems, for_execution=for_execution)
                           or _configured_input_problem(record, state, config))
             if reason and not record.problem:
                 changed = True

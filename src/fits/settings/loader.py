@@ -6,10 +6,38 @@ import os
 import tomlkit
 from collections.abc import Mapping, MutableMapping
 from tempfile import NamedTemporaryFile
+from datetime import datetime, timezone
 from fits.environment.paths import ensure_fits_directory, fits_dir
 
 
 SAVED_SETTINGS_NAME = "fits_settings.toml"
+
+
+def write_settings(path: Path, contents: str, *, backup: bool = False) -> Path:
+    """
+    Publish settings atomically, retaining a changed run snapshot before replacement.
+    """
+    path = path.expanduser().resolve()
+    encoded = contents.encode("utf-8")
+    previous = path.read_bytes() if path.is_file() else None
+    if previous == encoded:
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with NamedTemporaryFile(dir=path.parent, prefix=".fits_settings.", suffix=".tmp", delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(encoded)
+        if backup and previous is not None:
+            history = path.parent / "settings_history"
+            history.mkdir(exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            (history / f"fits_settings_{stamp}.toml").write_bytes(previous)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return path
 
 
 def normalize_registration_algorithms(document: MutableMapping[str, Any]) -> bool:
@@ -67,16 +95,7 @@ def save_run_settings(source: Path, run_dir: Path) -> Path:
     if source == destination.resolve() and contents == source.read_bytes():
         return destination
     ensure_fits_directory(destination.parent)
-    temporary_path = None
-    try:
-        with NamedTemporaryFile(dir=destination.parent, prefix=".fits_settings.", suffix=".tmp", delete=False) as temporary:
-            temporary_path = Path(temporary.name)
-            temporary.write(contents)
-        os.replace(temporary_path, destination)
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-    return destination
+    return write_settings(destination, contents.decode("utf-8"), backup=True)
 
 
 def resolve_step_params(step_name: str, step_config: Mapping[str, Any]) -> dict[str, Any]:

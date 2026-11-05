@@ -5,8 +5,6 @@ from __future__ import annotations
 import importlib
 import io
 from pathlib import Path
-import shlex
-import subprocess
 import sys
 import tarfile
 from types import ModuleType
@@ -106,28 +104,6 @@ def test_linux_archive_install_and_reuse(tad: ModuleType, tmp_path: Path, monkey
     assert tad.find_tad(tmp_path) == executable
 
 
-@pytest.mark.skipif(sys.platform != 'linux', reason='Linux desktop launcher')
-def test_clickable_launcher_handles_relocated_paths(tmp_path: Path) -> None:
-    """
-    Resolve the startup installer even when its checkout path contains shell characters.
-    """
-    entry = Path(__file__).resolve().parents[2] / 'install_linux.desktop'
-    root = tmp_path / 'FITS spaces $ ` % "'
-    root.mkdir()
-    launcher = root / entry.name
-    launcher.write_bytes(entry.read_bytes())
-    (root / 'startup').mkdir()
-    (root / 'startup/install_linux.sh').write_text('printf "%s" "$1"')
-    command = next(line[5:] for line in entry.read_text().splitlines() if line.startswith('Exec='))
-    # Decode the desktop-entry string layer, then its Exec quoting and field codes.
-    command = command.replace('\\\\', '\\')
-    # Unlike GLib's Exec parser, shlex preserves escaped dollar signs in quotes.
-    arguments = [argument.replace('%%', '%').replace('\\$', '$') for argument in shlex.split(command)]
-    arguments[-1] = str(launcher)
-    result = subprocess.run(arguments, check=True, text=True, capture_output=True, cwd=tmp_path)
-    assert result.stdout == '--pause'
-
-
 def test_windows_install_uses_current_user_and_reuses_result(tad: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Pass the NSIS destination with spaces correctly, then detect the installed executable.
@@ -155,3 +131,16 @@ def test_windows_install_uses_current_user_and_reuses_result(tad: ModuleType, tm
     assert executable == destination / 'Tad.exe'
     assert commands[0].endswith(f' /S /currentuser /D={destination}')
     assert tad.find_tad(tmp_path / 'FITS with spaces') == executable
+
+
+def test_macos_tad_setup_uses_manual_installation(tad, tmp_path, monkeypatch):
+    install_tad = tad._install_tad
+    monkeypatch.setattr(tad.sys, 'platform', 'darwin')
+    monkeypatch.setattr(tad, 'find_tad', lambda root: None)
+    monkeypatch.setattr(tad, '_install_tad', lambda *args: pytest.fail('Linux distribution downloaded on Mac'))
+    monkeypatch.setattr('builtins.input', lambda *args: pytest.fail('Unsupported automatic installation offered'))
+    messages = []
+    tad.setup_optional_tad(tmp_path, True, messages.append)
+    assert any('On macOS, install Tad separately' in message for message in messages)
+    with pytest.raises(RuntimeError, match='Linux and Windows only'):
+        install_tad(tmp_path, messages.append)

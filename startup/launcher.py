@@ -114,8 +114,9 @@ def run_progress(updater: Updater, *, repair: bool) -> bool:
     elif shutil.which("xterm"):
         command = ["xterm", "-e", *command]
     else:
+        launcher = "launch_macos.sh" if sys.platform == "darwin" else "launch_linux.sh"
         ask(updater, {"kind": "message", "title": "FITS needs a terminal",
-                      "message": "Open startup/launch_linux.sh in a terminal to update or repair FITS.\n"
+                      "message": f"Run bash startup/{launcher} in a terminal to update or repair FITS.\n"
                                  "Your installation has not been changed."})
         return False
     result = subprocess.run(command, cwd=updater.root, env=environment, creationflags=flags)

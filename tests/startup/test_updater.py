@@ -326,7 +326,7 @@ def test_bootstrap_lookup_excludes_project_environment(modules, repositories, mo
 def test_update_runs_real_installer_with_simulated_dependencies(modules, repositories, tmp_path, monkeypatch):
     module, _ = modules
     remote, root = repositories
-    shutil.copytree(STARTUP, remote / "startup", ignore=shutil.ignore_patterns("logs", "__pycache__"))
+    shutil.copytree(STARTUP, remote / "startup", ignore=shutil.ignore_patterns("logs", "__pycache__", "tools"))
     (remote / "assets").mkdir()
     (remote / "assets/fits_icon.png").touch()
     (remote / "startup/verify.py").write_text("print('Backend verification reached')\n")
@@ -370,7 +370,7 @@ def test_independent_interpreter_guard(modules, repositories, monkeypatch):
 def test_supervisor_shell_launches_current_and_exits_with_gui(modules, repositories, monkeypatch, tmp_path):
     _, launcher = modules
     _, root = repositories
-    shutil.copytree(STARTUP, root / "startup", ignore=shutil.ignore_patterns("logs", "__pycache__"))
+    shutil.copytree(STARTUP, root / "startup", ignore=shutil.ignore_patterns("logs", "__pycache__", "tools"))
     python = root / ".venv/bin/python"
     python.parent.mkdir(parents=True)
     python.symlink_to(sys.executable)

@@ -3,6 +3,7 @@
 set -euo pipefail
 fits_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$fits_root"
+export PATH="$PATH:$HOME/.local/bin"
 bootstrap_python=""
 if [[ -f startup/logs/bootstrap-python.txt ]]; then
     IFS= read -r bootstrap_python < startup/logs/bootstrap-python.txt || true

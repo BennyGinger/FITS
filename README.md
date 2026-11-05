@@ -18,6 +18,108 @@ viewers for segmentation tuning, reference masks, and ROI masks, while the CLI
 supports scripted and repeatable runs. Both use the same settings models and
 workflow engine.
 
+## Install
+
+FITS supports **Linux and Windows**. A **macOS installer is available for testing**;
+Mac dependency compatibility and processing still need validation on real hardware.
+An internet connection is needed to download Python and dependencies. No
+separate Python installation or GPU is required: uv installs Python 3.12 and
+creates a `.venv` inside the repository.
+
+**uv is required and will be downloaded and installed automatically if missing.**
+An existing uv installation is reused. uv is an independent third-party tool;
+FITS does not maintain, update, or uninstall it. The installer uses uv's official
+installer and installs it for your user in `~/.local/bin` (on Windows,
+`%USERPROFILE%\.local\bin`), without changing shell profiles. No terminal restart
+is needed for FITS installation or launch. To use a newly installed uv directly
+in a terminal, add that directory to your PATH. Like the optional Tad viewer,
+uv is maintained separately; unlike Tad, uv is mandatory.
+
+### Linux
+
+1. Install [Git](https://git-scm.com/downloads/linux).
+   Open a terminal and check that Git is available:
+
+   ```bash
+   git --version
+   ```
+
+2. Clone FITS into a folder you can write to, then run the installer:
+
+   ```bash
+   git clone https://github.com/BennyGinger/FITS.git fits
+   cd fits
+   bash install_linux.sh --pause
+   ```
+
+   If you already cloned the repository, open a terminal in its main folder
+   and run only `bash install_linux.sh --pause`. Use the terminal command;
+   double-clicking a shell script may open it in a text editor.
+
+3. Wait for the installation to finish. Answer the optional **Tad** viewer
+   prompt, then press Enter to close. Open **FITS** from your Applications menu.
+   You can also run `bash startup/launch_linux.sh` from the repository folder.
+
+### Windows
+
+1. Install [Git for Windows](https://git-scm.com/downloads/win).
+   Open a new PowerShell window after installation and check Git:
+
+   ```powershell
+   git --version
+   ```
+
+2. Clone FITS into a folder you can write to:
+
+   ```powershell
+   git clone https://github.com/BennyGinger/FITS.git fits
+   cd fits
+   .\install_win.bat
+   ```
+
+   If you already cloned the repository, double-click **install_win.bat** in
+   its main folder, or run `.\install_win.bat` from PowerShell in that folder.
+
+3. Wait for the installation to finish. Answer the optional **Tad** viewer
+   prompt, then press Enter to close. Open **FITS** from the Start menu or
+   the desktop shortcut.
+
+### macOS (experimental)
+
+1. Install [Git](https://git-scm.com/downloads/mac), then open Terminal and check
+   `git --version`. If macOS asks to install Command Line Tools, finish that first.
+
+2. Clone FITS and run the Mac installer:
+
+   ```bash
+   git clone https://github.com/BennyGinger/FITS.git fits
+   cd fits
+   bash install_macos.sh --pause
+   ```
+
+   For an existing clone, run `bash install_macos.sh --pause` from its main folder.
+   uv and Python are downloaded automatically when missing. Keep the terminal
+   output and `startup/logs/install.log` if dependencies or verification fail.
+
+3. After successful installation, double-click `FITS.command` in your home
+   folder's `Applications` directory. It opens a terminal for startup and updates.
+   Alternatively, run `bash startup/launch_macos.sh` from the repository folder.
+   Install optional Tad separately from [its website](https://www.tadviewer.com/).
+
+This installer uses the same dependency and import checks as Linux and Windows.
+Apple Silicon/Intel compatibility and Apple GPU acceleration have not yet been
+validated; providing this script does not guarantee every backend works on a Mac.
+
+Run the FITS installers as your normal user, without `sudo` or **Run as
+administrator**. Use a Git clone rather than a downloaded ZIP; the installer
+fetches the required submodules automatically. Keep the repository folder
+after installation, since the shortcuts launch FITS from there.
+
+If installation fails, read the terminal message and
+`startup/logs/install.log` (if created), fix the reported problem, and rerun
+the same installer. See [installation details](#installation-details) for
+optional settings, updates, and repair.
+
 ## Design
 
 FITS owns experiment discovery, scheduling, state, paths, provenance, and saved
@@ -302,25 +404,7 @@ The corresponding `[extract.params]` settings are `compartments = false`,
 (finite and non-negative), and `save_compartment_masks = false`. Both distances
 are in pixels.
 
-## Installation
-
-Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/),
-then clone FITS into a folder writable by your normal user:
-
-```bash
-git clone https://github.com/BennyGinger/FITS.git fits
-cd fits
-```
-
-On Linux, open `install_linux.desktop` or run `bash startup/install_linux.sh`.
-On Windows, open `install_win.bat`
-(or run it in a terminal). No globally installed Python or GPU is required:
-uv obtains Python 3.12 and creates this checkout's single `.venv`.
-
-For `install_linux.desktop`, allow launching/trust the file if your desktop
-asks, then open it to run installation in a terminal. Keep it at the top of
-the FITS checkout; its shell installer lives in `startup/`. Windows and this Linux launcher keep the final result
-visible until you press Enter.
+## Installation details
 
 After FITS installs, the terminal offers to install **Tad**, an optional,
 independently maintained third-party Parquet table viewer. Existing discoverable
@@ -338,7 +422,8 @@ as an alternative. This does not affect pipeline execution.
 
 The installer initializes the recorded submodules, runs ordinary `uv sync`,
 checks GUI/backend imports and model-cache write access, and creates a per-user
-Applications-menu entry on Linux or Start-menu and desktop shortcuts on Windows. It does
+Applications-menu entry on Linux, Start-menu and desktop shortcuts on Windows,
+or a `~/Applications/FITS.command` launcher on macOS. It does
 not run the pipeline or request model weights. Model downloads happen on first
 use. GPU availability is reported without making it an installation requirement.
 Run as your normal user, rather than as administrator or with `sudo`.
@@ -360,7 +445,8 @@ installer to stop before changing their checkouts. No pull, reset, cleanup, or
 automatic dependency upgrade is performed. If `uv sync` changes the lockfile,
 the installer reports it for review.
 
-Use `bash startup/install_linux.sh --no-shortcut` or `install_win.bat --no-shortcut`
+Use `bash install_linux.sh --no-shortcut`, `bash install_macos.sh --no-shortcut`,
+or `install_win.bat --no-shortcut`
 to omit shortcuts. If an existing FITS shortcut points to another checkout,
 the installer asks before replacing it, after the new installation passes its
 checks. The old folder is left untouched. Rerunning in the same location
@@ -426,6 +512,7 @@ records the independent Python path and refreshes shortcuts to use `startup/`.
 Manual launchers live together in `startup/`:
 
 - Linux: `startup/launch_linux.sh`.
+- macOS: `startup/launch_macos.sh` (experimental).
 - Windows: `startup/launch_win.vbs` opens without a console;
   `startup/launch_win.bat` keeps a console available for troubleshooting.
 

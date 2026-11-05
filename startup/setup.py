@@ -109,8 +109,8 @@ def main() -> int:
     args = parser.parse_args()
     installer = None
     try:
-        if sys.platform not in ("linux", "win32"):
-            raise RuntimeError("This installer supports Linux and Windows.")
+        if sys.platform not in ("linux", "win32", "darwin"):
+            raise RuntimeError("This installer supports Linux, Windows, and macOS.")
         installer = Installer(ROOT)
         require_independent_python(ROOT)
         installer.install(args.no_shortcut)

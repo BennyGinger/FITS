@@ -1,16 +1,22 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-where uv >nul 2>&1
-if errorlevel 1 (
-    echo uv is required. Install it from https://docs.astral.sh/uv/getting-started/installation/
-    goto failed
-)
 where git >nul 2>&1
 if errorlevel 1 (
     echo Git is required. Install Git, then run this installer again.
     goto failed
 )
+echo uv is required by FITS and will be installed if missing.
+echo uv is maintained independently; FITS does not manage its updates or removal.
+where uv >nul 2>&1
+if errorlevel 1 set "PATH=%PATH%;%USERPROFILE%\.local\bin"
+where uv >nul 2>&1
+if errorlevel 1 (
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0startup\install_uv.ps1"
+    if errorlevel 1 goto failed
+)
+where uv >nul 2>&1
+if errorlevel 1 goto failed
 set "FITS_BOOTSTRAP_PYTHON="
 for /f "delims=" %%P in ('uv python find --system --managed-python 3.12 2^>nul') do set "FITS_BOOTSTRAP_PYTHON=%%P"
 if not defined FITS_BOOTSTRAP_PYTHON (

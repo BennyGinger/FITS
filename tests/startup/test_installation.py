@@ -158,7 +158,8 @@ def test_linux_entry_runs_installation_from_another_directory(checkout: Path, tm
     """
     Exercise bootstrap/sync/verify/menu wiring with a fake uv, without downloads.
     """
-    shutil.copytree(STARTUP, checkout / "startup", ignore=shutil.ignore_patterns("__pycache__", "logs"))
+    shutil.copytree(STARTUP, checkout / "startup", ignore=shutil.ignore_patterns("__pycache__", "logs", "tools"))
+    shutil.copy2(STARTUP.parent / "install_linux.sh", checkout / "install_linux.sh")
     (checkout / "assets").mkdir()
     (checkout / "assets" / "fits_icon.png").touch()
     (checkout / "startup" / "verify.py").write_text("print('Verification invoked')\n")
@@ -184,7 +185,7 @@ def test_linux_entry_runs_installation_from_another_directory(checkout: Path, tm
     environment["PATH"] = str(tools) + os.pathsep + environment["PATH"]
     environment["XDG_DATA_HOME"] = str(tmp_path / "user data")
     result = subprocess.run(
-        ["bash", str(checkout / "startup" / "install_linux.sh")], cwd=tmp_path,
+        ["bash", str(checkout / "install_linux.sh")], cwd=tmp_path,
         env=environment, text=True, capture_output=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -194,3 +195,124 @@ def test_linux_entry_runs_installation_from_another_directory(checkout: Path, tm
     assert f"Path={checkout}" in shortcut.read_text()
     if shutil.which("desktop-file-validate"):
         subprocess.run(["desktop-file-validate", str(shortcut)], check=True)
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux shell bootstrap')
+@pytest.mark.parametrize('failure', ['missing_git', 'python_download'])
+def test_linux_bootstrap_failure_is_reported(tmp_path, failure):
+    tools = tmp_path / 'bin'
+    tools.mkdir()
+    bash = shutil.which('bash')
+    assert bash
+    (tools / 'dirname').symlink_to(shutil.which('dirname'))
+    if failure == 'python_download':
+        (tools / 'git').symlink_to(shutil.which('git'))
+        uv = tools / 'uv'
+        uv.write_text(f'#!{bash}\nexit 7\n')
+        uv.chmod(0o755)
+    result = subprocess.run(
+        [bash, str(STARTUP.parent / 'install_linux.sh'), '--pause'],
+        env={**os.environ, 'HOME': str(tmp_path), 'PATH': str(tools)},
+        capture_output=True, text=True,
+    )
+    assert result.returncode == (1 if failure == 'missing_git' else 7)
+    assert 'FITS installation failed' in result.stdout
+    if failure == 'missing_git':
+        assert 'Git is required' in result.stdout
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='Unix bootstrap with simulated download')
+@pytest.mark.parametrize('entry', ['install_linux.sh', 'install_macos.sh'])
+@pytest.mark.parametrize('mode', ['download', 'existing', 'download_failure'])
+def test_unix_uv_bootstrap(tmp_path, entry, mode):
+    """Download/reuse uv and reach setup immediately, without network or shell edits."""
+    root = tmp_path / 'FITS checkout'
+    (root / 'startup').mkdir(parents=True)
+    shutil.copy2(STARTUP.parent / entry, root / entry)
+    shutil.copy2(STARTUP / 'install_unix.sh', root / 'startup/install_unix.sh')
+    (root / 'startup/setup.py').write_text(
+        "import pathlib, sys\npathlib.Path('setup-args').write_text(repr(sys.argv[1:]))\n"
+    )
+    home = tmp_path / 'user home'
+    home.mkdir()
+    tools = tmp_path / 'tools'
+    tools.mkdir()
+    for command in ('dirname', 'mktemp', 'rm', 'sh', 'mkdir', 'cp', 'chmod', 'git'):
+        (tools / command).symlink_to(shutil.which(command))
+    fake_uv = tmp_path / 'fake uv'
+    fake_uv.write_text(
+        f'#!{sys.executable}\nimport sys\n'
+        "assert sys.argv[1:] == ['python', 'find', '--system', '--managed-python', '3.12']\n"
+        'print(sys.executable)\n'
+    )
+    fake_uv.chmod(0o755)
+    if mode == 'existing':
+        (tools / 'uv').symlink_to(fake_uv)
+    curl = tools / 'curl'
+    installer = (
+        'mkdir -p "$UV_INSTALL_DIR"\n'
+        'cp "$FITS_TEST_UV" "$UV_INSTALL_DIR/uv"\n'
+        'chmod +x "$UV_INSTALL_DIR/uv"\n'
+        'printf "%s" "$UV_NO_MODIFY_PATH" > "$HOME/profile-policy"\n'
+    )
+    curl.write_text(
+        f'#!{sys.executable}\nimport pathlib, sys\n'
+        f'pathlib.Path({str(home / "downloaded")!r}).touch()\n'
+        + ('raise SystemExit(9)\n' if mode == 'download_failure' else
+           f'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text({installer!r})\n')
+    )
+    curl.chmod(0o755)
+    result = subprocess.run(
+        [shutil.which('bash'), str(root / entry), '--pause', '--without-tad'],
+        cwd=tmp_path, capture_output=True, text=True,
+        env={**os.environ, 'HOME': str(home), 'PATH': str(tools), 'FITS_TEST_UV': str(fake_uv)},
+    )
+    assert 'uv is required by FITS' in result.stdout
+    assert 'FITS does not manage its updates or removal' in result.stdout
+    if mode == 'download_failure':
+        assert result.returncode != 0
+        assert not (root / 'setup-args').exists()
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (root / 'setup-args').read_text() == "['--without-tad']"
+    assert (home / 'downloaded').exists() == (mode != 'existing')
+    if mode == 'download':
+        assert (home / 'profile-policy').read_text() == '1'
+
+
+def test_macos_shortcut_runs_quoted_checkout_and_preserves_other_install(shortcuts, tmp_path, monkeypatch):
+    monkeypatch.setattr(shortcuts.sys, 'platform', 'darwin')
+    root = tmp_path / 'FITS spaces $`" and apostrophe\''
+    (root / 'startup').mkdir(parents=True)
+    (root / 'startup/launch_macos.sh').write_text('printf "%s" "$1"')
+    menu = tmp_path / 'Applications'
+    shortcuts.install_shortcut(root, output_dir=menu)
+    shortcut = menu / 'FITS.command'
+    result = subprocess.run(['bash', str(shortcut), 'hello'], capture_output=True, text=True, check=True)
+    assert result.stdout == 'hello'
+    original = shortcut.read_bytes()
+    shortcuts.install_shortcut(tmp_path / 'other', output_dir=menu, refresh_only=True)
+    assert shortcut.read_bytes() == original
+    monkeypatch.setattr('builtins.input', lambda prompt: 'n')
+    shortcuts.install_shortcut(tmp_path / 'other', output_dir=menu)
+    assert shortcut.read_bytes() == original
+    assert os.access(shortcut, os.X_OK)
+
+
+def test_gui_environment_finds_downloaded_uv(setup_module, monkeypatch, tmp_path):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('PATH', '/usr/bin')
+    environment = setup_module.command_environment(tmp_path)
+    assert environment['PATH'].split(os.pathsep)[-1] == str(tmp_path / '.local/bin')
+
+
+def test_macos_reaches_shared_installer(setup_module, monkeypatch):
+    from unittest.mock import Mock
+    monkeypatch.setattr(setup_module.sys, 'platform', 'darwin')
+    monkeypatch.setattr(setup_module.sys, 'argv', ['setup.py', '--without-tad'])
+    installer = Mock()
+    monkeypatch.setattr(setup_module, 'Installer', lambda root: installer)
+    monkeypatch.setattr(setup_module, 'require_independent_python', lambda root: None)
+    monkeypatch.setattr(setup_module.subprocess, 'run', Mock())
+    assert setup_module.main() == 0
+    installer.install.assert_called_once_with(False)

@@ -6,6 +6,7 @@ from collections.abc import Callable
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 
@@ -30,6 +31,31 @@ def desktop_entry(root: Path) -> str:
     )
 
 
+def install_macos_shortcut(root: Path, output_dir: Path | None, refresh_only: bool,
+                           report: Callable[[str], None]) -> None:
+    """A Terminal launcher keeps install/update progress available on macOS."""
+    destination = (output_dir or Path.home() / "Applications") / "FITS.command"
+    launcher = root / "startup" / "launch_macos.sh"
+    contents = "#!/bin/bash\nexec /bin/bash " + shlex.quote(str(launcher)) + ' "$@"\n'
+    if refresh_only and not destination.exists():
+        return
+    if destination.exists() and destination.read_text(encoding="utf-8") != contents:
+        if refresh_only:
+            return
+        report(f"Existing FITS launcher: {destination}\nNew checkout: {root}")
+        try:
+            answer = input("Point the FITS launcher to this checkout? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            report("Existing launcher kept. Run bash startup/launch_macos.sh from this checkout.")
+            return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(contents, encoding="utf-8")
+    destination.chmod(0o755)
+    report(f"Installed {destination}. Double-click it in Finder to launch FITS.")
+
+
 def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only: bool = False,
                      report: Callable[[str], None] = print) -> None:
     if sys.platform == "win32":
@@ -41,6 +67,9 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
              str(root / "startup" / "windows_shortcut.ps1")],
             env=environment, check=True,
         )
+        return
+    if sys.platform == "darwin":
+        install_macos_shortcut(root, output_dir, refresh_only, report)
         return
     if not (root / ".venv" / "bin" / "python").is_file():
         raise RuntimeError("Create the FITS environment before installing a shortcut.")
@@ -80,7 +109,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--refresh-existing", action="store_true")
-    parser.add_argument("--output-dir", type=Path, help="Linux only: write the desktop entry here for review.")
+    parser.add_argument("--output-dir", type=Path, help="Unix only: write the shortcut here for review.")
     arguments = parser.parse_args()
     install_shortcut(Path(__file__).resolve().parents[1], refresh_only=arguments.refresh_existing,
                      output_dir=arguments.output_dir)

@@ -54,6 +54,8 @@ def _install_tad(root: Path, report: Callable[[str], None]) -> Path:
     """
     Download the pinned upstream distribution and install without administrator access.
     """
+    if sys.platform not in ('linux', 'win32'):
+        raise RuntimeError('Automatic Tad installation supports Linux and Windows only. Install Tad from its website on macOS.')
     if platform.machine().lower() not in ('x86_64', 'amd64'):
         raise RuntimeError('Automatic Tad installation currently supports x86-64 machines only.')
     asset = f'Tad-Setup-{TAD_VERSION}.exe' if sys.platform == 'win32' else f'tad-{TAD_VERSION}.tar.bz2'
@@ -98,6 +100,9 @@ def setup_optional_tad(root: Path, requested: bool | None, report: Callable[[str
     report('\nTad is an optional third-party application for viewing Parquet tables.\n'
            'It is developed and maintained independently of FITS. FITS can install it\n'
            'for convenience, but does not manage its updates.')
+    if sys.platform == 'darwin':
+        report(f'On macOS, install Tad separately from {TAD_WEBSITE}')
+        return
     if requested is None:
         if sys.stdin is None or not sys.stdin.isatty():
             report('Tad was not installed. Rerun interactively or use --with-tad to install it.')

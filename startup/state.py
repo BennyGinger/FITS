@@ -32,6 +32,9 @@ def show_project_files(root: Path) -> None:
 def command_environment(root: Path) -> dict[str, str]:
     environment = os.environ.copy()
     environment.pop("VIRTUAL_ENV", None)
+    # GUI launches do not necessarily inherit the installer's PATH.
+    user_bin = Path.home() / ".local" / "bin"
+    environment["PATH"] = environment.get("PATH", "") + os.pathsep + str(user_bin)
     environment["UV_PROJECT_ENVIRONMENT"] = str(root / ".venv")
     environment["PYTHONUNBUFFERED"] = "1"
     environment["PYTHONIOENCODING"] = "utf-8"

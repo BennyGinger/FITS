@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Install FITS
-Comment=Install FITS and optionally the Tad table viewer
-Exec=bash -c "exec bash \\"\\${1%%/*}/startup/install_linux.sh\\" --pause" bash %k
-Terminal=true
-Icon=system-software-install
-Categories=Science;

@@ -29,7 +29,7 @@ unlock_all_tabs = false # Show all phase settings before converted arrays exist 
 enabled = true
 
 [convert.params]
-channel_labels = [] # Source-channel labels in source order; leave empty to use reader defaults.
+channel_labels = [] # Optional source labels in source order. Blanks use ND2 color names, then C1, C2, etc.
 export_channels = "all" # "all", one channel label, or a list of channel labels.
 z_projection = "max" # max | mean | sum | std | None (preserve Z for 3D)
 compression = "zlib" # zlib | lzma | jpeg | "None"

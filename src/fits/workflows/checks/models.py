@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fits.workflows.experiments import ExperimentState
@@ -12,12 +12,31 @@ from fits_io.metadata.models import FitsIOMeta
 @dataclass(frozen=True)
 class RawInputReport:
     """
-    Describe raw channel counts, planned acquisition folders, blocking problems and informational warnings.
+    Describe raw channel/frame counts, acquisition folders, blocking problems and warnings.
     """
     channel_counts: dict[Path, int]
     acquisition_directories: dict[Path, Path]
     problems: tuple[str, ...]
     warnings: tuple[str, ...] = ()
+    frame_counts: dict[Path, tuple[int, ...]] = field(default_factory=dict)
+    channel_colors: dict[Path, list[str | None] | None] = field(default_factory=dict)
+
+    @property
+    def expected_channel_colors(self) -> list[str | None] | None:
+        """
+        Return colors that agree across inputs; conflicting or missing colors remain unknown.
+        """
+        counts = set(self.channel_counts.values())
+        if len(counts) != 1 or not self.channel_colors:
+            return None
+        count = next(iter(counts))
+        palettes = [self.channel_colors.get(path) for path in self.channel_counts]
+        colors: list[str | None] = []
+        for index in range(count):
+            values = {palette[index] if palette is not None and len(palette) == count else None
+                      for palette in palettes}
+            colors.append(next(iter(values)) if len(values) == 1 else None)
+        return colors
 
     def describe(self) -> str:
         """
@@ -74,6 +93,7 @@ class PreflightReport:
     affected: tuple[str, ...]
     states: tuple[ExperimentState, ...]
     rebuild_outputs: tuple[tuple[str, Path], ...] = ()
+    disabled_steps: tuple[str, ...] = ()
 
     @property
     def conflicts(self) -> tuple[ArtifactRecord, ...]:
@@ -90,11 +110,37 @@ class PreflightReport:
         return any(record.legacy for record in self.records)
 
     @property
+    def blocking_conflicts(self) -> tuple[ArtifactRecord, ...]:
+        """
+        Preserve stale bypassed results without requiring a processing decision.
+        """
+        from fits.environment.constant import StepName
+        from fits.workflows.artifacts.branch_masks import is_branch
+
+        analyses_bypassed = {StepName.EXTRACT, StepName.DISTANCE_PROFILE} <= set(self.disabled_steps)
+        return tuple(record for record in self.conflicts if record.legacy or (
+            record.step not in self.disabled_steps and not (analyses_bypassed and is_branch(record.path))))
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        """
+        Summarize preserved bypassed results that are stale or affected by an overwrite.
+        """
+        from fits.workflows.checks.planning import overwrite_dependents
+
+        affected = (*self.conflicts, *overwrite_dependents(self.records, self.overwritten))
+        steps = sorted({record.step for record in affected if record.step in self.disabled_steps and record.step is not None})
+        return tuple(f"Bypassed step '{step}': existing results are preserved and may be outdated. "
+                     "They will be checked before reuse when this step is included again." for step in steps)
+
+    @property
     def needs_decision(self) -> bool:
         """
-        Return whether conflicts or overwrites require a caller decision.
+        Return whether conflicts or overwrites affecting saved downstream files need review.
         """
-        return bool(self.conflicts or self.overwritten)
+        from fits.workflows.checks.planning import overwrite_affects_existing
+
+        return bool(self.blocking_conflicts or overwrite_affects_existing(self.records, self.overwritten, self.disabled_steps))
 
     def describe(self) -> str:
         """

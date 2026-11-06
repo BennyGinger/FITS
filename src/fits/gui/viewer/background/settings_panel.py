@@ -42,6 +42,7 @@ class BackgroundSettingsPanel(QWidget):
         self.sigma = FocusWheelDoubleSpinBox()
         self.sigma.setRange(0, 10000)
         self.sigma.setDecimals(3)
+        self.sigma.setSingleStep(0.1)
         self.sigma.setToolTip("Gaussian smoothing sigma for background estimation; zero disables smoothing.")
         form.addRow("Sigma", self.sigma)
         self.threshold = FocusWheelDoubleSpinBox()

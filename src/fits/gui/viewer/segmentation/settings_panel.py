@@ -105,6 +105,7 @@ class CellposeSettingsPanel(QWidget):
             self.diameter,
             "Expected object diameter in pixels. Use 0 for automatic estimation; incorrect values can split or merge objects.")
         self.flow_threshold = self._double_spin(0.0, 1_000_000_000.0, 0.4)
+        self.flow_threshold.setSingleStep(0.1)
         self.flow_threshold.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
@@ -114,6 +115,7 @@ class CellposeSettingsPanel(QWidget):
             "Increase it to retain more ROIs; decrease it to reject more irregular ROIs. "
             "0 disables filtering. Ignored during native 3D segmentation.")
         self.cellprob_threshold = self._double_spin(-6.0, 6.0, 0.0)
+        self.cellprob_threshold.setSingleStep(0.1)
         self.cellprob_threshold.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,
@@ -128,6 +130,7 @@ class CellposeSettingsPanel(QWidget):
             self.do_3d,
             "Run native 3D segmentation on the complete Z volume.")
         self.stitch_threshold = self._double_spin(0.0, 1.0, 0.0)
+        self.stitch_threshold.setSingleStep(0.1)
         self.stitch_threshold.setFixedWidth(self.CONTROL_WIDTH)
         self._add_form_row(
             form,

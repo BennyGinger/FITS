@@ -9,6 +9,7 @@ from fits.workflows.checks.models import PreflightReport, PreflightRequired
 from fits.workflows.checks.artifacts import inspect_run
 from fits.workflows.checks.pipeline import require_pipeline_space
 from fits.workflows.checks.raw_inputs import inspect_raw_inputs
+from fits.workflows.checks.step_requirements import require_workflow_steps, step_input_problems
 from fits.workflows.file_management.snapshots import rebuild_backup_size, replacement_states, retain_rebuild_backups
 from fits.workflows.checks.decisions import apply_decision
 from fits.workflows.runtime.interactive.interaction import PipelineInteraction
@@ -119,6 +120,7 @@ def start_pipeline(settings_path: Path | None = None,
         scoped_cfg, upgrade_states = upgrade_execution_config(run_dir, scoped_cfg, cfg_path)
         origins = {state.original_image for state in upgrade_states}
         supported_files = sorted(origins)
+    require_workflow_steps(scoped_cfg)
     report = inspect_run(run_dir, scoped_cfg)
     if maintenance is not None:
         report = replace(report,
@@ -155,14 +157,25 @@ def start_pipeline(settings_path: Path | None = None,
     else:
         effective_cfg = apply_overwrite_cascade(scoped_cfg, WORKFLOW_ORDER)
 
+    require_workflow_steps(effective_cfg)
+
     raw_report = None
-    if effective_cfg.get("convert", {}).get("enabled", False):
+    if all_supported_files or supported_files:
         labels = effective_cfg.get("convert", {}).get("params", {}).get("channel_labels") or ()
         raw_report = inspect_raw_inputs(run_dir, sorted(set(all_supported_files) | set(supported_files)),
                                        channel_labels=[labels] if isinstance(labels, str) else labels,
                                        )
-        if raw_report.problems:
+        if effective_cfg.get("convert", {}).get("enabled", False) and raw_report.problems:
             raise ValueError(raw_report.describe())
+        if effective_cfg.get("convert", {}).get("enabled", False):
+            # Match the GUI's run-wide defaults when acquisitions have different or missing colors.
+            effective_cfg["convert"].setdefault("params", {})["source_channel_colors"] = raw_report.expected_channel_colors
+        selected = effective_cfg.get("convert", {}).get("params", {}).get("export_channels", "all")
+        exported = None if selected == "all" else 1 if isinstance(selected, str) else len(selected)
+        errors = [message for step, message in step_input_problems(raw_report, exported).items()
+                  if effective_cfg.get(step, {}).get("enabled")]
+        if errors:
+            raise ValueError("\n".join(errors))
 
     # --- build ExperimentState list from saved states + newly discovered raw files ---
     if maintenance is not None:
@@ -214,6 +227,8 @@ def start_pipeline(settings_path: Path | None = None,
                                  file_level=file_level,
                                  console_handler=console_handler,
                                  )
+    for warning in report.warnings:
+        logger.warning(warning)
 
     # Save the user's full configuration before execution or temporary run
     # overrides, so the GUI can reopen this run even if processing fails.

@@ -72,7 +72,7 @@ def extract(settings: ExtractSettings,
         payload = revision_payload(manager.image_reader, updated_state, step_profile, export_channels="all")
         save_path = save_parquet(dataframe, output_path, payload)
         if compartments is not None and settings.save_compartment_masks:
-            export_compartments(exp_state, compartments)
+            export_compartments(exp_state, compartments, profile=step_profile)
 
         new_state = complete_step_result(updated_state, step_profile, save_path)
         return [new_state]

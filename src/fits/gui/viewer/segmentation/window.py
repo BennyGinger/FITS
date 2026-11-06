@@ -1,4 +1,5 @@
 from __future__ import annotations
+from copy import deepcopy
 from numpy.typing import NDArray
 from collections.abc import Mapping
 from pathlib import Path
@@ -48,12 +49,14 @@ class SegmentationTunerWindow(ImageToolWindow):
                  directory_locked: bool = False,
                  extract_settings: ExtractSettings | None = None,
                  initial_tab: str = "segmentation",
+                 workflow_config: Mapping[str, Any] | None = None,
                  ) -> None:
         """
         Initialize the SegmentationTunerWindow state and dependencies.
         """
         self._provided_settings = (SegmentSettings.model_validate(segment_settings)
                                    if segment_settings is not None else None)
+        self._workflow_config = deepcopy(workflow_config)
         self._extract_provided = extract_settings is not None
         self._extract_settings = extract_settings or ExtractSettings()
         self._mask_previews = MaskPreviewStore()
@@ -304,6 +307,7 @@ class SegmentationTunerWindow(ImageToolWindow):
             if settings_path.is_file():
                 adapter = SettingsAdapter()
                 adapter.load(settings_path)
+                self._workflow_config = adapter.as_mapping()
                 self._save_root = directory
                 if not self._extract_provided:
                     self._extract_settings = ExtractSettings.model_validate(adapter.as_mapping()[cst.StepName.EXTRACT]["params"])
@@ -324,7 +328,7 @@ class SegmentationTunerWindow(ImageToolWindow):
         settings = self._preview_channel_settings()
         if not self._in_compartment():
             settings = self._entries[self._entry_index]
-        source = saved_mask_path(self._source_path.parent, compartment=self._in_compartment())
+        source = saved_mask_path(self._source_path.parent, compartment=self._in_compartment(), config=self._workflow_config)
         result = self._mask_previews.mask(source, frame, settings.channel, z_index, settings)
         if result is None:
             self.compartment_panel.source_label.setText("No mask available — run preview")
@@ -757,7 +761,7 @@ class SegmentationTunerWindow(ImageToolWindow):
         """
         if self._source_path is None:
             return
-        source = saved_mask_path(self._source_path.parent, compartment=True)
+        source = saved_mask_path(self._source_path.parent, compartment=True, config=self._workflow_config)
         try:
             labels = list(self._mask_previews.channels(source))
         except (OSError, ValueError) as error:

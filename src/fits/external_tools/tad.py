@@ -27,7 +27,9 @@ def find_tad(root: Path) -> Path | None:
     executable = 'Tad.exe' if sys.platform == 'win32' else 'tad'
     candidates = [root / 'startup' / 'tools' / 'Tad' / executable]
     installed = shutil.which(executable)
-    if installed:
+    # The unrelated Node.js test runner also installs a command named tad.
+    # Resolve launcher symlinks before checking for the viewer's Electron bundle.
+    if installed and (Path(installed).resolve().parent / 'resources' / 'app.asar').is_file():
         candidates.append(Path(installed))
     if sys.platform == 'win32':
         for variable in ('LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)'):

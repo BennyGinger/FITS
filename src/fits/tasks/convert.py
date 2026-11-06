@@ -57,8 +57,11 @@ def convert(settings: ConvertSettings,
             ARTI_RAW: Path(os.path.relpath(grouped, exp_state.workdir))})
         source = FitsIO.from_path(grouped)
 
+        color_options = ({"channel_colors": settings.source_channel_colors}
+                         if settings.source_channel_colors is not None else {})
         selection = source.resolve_channel_selection(channel_labels=settings.channel_labels or None,
                                                      export_channels=settings.export_channels,
+                                                     **color_options,
                                                      )
 
         series_readers = source.split_series()

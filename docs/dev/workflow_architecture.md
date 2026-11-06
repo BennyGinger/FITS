@@ -103,3 +103,28 @@ set of module aliases at the workflow root.
 Main-window completion waits for worker shutdown before opening management. The
 interactive CLI uses a local Qt event loop, allowing nested maintenance without
 quitting the main application or showing duplicate completion dialogs.
+
+## Reference
+
+Existing material moved from the project README; it has not been rewritten into a new walkthrough.
+
+### Design
+
+FITS owns experiment discovery, scheduling, state, paths, provenance, and saved
+artifacts. Numerical work is delegated to focused submodules that accept arrays
+and can also be used independently:
+
+- `fits_io` reads microscopy formats and writes metadata-rich FITS TIFFs.
+- `stackalign` performs time-wise and cross-channel registration.
+- `bg_sub` removes spatially varying image background.
+- `cellpose_kit` provides a stable Cellpose v3/v4 segmentation interface.
+- `tracklink` links segmented objects over time.
+- `mask_interpolation` completes sparsely drawn reference and ROI masks.
+- `bioimagequant` performs object extraction and distance-profile analysis.
+- `progress_bar` provides terminal progress and controlled log display.
+
+`fits.pipeline` is the top-level processing entry point. Supporting workflow code
+is grouped into definitions, experiments, metadata, artifacts, file management
+and runtime execution. See the [workflow responsibility map](workflow_architecture.md)
+for module locations; `fits.workflows.file_management.api` exposes file actions
+and compacting.

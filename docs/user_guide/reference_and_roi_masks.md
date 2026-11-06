@@ -1,0 +1,70 @@
+# Reference and ROI masks
+
+[User guide](README.md) · [Previous: Tracking](tracking.md) ·
+[Next: Analysis and results](analysis_and_results.md)
+
+Reference (REF) masks define the geometry from which distances are measured. ROI masks define which image pixels contribute to an ROI-restricted distance profile. Drawing names and drawing channels are distinct; see [Channels and labels](channels_and_labels.md#what-does-label-mean).
+
+See the separate feature lists for the
+[reference-mask tool](gui_tools.md#reference-mask-gui),
+[ROI-mask tool](gui_tools.md#roi-mask-gui), and
+[pipeline drawing session](gui_tools.md#pipeline-drawing-session-controls).
+
+## Draw masks during analysis
+
+Enable the drawing options for the relevant analysis. Distance profiling requires a reference; quantification can use references for distance measurements. The pipeline opens its drawing window when prepared images are ready and supplies further experiments as processing progresses. Draw and save the required channels, then finalize the mask type or session. Saved masks can be reused on later runs. Missing references omit distance profiling for that experiment; choosing no ROI permits whole-image profiling after confirmation.
+
+## Drawing and navigation
+
+Use Brush or Freehand polygon, navigate frames/Z planes, and inspect any interpolation before saving. Shared movement, clearing, selection, and keyboard controls are described in [Image and mask viewers](viewers.md#drawing-selection-and-keyboard-shortcuts). For naming and channel roles, see [Channels and labels](channels_and_labels.md).
+
+## Reuse masks after processing changes
+
+Saved REF/ROI drawings depend on registration geometry, not image intensity revisions. Background subtraction alone does not require redrawing them. Rerunning registration can flag their alignment for review; inspect the drawing over the current image, then accept its alignment through **Manage files** or correct/recreate it. See [file management](reprocessing_and_file_management.md#review-refroi-alignment).
+
+## Standalone drawing tools
+
+`fits-drawmask` opens a dedicated mask editor with **Reference** and **ROI**
+tabs sharing the same experiment and image controls.
+Opening an image also loads the first reference and ROI masks beside it, in
+filename order. Selecting a mask file opens its sibling image and that specific
+mask in the matching tab.
+The former `fits-viewer` command has been removed.
+
+## Collection-panel preview and experiment navigation
+
+To open the collection panel in preview mode without running the pipeline:
+
+```bash
+uv run fits-drawmask --tool pipeline
+```
+
+Click **Load test experiments…** and choose a folder containing prepared
+FITS image artifacts. The panel starts in Reference mode. **Go to ROI** /
+**Go to ref** switches between Reference and ROI; unsaved changes require confirmation before
+being discarded. New experiments join the waiting list without replacing the
+current drawing. **Complete ref masks** or **Complete ROI masks** finalizes that
+mask type and moves to the other one; completing the second type finishes the
+experiment. **Next experiment** finishes the current experiment after any
+needed warnings, and remains unavailable until the next queued experiment is
+ready. **Complete session** ends collection normally; **Quit pipeline** is a
+separate cancellation action. Buttons explain their actions when hovered.
+
+The experiment tree shows all received experiments, highlights the current one,
+and lists saved masks underneath each folder. Click a current experiment's mask
+to reload it for editing. Masks from other experiments open for viewing only;
+**Return to current experiment** restores your ongoing drawing. Newly saved
+masks appear in the tree immediately.
+
+**Load test experiments…** is only present in this preview. In the integrated
+window, the pipeline supplies prepared experiments automatically; there is no
+manual folder loader.
+
+This is a preview with no running pipeline, but **Save writes real mask files**
+to the selected experiment folders. The regular `fits-drawmask` command keeps
+the standalone browser and visible tabs.
+
+You can also supply `--experiments-dir /path/to/run` and
+`--settings /path/to/fits_settings.toml`. Without a settings file, the preview
+requests one reference per experiment and no ROI. With settings, it uses the
+enabled extraction/distance-profile steps and their drawing options.

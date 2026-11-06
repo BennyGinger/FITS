@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from scipy.ndimage import distance_transform_edt
 from skimage.draw import line as raster_line, polygon as raster_polygon
 
-from fits_io.metadata.imageJ_meta import COLOR_MAP, LABEL_TO_COLOR
+from fits_io.metadata.imageJ_meta import COLOR_MAP, label_display_color
 
 
 DrawingMode = Literal["replace", "edit"]
@@ -225,6 +225,7 @@ class FitsImageViewer(QWidget):
         self._drawing_active = False
         self._lut_color = ""
         self._channel_label = ""
+        self._source_color: str | None = None
         self._coloured_lut = True
         self._connected_gradient_markers: set[object] = set()
         self._drawing_mask: NDArray[np.uint8] | None = None
@@ -313,27 +314,35 @@ class FitsImageViewer(QWidget):
     def lut_color(self) -> str:
         return self._lut_color
 
-    def set_channel_lut(self, channel_label: str) -> None:
+    def set_channel_lut(self, channel_label: str, *, source_color: str | None = None) -> None:
         """
-        Colour the image from its FITS channel label or use grayscale.
+        Use an explicit source color when supplied, otherwise resolve the FITS label.
         """
-        color = (LABEL_TO_COLOR.get(channel_label.strip().lower(), "gray")
+        self._source_color = source_color
+        color = ((source_color or label_display_color(channel_label) or "gray")
                  if self._coloured_lut
                  else "gray")
         if channel_label == self._channel_label and color == self._lut_color:
             return
         self._channel_label = channel_label
-        red, green, blue = COLOR_MAP[color]
+        if source_color is not None and color != "gray":
+            selected = QColor(color)
+            rgb = (selected.red(), selected.green(), selected.blue())
+        else:
+            rgb = tuple(component * 255 for component in COLOR_MAP[color])
         color_map = pg.ColorMap(
             [0.0, 1.0],
             [(0, 0, 0, 255),
-             (red * 255, green * 255, blue * 255, 255)],)
+             (*rgb, 255)],)
         self.histogram.item.gradient.setColorMap(color_map)
         self._lut_color = color
 
     def set_coloured_lut(self, coloured: bool) -> None:
+        """
+        Toggle grayscale while retaining the current source or label color.
+        """
         self._coloured_lut = coloured
-        self.set_channel_lut(self._channel_label)
+        self.set_channel_lut(self._channel_label, source_color=self._source_color)
 
     def auto_scale(self) -> None:
         """

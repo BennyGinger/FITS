@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import tifffile
+from numpy.typing import NDArray
 from fits_io import FitsIO
 from fits.environment import constant as cst
 from fits.gui.settings import SettingsAdapter
@@ -15,24 +16,30 @@ from fits.workflows.file_management.api import plan_migration, migrate
 from fits.workflows.artifacts.provenance import read_metadata, compatible
 
 
-def legacy_run(root, *, masks=False):
+def legacy_run(root: Path, *, masks: bool = False, frames: int = 1, channels: int = 1) -> tuple[SettingsAdapter, ExperimentState, NDArray[np.uint16]]:
+    """
+    Build legacy outputs with optional time and channel dimensions for rebuild checks.
+    """
     folder = root / 'control'
     folder.mkdir()
     original = folder / 'image.tif'
-    pixels = np.arange(64, dtype=np.uint16).reshape(8, 8)
-    tifffile.imwrite(original, pixels, photometric='minisblack')
+    shape = ((frames,) if frames > 1 else ()) + ((channels,) if channels > 1 else ()) + (8, 8)
+    axes = ('T' if frames > 1 else '') + ('C' if channels > 1 else '') + 'YX'
+    labels = ['Red', 'Green'][:channels]
+    pixels = np.arange(np.prod(shape), dtype=np.uint16).reshape(shape)
+    tifffile.imwrite(original, pixels, photometric='minisblack', metadata={'axes': axes})
     series = folder / 'image_s1'
     series.mkdir()
     reader = FitsIO.from_path(original)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG,
-        channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '3.3.0'},
+        channel_labels=labels, custom_metadata={'pipeline_meta': {'version': '3.3.0'},
         'steps': {}})
     image = reader.save_array(pixels, metadata=payload, output_path=series / cst.FITS_ARRAY_NAME)
     state = ExperimentState.init(series, original, run_dir=root).with_complete_step(
         step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG, artifact_path=image)
     state = replace(state, completed_steps=('convert', 'bg_sub'))
     if masks:
-        seg = reader.save_array(np.ones((8, 8), dtype=np.uint16), metadata=payload.with_fitsio(artifact_type=cst.ARTI_SEG),
+        seg = reader.save_array(np.ones_like(pixels), metadata=payload.with_fitsio(artifact_type=cst.ARTI_SEG),
             output_path=series / 'fits_mask.tif')
         state = state.with_complete_step(step_name=cst.StepName.SEGMENT, artifact_kind=cst.ARTI_SEG, artifact_path=seg)
         table = series / cst.FITS_QUANTI_NAME
@@ -44,7 +51,7 @@ def legacy_run(root, *, masks=False):
     adapter.run_dir = str(root)
     adapter.user_name = 'Test'
     adapter.set_runtime_value('execution', 'batch')
-    adapter.set_field_value(cst.StepName.CONVERT, 'channel_labels', ['Red'])
+    adapter.set_field_value(cst.StepName.CONVERT, 'channel_labels', labels)
     adapter.set_step_enabled(cst.StepName.BG_SUB, True)
     adapter.save_to_run_dir()
     return adapter, state, pixels
@@ -155,7 +162,7 @@ def test_optional_full_rebuild_replaces_final_results_with_consistent_provenance
     from fits.workflows.checks.artifacts import inspect_run
     from fits.settings.loader import load_settings
     from fits.pipeline import start_pipeline
-    adapter, old, pixels = legacy_run(tmp_path, masks=True)
+    adapter, old, pixels = legacy_run(tmp_path, masks=True, frames=2, channels=2)
     old = replace(old, completed_steps=('convert', 'register_channel', 'register_time', 'bg_sub', 'segment', 'extract'))
     (old.workdir / 'experiment_state.json').write_text(json.dumps(serialize_experiment_state(old)))
     calls = mock_rebuild_processing(monkeypatch, adapter)
@@ -342,10 +349,10 @@ def test_full_rebuild_recreates_segmentation_and_tracking(tmp_path: Path, monkey
     from fits.tasks.common.preparation import load_input_reader
     from fits.tasks.common.artifact_results import save_step_result
     from fits.pipeline import start_pipeline
-    adapter, state, pixels = legacy_run(tmp_path)
+    adapter, state, pixels = legacy_run(tmp_path, frames=2)
     image = state.artifact(cst.ARTI_IMG)
     reader = FitsIO.from_path(image)
-    tracking = reader.save_array(np.ones((8, 8), dtype=np.uint16),
+    tracking = reader.save_array(np.ones_like(pixels),
         metadata=read_metadata(image).with_fitsio(artifact_type=cst.ARTI_TRACK),
         output_path=state.workdir / 'fits_track.tif')
     state = state.with_complete_step(step_name=cst.StepName.TRACK, artifact_kind=cst.ARTI_TRACK, artifact_path=tracking)

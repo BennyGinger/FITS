@@ -1,8 +1,11 @@
 # Analysis identifiers
 
-FITS adds portable `experiment_id` values to quantification and distance-profile
-Parquets. The value is the complete experiment path relative to the run directory,
-using `/` separators. For example:
+[User guide](README.md) · [Full output-table reference](output_tables.md)
+
+FITS adds `experiment_id` values to quantification and distance-profile Parquets.
+Current per-experiment exports use an acquisition-local ID such as
+`sample/sample_s1`. Master tables use the complete experiment path relative to
+the run directory, using `/` separators. For example, master IDs can be:
 
 ```text
 control/sample/sample_s1
@@ -10,9 +13,12 @@ treated/sample/sample_s1
 ```
 
 Moving or renaming the complete run folder leaves these identifiers unchanged.
-Changing the relative condition/acquisition/series path changes the identifier.
-Different runs with identical relative layouts share this namespace; retain a
-separate run identifier when combining them. Condition tags exclude the structural
+Changing condition folders changes the master IDs/tags after refreshing them;
+portable per-experiment tables keep their saved acquisition-local IDs. Older
+individual tables may retain the earlier full-path ID format. Different runs
+with identical layouts share the master namespace, so retain a separate run
+identifier when combining runs. Use master IDs to distinguish identically named
+acquisitions under different conditions. Condition tags exclude the structural
 acquisition folder: `control/sample/sample_s1` has the condition `control`.
 
 Quantification also includes `cell_id`, built from `experiment_id`, `object_name`,
@@ -20,6 +26,8 @@ Quantification also includes `cell_id`, built from `experiment_id`, `object_name
 include `frame`, because segmentation labels can represent different cells in
 different frames. Tracking identifiers omit frame and represent the same track
 through time. They do not assert biological continuity beyond the tracking result.
+
+Example master-table cell IDs:
 
 ```text
 control/sample/sample_s1|object=tracking|channel=iRed|label=24
@@ -109,12 +117,15 @@ later supports independent Z-plane objects, include an explicit plane index in
 their IDs to distinguish reused labels across planes. A 3D object's centroid Z
 coordinate must not be used as its identity.
 
-New extractions save both identifiers in each experiment's quantification file.
-Aggregation rebuilds identifiers from the current run layout for the master
+New extractions save both identifiers, with an acquisition-local experiment
+prefix, in each experiment's quantification file. Aggregation rebuilds identifiers from the current run layout for the master
 tables, including reused quantification files with the required object columns.
 After reorganizing folders, **Manage files → Update paths and condition tags**
-rewrites identifiers, known paths and tags in individual experiment files and
-regenerates masters without changing measurements or data revisions. This does
+refreshes affected run-owned paths and regenerates masters with current IDs and
+folder-based tags, without changing measurements or data revisions. A
+location-only update leaves portable individual Parquets unchanged; legacy
+structure migration can separately normalize their IDs and remove old condition
+columns. This does
 not refresh measurements after image/mask changes; rerun extraction for those.
 Already-running Python processes
 need restarting to use updated code; existing Parquets are not changed simply

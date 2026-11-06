@@ -244,6 +244,13 @@ def execution_config(config: Mapping[str, Any], plan: ProcessingPlan) -> dict[st
         elif step not in (cst.StepName.CONVERT, cst.StepName.REGISTER_CHANNEL,
                           cst.StepName.REGISTER_TIME, cst.StepName.BG_SUB):
             entry['enabled'] = False
+    if result.get(cst.StepName.EXTRACT, {}).get('enabled'):
+        for producer in (cst.StepName.TRACK, cst.StepName.SEGMENT):
+            if config.get(producer, {}).get('enabled'):
+                result[producer]['enabled'] = True
+                if producer == cst.StepName.TRACK and config.get(cst.StepName.EDIT_TRACK, {}).get('enabled'):
+                    result[cst.StepName.EDIT_TRACK]['enabled'] = True
+                break
     return result
 
 
@@ -313,7 +320,9 @@ def _finish_full_rebuild(plan: ProcessingPlan, states: Mapping[Path, ExperimentS
             kept = {rebuilt.artifact(kind) for kind in artifacts}
             params = run_config(plan.root).get(cst.StepName.EXTRACT, {}).get('params', {})
             if params.get('compartments') and params.get('save_compartment_masks'):
-                _, source = resolve_extraction_labels(rebuilt)
+                config = execution_config(run_config(plan.root), plan)
+                profile = configured_profile(REGISTRY[cst.StepName.EXTRACT].profile, config)
+                _, source = resolve_extraction_labels(rebuilt, profile)
                 kept.update(compartment_export_paths(source))
             kept.update(folder / REGISTRY[step].profile.output_name for step in plan.scope[folder])
             for name in cst.MANAGED_NAMES:

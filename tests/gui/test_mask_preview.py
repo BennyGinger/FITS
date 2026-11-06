@@ -1,13 +1,15 @@
 """Propagation cache equivalence, invalidation, and responsive navigation."""
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Event
 from time import monotonic
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import pytest
 import tifffile
+from numpy.typing import NDArray
 from fits_io import FitsIO
 from PySide6.QtCore import QThread
 from PySide6.QtTest import QTest
@@ -17,6 +19,7 @@ from fits.gui.viewer.masks.window import MaskDrawingWindow, _InterpolationOption
 from fits.interaction.mask_preview import MaskPreviewCache, PreviewCancelled
 from fits.tasks.reference_mask import ReferenceMaskSession
 from fits.tasks.roi_mask import RoiSession
+from fits.environment.paths import experiment_cache
 
 
 _APP: QApplication | None = None
@@ -40,6 +43,9 @@ def source_image(tmp_path: Path) -> Path:
 @pytest.mark.parametrize("axis", ["T", "Z"])
 def test_cached_planes_match_full_interpolation_and_follow_edits(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, roi: bool, axis: str) -> None:
+    """
+    Preserve interpolation equivalence and clean up caches at the current experiment location.
+    """
     source = source_image(tmp_path)
     session = RoiSession(source) if roi else ReferenceMaskSession(source)
     first = np.zeros((16, 17), dtype=np.uint8)
@@ -68,7 +74,7 @@ def test_cached_planes_match_full_interpolation_and_follow_edits(
         directory = session.preview_cache._directory
         assert directory is not None
         cache_path = Path(directory.name)
-        assert cache_path.parent == tmp_path / ".fits" / "viewer_cache"
+        assert cache_path.parent == experiment_cache(source.parent)
         assert (cache_path / "preview.npy").exists()
         assert not (cache_path / "anchors.npy").exists()
         field = "_complete_manual_corrections" if roi else "_complete_channel_mask"
@@ -92,9 +98,15 @@ def test_cached_planes_match_full_interpolation_and_follow_edits(
 
 
 def test_cancelled_preview_does_not_publish_or_leave_temporary_files(tmp_path: Path) -> None:
+    """
+    Remove incomplete cache files from the current cache directory after cancellation.
+    """
     cache = MaskPreviewCache(tmp_path / "fits_array.tif")
     count = 0
-    def read(_index: int):
+    def read(_index: int) -> NDArray[np.uint8]:
+        """
+        Count anchor reads so cancellation interrupts an unfinished preview.
+        """
         nonlocal count
         count += 1
         return np.ones((4, 4), dtype=np.uint8)
@@ -102,10 +114,13 @@ def test_cancelled_preview_does_not_publish_or_leave_temporary_files(tmp_path: P
         cache.plane((1,), 0, count=4, shape=(4, 4), read=read,
                     complete=lambda anchors: anchors, cancelled=lambda: count == 2)
     assert cache.key is None
-    assert not list((tmp_path / ".fits" / "viewer_cache").iterdir())
+    assert not list(experiment_cache(tmp_path).iterdir())
 
 
 def test_preview_separates_channels_depths_and_extrapolation_options(tmp_path: Path) -> None:
+    """
+    Keep only the current preview in the experiment's configured cache location.
+    """
     session = ReferenceMaskSession(source_image(tmp_path))
     anchor = np.zeros((16, 17), dtype=np.uint8)
     anchor[3:7, 4:8] = 1
@@ -119,16 +134,22 @@ def test_preview_separates_channels_depths_and_extrapolation_options(tmp_path: P
             session.interpolated_mask_plane("T", channel="iRed"), anchor)
         assert not np.any(session.interpolated_mask_plane("T", channel="GFP"))
         assert not np.any(session.interpolated_mask_plane("T", channel="iRed", z_index=1))
-        assert len(list((tmp_path / ".fits" / "viewer_cache").iterdir())) == 1
+        assert len(list(experiment_cache(tmp_path).iterdir())) == 1
     finally:
         session.close()
 
 
 def test_preview_uses_system_temp_when_experiment_cache_is_unwritable(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Fall back outside the preferred cache directory when that location is unwritable.
+    """
     import fits.interaction.mask_preview as preview
     temporary = preview.TemporaryDirectory
-    def fallback(*args, **kwargs):
+    def fallback(*args: Any, **kwargs: Any) -> TemporaryDirectory[str]:
+        """
+        Reject the preferred directory while allowing the system temporary fallback.
+        """
         if "dir" in kwargs:
             raise PermissionError("read-only experiment")
         return temporary(*args, **kwargs)
@@ -140,7 +161,7 @@ def test_preview_uses_system_temp_when_experiment_cache_is_unwritable(
                             complete=lambda anchors: anchors)
         assert np.all(plane == 1)
         assert cache._directory is not None
-        assert Path(cache._directory.name).parent != tmp_path / ".fits" / "viewer_cache"
+        assert Path(cache._directory.name).parent != experiment_cache(tmp_path)
     finally:
         cache.close()
 

@@ -156,6 +156,6 @@ def test_management_preserves_main_page_and_selection(tmp_path: Path, monkeypatc
         assert window._current_step == cst.StepName.BG_SUB
         assert window.run_browser.selected_path == state.workdir
         assert not hasattr(window, 'compact_button')
-        assert window.file_size_label.text().startswith('Run size:')
+        assert window.file_size_label.text().startswith('Size:')
     finally:
         window.close()

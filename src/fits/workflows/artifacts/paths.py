@@ -21,7 +21,7 @@ def image_for(path: str | Path) -> Path | None:
     if source.is_file() and source.name in cst.IMAGE_NAMES:
         return source
     directory = source if source.is_dir() else source.parent
-    if source.is_file():
+    if source.is_file() and source.suffix.lower() in (".tif", ".tiff"):
         try:
             refs = read_metadata(source).fits_io.derived_from
             if isinstance(refs, list):

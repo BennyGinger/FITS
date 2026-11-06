@@ -19,7 +19,7 @@ class ImageToolWindow(QMainWindow):
     """Shared image browsing, display and navigation for focused tools."""
 
     source_panel_sizes = (230, 750)
-    auto_open_first_image = False
+    auto_open_first_image = True
     file_filters: tuple[str, ...]
     help_gui: str
     tool_help: tuple[HelpRow, ...]
@@ -421,10 +421,16 @@ class ImageToolWindow(QMainWindow):
         selected = Path(initial_path).expanduser().resolve() if initial_path is not None else root
         source = first_image(selected) if selected.is_dir() else image_for(selected)
         if source is None or not source.is_file():
-            self.status_label.setText(f"No FITS image artifact found in {selected}.")
+            source = first_image(root)
+        if source is None or not source.is_file():
+            self.status_label.setText(f"No FITS image artifact found in {root}.")
             return
-        if not self.directory_browser.select_path(source):
-            self._path_selected(source)
+        target = source.parent if selected.is_dir() else source
+        if not self.directory_browser.select_path(target):
+            self._path_selected(target)
+        if self._source_path is not None:
+            with QSignalBlocker(self.directory_browser):
+                self.directory_browser.select_path(self._source_path)
 
     @Slot()
     def _display_selection(self) -> None:
@@ -439,7 +445,7 @@ class ImageToolWindow(QMainWindow):
         try:
             if self._displayed_channel is not None and self._displayed_channel != channel:
                 self._channel_levels[self._displayed_channel] = self.image_viewer.display_levels
-            self.image_viewer.set_channel_lut(channel)
+            self._set_channel_lut(channel)
             image = self._image_session.display_frame(frame, channel, z_index)
             self.image_viewer.set_image(image)
             if self._displayed_channel != channel:
@@ -458,6 +464,12 @@ class ImageToolWindow(QMainWindow):
             return
         self.frame_value.setText(f"{frame + 1} / {self._image_session.frame_count}")
         self.z_value.setText(f"{z_index + 1} / {self._image_session.plane_count}")
+
+    def _set_channel_lut(self, channel: str) -> None:
+        """
+        Apply the selected channel's label-based LUT for FITS tools.
+        """
+        self.image_viewer.set_channel_lut(channel)
 
     def _set_source_controls_enabled(self, enabled: bool) -> None:
         """

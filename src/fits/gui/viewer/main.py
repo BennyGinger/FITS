@@ -118,11 +118,11 @@ def trackviewer() -> None:
     """
     Return the current trackviewer.
     """
-    parser = argparse.ArgumentParser(description="View FITS images, segmentation/tracking masks and REF/ROI masks.")
+    parser = argparse.ArgumentParser(description="View raw ND2/TIFF inputs, FITS images and masks.")
     parser.add_argument("tracking",
                         nargs="?",
                         type=Path,
-                        help="Current, compacted or legacy FITS image/mask TIFF to open.",
+                        help="Raw ND2/TIFF input or current, compacted or legacy FITS image/mask to open.",
                         )
     parser.add_argument("--experiments-dir", type=Path, help="FITS run directory.")
     arguments, qt_arguments = parser.parse_known_args()

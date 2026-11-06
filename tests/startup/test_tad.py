@@ -36,6 +36,34 @@ def test_existing_tad_is_reused(tad: ModuleType, tmp_path: Path, monkeypatch: py
     assert 'reused' in messages[-1]
 
 
+@pytest.mark.parametrize('viewer', [False, True])
+def test_path_tad_requires_viewer_bundle(tad: ModuleType, tmp_path: Path,
+                                        monkeypatch: pytest.MonkeyPatch, viewer: bool,
+                                        ) -> None:
+    """
+    Reject the JavaScript runner but reuse a viewer reached through a PATH symlink.
+    """
+    executable = tmp_path / 'Tad/tad'
+    executable.parent.mkdir()
+    executable.write_text('#!/bin/sh\n')
+    executable.chmod(0o755)
+    launcher = tmp_path / 'tad'
+    launcher.symlink_to(executable)
+    if viewer:
+        resources = executable.parent / 'resources'
+        resources.mkdir()
+        (resources / 'app.asar').touch()
+    monkeypatch.setattr(tad.shutil, 'which', lambda name: str(launcher))
+    # Keep host installations out of this discovery and setup check.
+    monkeypatch.setattr(tad.os, 'access', lambda path, mode: Path(path).is_relative_to(tmp_path))
+    root = tmp_path / 'fits'
+    assert tad.find_tad(root) == (launcher if viewer else None)
+    install = Mock(return_value=root / 'startup/tools/Tad/tad')
+    monkeypatch.setattr(tad, '_install_tad', install)
+    tad.setup_optional_tad(root, True, lambda message: None)
+    assert install.called is not viewer
+
+
 @pytest.mark.parametrize('answer,expected', [('n', False), ('', True), ('yes', True)])
 def test_optional_prompt(tad: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer: str, expected: bool) -> None:
     """
@@ -133,7 +161,12 @@ def test_windows_install_uses_current_user_and_reuses_result(tad: ModuleType, tm
     assert tad.find_tad(tmp_path / 'FITS with spaces') == executable
 
 
-def test_macos_tad_setup_uses_manual_installation(tad, tmp_path, monkeypatch):
+def test_macos_tad_setup_uses_manual_installation(tad: ModuleType, tmp_path: Path,
+                                                monkeypatch: pytest.MonkeyPatch,
+                                                ) -> None:
+    """
+    Direct macOS users to manual installation instead of downloading a Linux archive.
+    """
     install_tad = tad._install_tad
     monkeypatch.setattr(tad.sys, 'platform', 'darwin')
     monkeypatch.setattr(tad, 'find_tad', lambda root: None)

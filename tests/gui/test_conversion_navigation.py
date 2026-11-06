@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
 
 from fits.environment.constant import StepName
 from fits.gui.main_window.window import FitsMainWindow
+from fits.gui.settings.conversion_channels import ConversionChannelsWidget
 from fits.gui.settings import SettingsAdapter
 from fits.workflows.runtime.progress import StageStatus, WorkflowStage
 
@@ -57,23 +58,148 @@ def wait_for_run(window: FitsMainWindow) -> None:
 @pytest.mark.parametrize("channels", [1, 2])
 def test_expected_channels_uses_all_raw_files(window: FitsMainWindow, tmp_path: Path, channels: int) -> None:
     """
-    Show the raw channel count independently of user labels and exported channels.
+    Convey the raw channel count through table rows and reserve the hint for warnings.
     """
     for name in ("first.tif", "second.tiff"):
         tifffile.imwrite(tmp_path / name, np.zeros((channels, 8, 8), dtype=np.uint16),
                          imagej=True, metadata={"axes": "CYX"})
     window._refresh_run_inventory()
     hint = window._editors[StepName.CONVERT].expected_channels_label
-    noun = "channel" if channels == 1 else "channels"
-    assert hint.text() == f"({channels} expected {noun})"
+    table = cast(ConversionChannelsWidget, window._editors[StepName.CONVERT].widgets["channel_labels"])
+    assert table.table.rowCount() == channels
+    assert hint.text() == ("Channel label count mismatch" if channels != 1 else "")
+    assert hint.isHidden() == (channels == 1)
     assert hint.font().italic()
     assert not window._raw_input_error()
+    assert window.file_frames_label.text() == "Frames: 1"
     assert window.run_button.isEnabled()
     assert bool(window._channel_label_warning()) == (channels != 1)
     for path in tmp_path.glob("*.tif*"):
         path.unlink()
     window._refresh_run_inventory()
     assert hint.isHidden()
+    assert window.file_frames_label.text() == "Frames: —"
+
+
+def test_incompatible_steps_warn_on_activation_and_block_launch(window: FitsMainWindow,
+                                                               tmp_path: Path,
+                                                               monkeypatch: pytest.MonkeyPatch,
+                                                               ) -> None:
+    """
+    Warn once on activation and stop before saving or starting invalid processing.
+    """
+    tifffile.imwrite(tmp_path / "input.tif", np.zeros((2, 8, 8), dtype=np.uint16),
+                     imagej=True, metadata={"axes": "CYX"})
+    window._refresh_run_inventory()
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: pytest.fail("Unexpected validation popup"))
+    monkeypatch.setattr(window, "_save_settings", lambda: pytest.fail("Incompatible steps reached pipeline setup"))
+    for step in (StepName.TRACK, StepName.REGISTER_TIME):
+        toggle = window._editors[step].enable_group
+        toggle.setChecked(True)
+        message = window._step_input_problems()[step]
+        assert window.console.toPlainText().count(message) == 1
+        assert "⚠ WARNING |" in window.console.toPlainText()
+        assert window.console.textCursor().charFormat().foreground().color().name() == "#efb366"
+        window._update_run_button_text()
+        assert window.console.toPlainText().count(message) == 1
+        window._launch_pipeline(convert_only=False)
+        assert "✖ ERROR | " + message in window.console.toPlainText()
+        assert window.console.textCursor().charFormat().foreground().color().name() == "#e57373"
+        assert window._thread is None
+        toggle.setChecked(False)
+
+
+def test_frame_summary_and_single_channel_registration_guard(window: FitsMainWindow, tmp_path: Path) -> None:
+    """
+    Show minimum frame counts and make single-channel registration unavailable.
+    """
+    for name, frames in (("first", 3), ("second", 5)):
+        tifffile.imwrite(tmp_path / f"{name}.tif", np.zeros((frames, 8, 8), dtype=np.uint16),
+                         imagej=True, metadata={"axes": "TYX"})
+    window.adapter.set_runtime_value("unlock_all_tabs", True)
+    window._refresh_run_inventory()
+    window._refresh_phase_access()
+    assert window.file_frames_label.text() == "Frames: ≥ 3"
+    toggle = window._editors[StepName.REGISTER_CHANNEL].enable_group
+    assert not toggle.isEnabled()
+    assert "at least 2 image channels" in toggle.toolTip()
+    assert StepName.TRACK not in window._step_input_problems()
+
+
+def test_missing_user_name_is_a_red_console_error(window: FitsMainWindow,
+                                                 monkeypatch: pytest.MonkeyPatch,
+                                                 ) -> None:
+    """
+    Keep the required-name safeguard without opening a blocking warning dialog.
+    """
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: pytest.fail("Unexpected validation popup"))
+    window.user_name_edit.clear()
+    window._next_from_convert()
+    assert "✖ ERROR | Enter a user name." in window.console.toPlainText()
+    assert window.console.textCursor().charFormat().foreground().color().name() == "#e57373"
+    assert window._thread is None
+
+
+def test_quantification_without_processing_warns_and_blocks(window: FitsMainWindow,
+                                                           monkeypatch: pytest.MonkeyPatch,
+                                                           ) -> None:
+    """
+    Warn on inclusion, block launch, and explain bypass through the common tooltip.
+    """
+    for step in (StepName.SEGMENT, StepName.TRACK):
+        window._editors[step].enable_group.setChecked(False)
+    toggle = window._editors[StepName.EXTRACT].enable_group
+    toggle.setChecked(True)
+    message = "Quantification requires Segmentation or Tracking to be included in the workflow."
+    assert window.console.toPlainText().count(message) == 1
+    assert "⚠ WARNING | " + message in window.console.toPlainText()
+    assert toggle.title() == "Include in workflow"
+    assert "bypass this step" in toggle.toolTip()
+    assert "Recompute this step" in window._editors[StepName.EXTRACT].widgets["overwrite"].toolTip()
+    monkeypatch.setattr(window, "_save_settings", lambda: pytest.fail("Invalid workflow reached saving"))
+    window._launch_pipeline(convert_only=False)
+    assert "✖ ERROR | " + message in window.console.toPlainText()
+    assert window._thread is None
+    window._editors[StepName.SEGMENT].enable_group.setChecked(True)
+    assert StepName.EXTRACT not in window._enabled_step_input_problems()
+
+
+def test_reviewed_rebuild_validates_its_effective_included_steps(window: FitsMainWindow, tmp_path: Path) -> None:
+    """
+    Use the reviewed scope when it includes a required producer absent from the GUI draft.
+    """
+    from fits.workflows.file_management.rebuild import ProcessingPlan
+
+    for step in (StepName.SEGMENT, StepName.TRACK):
+        window._editors[step].enable_group.setChecked(False)
+    window._editors[StepName.EXTRACT].enable_group.setChecked(True)
+    window._maintenance_plan = ProcessingPlan(tmp_path, "update",
+                                              {tmp_path: (str(StepName.SEGMENT), str(StepName.EXTRACT))}, ())
+    assert StepName.EXTRACT not in window._enabled_step_input_problems()
+
+
+def test_channel_registration_guard_follows_export_choices(window: FitsMainWindow, tmp_path: Path) -> None:
+    """
+    Let users disable incompatible saved settings and restore eligibility by exporting all channels.
+    """
+    tifffile.imwrite(tmp_path / "input.tif", np.zeros((3, 2, 8, 8), dtype=np.uint16),
+                     imagej=True, metadata={"axes": "TCYX"})
+    window.adapter.set_field_value(StepName.CONVERT, "channel_labels", ["Red", "Green"])
+    window.adapter.set_runtime_value("unlock_all_tabs", True)
+    window._refresh_run_inventory()
+    window._refresh_phase_access()
+    toggle = window._editors[StepName.REGISTER_CHANNEL].enable_group
+    assert toggle.isEnabled()
+    toggle.setChecked(True)
+    window.adapter.set_field_value(StepName.CONVERT, "export_channels", ["Red"])
+    window._update_run_button_text()
+    assert toggle.isEnabled()
+    assert StepName.REGISTER_CHANNEL in window._enabled_step_input_problems()
+    toggle.setChecked(False)
+    assert not toggle.isEnabled()
+    window.adapter.set_field_value(StepName.CONVERT, "export_channels", "all")
+    window._update_run_button_text()
+    assert toggle.isEnabled()
 
 
 def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
@@ -88,24 +214,32 @@ def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
                          imagej=True, metadata={"axes": "CYX"})
     window._refresh_run_inventory()
     hint = window._editors[StepName.CONVERT].expected_channels_label
-    assert hint.text() == "(different channel counts: 1 or 2)"
+    assert hint.text() == ""
+    assert hint.isHidden()
+    message = window._raw_input_error()
+    assert "✖ ERROR | " + message in window.console.toPlainText()
+    assert "Place acquisitions with different channel counts in separate run directories." in message
+    assert window.console.textCursor().charFormat().foreground().color().name() == "#e57373"
+    window._update_run_button_text()
+    window._refresh_run_inventory()
+    assert window.console.toPlainText().count(message) == 1
     assert not window.run_button.isEnabled()
-    assert "Cannot convert" in window.navigation_status.text()
+    assert "Cannot convert" in window.run_button.toolTip()
     assert "input_1.tif: 1 channel" in window.file_status_label.toolTip()
     assert "input_2.tif: 2 channels" in window._file_details_text()
     assert "#e57373" in window.file_status_label.styleSheet()
-    assert "#e57373" in window.navigation_status.styleSheet()
     assert not window._channel_label_warning()
-    warnings: list[str] = []
-    monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, message: warnings.append(message))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: pytest.fail("Unexpected validation popup"))
     monkeypatch.setattr(window, "_save_settings", lambda: pytest.fail("Mixed channel counts reached pipeline setup"))
     window._launch_pipeline(convert_only=True)
-    assert len(warnings) == 1
-    assert "different numbers of channels (1, 2)" in warnings[0]
+    assert "different numbers of channels (1, 2)" in window.console.toPlainText()
+    assert "✖ ERROR |" in window.console.toPlainText()
+    assert window.console.textCursor().charFormat().foreground().color().name() == "#e57373"
     assert window._thread is None
     (tmp_path / "input_2.tif").unlink()
     window._refresh_run_inventory()
-    assert hint.text() == "(1 expected channel)"
+    assert hint.text() == ""
+    assert hint.isHidden()
     assert window.run_button.isEnabled()
 
 
@@ -119,15 +253,14 @@ def test_label_count_warning_is_orange_nonblocking_and_clears_after_edit(window:
                      imagej=True, metadata={"axes": "CYX"})
     window._refresh_run_inventory()
     editor = window._editors[StepName.CONVERT]
-    field = cast(QLineEdit, editor.widgets["channel_labels"])
-    field.setText("Red, Green")
-    field.editingFinished.emit()
+    field = cast(ConversionChannelsWidget, editor.widgets["channel_labels"])
+    field.set_labels(['Red', 'Green'])
+    field.value_changed.emit(field.value())
     message = window._channel_label_warning()
     assert "Expected 3 channels, got 2 channel labels" in message
-    assert "default names: C_1, C_2, C_3." in message
+    assert "default names: C1, C2, C3." in message
     assert not window._raw_input_error()
     assert window.run_button.isEnabled()
-    assert "#efb366" in window.navigation_status.styleSheet()
     assert "#efb366" in editor.expected_channels_label.styleSheet()
     assert message in window._file_details_text()
     assert window.console.toPlainText().count(message) == 1
@@ -136,10 +269,9 @@ def test_label_count_warning_is_orange_nonblocking_and_clears_after_edit(window:
     assert window.console.toPlainText().count(message) == 1
     window._append_log("Normal log message")
     assert window.console.textCursor().charFormat().foreground().color().name() != "#efb366"
-    field.setText("Red, Green, Blue")
-    field.editingFinished.emit()
+    field.set_labels(['Red', 'Green', 'Blue'])
+    field.value_changed.emit(field.value())
     assert not window._channel_label_warning()
-    assert "#efb366" not in window.navigation_status.styleSheet()
     assert not editor.expected_channels_label.styleSheet()
     assert window.run_button.isEnabled()
 
@@ -172,7 +304,7 @@ def test_destination_conflict_identifies_input_in_red(window: FitsMainWindow, tm
     (tmp_path / "sample").mkdir()
     window._refresh_run_inventory()
     assert not window.run_button.isEnabled()
-    assert "Cannot create acquisition folder: sample" in window.navigation_status.text()
+    assert "Cannot create acquisition folder: sample" in window.run_button.toolTip()
     assert "sample.tif" in window._file_details_text()
     assert "#e57373" in window.file_status_label.styleSheet()
 
@@ -223,9 +355,9 @@ def test_changed_conversion_settings_force_rebuild_without_changing_overwrite(wi
     # Simulate reopening this prepared run with the current conversion settings.
     window._converted_settings = window._conversion_signature()
     window._back_to_convert()
-    field = window._editors[StepName.CONVERT].widgets["channel_labels"]
-    field.setText("FarRed")
-    field.editingFinished.emit()
+    field = cast(ConversionChannelsWidget, window._editors[StepName.CONVERT].widgets["channel_labels"])
+    field.set_labels(['FarRed'])
+    field.value_changed.emit(field.value())
     captured = []
 
     def convert(**kwargs):
@@ -265,9 +397,9 @@ def test_unsuccessful_or_changed_conversion_does_not_advance(window, tmp_path, m
     monkeypatch.setattr("fits.gui.main_window.pipeline_worker.start_pipeline", convert)
     window.run_button.click()
     if outcome == "changed_while_running":
-        field = window._editors[StepName.CONVERT].widgets["channel_labels"]
-        field.setText("Changed")
-        field.editingFinished.emit()
+        field = cast(ConversionChannelsWidget, window._editors[StepName.CONVERT].widgets["channel_labels"])
+        field.set_labels(['Changed'])
+        field.value_changed.emit(field.value())
     wait_for_run(window)
     assert window.workflow_pages.currentIndex() == 0
     assert not window._conversion_is_current()

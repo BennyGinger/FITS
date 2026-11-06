@@ -12,6 +12,7 @@ from fits.environment import constant as cst
 from fits.tasks.analysis.extraction.manager import resolve_extraction_labels
 from fits.tasks.analysis.manager import project_z
 from fits.workflows.experiments import ExperimentState
+from fits.workflows.definitions.models import StepProfile
 
 
 def compartment_export_paths(source: Path) -> tuple[Path, Path]:
@@ -21,11 +22,11 @@ def compartment_export_paths(source: Path) -> tuple[Path, Path]:
     return source.with_name(f"{source.stem}_mb.tif"), source.with_name(f"{source.stem}_cyto.tif")
 
 
-def export_compartments(state: ExperimentState, settings: CompartmentSettings) -> tuple[Path, Path]:
+def export_compartments(state: ExperimentState, settings: CompartmentSettings, *, profile: StepProfile | None = None) -> tuple[Path, Path]:
     """
     Write source-shaped mask channels through the ordinary FITS TIFF protocol.
     """
-    _, source = resolve_extraction_labels(state)
+    _, source = resolve_extraction_labels(state, profile)
     reader = FitsIO.from_path(source)
     raw = reader.get_array()
     array, axes = project_z(np.asarray(raw.array), raw.axes, mask=False)

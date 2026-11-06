@@ -34,6 +34,7 @@ def _run_gui(arguments: argparse.Namespace, qt_arguments: list[str]) -> None:
     from PySide6.QtWidgets import QApplication
     from fits.gui.theme import apply_dark_theme
     from fits.gui.main_window import FitsMainWindow
+    from fits.gui.settings import SettingsAdapter
 
     app = QApplication.instance()
     if not isinstance(app, QApplication):
@@ -45,6 +46,25 @@ def _run_gui(arguments: argparse.Namespace, qt_arguments: list[str]) -> None:
         app.setWindowIcon(QIcon(str(icon)))
     apply_dark_theme(app)
     window = FitsMainWindow(demo_step_delay=arguments.demo_step_delay)
+
+    def fresh_window(root: str) -> None:
+        """
+        Replace the completed reset's window using template settings and fresh state.
+        """
+        nonlocal window
+        previous = window
+        adapter = SettingsAdapter(previous.adapter.template_path)
+        adapter.run_dir = root
+        adapter.user_name = ''
+        window = FitsMainWindow(adapter, demo_step_delay=arguments.demo_step_delay)
+        window.fresh_window_requested.connect(fresh_window)
+        window.setGeometry(previous.geometry())
+        window.console.clear()
+        window.show()
+        previous.close()
+        previous.deleteLater()
+
+    window.fresh_window_requested.connect(fresh_window)
     window.show()
     raise SystemExit(app.exec())
 

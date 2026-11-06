@@ -7,9 +7,10 @@ from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import QFormLayout, QGroupBox, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QHBoxLayout, QPushButton
 from fits.environment.constant import RegistrationContext, StepName
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
-from fits.gui.settings.field_widgets import ChannelChoiceWidget, ChoiceWidget, ChannelSelectionWidget, ExportChannelsWidget, FloatWidget, IntWidget, TextWidget, ValueWidget, create_field_widget
+from fits.gui.settings.field_widgets import BoolWidget, ChannelChoiceWidget, ChoiceWidget, ChannelSelectionWidget, ExportChannelsWidget, FloatWidget, IntWidget, TextWidget, ValueWidget, create_field_widget
 from fits.gui.settings.adapter import RUNTIME_CHOICES, SettingsAdapter, field_choices, field_hint, field_label, field_tooltip, runtime_field_tooltip
 from fits.gui.settings.layouts import STEP_LAYOUTS
+from fits.gui.settings.conversion_channels import ConversionChannelsWidget
 from fits.gui.segmentation_models.loader import model_options_loader
 from fits.gui.segmentation_models.options import CellposeModelOptions, model_setting_path
 
@@ -22,6 +23,9 @@ TRACK_POSTPROCESS_PARAMETERS = (
 )
 
 COMPARTMENT_PARAMETERS = ("compartments", "membrane_thickness", "dilation_radius", "save_compartment_masks")
+WORKFLOW_INCLUSION_TOOLTIP = (
+    "Checked: use this step's output, reusing existing results when valid.\n"
+    "Unchecked: bypass this step and ignore its saved output when selecting downstream inputs.")
 
 
 def _add_parameter_row(form: QFormLayout,
@@ -44,24 +48,26 @@ def _add_parameter_row(form: QFormLayout,
     controls_form.setContentsMargins(0, 0, 0, 0)
     controls_form.setHorizontalSpacing(18)
     controls_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
-    label = QLabel(title)
-    label.setFixedWidth(label_width)
-    label.setWordWrap(True)
-    label.setToolTip(tooltip)
     widget.setToolTip(tooltip)
     if isinstance(widget, (IntWidget, FloatWidget)):
         widget.setFixedWidth(110)
-    else:
+    elif not isinstance(widget, ConversionChannelsWidget):
         widget.setMaximumWidth(220)
-    if trailing is None:
-        controls_form.addRow(label, widget)
-    else:
+    field = widget
+    if trailing is not None:
         field = QWidget()
         field_layout = QHBoxLayout(field)
         field_layout.setContentsMargins(0, 0, 0, 0)
         field_layout.addWidget(widget)
         field_layout.addWidget(trailing)
+    if title:
+        label = QLabel(title)
+        label.setFixedWidth(label_width)
+        label.setWordWrap(True)
+        label.setToolTip(tooltip)
         controls_form.addRow(label, field)
+    else:
+        controls_form.addRow(field)
     layout.addWidget(controls, 1)
     description = QLabel(hint or tooltip.split(". ", 1)[0].rstrip(".") + ".")
     description.setWordWrap(True)
@@ -124,15 +130,19 @@ class StepSettingsEditor(QWidget):
         description.setWordWrap(True)
         description.setStyleSheet("color: #b8b8b8;")
         description.setToolTip(adapter.step_documentation(step))
-        outer.addWidget(description)
+        self.description_layout = QHBoxLayout()
+        self.description_layout.setSpacing(16)
+        self.description_layout.addWidget(description, 1)
+        outer.addLayout(self.description_layout)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         contents = QWidget()
         contents_layout = QVBoxLayout(contents)
 
-        basic = QGroupBox("Enable")
+        basic = QGroupBox("Include in workflow")
         basic.setCheckable(True)
+        basic.setToolTip(WORKFLOW_INCLUSION_TOOLTIP)
         basic.setChecked(adapter.step_enabled(step))
         self.enable_group = basic
         basic.toggled.connect(self._enabled_toggled)
@@ -146,24 +156,7 @@ class StepSettingsEditor(QWidget):
             self._add_fields(basic_form, layout_spec.basic)
         contents_layout.addWidget(basic)
         if step == StepName.EXTRACT:
-            self.compartment_group = QGroupBox()
-            self.compartment_group.setAccessibleName("Compartments")
-            compartment_form = QFormLayout(self.compartment_group)
-            header = QWidget()
-            header_layout = QHBoxLayout(header)
-            header_layout.setContentsMargins(0, 0, 0, 0)
-            header_layout.addWidget(QLabel("Compartments"))
-            header_layout.addStretch()
-            self.compartment_preview_button = QPushButton("Preview")
-            self.compartment_preview_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            header_layout.addWidget(self.compartment_preview_button)
-            compartment_form.addRow(header)
-            explanation = QLabel("Measure membrane and cytoplasm separately. Masks are generated during quantification "
-                                 "and can be regenerated with the same settings. Saving is optional; compaction removes exports.")
-            explanation.setWordWrap(True)
-            compartment_form.addRow(explanation)
-            self._add_fields(compartment_form, COMPARTMENT_PARAMETERS)
-            contents_layout.addWidget(self.compartment_group)
+            self._add_compartment_section(contents_layout)
         if step == StepName.TRACK:
             self._add_track_postprocess_section(contents_layout)
         if step == StepName.SEGMENT:
@@ -184,6 +177,37 @@ class StepSettingsEditor(QWidget):
         self.scroll_area = scroll
         outer.addWidget(scroll)
         self._refresh_enabled_states()
+
+    def _add_compartment_section(self, parent_layout: QVBoxLayout) -> None:
+        """
+        Put the compartment toggle and preview above the settings.
+        """
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        toggle = BoolWidget(bool(self.adapter.field_value(self.step, "compartments")))
+        toggle.setText(field_label("compartments"))
+        toggle.setToolTip(field_tooltip(self.step, "compartments"))
+        toggle.value_changed.connect(lambda value: self._store_value("compartments", value))
+        self.widgets["compartments"] = cast(ValueWidget, toggle)
+        header_layout.addWidget(toggle)
+        header_layout.addStretch()
+        self.compartment_preview_button = QPushButton("Preview")
+        self.compartment_preview_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        header_layout.addWidget(self.compartment_preview_button)
+        parent_layout.addWidget(header)
+        self._field_rows.append(header)
+
+        self.compartment_group = QGroupBox()
+        self.compartment_group.setFlat(True)
+        self.compartment_group.setAccessibleName(field_label("compartments"))
+        compartment_form = QFormLayout(self.compartment_group)
+        explanation = QLabel("Measure membrane and cytoplasm separately. Masks are generated during quantification "
+                             "and can be regenerated with the same settings. Saving is optional; compaction removes exports.")
+        explanation.setWordWrap(True)
+        compartment_form.addRow(explanation)
+        self._add_fields(compartment_form, tuple(path for path in COMPARTMENT_PARAMETERS if path != "compartments"))
+        parent_layout.addWidget(self.compartment_group)
 
     def _enabled_toggled(self, enabled: bool) -> None:
         """
@@ -206,7 +230,10 @@ class StepSettingsEditor(QWidget):
                            for path in paths), default=0) + 12
         for path in paths:
             value = self.adapter.field_value(self.step, path)
-            if self.step == StepName.CONVERT and path == "export_channels":
+            if self.step == StepName.CONVERT and path == "channel_labels":
+                labels = [value] if isinstance(value, str) else list(value or [])
+                widget = ConversionChannelsWidget(labels)
+            elif self.step == StepName.CONVERT and path == "export_channels":
                 widget = ExportChannelsWidget(value, self.adapter.source_channel_labels() or self.adapter.saved_image_channels)
             elif self.step == StepName.TRACK and path == "channel_to_track":
                 channels = self._segmentation_channel_labels()
@@ -231,7 +258,8 @@ class StepSettingsEditor(QWidget):
                                                                                                   changed_value,
                                                                                                   ),
                                          )
-            row = _add_parameter_row(form, field_label(path), widget, tooltip, label_width,
+            title = "" if isinstance(widget, ConversionChannelsWidget) else field_label(path)
+            row = _add_parameter_row(form, title, widget, tooltip, label_width,
                                      hint=hints.get(path, field_hint(self.step, path)) if hints else field_hint(self.step, path),
                                      trailing=trailing,
                                      )
@@ -240,18 +268,19 @@ class StepSettingsEditor(QWidget):
 
     def set_expected_channel_counts(self, counts: set[int], warning: str = "") -> None:
         """
-        Show the channel counts found in the run's raw acquisition metadata.
+        Update table rows from detected channel counts and show only mismatch warnings.
         """
-        values = " or ".join(str(count) for count in sorted(counts))
-        noun = "channel" if counts == {1} else "channels"
-        text = f"({values} expected {noun})" if counts else ""
-        if len(counts) > 1:
-            text = f"(different channel counts: {values})"
+        text = "Channel label count mismatch" if warning and len(counts) == 1 else ""
         self.expected_channels_label.setText(text)
-        color = "#e57373" if len(counts) > 1 else "#efb366" if warning else ""
+        color = "#efb366" if text else ""
         self.expected_channels_label.setStyleSheet(f"color: {color};" if color else "")
         self.expected_channels_label.setToolTip(warning)
-        self.expected_channels_label.setVisible(bool(counts))
+        self.expected_channels_label.setVisible(bool(text))
+        widget = self.widgets.get("channel_labels")
+        if isinstance(widget, ConversionChannelsWidget):
+            widget.set_source(next(iter(counts)) if len(counts) == 1 else None,
+                              self.adapter.raw_channel_colors,
+                              )
 
     def _create_parameter_widget(self, path: str, value: Any) -> ValueWidget | ChannelChoiceWidget | ChannelSelectionWidget:
         """
@@ -284,6 +313,8 @@ class StepSettingsEditor(QWidget):
                                      )
         if bounded and isinstance(widget, FloatWidget):
             widget.setRange(0, 1)
+        if continuous and self.step in (StepName.SEGMENT, StepName.TRACK) and isinstance(widget, FloatWidget):
+            widget.setSingleStep(0.1)
         if self.step == StepName.SEGMENT and path == "user_settings.flow_threshold" and isinstance(widget, (IntWidget, FloatWidget)):
             widget.setMinimum(0)
         return widget
@@ -342,25 +373,30 @@ class StepSettingsEditor(QWidget):
         """
         Explain optional stationary-cell repair and group its dependent controls.
         """
-        section = QGroupBox("Stationary-cell mask repair (optional)")
+        toggle = BoolWidget(bool(self.adapter.field_value(self.step, "postprocess.enabled")))
+        toggle.setText(field_label("postprocess.enabled"))
+        toggle.setToolTip(field_tooltip(self.step, "postprocess.enabled"))
+        toggle.value_changed.connect(lambda value: self._store_value("postprocess.enabled", value))
+        self.widgets["postprocess.enabled"] = cast(ValueWidget, toggle)
+        parent_layout.addWidget(toggle)
+        self._field_rows.append(toggle)
+
+        section = QGroupBox()
+        section.setFlat(True)
+        section.setAccessibleName(field_label("postprocess.enabled"))
         layout = QVBoxLayout(section)
         description = QLabel(
-            "For cells that remain in approximately the same position. Reconnects fragmented tracks, "
-            "removes inconsistent masks, and fills missing frames. Tracks with too few reliable "
+            "For cells that remain in approximately the same position. Uses IoU (intersection over union) "
+            "tracking to reconnect fragmented tracks, removes inconsistent masks, and fills missing frames. "
+            "Tracks with too few reliable "
             "observations are removed. Leave off for migrating cells.")
         description.setWordWrap(True)
         description.setStyleSheet("color: #b8b8b8;")
         layout.addWidget(description)
 
-        toggle_container = QWidget()
-        toggle_form = QFormLayout(toggle_container)
-        toggle_form.setContentsMargins(0, 0, 0, 0)
-        self._add_fields(toggle_form, ("postprocess.enabled",))
-        layout.addWidget(toggle_container)
-
         parameters = QWidget()
         parameter_form = QFormLayout(parameters)
-        parameter_form.setContentsMargins(28, 4, 0, 0)
+        parameter_form.setContentsMargins(0, 4, 0, 0)
         explanations = (
             "Higher values reject more masks that differ from the cell's typical shape.",
             "Number of consistent observations needed to keep a track.",

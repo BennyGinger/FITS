@@ -128,13 +128,17 @@ def _missing_input_records(states: Sequence[ExperimentState],
             entry = config.get(step, {})
             if not entry.get("enabled"):
                 continue
-            profile = configured_profile(REGISTRY[step].profile, config)
+            try:
+                profile = configured_profile(REGISTRY[step].profile, config)
+            except ValueError:
+                # Workflow inclusion errors are reported by shared configuration validation.
+                continue
             if checkpoint_complete(state, profile, entry.get("params", {}).get("overwrite", False)):
                 continue
             output = state.artifact(profile.output_artifact)
             if output is not None and output.is_file():
                 continue
-            if not for_execution and output is None and step not in state.completed_steps:
+            if not state.compacted and output is None and step not in state.completed_steps:
                 # Future enabled work has no saved result to mark as outdated.
                 continue
             try:
@@ -154,11 +158,15 @@ def _propagate_conflicts(records: list[ArtifactRecord],
     Propagate upstream conflicts until no additional artifacts become stale.
     """
     problems = {record.path.resolve(): record.problem for record in records if record.problem}
+    overwritten = set(overwrite_steps(config)) if for_execution else set()
     for _ in range(len(records) + 1):
         changed = False
         updated: list[ArtifactRecord] = []
         for record in records:
             state = states_by_directory.get(record.path.parent)
+            if record.step in overwritten and _can_replace_result(record, state, config):
+                updated.append(record)
+                continue
             if is_branch(record.path):
                 reason = _branch_problem(record, state, config)
                 if reason:
@@ -168,9 +176,10 @@ def _propagate_conflicts(records: list[ArtifactRecord],
                 continue
             reason = record.problem
             if not reason:
-                reason = (settings_problem(record, config)
+                included = record.step is None or config.get(record.step, {}).get("enabled", False)
+                reason = ((settings_problem(record, config) if included else "")
                           or _reference_problem(record, state, problems, for_execution=for_execution)
-                          or _configured_input_problem(record, state, config))
+                          or (_configured_input_problem(record, state, config) if included else ""))
             if reason and not record.problem:
                 changed = True
                 problems[record.path.resolve()] = reason
@@ -180,6 +189,22 @@ def _propagate_conflicts(records: list[ArtifactRecord],
         if not changed:
             break
     return records
+
+
+def _can_replace_result(record: ArtifactRecord,
+                        state: ExperimentState | None,
+                        config: Mapping[str, Any],
+                        ) -> bool:
+    """
+    Allow an intentional rerun to replace old settings or lineage when its inputs exist.
+    """
+    if record.problem or record.legacy or record.step is None or state is None or state.compacted:
+        return False
+    try:
+        resolve_inputs(state, configured_profile(REGISTRY[record.step].profile, config))
+    except ValueError:
+        return False
+    return True
 
 
 def _branch_problem(record: ArtifactRecord, state: ExperimentState | None, config: Mapping[str, Any]) -> str:
@@ -244,7 +269,8 @@ def _configured_input_problem(record: ArtifactRecord,
     """
     Compare saved inputs with the enabled chain without inventing old lineage.
     """
-    if record.metadata is None or state is None or record.step is None or record.step == cst.StepName.CONVERT or state.compacted:
+    if (record.metadata is None or state is None or record.step is None
+            or record.step in (cst.StepName.CONVERT, cst.StepName.EDIT_TRACK) or state.compacted):
         return ""
     try:
         profile = configured_profile(REGISTRY[record.step].profile, config)
@@ -272,9 +298,11 @@ def _build_report(records: Sequence[ArtifactRecord],
     Describe requested overwrites, affected downstream work and output paths.
     """
     existing_steps = {record.step for record in records}
+    disabled = tuple(str(step) for step in cst.WORKFLOW_ORDER if not config.get(step, {}).get("enabled"))
     overwritten = tuple(step for step in overwrite_steps(config) if step in existing_steps) if for_execution else ()
-    sources, from_original = rebuild_sources(records, states, overwritten)
-    affected = downstream_steps(sources)
+    reviewed_records = [record for record in records if record.legacy or record.step not in disabled]
+    sources, from_original = rebuild_sources(reviewed_records, states, overwritten)
+    affected = tuple(step for step in downstream_steps(sources) if from_original or step not in disabled)
     steps = sources | set(affected)
     outputs: list[tuple[str, Path]] = []
     for state in states:
@@ -284,7 +312,7 @@ def _build_report(records: Sequence[ArtifactRecord],
         for step in cst.WORKFLOW_ORDER:
             if step in steps and (step in existing or config.get(step, {}).get("enabled")):
                 outputs.append((str(step), state.workdir / REGISTRY[step].profile.output_name))
-    report = PreflightReport(tuple(records), overwritten, affected, tuple(states), tuple(outputs))
+    report = PreflightReport(tuple(records), overwritten, affected, tuple(states), tuple(outputs), disabled)
     return _include_required_rebuild_outputs(report, config) if report.needs_decision else report
 
 

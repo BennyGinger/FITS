@@ -31,7 +31,7 @@ Intermediate artifacts and experiment compacting — FITS 4 implementation
 [x] Intermediate/compact/legacy/REF/ROI viewer loading and tracking-only controls.
 
 Full agreed contract, five implementation phases and validation evidence:
-    docs/fits4_artifacts_plan.md
+    docs/dev/fits4_artifacts_plan.md
 
 Portable acquisitions and file management — implemented
 -------------------------------------------------------
@@ -48,8 +48,8 @@ Portable acquisitions and file management — implemented
     Runtime-only reserved Advanced space, preserving step-tab expansion behavior.
 
 Full plan, implementation phases and validation:
-    docs/portable_experiments_plan.md
-    docs/file_management_actions_plan.md (revised migration and processing actions)
+    docs/dev/portable_experiments_plan.md
+    docs/dev/file_management_actions_plan.md (revised migration and processing actions)
 
 Analysis identifiers: deferred Z-plane support
 ----------------------------------------------

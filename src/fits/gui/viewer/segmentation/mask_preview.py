@@ -3,6 +3,7 @@
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
+from collections.abc import Mapping
 
 import numpy as np
 from bioimagequant import CompartmentGeometry, prepare_compartments
@@ -17,20 +18,32 @@ from fits.tasks.segmentation.preview_cache import SegmentationPreview
 from fits.workflows.experiments import load_experiment_state
 
 
-def saved_mask_path(folder: Path, *, compartment: bool) -> Path | None:
+def saved_mask_path(folder: Path, *, compartment: bool, config: Mapping[str, Any] | None = None) -> Path | None:
     """
     Reuse active workflow identity, with known filenames for state-free images.
     """
+    from fits.workflows.definitions.registry import REGISTRY
+    from fits.workflows.definitions.inputs import configured_profile
+
+    try:
+        profile = configured_profile(REGISTRY[cst.StepName.EXTRACT].profile, config) if compartment and config is not None else None
+    except ValueError:
+        return None
     try:
         state = load_experiment_state(folder)
     except FileNotFoundError:
         names = ((cst.FITS_MASK_TRACK_EDITED_FILTERED, cst.FITS_MASK_TRACK_EDITED,
                   cst.FITS_MASK_TRACK, *cst.TRACKING_NAMES, *cst.SEGMENTATION_NAMES)
                  if compartment else cst.SEGMENTATION_NAMES)
+        if profile is not None:
+            if cst.ARTI_SEG in profile.additional_artifacts:
+                names = cst.SEGMENTATION_NAMES
+            elif not profile.use_tracking_edits:
+                names = cst.TRACKING_NAMES[:2]
         return next((folder / name for name in names if (folder / name).is_file()), None)
     if compartment:
         try:
-            return resolve_extraction_labels(state)[1]
+            return resolve_extraction_labels(state, profile)[1]
         except ValueError:
             return None
     path = state.artifact(cst.ARTI_SEG)

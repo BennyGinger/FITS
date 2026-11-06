@@ -6,23 +6,20 @@ from fits_io import FitsIO
 import numpy as np
 from bioimagequant import ExtractData
 
-from fits.environment import constant as cst
 from fits.tasks.analysis.manager import AnalysisManager, project_z
 from fits.workflows.experiments import ExperimentState
+from fits.workflows.definitions.models import StepProfile
+from fits.workflows.definitions.inputs import resolve_quantification_mask
 
 
 logger = logging.getLogger(__name__)
 
 
-def resolve_extraction_labels(state: ExperimentState) -> tuple[str, Path]:
+def resolve_extraction_labels(state: ExperimentState, profile: StepProfile | None = None) -> tuple[str, Path]:
     """
-    Select the active tracking result, otherwise segmentation, for analysis/preview.
+    Resolve the mask selected by the configured workflow for analysis/preview.
     """
-    for kind in (cst.ARTI_TRACK, cst.ARTI_SEG):
-        path = state.artifact(kind)
-        if path is not None and path.is_file():
-            return kind, path
-    raise ValueError("Extraction requires a tracking or segmentation artifact.")
+    return resolve_quantification_mask(state, profile)
 
 
 @dataclass
@@ -30,13 +27,10 @@ class ExtractionManager(AnalysisManager):
 
     def _resolve_labels(self) -> tuple[str, Path]:
         """
-        Resolve the label artifact to use for extraction, based on their priority: 
-            - tracking > segmentation. 
-        
-        Returns a tuple of (label_name, label_path).
+        Resolve the label artifact selected by the configured extraction profile.
         """
         
-        return resolve_extraction_labels(self.state)
+        return resolve_extraction_labels(self.state, self.profile)
 
 
     def prepare_quantification(self) -> ExtractData:

@@ -62,7 +62,8 @@ def channel_label_warnings(counts: dict[Path, int], labels: Sequence[str] | None
     expected = set(counts.values())
     if not labels or len(expected) != 1:
         return ()
-    warning = channel_label_warning(next(iter(expected)), len(labels))
+    count = next(iter(expected))
+    warning = channel_label_warning(count, len(labels), default_labels=[f"C{index + 1}" for index in range(count)])
     return (warning,) if warning else ()
 
 
@@ -72,15 +73,22 @@ def inspect_raw_inputs(root: Path,
                        channel_labels: Sequence[str] | None = None,
                        ) -> RawInputReport:
     """
-    Check raw channel counts and acquisition destinations without reading image pixels or changing files.
+    Check channel/frame counts and acquisition destinations without reading image pixels or changing files.
     """
     root = root.expanduser().resolve()
     sources = sorted({path.resolve() for path in (collect_supported_files(root) if files is None else files)})
     counts: dict[Path, int] = {}
+    frames: dict[Path, tuple[int, ...]] = {}
+    colors: dict[Path, list[str | None] | None] = {}
     problems: list[str] = []
     for path in sources:
         try:
-            counts[path] = FitsIO.from_path(path).reader.channel_count
+            reader = FitsIO.from_path(path).reader
+            frame_counts = tuple(series.shape[series.axes.index("T")] if "T" in series.axes else 1
+                                 for series in reader.split_series())
+            counts[path] = reader.channel_count
+            colors[path] = reader.channel_colors
+            frames[path] = frame_counts
         except Exception as error:
             problems.append(f"Cannot read raw input metadata: {_display_path(path, root)}.\n"
                             f"{error}\nCheck that this is a readable supported ND2/TIFF acquisition.")
@@ -93,4 +101,6 @@ def inspect_raw_inputs(root: Path,
     directories, destination_problems = _plan_acquisition_directories(sources, root)
     return RawInputReport(counts, directories, tuple(problems + destination_problems),
                           channel_label_warnings(counts, channel_labels),
+                          frames,
+                          colors,
                           )

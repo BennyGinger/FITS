@@ -20,6 +20,7 @@ class StepProfile:
     output_name: FitsName
     input_alternatives: tuple[ArtifactType, ...] = ()
     additional_artifacts: tuple[ArtifactType, ...] = ()
+    use_tracking_edits: bool = True
 
 
 FitsSettings = TypeVar("FitsSettings", bound=SettingsModel)

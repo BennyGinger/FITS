@@ -28,6 +28,8 @@ from fits.gui.file_preview.portable import portable_changes
 from fits.gui.file_preview.backups import restoration_changes
 from fits.gui.file_preview.review import review_tabs, size_file_review
 from fits.gui.file_preview.migration import MigrationPreviewWidget
+from fits.gui.file_management.reset import confirm_reset
+from fits.workflows.file_management.reset import plan_reset
 
 
 def _fit_manager_height(dialog: QDialog) -> None:
@@ -446,6 +448,7 @@ def manage_files(root: str | Path,
                  selected: Path | None = None,
                  parent: QWidget | None = None,
                  run_processing: Callable[[ProcessingPlan], None] | None = None,
+                 reset_run: Callable[[], None] | None = None,
                  ) -> bool:
     """
     Present run-wide file actions and execute only an accepted review after closing.
@@ -491,6 +494,10 @@ def manage_files(root: str | Path,
                 pending[0] = _update_action(root, dialog, notice)
             elif action == 'compact':
                 pending[0] = _compact_action(root, dialog, notice, processing_runner)
+            elif action == 'reset':
+                plan_reset(root)
+                if confirm_reset(root, dialog):
+                    pending[0] = reset_run
             else:
                 pending[0] = _history_action(root, dialog, backup_notice, history, entries, action)
             if pending[0] is not None:
@@ -501,6 +508,18 @@ def manage_files(root: str | Path,
     layout.addWidget(_file_actions_panel(notice, _primary_action(status, report), choose, unavailable))
     group, history, backup_notice = _history_panel(entries, root, choose)
     layout.addWidget(group)
+    if reset_run is not None:
+        reset_group = QGroupBox('Reset to raw inputs')
+        reset_group.setObjectName('reset_to_raw')
+        reset_group.setStyleSheet('QGroupBox#reset_to_raw { color: #ff5555; }')
+        reset_layout = QHBoxLayout(reset_group)
+        reset_button = QPushButton('Reset')
+        reset_button.setStyleSheet('color: #ff5555;')
+        reset_button.setToolTip('Permanently reset the whole run to its original acquisitions. '
+                               'All FITS results and backup history are removed. Confirmation is required.')
+        reset_button.clicked.connect(lambda: choose('reset'))
+        reset_layout.addWidget(reset_button)
+        layout.addWidget(reset_group)
     close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
     close.rejected.connect(dialog.reject)
     layout.addWidget(close)

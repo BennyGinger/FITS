@@ -70,7 +70,8 @@ def test_duplicate_stems_only_change_planned_folders_in_same_parent(tmp_path: Pa
         path.parent.mkdir(exist_ok=True)
         path.touch()
     monkeypatch.setattr("fits.workflows.checks.raw_inputs.FitsIO.from_path",
-                        lambda path: SimpleNamespace(reader=SimpleNamespace(channel_count=2)))
+                        lambda path: SimpleNamespace(reader=SimpleNamespace(
+                            channel_count=2, channel_colors=None, split_series=lambda: [SimpleNamespace(axes="YX", shape=(8, 8))])))
     report = inspect_raw_inputs(tmp_path)
     assert not report.problems
     assert report.acquisition_directories == {
@@ -107,6 +108,34 @@ def test_unreadable_metadata_blocks_instead_of_guessing(tmp_path: Path) -> None:
     assert "Cannot read raw input metadata: broken.nd2" in report.describe()
 
 
+def test_frame_counts_use_headers_for_every_series(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Inspect unequal series lengths without requesting image pixels.
+    """
+    source = tmp_path / "sample.tif"
+    source.touch()
+    series = [SimpleNamespace(axes="CYX", shape=(2, 8, 8)),
+              SimpleNamespace(axes="TCYX", shape=(5, 2, 8, 8))]
+    monkeypatch.setattr("fits.workflows.checks.raw_inputs.FitsIO.from_path",
+                        lambda path: SimpleNamespace(reader=SimpleNamespace(
+                            channel_count=2, channel_colors=None, split_series=lambda: series)))
+    report = inspect_raw_inputs(tmp_path)
+    assert not report.problems
+    assert report.frame_counts == {source: (1, 5)}
+
+
+def test_frame_counts_are_read_from_real_tiff_headers(tmp_path: Path) -> None:
+    """
+    Distinguish time series from single images without counting channels as frames.
+    """
+    single = tmp_path / "single.tif"
+    movie = tmp_path / "movie.tif"
+    _write_tiff(single, 2)
+    imwrite(movie, np.zeros((4, 2, 8, 8), dtype=np.uint16), imagej=True, metadata={"axes": "TCYX"})
+    report = inspect_raw_inputs(tmp_path)
+    assert report.frame_counts == {single: (1,), movie: (4,)}
+
+
 def test_explicit_labels_match_source_channels_and_empty_labels_use_defaults(tmp_path: Path) -> None:
     """
     Check source counts without mistaking a selected export subset for all inputs.
@@ -120,7 +149,7 @@ def test_explicit_labels_match_source_channels_and_empty_labels_use_defaults(tmp
     assert not report.problems
     assert len(report.warnings) == 1
     assert "Expected 2 channels, got 3 channel labels" in report.warnings[0]
-    assert "default names: C_1, C_2." in report.warnings[0]
+    assert "default names: C1, C2." in report.warnings[0]
 
 
 def test_pipeline_warns_and_uses_defaults_for_label_count_mismatch(tmp_path: Path) -> None:
@@ -134,10 +163,10 @@ def test_pipeline_warns_and_uses_defaults_for_label_count_mismatch(tmp_path: Pat
 
     start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
     output = next(run.rglob("fits_array_raw.tif"))
-    assert FitsIO.from_path(output).channel_labels == ["C_1", "C_2", "C_3"]
+    assert FitsIO.from_path(output).channel_labels == ["C1", "C2", "C3"]
     log = next((run / ".fits" / "logs").glob("*.log")).read_text()
     assert "Expected 3 channels, got 2 channel labels" in log
-    assert "default names: C_1, C_2, C_3." in log
+    assert "default names: C1, C2, C3." in log
 
 
 def test_pipeline_empty_labels_uses_reader_defaults(tmp_path: Path) -> None:
@@ -154,7 +183,29 @@ def test_pipeline_empty_labels_uses_reader_defaults(tmp_path: Path) -> None:
     settings = adapter.save(tmp_path / "settings.toml")
     start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
     output = next(run.rglob("fits_array_raw.tif"))
-    assert FitsIO.from_path(output).channel_labels == ["C_1", "C_2"]
+    assert FitsIO.from_path(output).channel_labels == ["C1", "C2"]
+
+
+def test_pipeline_uses_run_color_consensus_for_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Use the same defaults as the GUI when one source channel has conflicting colors.
+    """
+    from fits_io import FitsIO
+    from fits_io.readers.r_tiff import TiffReader
+
+    run = tmp_path / "run"
+    _write_tiff(run / "first.tif", 2)
+    _write_tiff(run / "second.tif", 2)
+    monkeypatch.setattr(TiffReader, "channel_colors", property(
+        lambda self: ["#00ff00", "#ff0000" if self.img_path.name == "first.tif" else "#0000ff"]))
+    adapter = SettingsAdapter()
+    adapter.run_dir = str(run)
+    adapter.user_name = "Test"
+    settings = adapter.save(tmp_path / "settings.toml")
+    start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
+    outputs = list(run.rglob("fits_array_raw.tif"))
+    assert len(outputs) == 2
+    assert all(FitsIO.from_path(output).channel_labels == ["green", "C2"] for output in outputs)
 
 
 def test_duplicates_inside_existing_acquisition_require_resolution(tmp_path: Path) -> None:

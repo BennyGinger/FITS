@@ -8,6 +8,7 @@ import subprocess
 import sys
 import stat
 from types import SimpleNamespace
+from types import ModuleType
 from unittest.mock import MagicMock
 
 import pytest
@@ -148,6 +149,105 @@ def test_changed_branch_is_not_updated(modules, repositories):
     with pytest.raises(RuntimeError, match="branch changed"):
         engine.prepare(update)
     assert engine.check() is None
+
+
+@pytest.mark.parametrize("repair_only", [True, False])
+def test_dirty_pinned_submodule_allows_only_environment_repair(modules: tuple[ModuleType, ModuleType],
+                                                              repositories: tuple[Path, Path],
+                                                              tmp_path: Path,
+                                                              monkeypatch: pytest.MonkeyPatch,
+                                                              repair_only: bool,
+                                                              ) -> None:
+    """
+    Preserve local module work during dependency repair while still refusing source updates.
+    """
+    module, _ = modules
+    remote, root = repositories
+    source = tmp_path / "module"
+    initialize(source)
+    (source / "module.py").write_text("original module")
+    pin = commit(source, "module")
+    git(remote, "submodule", "add", str(source), "example")
+    commit(remote, "include module")
+    engine = module.Updater(root)
+    monkeypatch.setattr(engine, "synchronize", lambda: None)
+    engine.prepare(engine.check())
+    engine.resume()
+    import state
+    state.record_installation(root)
+    before = git(root, "rev-parse", "HEAD")
+    if repair_only:
+        (root / "uv.lock").write_text("changed dependencies")
+        engine.prepare_repair()
+        (root / "app.py").write_text("local FITS work")
+    else:
+        change_remote(remote)
+        engine.prepare(engine.check())
+    edited = root / "example/module.py"
+    untracked = root / "example/new.py"
+    edited.write_text("local module work")
+    untracked.write_text("new module work")
+    calls: list[tuple[str, ...]] = []
+
+    def run(*command: str) -> str:
+        """
+        Permit only environment commands and simulate the environment's interpreter.
+        """
+        assert command[0] != "git"
+        calls.append(command)
+        python = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        python.parent.mkdir(parents=True, exist_ok=True)
+        python.touch()
+        return ""
+
+    monkeypatch.setattr(engine, "run", run)
+    if repair_only:
+        engine.resume()
+        assert calls[0] == ("uv", "sync", "--python", "3.12")
+        assert calls[1][-1] == str(root / "startup/verify.py")
+        assert not engine.pending.exists()
+        assert not state.needs_repair(root)
+        assert (root / "app.py").read_text() == "local FITS work"
+    else:
+        with pytest.raises(RuntimeError, match="Local submodule edits"):
+            engine.resume()
+        assert not calls
+        assert engine.pending.exists()
+    assert git(root, "rev-parse", "HEAD") == before
+    assert git(root / "example", "rev-parse", "HEAD") == pin
+    assert edited.read_text() == "local module work"
+    assert untracked.read_text() == "new module work"
+
+
+def test_failed_environment_verification_keeps_repair_pending(modules: tuple[ModuleType, ModuleType],
+                                                              repositories: tuple[Path, Path],
+                                                              monkeypatch: pytest.MonkeyPatch,
+                                                              ) -> None:
+    """
+    Write a new installation receipt only after the repaired environment verifies successfully.
+    """
+    module, _ = modules
+    _, root = repositories
+    import state
+    state.record_installation(root)
+    receipt = root / "startup/logs/installed.json"
+    before = receipt.read_bytes()
+    engine = module.Updater(root)
+    engine.prepare_repair()
+
+    def run(*command: str) -> str:
+        """
+        Simulate successful synchronization followed by a failing import check.
+        """
+        if command[-1] == str(root / "startup/verify.py"):
+            raise RuntimeError("verification failed")
+        return ""
+
+    monkeypatch.setattr(engine, "run", run)
+    with pytest.raises(RuntimeError, match="verification failed"):
+        engine.resume()
+    assert engine.pending.exists()
+    assert receipt.read_bytes() == before
 
 
 def test_new_submodule_is_initialized_and_existing_one_is_pinned(modules, repositories, tmp_path, monkeypatch):

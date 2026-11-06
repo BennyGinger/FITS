@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from shutil import copyfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -13,6 +14,10 @@ from fits.gui.main_window import FitsMainWindow
 from fits.gui.settings import SettingsAdapter
 from fits.gui.viewer.registration import RegistrationTunerWindow
 from fits.gui.viewer.segmentation import SegmentationTunerWindow
+from fits.gui.viewer.background import BackgroundTunerWindow
+from fits.gui.viewer.common.base_window import ImageToolWindow
+from fits.gui.viewer.masks import MaskDrawingWindow
+from fits.gui.viewer.tracking import TrackingViewerWindow
 
 _APP = None
 
@@ -34,11 +39,14 @@ def application(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def images(tmp_path):
+def images(tmp_path: Path) -> list[Path]:
+    """
+    Create prepared series inside portable acquisition folders.
+    """
     paths = []
     for name, intensity in (("a_first", 10), ("b_selected", 20)):
-        folder = tmp_path / name
-        folder.mkdir()
+        folder = tmp_path / "condition" / name / f"{name}_s1"
+        folder.mkdir(parents=True)
         path = folder / "fits_array.tif"
         array = np.full((3, 2, 16, 16), intensity, dtype=np.uint16)
         input_path = folder / "input.tif"
@@ -98,16 +106,56 @@ def test_image_in_selected_folder_takes_priority_over_subfolders(tuner_class, im
         tuner.close()
 
 
-@pytest.mark.parametrize("tuner_class", [SegmentationTunerWindow, RegistrationTunerWindow])
-def test_selected_empty_experiment_does_not_open_another(tuner_class, images, tmp_path):
+@pytest.mark.parametrize("tuner_class", [SegmentationTunerWindow, RegistrationTunerWindow, BackgroundTunerWindow])
+@pytest.mark.parametrize("selection", ["empty", "missing", "metadata"])
+def test_unusable_selection_opens_first_experiment(tuner_class: type[ImageToolWindow],
+                                                  selection: str,
+                                                  images: list[Path],
+                                                  tmp_path: Path,
+                                                  ) -> None:
+    """
+    Fall back to a prepared series when the main browser selection has no image.
+    """
     empty = tmp_path / "empty"
     empty.mkdir()
-    tuner = tuner_class(tmp_path, initial_path=empty)
+    selected = empty
+    if selection == "missing":
+        selected = tmp_path / "old_experiment"
+    elif selection == "metadata":
+        selected = tmp_path / ".fits" / "notes.txt"
+        selected.parent.mkdir()
+        selected.touch()
+    tuner = tuner_class(tmp_path)
     try:
-        assert tuner._source_path is None
-        assert "No FITS image artifact" in tuner.status_label.text()
+        tuner._set_experiments_directory(tmp_path, initial_path=selected)
+        assert tuner._source_path == images[0], tuner.status_label.text()
+        assert tuner.directory_browser.selected_path == images[0]
+        assert tuner.image_viewer.image_item.image is not None
     finally:
         tuner.close()
+
+
+@pytest.mark.parametrize("tool_class", [SegmentationTunerWindow, RegistrationTunerWindow,
+                                       BackgroundTunerWindow, MaskDrawingWindow, TrackingViewerWindow])
+def test_all_tools_open_nested_series_and_ignore_backups(tool_class: type[ImageToolWindow],
+                                                        images: list[Path],
+                                                        tmp_path: Path,
+                                                        ) -> None:
+    """
+    Reveal active scientific data automatically without selecting retained history.
+    """
+    for metadata in (tmp_path / ".fits", tmp_path / "a_acquisition" / ".fits_experiment"):
+        backup = metadata / "backup" / "old_series" / "fits_array.tif"
+        backup.parent.mkdir(parents=True)
+        copyfile(images[1], backup)
+    tool = tool_class(tmp_path)
+    try:
+        assert tool._image_session is not None, tool.status_label.text()
+        assert tool._source_path == images[0], tool.status_label.text()
+        assert tool.directory_browser.selected_path == images[0]
+        assert np.all(tool.image_viewer.image_item.image == 10)
+    finally:
+        tool.close()
 
 
 @pytest.mark.parametrize("kind", ["segmentation", "registration"])

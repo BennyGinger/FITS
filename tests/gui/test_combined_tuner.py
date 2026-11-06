@@ -85,6 +85,20 @@ def test_saved_mask_priority_and_independent_image_channel(tuner: SegmentationTu
     assert "Saved mask" in tuner.mode_label.text()
 
 
+def test_compartment_preview_bypasses_tracking(tuner: SegmentationTunerWindow,
+                                              image_masks: tuple[Path, np.ndarray, np.ndarray],
+                                              ) -> None:
+    """
+    Use included segmentation for membrane previews even when edited tracking exists.
+    """
+    tuner._workflow_config = {cst.StepName.SEGMENT: {"enabled": True}, cst.StepName.TRACK: {"enabled": False}}
+    tuner._refresh_mask_channels()
+    tuner._display_selection()
+    expected = compartment_masks(image_masks[1][0], CompartmentSettings(1))["mb"]
+    np.testing.assert_array_equal(np.asarray(tuner.image_viewer._mask_array), expected)
+    assert cst.FITS_MASK_SEG in tuner.compartment_panel.source_label.text()
+
+
 def test_thickness_reuses_geometry_and_dilation_rebuilds_it(tuner: SegmentationTunerWindow) -> None:
     """
     Keep the distance map on thickness/background changes and rebuild on dilation.

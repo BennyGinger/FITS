@@ -8,6 +8,7 @@ from typing import Any
 import tomlkit
 from pydantic import ValidationError
 from tomlkit import TOMLDocument
+from fits_io.metadata.channel_colors import conversion_channel_labels
 
 from fits.environment.constant import WORKFLOW_ORDER, StepName
 from fits.workflows.definitions.registry import REGISTRY
@@ -57,7 +58,7 @@ FIELD_LABELS: dict[str, str] = {
 
 FIELD_PATH_LABELS: dict[str, str] = {
     "user_settings.pretrained_model": "Model type",
-    "postprocess.enabled": "Enable mask repair",
+    "postprocess.enabled": "Repair masks and tracks (optional, for stationary cells only)",
     "postprocess.shape_similarity": "Minimum mask consistency (0–1)",
     "postprocess.minimum_appearances": "Minimum reliable frames",
     "postprocess.extrapolate_start": "Extend masks to the first frame",
@@ -66,7 +67,8 @@ FIELD_PATH_LABELS: dict[str, str] = {
 
 
 FIELD_HINTS: dict[str, str] = {
-    "channel_labels": "Choose any labels, in the same order as channels in the source image.",
+    "channel_labels": ("ND2/TIFF colors are detected automatically. Enter optional labels in source order; "
+                       "blank cells use color names, then C1, C2, etc."),
     "export_channels": "Select which channels to convert/export; multiple selections are allowed.",
     "exclude_channel": "Select channels to leave unchanged; None excludes no channels.",
     "context": "Choose a motion/alignment preset; hover for an explanation of each context.",
@@ -162,7 +164,9 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
         "Built-in model available in the installed Cellpose version."
     ),
     (StepName.CONVERT, "channel_labels"): (
-        "Labels can be any names you choose. Enter one label per source channel, in exactly the same order as the channels in the source image."
+        "Enter optional labels in source-channel order. Blank labels use the detected source color, "
+        "or C1, C2, etc. when unavailable. Expected colors come from ND2 metadata or ImageJ TIFF LUTs. "
+        "Converted-file LUTs follow labels, including any user overrides."
     ),
     (StepName.CONVERT, "export_channels"): (
         "Select which source channels to convert/export. Multiple channels may be selected; all source channels are selected by default."
@@ -446,6 +450,8 @@ def field_label(path: str) -> str:
 
 def field_tooltip(step: StepName, path: str) -> str:
     """Return explanatory help for a GUI settings field."""
+    if path == "overwrite":
+        return "Recompute this step even if its output already exists. " + STEP_FIELD_TOOLTIPS.get((step, path), "")
     return STEP_FIELD_TOOLTIPS.get((step, path), path)
 
 
@@ -482,6 +488,8 @@ class SettingsAdapter:
         self.document = self._parse(template_path)
         self.source_path: Path | None = None
         self.saved_image_channels: list[str] = []
+        self.raw_channel_count: int | None = None
+        self.raw_channel_colors: list[str | None] | None = None
 
     @staticmethod
     def _parse(path: Path) -> TOMLDocument:
@@ -592,10 +600,12 @@ class SettingsAdapter:
 
     def source_channel_labels(self) -> list[str]:
         """
-        Return user-defined source labels in their original channel order.
+        Resolve user labels and color defaults in their original channel order.
         """
         value = self.field_value(StepName.CONVERT, "channel_labels")
         entries = value.split(",") if isinstance(value, str) else value or []
+        if self.raw_channel_count is not None:
+            return conversion_channel_labels(entries, self.raw_channel_count, self.raw_channel_colors)
         return list(dict.fromkeys(str(label).strip() for label in entries if str(label).strip()))
 
     def exported_channel_labels(self) -> list[str]:
@@ -707,6 +717,8 @@ class SettingsAdapter:
         candidate.user_name = self.user_name
         candidate.set_runtime_value("log_dir", self.runtime_value("log_dir"))
         candidate.saved_image_channels = list(self.saved_image_channels)
+        candidate.raw_channel_count = self.raw_channel_count
+        candidate.raw_channel_colors = self.raw_channel_colors
         candidate.source_path = self.source_path
         return candidate
 

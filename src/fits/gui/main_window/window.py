@@ -4,23 +4,29 @@ from fits.gui.theme import STEP_TAB_BAR_STYLE
 
 from fits.workflows.checks.models import PreflightReport, RawInputReport
 from fits.workflows.checks.raw_inputs import channel_label_warnings, inspect_raw_inputs
+from fits.workflows.checks.step_requirements import frame_count_summary, step_input_problems, workflow_step_problems
 from fits.workflows.file_management.rebuild import ProcessingPlan
 from fits.workflows.runtime.interactive.messages import MaskCollectionRequest, TrackEditRequest, TrackEditOutcome
 import logging
 import psutil
 from copy import deepcopy
+from collections.abc import Mapping
+from typing import Any
 from pathlib import Path
 from fits.environment.paths import is_internal_path, reports_dir
-from PySide6.QtCore import QEventLoop, QMimeData, Qt, QThread, QTimer, Slot
+from PySide6.QtCore import QEventLoop, QMimeData, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QShowEvent, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 from fits.environment import constant as cst
 from fits.workflows.artifacts.paths import first_image
 from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
 from fits.gui.settings import STEP_LAYOUTS, RuntimeSettingsEditor, SettingsAdapter, StepSettingsEditor
+from fits.gui.settings.editor import WORKFLOW_INCLUSION_TOOLTIP
 from fits.gui.run_result.report import ReportDialog
 from fits.gui.run_result.dialog import show_run_result
 from fits.gui.file_management.manager import manage_files
+from fits.gui.file_management.tasks import run_file_task
+from fits.workflows.file_management.reset import reset_run
 from fits.workflows.runtime.progress.outcome import RunResult, summarize_run
 from fits.workflows.checks.space import file_bytes
 from fits.gui.main_window.run_browser import COMPATIBLE_COLOR, OUTDATED_COLOR, RunDirectoryBrowser
@@ -33,6 +39,7 @@ from fits.tasks.registration.registration_resolver import resolve_registration_p
 from fits.settings.loader import run_settings_path, write_settings
 import tomlkit
 from fits.workflows.experiments.roots import resolve_run_root
+from fits.workflows.experiments import collect_supported_files
 from fits.gui.artifact_decisions import choose_artifacts
 from fits.workflows.checks.compatibility import inspect_run_compatibility
 from fits_io import FitsIO
@@ -53,7 +60,7 @@ from fits.workflows.checks.locations import LocationReport, inspect_locations
 _PHASE_STEPS = (
     ("Convert", (cst.StepName.CONVERT,)),
     ("Preprocess", (cst.StepName.REGISTER_TIME, cst.StepName.REGISTER_CHANNEL, cst.StepName.BG_SUB)),
-    ("Process", (cst.StepName.SEGMENT, cst.StepName.TRACK, cst.StepName.EDIT_TRACK)),
+    ("Process", (cst.StepName.SEGMENT, cst.StepName.TRACK)),
     ("Analysis", (cst.StepName.EXTRACT, cst.StepName.DISTANCE_PROFILE)),
 )
 _STEP_PHASE = {step: phase_index
@@ -63,6 +70,8 @@ _STEP_PHASE = {step: phase_index
 
 class FitsMainWindow(QMainWindow):
     """Main FITS desktop window."""
+
+    fresh_window_requested = Signal(str)
 
     def __init__(self,
                  adapter: SettingsAdapter | None = None,
@@ -94,6 +103,8 @@ class FitsMainWindow(QMainWindow):
         self._file_channel_cache = {}
         self._raw_input_report: RawInputReport | None = None
         self._last_channel_label_warning = ""
+        self._last_raw_channel_warning: tuple[str, str] | None = None
+        self._last_step_input_warnings: dict[cst.StepName, str] = {}
         self._current_step = cst.StepName.CONVERT
         self._conversion_root: str | None = None
         self._converted_settings: dict | None = None
@@ -110,6 +121,8 @@ class FitsMainWindow(QMainWindow):
         self._registration_tuner = None
         self._registration_tune_buttons: dict[cst.StepName, QPushButton] = {}
         self._tracking_viewer = None
+        self._manual_tracking_editor: QWidget | None = None
+        self._manual_tracking_path: Path | None = None
         self._channel_labels_window = None
         self._prepared_available = False
         self._phases_unlocked = False
@@ -187,8 +200,9 @@ class FitsMainWindow(QMainWindow):
         identity_form.addRow(run_dir_label, run_dir_row)
 
         self.user_name_edit = QLineEdit()
-        user_name_tooltip = "Name recorded with this run's settings."
+        user_name_tooltip = "Name of the person running this experiment."
         self.user_name_edit.setToolTip(user_name_tooltip)
+        self.user_name_edit.setPlaceholderText("Person running this exp.")
         user_name_label = QLabel("User name")
         user_name_label.setToolTip(user_name_tooltip)
         identity_form.addRow(user_name_label, self.user_name_edit)
@@ -205,13 +219,19 @@ class FitsMainWindow(QMainWindow):
         self.run_browser.path_activated.connect(self._open_selected_report)
         self.tracking_viewer_button = QPushButton("Image / Mask Viewer")
         self.tracking_viewer_button.setToolTip(
-            "Inspect intermediate, compacted or earlier FITS images and masks, including REF/ROI. "
+            "Inspect raw ND2/TIFF inputs and intermediate, compacted or earlier FITS images and masks, including REF/ROI. "
             "Tracking results also offer trajectories and track-length filtering.")
         self.tracking_viewer_button.setStyleSheet(
             "QPushButton { background-color: #d97706; color: white; font-weight: bold; } "
             "QPushButton:disabled { background-color: #6b4b2a; color: #aaa; }")
         self.tracking_viewer_button.clicked.connect(lambda: self._open_tracking_viewer())
         self.run_browser.selection_layout.addWidget(self.tracking_viewer_button)
+        self.tracking_edit_button = QPushButton("Edit tracking")
+        self.tracking_edit_button.setToolTip(
+            "Edit saved tracking results from the selected experiment, or the first tracked experiment in this run. "
+            "Requires existing tracking files. Editing is opened separately from the pipeline.")
+        self.tracking_edit_button.clicked.connect(self._open_manual_tracking_editor)
+        self.run_browser.selection_layout.addWidget(self.tracking_edit_button)
         self.channel_labels_button = QPushButton("Edit Channel Labels")
         self.channel_labels_button.setToolTip(
             "Inspect and rename channel labels across this run's converted images, "
@@ -250,9 +270,16 @@ class FitsMainWindow(QMainWindow):
         self.file_channels_label.setWordWrap(True)
         self.file_channels_label.setTextFormat(Qt.TextFormat.PlainText)
         metadata_row.addWidget(self.file_channels_label, 1)
-        self.file_size_label = QLabel("Run size: —")
+        self.file_frames_label = QLabel("Frames: —")
+        self.file_frames_label.setToolTip(
+            "Frames per input experiment across the run. Mixed lengths show ≥ followed by the minimum. "
+            "Counts come from acquisition headers without reading image pixels.")
+        metadata_row.addWidget(self.file_frames_label, 1)
+        self.file_size_label = QLabel("Size: —")
         self.file_size_label.setToolTip("Total size of the run directory, including original acquisitions, results, caches and retained backups.")
-        metadata_row.addWidget(self.file_size_label)
+        metadata_row.addWidget(self.file_size_label, 1)
+        for label in (self.file_channels_label, self.file_frames_label, self.file_size_label):
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         summary_layout.addLayout(metadata_row)
         browser_layout.addWidget(summary_panel)
         browser_layout.addWidget(self.run_browser, 1)
@@ -361,10 +388,6 @@ class FitsMainWindow(QMainWindow):
         buttons.addWidget(self.save_protocol_button)
         buttons.addWidget(self.load_protocol_button)
         buttons.addStretch()
-        self.navigation_status = QLabel()
-        self.navigation_status.setWordWrap(True)
-        self.navigation_status.setStyleSheet("color: #b8b8b8;")
-        buttons.addWidget(self.navigation_status)
         self.back_button = QPushButton("Back")
         self.back_button.setToolTip(
             "Return to Convert settings without running the pipeline. "
@@ -392,6 +415,7 @@ class FitsMainWindow(QMainWindow):
         """
         Populate from adapter.
         """
+        self.adapter.set_step_enabled(cst.StepName.EDIT_TRACK, False)
         self._begin_settings_population()
         self.run_dir_edit.setText(self.adapter.run_dir)
         self.user_name_edit.setText(self.adapter.user_name)
@@ -419,65 +443,58 @@ class FitsMainWindow(QMainWindow):
             editor.value_changed.connect(self._update_run_button_text)
             editor.enabled_changed.connect(self._refresh_phase_markers)
             if step in (cst.StepName.REGISTER_TIME, cst.StepName.REGISTER_CHANNEL):
-                tune_row = QWidget()
-                tune_layout = QHBoxLayout(tune_row)
-                tune_layout.setContentsMargins(0, 0, 0, 0)
                 operation = "frame-shift registration" if step == cst.StepName.REGISTER_TIME else "channel-shift registration"
-                preview_description = f"Preview {operation} and save this experiment's settings and transforms."
-                description = QLabel(preview_description)
-                description.setWordWrap(True)
-                description.setToolTip(preview_description)
-                tune_layout.addWidget(description, 1)
                 tune_button = QPushButton("Preview")
                 tune_button.setStyleSheet(PREVIEW_BUTTON_STYLE)
-                tune_button.setToolTip(f"Preview {operation}. Requires a converted fits_array.tif image.")
+                tune_button.setToolTip(
+                    f"Open the {operation} tuner to adjust settings, optionally crop the fitting area, "
+                    "and compare original and registered images without modifying the source images.\n"
+                    "Save current settings updates this tab and saves the experiment's fitting crop and any "
+                    "matching preview transforms. Complete saves both registration tabs and closes the tuner. "
+                    "Preview is optional; otherwise fitting runs in the pipeline.\n"
+                    "Opens the selected experiment, or the first available experiment in this run. "
+                    "Requires converted input images; rebuild missing inputs for compacted experiments.")
                 mode = "time" if step == cst.StepName.REGISTER_TIME else "channel"
                 tune_button.clicked.connect(lambda checked=False, selected=mode: self._open_registration_tuner(selected))
-                tune_layout.addWidget(tune_button)
+                editor.description_layout.addWidget(tune_button, 0, Qt.AlignmentFlag.AlignVCenter)
                 self._registration_tune_buttons[step] = tune_button
-                editor.outer_layout.insertWidget(1, tune_row)
             if step == cst.StepName.BG_SUB:
-                tune_row = QWidget()
-                tune_layout = QHBoxLayout(tune_row)
-                tune_layout.setContentsMargins(0, 0, 0, 0)
-                tune_layout.setSpacing(16)
                 self.bgtune_button = QPushButton("Preview")
                 self.bgtune_button.setStyleSheet(PREVIEW_BUTTON_STYLE)
                 self.bgtune_button.setToolTip(
-                    "Preview background subtraction on selected image planes and compare intensities. "
-                    "Requires a converted fits_array.tif image.")
+                    "Open the background-subtraction tuner to adjust settings, compare original and processed "
+                    "image planes, and measure intensities in a selected area without modifying the source images.\n"
+                    "Save and close copies your changes back to this step. Preview is optional, and saving "
+                    "keeps whether the step is included in the workflow.\n"
+                    "Opens the selected experiment, or the first available experiment in this run. "
+                    "Requires converted input images; rebuild missing inputs for compacted experiments.")
                 self.bgtune_button.clicked.connect(self._open_background_tuner)
-                tune_description = QLabel(
-                    "Preview background subtraction on an image and compare intensities. "
-                    "Save and close copies your changes back here.")
-                tune_description.setWordWrap(True)
-                tune_description.setToolTip(tune_description.text())
-                tune_description.setStyleSheet("color: #b8b8b8;")
-                tune_layout.addWidget(tune_description, 1)
-                tune_layout.addWidget(self.bgtune_button, 0, Qt.AlignmentFlag.AlignVCenter)
-                editor.outer_layout.insertWidget(1, tune_row)
+                editor.description_layout.addWidget(self.bgtune_button, 0, Qt.AlignmentFlag.AlignVCenter)
             if step == cst.StepName.SEGMENT:
-                tune_row = QWidget()
-                tune_layout = QHBoxLayout(tune_row)
-                tune_layout.setContentsMargins(0, 0, 0, 0)
-                tune_layout.setSpacing(16)
                 self.segtune_button = QPushButton('Loading models…' if self._segmentation_preview_pending else 'Preview')
                 self.segtune_button.setStyleSheet(PREVIEW_BUTTON_STYLE)
                 self.segtune_button.setToolTip(
-                    "Preview segmentation and adjust Cellpose settings. "
-                    "Requires a converted fits_array.tif image in the run directory.")
+                    "Open the segmentation tuner to adjust Cellpose settings for each segmentation channel "
+                    "and inspect mask previews without replacing saved pipeline masks.\n"
+                    "Save current settings on the Segmentation tab copies all segmentation channel settings "
+                    "back here without closing the tuner. Unsaved edits can be discarded when closing.\n"
+                    "Opens the selected experiment, or the first available experiment in this run. "
+                    "Requires converted input images; rebuild missing inputs for compacted experiments.")
                 self.segtune_button.clicked.connect(lambda: self._open_segmentation_tuner("segmentation"))
-                tune_description = QLabel(
-                    "Preview segmentation on an image and adjust Cellpose settings. "
-                    "Save current settings copies all channel settings back here.")
-                tune_description.setWordWrap(True)
-                tune_description.setToolTip(tune_description.text())
-                tune_description.setStyleSheet("color: #b8b8b8;")
-                tune_layout.addWidget(tune_description, 1)
-                tune_layout.addWidget(self.segtune_button, 0, Qt.AlignmentFlag.AlignVCenter)
-                editor.outer_layout.insertWidget(1, tune_row)
+                editor.description_layout.addWidget(self.segtune_button, 0, Qt.AlignmentFlag.AlignVCenter)
             if step == cst.StepName.EXTRACT:
                 editor.compartment_preview_button.setStyleSheet(PREVIEW_BUTTON_STYLE)
+                editor.compartment_preview_button.setToolTip(
+                    "Open the combined tuner on the Compartment tab to inspect membrane rings over any image "
+                    "channel and adjust membrane thickness and cell expansion for all mask channels. "
+                    "Uses masks from the latest included producer, or temporary segmentation previews. "
+                    "Bypassed tracking and editing outputs are ignored.\n"
+                    "Save current settings on the Compartment tab copies compartment measurement and mask-export "
+                    "options back to Quantification without changing segmentation settings. "
+                    "Masks are generated during quantification; previewing does not replace saved masks.\n"
+                    "Opens the selected experiment, or the first available experiment in this run. "
+                    "Requires converted input images and saved masks or a segmentation preview; "
+                    "rebuild missing inputs for compacted experiments.")
                 editor.compartment_preview_button.clicked.connect(lambda: self._open_segmentation_tuner("compartment"))
             editor.set_editable(self.adapter.step_enabled(step))
             tabs = self.convert_tabs if step == cst.StepName.CONVERT else self._step_tabs[_STEP_PHASE[step]]
@@ -630,6 +647,7 @@ class FitsMainWindow(QMainWindow):
         tuner = SegmentationTunerWindow(experiments_dir=self.adapter.run_dir or None,
                                         segment_settings=settings,
                                         extract_settings=ExtractSettings.model_validate(self.adapter.as_mapping()[cst.StepName.EXTRACT]["params"]),
+                                        workflow_config=self.adapter.as_mapping(),
                                         initial_tab=self._pending_tuner_tab,
                                         parent=self,
                                         initial_path=self.run_browser.selected_path,
@@ -762,6 +780,8 @@ class FitsMainWindow(QMainWindow):
         """
         Display one step without triggering navigation validation.
         """
+        if step == cst.StepName.EDIT_TRACK:
+            step = cst.StepName.TRACK
         if step != cst.StepName.CONVERT and not self._phases_unlocked:
             step = cst.StepName.CONVERT
         self._current_step = step
@@ -791,7 +811,7 @@ class FitsMainWindow(QMainWindow):
             errors = [error for previous in steps
                       for error in self.adapter.missing_user_fields(previous)]
             if errors:
-                QMessageBox.warning(self, "Missing required setting", "\n".join(errors))
+                self._report_validation_errors(errors)
                 self._show_step(self._current_step)
                 return
         self._show_step(step)
@@ -830,13 +850,13 @@ class FitsMainWindow(QMainWindow):
             active = any(self.adapter.step_enabled(step) for step in steps)
             self.phase_tabs.setTabText(phase - 1, title)
             self.phase_tabs.setTabToolTip(phase - 1,
-                                          "At least one step is enabled." if active else "No steps are enabled.",
+                                          "At least one step is included." if active else "No steps are included.",
                                           )
             for index, step in enumerate(steps):
                 enabled = self.adapter.step_enabled(step)
                 self._step_tabs[phase].setTabText(index, STEP_LAYOUTS[step].title)
                 self._step_tabs[phase].setTabToolTip(index,
-                                                     "Enabled" if enabled else "Use Enable in this subtab to include this step.",
+                                                     "Included" if enabled else "Use Include in workflow in this subtab to include this step.",
                                                      )
 
     def _refresh_phase_access(self) -> None:
@@ -860,8 +880,9 @@ class FitsMainWindow(QMainWindow):
             self.bgtune_button.setEnabled(prepared and not self._running)
         if hasattr(self, "segtune_button"):
             self.segtune_button.setEnabled(prepared and not self._running)
-        for button in self._registration_tune_buttons.values():
-            button.setEnabled(prepared and not self._running)
+        input_problems = self._step_input_problems()
+        for step, button in self._registration_tune_buttons.items():
+            button.setEnabled(prepared and not self._running and step not in input_problems)
         self._refresh_tracking_viewer_button()
         self.channel_labels_button.setEnabled(not self._running and root is not None and root.is_dir())
         if not self._phases_unlocked and self._current_step != cst.StepName.CONVERT:
@@ -919,10 +940,10 @@ class FitsMainWindow(QMainWindow):
             return
         errors = self.adapter.validate_for_run((cst.StepName.CONVERT,))
         if errors:
-            QMessageBox.warning(self, "Cannot convert images", "\n".join(errors))
+            self._report_validation_errors(errors)
             return
         if not self.adapter.step_enabled(cst.StepName.CONVERT):
-            QMessageBox.warning(self, "Conversion required", "Enable Convert before continuing.")
+            self._report_validation_errors(["Include Convert in the workflow before continuing."])
             return
         self._launch_pipeline(convert_only=True)
 
@@ -996,6 +1017,7 @@ class FitsMainWindow(QMainWindow):
                                                   )
             return
         self.adapter.run_dir = ""
+        self._refresh_raw_inputs(None)
         self._refresh_protocol_buttons()
         self.run_browser.set_root("")
         self._refresh_report_button()
@@ -1010,6 +1032,7 @@ class FitsMainWindow(QMainWindow):
         if not raw_directory:
             self.run_dir_edit.clear()
             self.adapter.run_dir = ""
+            self._refresh_raw_inputs(None)
             self.run_browser.set_root("")
             self._refresh_report_button()
             self._refresh_phase_access()
@@ -1041,6 +1064,7 @@ class FitsMainWindow(QMainWindow):
         """
         Sync identity.
         """
+        self.adapter.set_step_enabled(cst.StepName.EDIT_TRACK, False)
         self.adapter.run_dir = self.run_dir_edit.text().strip()
         self.adapter.user_name = self.user_name_edit.text().strip()
         self.run_browser.set_root(self.adapter.run_dir)
@@ -1176,12 +1200,12 @@ class FitsMainWindow(QMainWindow):
         """
         self._sync_identity()
         if not self.adapter.run_dir:
-            QMessageBox.warning(self, "Run directory required", "Select a run directory first.")
+            self._report_validation_errors(["Select a run directory first."])
             return None
         step_errors = self.adapter.validate_steps()
         if step_errors:
             step, error = next(iter(step_errors.items()))
-            QMessageBox.critical(self, "Invalid settings", f"{STEP_LAYOUTS[step].title}:\n{error}")
+            self._report_validation_errors([f"{STEP_LAYOUTS[step].title}:\n{error}"])
             return None
         try:
             destination = self.adapter.save_to_run_dir()
@@ -1198,10 +1222,7 @@ class FitsMainWindow(QMainWindow):
         Run pipeline.
         """
         if self._run_status is not None and self._run_status.outdated and not self._upgrading:
-            QMessageBox.information(self,
-                                    'Run is read-only',
-                                    'Use Manage files to migrate this run before processing.',
-                                    )
+            self._report_validation_errors(["Run is read-only. Use Manage files to migrate this run before processing."])
             return
         if self._running or self._thread is not None:
             return
@@ -1218,7 +1239,7 @@ class FitsMainWindow(QMainWindow):
         if not self._phases_unlocked and not self._upgrading:
             errors.append("Convert your images with Next before running the pipeline.")
         if errors:
-            QMessageBox.warning(self, "Cannot run FITS", "\n".join(errors))
+            self._report_validation_errors(errors)
             return
         self._launch_pipeline(convert_only=False)
 
@@ -1226,13 +1247,18 @@ class FitsMainWindow(QMainWindow):
         """
         Launch pipeline.
         """
+        root = Path(self.adapter.run_dir).expanduser() if self.adapter.run_dir else None
+        self._refresh_raw_inputs(root)
         if convert_only or self.adapter.step_enabled(cst.StepName.CONVERT):
-            root = Path(self.adapter.run_dir).expanduser() if self.adapter.run_dir else None
-            self._refresh_raw_inputs(root)
             input_error = self._raw_input_error()
             if input_error:
                 self._update_run_button_text()
-                QMessageBox.warning(self, "Cannot convert images", input_error)
+                self._report_validation_errors([input_error])
+                return
+        if not convert_only:
+            problems = self._enabled_step_input_problems()
+            if problems:
+                self._report_validation_errors(list(problems.values()))
                 return
         label_window = self._channel_labels_window
         if (label_window is not None and label_window._job is not None
@@ -1321,17 +1347,64 @@ class FitsMainWindow(QMainWindow):
         conflicts.update(self._location_report.folders)
         self.run_browser.set_experiment_status(self._run_status, conflicts)
         self._selection_status_changed(self.run_browser.selected_path)
+        self._refresh_tracking_viewer_button()
 
     def _refresh_raw_inputs(self, root: Path | None) -> None:
         """
         Reuse shared raw-input checks for channel hints and blocking run problems.
         """
         self._raw_input_report = inspect_raw_inputs(root) if root is not None and root.is_dir() else None
+        self.file_frames_label.setText("Frames: " + frame_count_summary(self._raw_input_report))
         counts = set(self._raw_input_report.channel_counts.values()) if self._raw_input_report is not None else set()
         if self._raw_input_report is not None and self._raw_input_report.problems and len(counts) <= 1:
             counts.clear()
+        self.adapter.raw_channel_count = next(iter(counts)) if len(counts) == 1 else None
+        self.adapter.raw_channel_colors = (self._raw_input_report.expected_channel_colors
+                                           if self._raw_input_report is not None and len(counts) == 1 else None)
         self._editors[cst.StepName.CONVERT].set_expected_channel_counts(counts)
+        self._refresh_channel_choices()
         self._refresh_protocol_buttons()
+
+    def _step_input_problems(self, config: Mapping[str, Any] | None = None) -> dict[cst.StepName, str]:
+        """
+        Check cached acquisition dimensions and the selected export channels.
+        """
+        workflow = self.adapter.as_mapping() if config is None else config
+        selected = workflow.get(cst.StepName.CONVERT, {}).get("params", {}).get("export_channels", "all")
+        exported = None if selected == "all" else len(self.adapter.exported_channel_labels())
+        return {**step_input_problems(self._raw_input_report, exported),
+                **workflow_step_problems(workflow),
+                cst.StepName.EDIT_TRACK: "Edit tracking is temporarily unavailable inside the pipeline. Use the Edit tracking button instead."}
+
+    def _enabled_step_input_problems(self) -> dict[cst.StepName, str]:
+        """
+        Limit dimension problems to steps selected for this execution.
+        """
+        config = (execution_config(self.adapter.as_mapping(), self._maintenance_plan)
+                  if self._maintenance_plan is not None else self.adapter.as_mapping())
+        return {step: problem for step, problem in self._step_input_problems(config).items()
+                if config.get(step, {}).get("enabled")}
+
+    def _refresh_step_input_warnings(self) -> None:
+        """
+        Warn once per activation and prevent enabling one-channel registration.
+        """
+        problems = self._step_input_problems()
+        editor = self._editors.get(cst.StepName.REGISTER_CHANNEL)
+        if editor is not None:
+            group = editor.enable_group
+            problem = problems.get(cst.StepName.REGISTER_CHANNEL, "")
+            group.setEnabled(not problem or group.isChecked())
+            group.setToolTip((problem + "\n\n" if problem else "") + WORKFLOW_INCLUSION_TOOLTIP)
+        read_only = self._run_status is not None and self._run_status.outdated and not self._upgrading
+        for step, button in self._registration_tune_buttons.items():
+            button.setEnabled(self._prepared_available and not self._running and not read_only and step not in problems)
+        active = self._enabled_step_input_problems()
+        if not self._populating_settings:
+            for step, message in active.items():
+                if self._last_step_input_warnings.get(step) != message:
+                    self._append_log("WARNING | " + message)
+            self._last_step_input_warnings = active
 
     def _raw_input_error(self) -> str:
         """
@@ -1341,6 +1414,20 @@ class FitsMainWindow(QMainWindow):
             return ""
         return self._raw_input_report.describe()
 
+    def _refresh_raw_channel_warning(self, message: str) -> None:
+        """
+        Log mixed source-channel counts with filenames and corrective guidance once per run/problem.
+        """
+        if self._populating_settings:
+            return
+        mixed = (self._raw_input_report is not None
+                 and len(set(self._raw_input_report.channel_counts.values())) > 1)
+        key = (self.adapter.run_dir, message) if mixed else None
+        if key != self._last_raw_channel_warning:
+            self._last_raw_channel_warning = key
+            if key is not None:
+                self._append_log("ERROR | " + message)
+
     def _channel_label_warning(self) -> str:
         """
         Compare current user labels against cached input counts without rereading files.
@@ -1348,7 +1435,7 @@ class FitsMainWindow(QMainWindow):
         if self._raw_input_report is None or self._raw_input_report.problems:
             return ""
         return "\n".join(channel_label_warnings(self._raw_input_report.channel_counts,
-                                               self.adapter.source_channel_labels(),
+                                               self.adapter.field_value(cst.StepName.CONVERT, "channel_labels"),
                                                ))
 
     @Slot(object)
@@ -1362,7 +1449,7 @@ class FitsMainWindow(QMainWindow):
             self._refresh_channel_choices()
             self.file_status_label.setText('Experiment files')
             self.file_status_label.setStyleSheet('')
-            self.file_size_label.setText('Run size: —')
+            self.file_size_label.setText('Size: —')
             self.file_channels_label.setText('Channels: —')
             self.file_details_button.setEnabled(False)
             return
@@ -1384,8 +1471,8 @@ class FitsMainWindow(QMainWindow):
         self.file_status_label.setToolTip(input_error or ('See Details and Manage files for migration, rebuilding or path/tag updates.'
                                                          if status.outdated or conflicts or self._location_report.needs_update else ''))
         count = f'{len(files)} result ' + ('file' if len(files) == 1 else 'files')
-        self.file_size_label.setText(f"Run size: {self._run_size_bytes / 1024**3:.2f} GiB" if self._run_size_bytes >= 1024**3 else
-                                     f"Run size: {self._run_size_bytes / 1024**2:.1f} MiB")
+        self.file_size_label.setText(f"Size: {self._run_size_bytes / 1024**3:.2f} GiB" if self._run_size_bytes >= 1024**3 else
+                                     f"Size: {self._run_size_bytes / 1024**2:.1f} MiB")
         channels: dict[str, None] = {}
         images = {}
         for path in files:
@@ -1471,34 +1558,81 @@ class FitsMainWindow(QMainWindow):
             return
         self._sync_identity()
         compatibility = inspect_run_compatibility(Path(self.adapter.run_dir))
-        if not compatibility.outdated and self._save_settings() is None:
+        if not compatibility.outdated and self.adapter.user_name.strip() and self._save_settings() is None:
             return
         previous_step = self._current_step
         selected = self.run_browser.selected_path
+        root = Path(self.adapter.run_dir)
+        did_reset = False
+
+        def reset_action() -> None:
+            """
+            Release open run resources before resetting and request a fresh window.
+            """
+            nonlocal did_reset
+            self._close_reset_resources(root)
+            run_file_task(lambda: reset_run(root), self,
+                          title='Resetting to raw inputs',
+                          message='Restoring original acquisitions and permanently removing FITS files…',
+                          )
+            did_reset = True
+
         try:
             changed = manage_files(Path(self.adapter.run_dir),
                                    self.run_browser.selected_path,
                                    self,
                                    run_processing=self._run_maintenance_plan,
+                                   reset_run=reset_action,
                                    )
-            if changed:
+            if changed and not did_reset:
                 self._append_log('Experiment files updated. Measurements were reused for path/tag-only changes.')
         except PipelineCancelled as error:
             self._append_log(str(error))
         except Exception as error:
             ReportDialog(None, str(error), self, title='File update needs review').exec()
         finally:
-            settings = run_settings_path(Path(self.adapter.run_dir))
-            if settings.is_file():
-                self._load_settings_path(settings, run_dir=Path(self.adapter.run_dir))
-            else:
-                self._refresh_run_inventory()
-                self._refresh_phase_access()
-            self._show_step(previous_step)
-            if selected is not None and selected.exists():
-                self.run_browser.select_path(selected)
-            else:
-                self.run_browser.select_path(Path(self.adapter.run_dir))
+            if not did_reset:
+                self._refresh_after_file_management(previous_step, selected)
+        if did_reset:
+            self.fresh_window_requested.emit(str(root))
+
+    def _refresh_after_file_management(self, previous_step: cst.StepName, selected: Path | None) -> None:
+        """
+        Refresh the current window after ordinary file management or a cancelled reset.
+        """
+        root = Path(self.adapter.run_dir)
+        settings = run_settings_path(root)
+        if settings.is_file():
+            self._load_settings_path(settings, run_dir=root)
+        else:
+            self._refresh_run_inventory()
+            self._refresh_phase_access()
+        self._show_step(previous_step)
+        self.run_browser.select_path(selected if selected is not None and selected.exists() else root)
+
+    def _close_reset_resources(self, root: Path) -> None:
+        """
+        Honour cancelled editor closure and release readers and run log handles.
+        """
+        if self._running or (self._thread is not None and self._thread.isRunning()):
+            raise PipelineCancelled('Wait for the pipeline to finish before resetting this run.')
+        for name in ('_manual_tracking_editor', '_tracking_viewer', '_segmentation_tuner',
+                     '_background_tuner', '_registration_tuner', '_channel_labels_window',
+                     '_mask_collection', '_tracking_editor'):
+            window = getattr(self, name)
+            if window is not None:
+                if not window.close():
+                    raise PipelineCancelled('Reset cancelled. Close active viewers or finish their work, then try again.')
+                setattr(self, name, None)
+        if self._segmentation_preview_pending:
+            self._clear_segmentation_preview_request()
+        logger = logging.getLogger()
+        for handler in logger.handlers[:]:
+            if ((isinstance(handler, logging.FileHandler)
+                 and Path(handler.baseFilename).resolve().is_relative_to(root.resolve()))
+                    or isinstance(handler, QtLogHandler)):
+                logger.removeHandler(handler)
+                handler.close()
 
     def _run_maintenance_plan(self, plan: ProcessingPlan) -> None:
         """
@@ -1737,12 +1871,25 @@ class FitsMainWindow(QMainWindow):
         cursor = self.console.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         text_format = QTextCharFormat()
-        if "| WARNING |" in message or message.startswith("WARNING |"):
+        if "| ERROR |" in message or message.startswith("ERROR |"):
+            text_format.setForeground(QColor("#e57373"))
+            message = "✖ " + message
+        elif "| WARNING |" in message or message.startswith("WARNING |"):
             text_format.setForeground(QColor(OUTDATED_COLOR))
+            message = "⚠ " + message
+        elif message == "FITS pipeline completed successfully.":
+            text_format.setForeground(QColor(COMPATIBLE_COLOR))
         separator = "" if self.console.document().isEmpty() else "\n"
         cursor.insertText(separator + message, text_format)
         self.console.setTextCursor(cursor)
         self.console.ensureCursorVisible()
+
+    def _report_validation_errors(self, errors: list[str]) -> None:
+        """
+        Bring blocking validation errors to the console without a modal dialog.
+        """
+        for error in errors:
+            self._append_log("ERROR | " + error)
 
     def _set_running(self, running: bool) -> None:
         """
@@ -1795,6 +1942,8 @@ class FitsMainWindow(QMainWindow):
         missing = [error for step in steps for error in self.adapter.missing_user_fields(step)]
         input_error = self._raw_input_error()
         label_warning = self._channel_label_warning() if converting else ""
+        self._refresh_step_input_warnings()
+        self._refresh_raw_channel_warning(input_error)
         if self._raw_input_report is not None:
             counts = set(self._raw_input_report.channel_counts.values())
             if self._raw_input_report.problems and len(counts) <= 1:
@@ -1806,10 +1955,8 @@ class FitsMainWindow(QMainWindow):
                 self._append_log("WARNING | " + label_warning)
         if input_error and (converting or self.adapter.step_enabled(cst.StepName.CONVERT)):
             missing.append(input_error)
-        color = "#e57373" if input_error else OUTDATED_COLOR if label_warning else "#b8b8b8"
-        self.navigation_status.setStyleSheet(f"color: {color};")
         if converting and not self.adapter.step_enabled(cst.StepName.CONVERT) and not self._conversion_is_current():
-            missing.append("Enable Convert before continuing.")
+            missing.append("Include Convert in the workflow before continuing.")
         label_job = (self._channel_labels_window is not None
                      and self._channel_labels_window._job is not None
                      and self._channel_labels_window._job.isRunning())
@@ -1818,7 +1965,6 @@ class FitsMainWindow(QMainWindow):
             if converting:
                 self.run_button.setEnabled(not label_job)
                 self.run_button.setToolTip("Inspect processing settings. This run remains read-only; no conversion or processing will run.")
-                self.navigation_status.setText("Read-only: inspect Convert and processing settings.")
                 return
             missing.append('This entire run is outdated/read-only. Use Manage files to migrate it.')
         self.run_button.setEnabled(not missing and not label_job)
@@ -1826,14 +1972,9 @@ class FitsMainWindow(QMainWindow):
             "Continue to processing. Reuse the converted images when conversion settings "
             "are unchanged; otherwise run Convert first."
             if converting else
-            "Run the normal pipeline using all enabled steps and their overwrite settings.")
+            "Run the normal pipeline using all included steps and their overwrite settings.")
         self.run_button.setToolTip(action_help + ("\n\nBefore continuing:\n" + "\n".join(missing) if missing else ""),
                                    )
-        self.navigation_status.setText(
-            input_error.split("\n", 1)[0] + " See Details for affected files." if input_error and converting else
-            label_warning if label_warning else
-            ("Converted images are ready." if self._conversion_is_current()
-             else "Next converts your images before processing.") if converting else "")
 
     def _latest_report(self) -> Path | None:
         """
@@ -1868,8 +2009,10 @@ class FitsMainWindow(QMainWindow):
                      *cst.TRACKING_NAMES, *cst.SEGMENTATION_NAMES,
                      cst.FITS_MASKS_COMPACTED, *reversed(cst.IMAGE_STAGE_NAMES), cst.FITS_ARRAY_NAME,
                      cst.FITS_REFERENCE_TEMPLATE.format(label="*"), cst.FITS_ROI_TEMPLATE.format(label="*"))
-            return [path for name in names for path in sorted(root.rglob(name))
-                    if not is_internal_path(path, root)]
+            artifacts = [path for name in names for path in sorted(root.rglob(name))
+                         if not is_internal_path(path, root)]
+            raw_files = collect_supported_files(root)
+            return list(dict.fromkeys([*artifacts, *raw_files]))
         except OSError:
             return []
 
@@ -1877,7 +2020,61 @@ class FitsMainWindow(QMainWindow):
         """
         Refresh tracking viewer button.
         """
-        self.tracking_viewer_button.setEnabled(not self._running and self._thread is None)
+        idle = not self._running and self._thread is None
+        self.tracking_viewer_button.setEnabled(idle)
+        self.tracking_edit_button.setEnabled(idle and bool(self._tracking_edit_sources()))
+
+    def _tracking_edit_sources(self) -> list[Path]:
+        """
+        Reuse the run inventory to find tracking files, excluding images and segmentation.
+        """
+        status = self._run_status
+        if status is None or not self.adapter.run_dir or status.root != Path(self.adapter.run_dir).expanduser().resolve():
+            return []
+        names = tuple(dict.fromkeys((cst.FITS_MASK_TRACK_EDITED_FILTERED, cst.FITS_MASK_TRACK_EDITED, *cst.TRACKING_NAMES)))
+        sources = {path for path in status.files if path.name in names and path.is_file()}
+        sources.update(path for state in status.states
+                       if (path := state.artifact(cst.ARTI_TRACK)) is not None and path.is_file())
+        priority = {name: index for index, name in enumerate(names)}
+        return sorted(sources, key=lambda path: (priority.get(path.name, len(names)), str(path)))
+
+    @Slot()
+    def _open_manual_tracking_editor(self) -> None:
+        """
+        Open only an existing tracked result with the current standalone editor API.
+        """
+        if self._running or self._thread is not None:
+            return
+        sources = self._tracking_edit_sources()
+        if not sources:
+            self.tracking_edit_button.setEnabled(False)
+            self._report_validation_errors(["Edit tracking requires existing tracking results in the selected run."])
+            return
+        selected = self.run_browser.selected_path
+        source = sources[0]
+        if selected is not None:
+            scope = selected if selected.is_dir() else selected.parent
+            source = selected if selected in sources else next((path for path in sources if path.is_relative_to(scope)), sources[0])
+        editor = self._manual_tracking_editor
+        if editor is not None and self._manual_tracking_path != source:
+            if not editor.close():
+                return
+            editor = None
+        if editor is None:
+            from fits.gui.viewer.tracking import TrackingViewerWindow
+
+            editor = TrackingViewerWindow(experiments_dir=self.adapter.run_dir,
+                                           tracking_path=source,
+                                           editing_enabled=True,
+                                           parent=self)
+            self._manual_tracking_editor = editor
+            self._manual_tracking_path = source
+        if editor.isMinimized():
+            editor.showNormal()
+        else:
+            editor.show()
+        editor.raise_()
+        editor.activateWindow()
 
     @Slot()
     def _open_channel_labels(self) -> None:
@@ -1943,7 +2140,8 @@ class FitsMainWindow(QMainWindow):
             return
         selected = path or self.run_browser.selected_path
         patterns = (*cst.MASK_NAMES, *cst.IMAGE_NAMES,
-                    cst.FITS_REFERENCE_TEMPLATE.format(label="*"), cst.FITS_ROI_TEMPLATE.format(label="*"))
+                    cst.FITS_REFERENCE_TEMPLATE.format(label="*"), cst.FITS_ROI_TEMPLATE.format(label="*"),
+                    "*.nd2", "*.tif", "*.tiff")
         if (selected is None or not any(selected.match(pattern) for pattern in patterns)
                 or not selected.is_file()):
             root = selected if selected is not None and selected.is_dir() else None
@@ -1952,8 +2150,8 @@ class FitsMainWindow(QMainWindow):
         if selected is None:
             QMessageBox.information(
                 self, "No image or mask found",
-                "No FITS image or mask was found in the selected experiment or run folder.\n\n"
-                "Convert your acquisition with Next, or select an experiment containing saved results.")
+                "No supported image or mask was found in the selected experiment or run folder.\n\n"
+                "Select a folder containing ND2/TIFF inputs or saved FITS results.")
             return
         viewer = self._tracking_viewer
         if viewer is not None and viewer.isVisible():
@@ -2005,7 +2203,8 @@ class FitsMainWindow(QMainWindow):
             open_parquet(report, self)
             return
         patterns = (*cst.IMAGE_NAMES, *cst.MASK_NAMES,
-                    cst.FITS_REFERENCE_TEMPLATE.format(label="*"), cst.FITS_ROI_TEMPLATE.format(label="*"))
+                    cst.FITS_REFERENCE_TEMPLATE.format(label="*"), cst.FITS_ROI_TEMPLATE.format(label="*"),
+                    "*.nd2", "*.tif", "*.tiff")
         if report.is_file() and any(report.match(pattern) for pattern in patterns):
             self._open_tracking_viewer(report)
             return
@@ -2037,6 +2236,9 @@ class FitsMainWindow(QMainWindow):
         label_window = self._channel_labels_window
         if (label_window is not None and label_window._job is not None
                 and label_window._job.isRunning()):
+            event.ignore()
+            return
+        if self._manual_tracking_editor is not None and not self._manual_tracking_editor.close():
             event.ignore()
             return
         if self._tracking_viewer is not None:

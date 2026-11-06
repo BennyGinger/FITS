@@ -283,7 +283,7 @@ def compact_run(root: str | Path,
     report = replace(report,
                      records=tuple(record for record in report.records if record.path.parent not in compacted_folders),
                      )
-    report = replace(report, overwritten=(), affected=downstream_steps(
+    report = replace(report, overwritten=(), disabled_steps=(), affected=downstream_steps(
         record.step for record in report.conflicts if record.step))
     accepted = False
     if report.needs_decision:

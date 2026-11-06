@@ -860,7 +860,7 @@ def test_main_window_tracking_viewer_loads_selected_experiment(
         window.tracking_viewer_button.click()
         assert len(launches) == 2
         assert messages[-1][0] == "No image or mask found"
-        assert "Convert" in messages[-1][1]
+        assert "ND2/TIFF" in messages[-1][1]
         assert window.run_browser.select_path(tmp_path)
         window.tracking_viewer_button.click()
         assert launches[-1]["tracking_path"] == edited

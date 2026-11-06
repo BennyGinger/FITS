@@ -55,6 +55,8 @@ class ConvertSettings(SettingsModel):
             Python None or the string "None" preserves Z for 3D.
         compression: TIFF compression passed to the output writer. The string
             ``"None"`` is normalized to ``None``.
+        source_channel_colors: Runtime-only shared palette for consistent run-wide
+            defaults. Excluded from saved processing metadata.
 
     Inherited attributes:
         overwrite: Recompute conversion even when its output already exists.
@@ -68,6 +70,7 @@ class ConvertSettings(SettingsModel):
     export_channels: str | Sequence[str] = 'all'
     z_projection: Zproj = 'max'
     compression: str | None = 'zlib'
+    source_channel_colors: list[str | None] | None = Field(default=None, exclude=True)
     
     @field_validator('channel_labels', mode='before')
     @classmethod

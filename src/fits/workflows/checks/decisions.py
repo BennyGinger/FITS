@@ -52,7 +52,8 @@ def _enable_rebuild_steps(config: dict[str, Any], report: PreflightReport) -> No
     """
     Enable affected existing/configured work, validating original-data rebuilds.
     """
-    sources, from_original = rebuild_sources(report.records, report.states, report.overwritten)
+    records = tuple(record for record in report.records if record.legacy or record.step not in report.disabled_steps)
+    sources, from_original = rebuild_sources(records, report.states, report.overwritten)
     if from_original:
         if not report.states or any(not state.original_image.is_file() for state in report.states):
             raise ValueError("Original acquisition files/state are unavailable. Rebuilding cannot proceed.")
@@ -61,7 +62,8 @@ def _enable_rebuild_steps(config: dict[str, Any], report: PreflightReport) -> No
     if from_original:
         existing.update(step for state in report.states for step in state.completed_steps)
     for step in steps:
-        if step in config and (step in existing or config[step].get("enabled") or step == cst.StepName.CONVERT):
+        if step in config and (from_original or step not in report.disabled_steps) and (
+                step in existing or config[step].get("enabled") or step == cst.StepName.CONVERT):
             config[step]["enabled"] = True
             config[step].setdefault("params", {})["overwrite"] = True
 

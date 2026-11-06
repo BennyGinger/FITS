@@ -1,13 +1,15 @@
 from importlib import import_module
+from pathlib import Path
 
 import numpy as np
+import pytest
 from fits_io import FitsIO
 import tifffile
 
 from fits.environment import constant as cst
 from fits.gui.settings import SettingsAdapter
 from fits.pipeline import start_pipeline
-from fits.workflows.experiments import discover_saved_states
+from fits.workflows.experiments import discover_saved_states, save_experiment_state
 
 
 class IdentityRegistration:
@@ -21,12 +23,15 @@ class IdentityRegistration:
         return np.asarray(array) + 1
 
 
-def test_intermediates_preserve_inputs_and_bypass_disabled_stage(tmp_path, monkeypatch):
+def test_intermediates_preserve_inputs_and_bypass_disabled_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Rerun the last image stage without reviewing nonexistent downstream results.
+    """
     for module in ("register_channel", "register_time"):
         monkeypatch.setattr(import_module("fits.tasks.registration." + module), "RegisterModel", IdentityRegistration)
     monkeypatch.setattr(import_module("fits.tasks.bg_sub"), "bg_sub", lambda array, **kw: array.astype(np.float32) + 0.5)
-    pixels = np.arange(3 * 8 * 8, dtype=np.uint16).reshape(3, 8, 8)
-    tifffile.imwrite(tmp_path / "source.tif", pixels, photometric="minisblack", metadata={"axes": "TYX"})
+    pixels = np.arange(3 * 2 * 8 * 8, dtype=np.uint16).reshape(3, 2, 8, 8)
+    tifffile.imwrite(tmp_path / "source.tif", pixels, photometric="minisblack", metadata={"axes": "TCYX"})
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "Test"
@@ -35,10 +40,10 @@ def test_intermediates_preserve_inputs_and_bypass_disabled_stage(tmp_path, monke
     for step in cst.WORKFLOW_ORDER:
         adapter.set_step_enabled(step, step in enabled)
         adapter.set_field_value(step, "execution", "serial")
-    adapter.set_field_value(cst.StepName.CONVERT, "channel_labels", ["Red"])
+    adapter.set_field_value(cst.StepName.CONVERT, "channel_labels", ["Red", "Green"])
     adapter.set_field_value(cst.StepName.REGISTER_CHANNEL, "reference_channel", "Red")
     settings = adapter.save_to_run_dir()
-    start_pipeline(settings, terminal_progress=False, artifact_decision=lambda report: "rebuild")
+    start_pipeline(settings, terminal_progress=False, artifact_decision=lambda report: pytest.fail("Unexpected conflict review"))
     state = discover_saved_states(tmp_path)[0]
     raw = state.artifact(cst.ARTI_IMG_RAW)
     channel = state.artifact(cst.ARTI_IMG_CHANNEL)
@@ -50,16 +55,38 @@ def test_intermediates_preserve_inputs_and_bypass_disabled_stage(tmp_path, monke
     metadata = FitsIO.from_path(bg).reader.metadata
     assert metadata.fits_io.derived_from[0]["created_at"] == FitsIO.from_path(time).reader.metadata.fits_io.created_at
 
+    # A bypassed downstream result is retained and does not require a decision.
+    reader = FitsIO.from_path(bg)
+    segmentation = state.workdir / cst.FITS_MASK_SEG
+    payload = reader.build_payload(export_channels="all", artifact_type=cst.ARTI_SEG,
+                                   custom_metadata={"pipeline_meta": {"version": "4.0.0"}}).new_revision(
+                                       [{"artifact_path": bg.name, "created_at": metadata.fits_io.created_at}])
+    reader.save_array(pixels, metadata=payload, output_path=segmentation)
+    state = state.with_complete_step(step_name=cst.StepName.SEGMENT,
+                                    artifact_kind=cst.ARTI_SEG, artifact_path=segmentation)
+    save_experiment_state(state)
+    preserved = segmentation.read_bytes()
+
     adapter.set_step_enabled(cst.StepName.REGISTER_TIME, False)
     adapter.set_field_value(cst.StepName.BG_SUB, "overwrite", True)
     adapter.save_to_run_dir()
-    start_pipeline(settings, terminal_progress=False, artifact_decision=lambda report: "rebuild")
+    start_pipeline(settings, terminal_progress=False, artifact_decision=lambda report: pytest.fail("Unexpected terminal-overwrite review"))
     np.testing.assert_array_equal(FitsIO.from_path(bg).get_array().array, pixels + 1.5)
     assert FitsIO.from_path(bg).reader.metadata.fits_io.derived_from[0]["created_at"] == (
         FitsIO.from_path(channel).reader.metadata.fits_io.created_at)
+    assert segmentation.read_bytes() == preserved
+    from fits.workflows.checks.artifacts import inspect_run
+    report = inspect_run(tmp_path, adapter.as_mapping())
+    assert not report.needs_decision
+    assert any("Bypassed step 'segment'" in warning for warning in report.warnings)
+    adapter.set_step_enabled(cst.StepName.SEGMENT, True)
+    assert inspect_run(tmp_path, adapter.as_mapping()).needs_decision
 
 
-def test_real_artifacts_segmentation_tracking_and_analysis_provenance(tmp_path, monkeypatch):
+def test_real_artifacts_segmentation_tracking_and_analysis_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Preserve lineage and rerun terminal Quantification without reviewing the overwrite.
+    """
     from types import SimpleNamespace
     from fits.workflows.artifacts.provenance import read_metadata
     from fits.workflows.file_management.compaction import compact_run
@@ -93,8 +120,41 @@ def test_real_artifacts_segmentation_tracking_and_analysis_provenance(tmp_path, 
     track = read_metadata(state.artifact(cst.ARTI_TRACK))
     assert {ref['artifact_path'] for ref in track.fits_io.derived_from} == {cst.FITS_MASK_SEG, cst.FITS_ARRAY_RAW}
     table = read_metadata(state.artifact(cst.ARTI_QUANTI))
+    assert state.artifact(cst.ARTI_QUANTI).name == cst.FITS_QUANTI_NAME
     assert {ref['artifact_path'] for ref in table.fits_io.derived_from} == {cst.FITS_MASK_TRACK, cst.FITS_ARRAY_RAW}
     assert not inspect_run(tmp_path, adapter.as_mapping()).conflicts
+    adapter.set_field_value(cst.StepName.EXTRACT, 'overwrite', True)
+    adapter.set_field_value(cst.StepName.EXTRACT, 'membrane_thickness', 2.0)
+    adapter.save_to_run_dir()
+    assert not inspect_run(tmp_path, adapter.as_mapping()).needs_decision
+    start_pipeline(settings, terminal_progress=False,
+                   artifact_decision=lambda report: pytest.fail("Unexpected quantification-overwrite review"))
+    assert read_metadata(state.artifact(cst.ARTI_QUANTI)).fits_io.created_at != table.fits_io.created_at
+    assert read_metadata(state.artifact(cst.ARTI_TRACK)).fits_io.created_at == track.fits_io.created_at
+    adapter.set_field_value(cst.StepName.EXTRACT, 'overwrite', False)
+    # Bypass stale tracking and quantify segmentation, preserving the tracked pixels.
+    tracking_path = state.artifact(cst.ARTI_TRACK)
+    tracking_reader = FitsIO.from_path(tracking_path)
+    stale = tracking_reader.reader.metadata.new_revision(
+        [{"artifact_path": cst.FITS_MASK_SEG, "created_at": "superseded revision"},
+         *[ref for ref in track.fits_io.derived_from if ref['artifact_path'] != cst.FITS_MASK_SEG]])
+    tracking_reader.save_array(tracking_reader.get_array().array, metadata=stale, output_path=tracking_path)
+    track = read_metadata(tracking_path)
+    preserved_tracking = tracking_path.read_bytes()
+    adapter.set_step_enabled(cst.StepName.TRACK, False)
+    adapter.set_field_value(cst.StepName.EXTRACT, 'overwrite', True)
+    adapter.save_to_run_dir()
+    report = inspect_run(tmp_path, adapter.as_mapping())
+    assert not report.needs_decision
+    assert any("Bypassed step 'track'" in warning for warning in report.warnings)
+    start_pipeline(settings, terminal_progress=False,
+                   artifact_decision=lambda report: pytest.fail("Bypassed tracking must not require a decision"))
+    assert tracking_path.read_bytes() == preserved_tracking
+    assert {ref['artifact_path'] for ref in read_metadata(state.artifact(cst.ARTI_QUANTI)).fits_io.derived_from} == {
+        cst.FITS_MASK_SEG, cst.FITS_ARRAY_RAW}
+    adapter.set_step_enabled(cst.StepName.TRACK, True)
+    adapter.set_field_value(cst.StepName.EXTRACT, 'overwrite', False)
+    assert inspect_run(tmp_path, adapter.as_mapping()).needs_decision
     segmentation = state.artifact(cst.ARTI_SEG)
     reader = FitsIO.from_path(segmentation)
     changed = reader.reader.metadata.new_revision(reader.reader.metadata.fits_io.derived_from)

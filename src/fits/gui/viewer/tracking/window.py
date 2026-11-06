@@ -11,11 +11,13 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.GraphicsScene.mouseEvents import MouseClickEvent
 from scipy.ndimage import distance_transform_edt
-from PySide6.QtCore import QObject, QPointF, QThread, Qt, Signal, Slot
+from PySide6.QtCore import QObject, QPointF, QSignalBlocker, QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import QCheckBox, QColorDialog, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QProgressBar, QVBoxLayout, QWidget
 from fits.gui.settings.wheel_widgets import FocusWheelComboBox, FocusWheelSpinBox
+from fits.interaction import FitsImageSession
 from fits.environment import constant as cst
-from fits.workflows.artifacts.paths import image_for
+from fits.workflows.artifacts.paths import first_image, image_for
+from fits.workflows.experiments import collect_supported_files
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK, FITS_MASK_TRACK_EDITED, FITS_MASK_TRACK_EDITED_FILTERED
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.common.information_dialog import TRACKING_HELP
@@ -352,6 +354,9 @@ class TrackingViewerWindow(ImageToolWindow):
         Initialize the TrackingViewerWindow state and dependencies.
         """
         self.editing_enabled = editing_enabled
+        self._raw_source = False
+        if not editing_enabled:
+            self.file_filters = (*self.file_filters, "*.nd2", "*.tif", "*.tiff")
         self.selection_enabled = selection_enabled
         self._pipeline_request = pipeline_request
         self._pipeline_resolved = False
@@ -402,7 +407,15 @@ class TrackingViewerWindow(ImageToolWindow):
         self.raw_image_toggle.setChecked(True)
         self.raw_image_toggle.setToolTip("Show or hide the selected channel from the sibling fits_array.tif image.",
                                          )
-        super().__init__(experiments_dir, parent)
+        super().__init__(None, parent)
+        self.series_label = QLabel("Series")
+        self.series_combo = FocusWheelComboBox()
+        self.series_combo.setToolTip("Choose an acquisition position or image series.")
+        self.left_display_controls.insertWidget(0, self.series_label)
+        self.left_display_controls.insertWidget(1, self.series_combo)
+        self.series_label.hide()
+        self.series_combo.hide()
+        self.series_combo.currentIndexChanged.connect(self._raw_series_changed)
         self.setWindowTitle("FITS Tracking Viewer / Editor" if editing_enabled else "FITS Tracking Viewer")
         self.left_display_controls.insertWidget(0, self.raw_image_toggle)
         self.left_display_controls.insertSpacing(1, 10)
@@ -411,6 +424,13 @@ class TrackingViewerWindow(ImageToolWindow):
             self.track_edit_section.hide()
             self.mask_edit_section.hide()
             self.local_cell_diameter.hide()
+        if experiments_dir is not None:
+            if tracking_path is None:
+                self._set_experiments_directory(experiments_dir)
+            else:
+                with QSignalBlocker(self.directory_browser):
+                    self.directory_browser.set_root(experiments_dir)
+                self.directory_edit.setText(str(self.directory_browser.root_path or experiments_dir))
         if tracking_path is not None:
             self._path_selected(Path(tracking_path))
 
@@ -916,10 +936,14 @@ class TrackingViewerWindow(ImageToolWindow):
                                 )
             image_source = image_for(source) or source / FITS_ARRAY_NAME
             source = track_source if track_source.is_file() else image_source
+            if not source.is_file() and not self.editing_enabled:
+                candidates = collect_supported_files(source.parent)
+                if candidates:
+                    source = candidates[0]
             if source.is_file() and self.directory_browser.select_path(source):
                 return
         if not source.is_file() or not any(source.match(pattern) for pattern in self.file_filters):
-            self.status_label.setText("Select a FITS image, mask or an experiment containing saved artifacts.",
+            self.status_label.setText("Select an image, mask or an experiment containing supported files.",
                                       )
             return
         if (self.directory_browser.selected_path != source.resolve()
@@ -932,6 +956,12 @@ class TrackingViewerWindow(ImageToolWindow):
         Open source.
         """
         if source == self._source_path:
+            return
+        recognized = (source.name in {*cst.IMAGE_NAMES, *cst.MASK_NAMES}
+                      or any(source.match(template.format(label="*")) for template in
+                             (cst.FITS_REFERENCE_TEMPLATE, cst.FITS_ROI_TEMPLATE)))
+        if not recognized and not self.editing_enabled:
+            self._open_raw_source(source)
             return
         self._close_session()
         try:
@@ -990,6 +1020,8 @@ class TrackingViewerWindow(ImageToolWindow):
         self.channel_combo.setEnabled(has_raw_image)
         self.grayscale_lut_button.setEnabled(has_raw_image)
         self.mask_channel_combo.setEnabled(True)
+        self.show_mask.setEnabled(True)
+        self.mask_opacity.setEnabled(True)
         if not self.editing_enabled:
             self.save_display_button.setEnabled(has_raw_image)
         if self._pipeline_request is not None:
@@ -1007,11 +1039,87 @@ class TrackingViewerWindow(ImageToolWindow):
             f"Loaded {source.parent.name} — axes {session.axes}, shape {session.shape}, "
             f"{mode_note}.")
 
+    def _open_initial_image(self, initial_path: str | Path | None = None) -> None:
+        """
+        Prefer prepared artifacts, then open a raw input when viewing an unconverted run.
+        """
+        if not self.editing_enabled and self.directory_browser.root_path is not None:
+            root = Path(initial_path) if initial_path is not None else self.directory_browser.root_path
+            if root.is_file() or (root.is_dir() and first_image(root) is None and collect_supported_files(root)):
+                self._path_selected(root)
+                return
+        super()._open_initial_image(initial_path)
+
+    def _open_raw_source(self, source: Path, series_idx: int = 0) -> None:
+        """
+        Open a raw image for plane browsing without creating a tracking or editing session.
+        """
+        self._close_session()
+        try:
+            session = FitsImageSession(source, allow_raw=True, series_idx=series_idx)
+        except Exception as error:
+            self.status_label.setText(str(error))
+            return
+        self._raw_source = True
+        self._image_session = session
+        self._source_path = source
+        self.setWindowTitle("FITS Image Viewer")
+        with QSignalBlocker(self.series_combo):
+            self.series_combo.clear()
+            self.series_combo.addItems([str(index + 1) for index in range(session.series_count)])
+            self.series_combo.setCurrentIndex(series_idx)
+        self.series_label.setVisible(session.series_count > 1)
+        self.series_combo.setVisible(session.series_count > 1)
+        with QSignalBlocker(self.channel_combo):
+            self.channel_combo.clear()
+            self.channel_combo.addItems(session.channel_labels)
+        self.frame_slider.setRange(0, session.frame_count - 1)
+        self.z_slider.setRange(0, session.plane_count - 1)
+        self._set_source_controls_enabled(True)
+        self.tool_panel.setEnabled(False)
+        self.filter_section.hide()
+        self.trajectory_section.hide()
+        self.track_edit_section.hide()
+        self.mask_edit_section.hide()
+        self.raw_image_toggle.setEnabled(True)
+        self.raw_image_toggle.setChecked(True)
+        self.grayscale_lut_button.setEnabled(True)
+        self.show_mask.setEnabled(False)
+        self.mask_opacity.setEnabled(False)
+        self.mask_channel_combo.setEnabled(False)
+        self.save_display_button.setEnabled(False)
+        self.status_label.setText(f"Loaded {source.name} — series {series_idx + 1}/{session.series_count}, "
+                                  f"axes {session.axes}, shape {session.shape}.")
+        self._display_selection()
+
+    @Slot(int)
+    def _raw_series_changed(self, index: int) -> None:
+        """
+        Reopen the selected acquisition position with a fresh bounded plane cache.
+        """
+        if self._raw_source and self._source_path is not None and index >= 0:
+            self._open_raw_source(self._source_path, index)
+
+    def _set_channel_lut(self, channel: str) -> None:
+        """
+        Use exposed source colors only for raw images; FITS artifacts keep label-based LUTs.
+        """
+        if (self._raw_source and self._image_session is not None
+                and self._image_session.use_source_colors):
+            colors = self._image_session.source_colors
+            index = self.channel_combo.currentIndex()
+            color = colors[index] if colors is not None else None
+            self.image_viewer.set_channel_lut(channel, source_color=color or "#ffffff")
+        else:
+            super()._set_channel_lut(channel)
+
     def _display_overlay(self, image: NDArray[Any] | None, frame: int, channel: str, z_index: int) -> None:
         """
         Display overlay.
         """
         del image, channel
+        if self._raw_source:
+            return
         if self.diameter_reference is not None:
             self.diameter_reference.refresh()
         if self._tracking_session is not None and self.mask_channel_combo.currentIndex() >= 0:
@@ -2940,6 +3048,10 @@ class TrackingViewerWindow(ImageToolWindow):
         """
         Clear tools.
         """
+        self._raw_source = False
+        if hasattr(self, "series_combo"):
+            self.series_combo.hide()
+            self.series_label.hide()
         if self._crop_thread is not None:
             self._crop_thread.requestInterruption()
             self._crop_thread.quit()

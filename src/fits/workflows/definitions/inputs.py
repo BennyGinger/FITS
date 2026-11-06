@@ -19,6 +19,17 @@ IMAGE_OUTPUTS: dict[cst.StepName, cst.ArtifactType] = {
 }
 
 
+def quantification_mask_kind(config: Mapping[str, Any]) -> cst.ArtifactType:
+    """
+    Select the latest included mask producer before looking for any saved files.
+    """
+    if config.get(cst.StepName.TRACK, {}).get("enabled"):
+        return cst.ARTI_TRACK
+    if config.get(cst.StepName.SEGMENT, {}).get("enabled"):
+        return cst.ARTI_SEG
+    raise ValueError("Quantification requires Segmentation or Tracking to be included in the workflow.")
+
+
 def configured_profile(profile: StepProfile, config: Mapping[str, Any]) -> StepProfile:
     """
     Disabled preprocessing stages are bypassed, even when old files exist.
@@ -29,6 +40,10 @@ def configured_profile(profile: StepProfile, config: Mapping[str, Any]) -> StepP
             break
         if step in IMAGE_OUTPUTS and config.get(step, {}).get("enabled", False):
             image = IMAGE_OUTPUTS[step]
+    if profile.step_name == cst.StepName.EXTRACT:
+        return replace(profile, input_artifact=image, input_alternatives=(),
+                       additional_artifacts=(quantification_mask_kind(config),),
+                       use_tracking_edits=bool(config.get(cst.StepName.EDIT_TRACK, {}).get("enabled")))
     if profile.step_name in (*IMAGE_OUTPUTS.keys(), cst.StepName.SEGMENT) and profile.step_name != cst.StepName.CONVERT:
         return replace(profile, input_artifact=image, input_alternatives=())
     if profile.input_artifact == cst.ARTI_IMG:
@@ -37,6 +52,27 @@ def configured_profile(profile: StepProfile, config: Mapping[str, Any]) -> StepP
         return replace(profile, additional_artifacts=tuple(
             image if kind == cst.ARTI_IMG else kind for kind in profile.additional_artifacts))
     return profile
+
+
+def resolve_quantification_mask(state: ExperimentState, profile: StepProfile | None = None) -> tuple[str, Path]:
+    """
+    Require the configured mask source, with no fallback to bypassed outputs.
+    """
+    kinds = tuple(kind for kind in profile.additional_artifacts if kind in (cst.ARTI_TRACK, cst.ARTI_SEG)) if profile else ()
+    if (kinds == (cst.ARTI_TRACK,) and profile is not None and profile.use_tracking_edits
+            and cst.StepName.EDIT_TRACK not in state.completed_steps):
+        raise ValueError(f"Quantification requires an accepted Edit tracking result for {state.experiment_id}.")
+    for kind in kinds or (cst.ARTI_TRACK, cst.ARTI_SEG):
+        path = state.artifact(kind)
+        if (kind == cst.ARTI_TRACK and profile is not None and not profile.use_tracking_edits
+                and path is not None and (path.name in (cst.FITS_MASK_TRACK_EDITED, cst.FITS_MASK_TRACK_EDITED_FILTERED)
+                                          or (state.compacted and cst.StepName.EDIT_TRACK in state.completed_steps))):
+            path = next((state.workdir / name for name in cst.TRACKING_NAMES[:2]
+                         if (state.workdir / name).is_file()), state.workdir / cst.FITS_MASK_TRACK)
+        if path is not None and path.is_file():
+            return kind, path
+    expected = kinds[0] if kinds else "tracking or segmentation"
+    raise ValueError(f"Quantification requires the selected {expected} mask for {state.experiment_id}.")
 
 
 def resolve_inputs(state: ExperimentState, profile: StepProfile) -> dict[str, Path]:
@@ -52,18 +88,15 @@ def resolve_inputs(state: ExperimentState, profile: StepProfile) -> dict[str, Pa
     if not paths:
         raise ValueError(f"{profile.step_name}: missing {profile.input_artifact} input for {state.experiment_id}")
     for kind in profile.additional_artifacts:
+        if profile.step_name == cst.StepName.EXTRACT and kind in (cst.ARTI_TRACK, cst.ARTI_SEG):
+            continue
         path = state.artifact(kind)
         if path is None or not path.is_file():
             raise ValueError(f"{profile.step_name}: missing {kind} input for {state.experiment_id}")
         paths[kind] = path
     if profile.step_name == cst.StepName.EXTRACT:
-        for kind in (cst.ARTI_TRACK, cst.ARTI_SEG):
-            path = state.artifact(kind)
-            if path is not None and path.is_file():
-                paths[kind] = path
-                break
-        else:
-            raise ValueError("Quantification requires a tracking or segmentation mask.")
+        kind, path = resolve_quantification_mask(state, profile)
+        paths[kind] = path
     if profile.step_name in (cst.StepName.EXTRACT, cst.StepName.DISTANCE_PROFILE):
         for path in sorted(state.workdir.glob(cst.FITS_REFERENCE_TEMPLATE.format(label="*"))):
             paths[str(path)] = path

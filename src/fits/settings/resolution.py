@@ -2,6 +2,7 @@ import copy
 from collections.abc import Mapping, Sequence
 from typing import Any
 import logging
+from fits.environment.constant import StepName
 
 
 logger = logging.getLogger(__name__)
@@ -13,7 +14,7 @@ def apply_overwrite_cascade(user_cfg: Mapping[str, Any], workflow_order: Sequenc
 
     Once an enabled step requests overwrite, every later enabled step is also
     marked for overwrite so that downstream outputs are not reused from an
-    older upstream result.
+    older upstream result. The independent analysis outputs do not invalidate each other.
     """
     resolved = copy.deepcopy(dict(user_cfg))
     overwrite_downstream = False
@@ -39,7 +40,7 @@ def apply_overwrite_cascade(user_cfg: Mapping[str, Any], workflow_order: Sequenc
             params["overwrite"] = True
             logger.debug("Propagating overwrite from upstream to '%s'",step_name,)
 
-        if step_requests_overwrite:
+        if step_requests_overwrite and step_name not in (StepName.EXTRACT, StepName.DISTANCE_PROFILE):
             overwrite_downstream = True
 
     return resolved

@@ -13,7 +13,7 @@ import sys
 
 from locking import Lease
 from setup import Installer
-from state import command_environment, module_heads, require_independent_python, show_project_files, write_json
+from state import command_environment, module_heads, record_installation, require_independent_python, show_project_files, write_json
 
 
 @dataclass
@@ -113,6 +113,10 @@ class Updater(Installer):
         current = self.git("rev-parse", "HEAD").stdout.strip()
         if current not in (before, target):
             raise RuntimeError("FITS changed during an unfinished update. Reconcile it manually.")
+        if state.get("repair_only") and before == target and self._modules_at_required_versions():
+            self._synchronize_environment()
+            self.pending.unlink()
+            return
         if not state.get("repair_only") and self.local_changes(ignore_module_commits=True):
             raise RuntimeError("Local FITS changes prevent resuming this update. Nothing will be discarded.")
         dirty = self.git(
@@ -132,6 +136,23 @@ class Updater(Installer):
         self.run("git", "submodule", "update", "--init", "--recursive")
         self.synchronize()
         self.pending.unlink()
+
+    def _modules_at_required_versions(self) -> bool:
+        """
+        Allow environment-only repair when no submodule checkout needs to move.
+        """
+        statuses = self.git("submodule", "status", "--recursive").stdout.splitlines()
+        return all(line.startswith(" ") for line in statuses) and self.module_heads() == self.module_heads(recorded=True)
+
+    def _synchronize_environment(self) -> None:
+        """
+        Verify the current dependencies without modifying any source checkout.
+        """
+        self.message("Repairing the environment only; preserving local FITS and submodule edits.")
+        self.run("uv", "sync", "--python", "3.12")
+        python = self.root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        self.run(str(python), str(self.root / "startup/verify.py"))
+        record_installation(self.root)
 
     def synchronize(self) -> None:
         """

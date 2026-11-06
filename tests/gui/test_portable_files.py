@@ -48,7 +48,7 @@ def test_summary_and_mixed_run_block_all_processing(current_window, tmp_path):
     window, series = current_window
     assert 'Current' in window.file_status_label.text()
     assert 'Red' in window.file_channels_label.text()
-    assert window.file_size_label.text().startswith('Run size:')
+    assert window.file_size_label.text().startswith('Size:')
     assert 'incompatible' not in window._file_details_text()
     old = tmp_path / 'old'
     old.mkdir()
@@ -93,7 +93,7 @@ def test_folder_status_and_details_popup(current_window, tmp_path):
     QTimer.singleShot(0, inspect_popup)
     window.file_details_button.click()
     assert window.run_browser.select_path(series)
-    assert window.file_size_label.text().startswith('Run size:')
+    assert window.file_size_label.text().startswith('Size:')
     assert 'Red' in window.file_channels_label.text()
 
 

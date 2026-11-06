@@ -17,7 +17,7 @@ class FitsImageSession:
     sessions without defining tool-specific processing or lifecycle behavior.
     """
 
-    def __init__(self, source_path: str | Path) -> None:
+    def __init__(self, source_path: str | Path, *, allow_raw: bool = False, series_idx: int = 0) -> None:
         """
         Initialize the FitsImageSession state and dependencies.
         """
@@ -25,15 +25,23 @@ class FitsImageSession:
         if not self.source_path.is_file():
             raise FileNotFoundError(f"FITS image session source does not exist: {self.source_path}")
 
-        if self.source_path.name not in IMAGE_NAMES:
+        if self.source_path.name not in IMAGE_NAMES and not allow_raw:
             raise ValueError("FITS image sessions only accept the normalized image artifact "
                             f"named {FITS_ARRAY_NAME!r}; got {self.source_path.name!r}.")
 
-        self._reader = FitsIO.from_path(self.source_path)
+        self._reader = (FitsIO.from_path(self.source_path, series_idx=series_idx)
+                        if allow_raw else FitsIO.from_path(self.source_path))
+        self.series_count = self._reader.reader.series_count if allow_raw else 1
+        if not 0 <= series_idx < self.series_count:
+            raise IndexError(f"Series index {series_idx} is outside 0..{self.series_count - 1}.")
         self._axes = self._reader.axes
         self._shape = tuple(self._reader.reader.shape)
         self._planes = PlaneStore(self._axes, self._shape, reader=self._reader)
         self._channel_labels = tuple(self._reader.channel_labels)
+        self.source_colors = self._reader.channel_colors if allow_raw else None
+        self.use_source_colors = allow_raw and self._reader.metadata.fits_io.channel_labels is None
+        if allow_raw and self._reader.metadata.fits_io.channel_labels is None:
+            self._channel_labels = tuple(f"C{index + 1}" for index in range(self._reader.reader.channel_count))
 
         if len(self._axes) != len(self._shape):
             raise ValueError(f"Image axes {self._axes!r} do not match shape {self._shape}.")

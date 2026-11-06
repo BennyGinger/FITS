@@ -84,6 +84,49 @@ def test_missing_submodule_can_pass_preflight(setup_module, checkout, monkeypatc
     setup_module.Installer(checkout).check_checkout()
 
 
+def test_older_module_is_fetched_and_updated_before_dependency_sync(setup_module: ModuleType,
+                                                                  checkout: Path,
+                                                                  monkeypatch: pytest.MonkeyPatch,
+                                                                  ) -> None:
+    """
+    Repair a manual parent pull even when the required module commit is not local.
+    """
+    monkeypatch.setattr(setup_module.shutil, "which", lambda name: name)
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+    source = checkout.parent / "module source"
+    (source / "module.py").write_text("value = 2\n")
+    git(source, "commit", "-qam", "required by new FITS")
+    required = git(source, "rev-parse", "HEAD").strip()
+    git(checkout, "update-index", "--cacheinfo", "160000", required, "example")
+    git(checkout, "commit", "-qm", "update required library")
+    module = checkout / "example"
+    missing = subprocess.run(["git", "-C", str(module), "cat-file", "-e", required], capture_output=True)
+    assert missing.returncode != 0
+    # A newer upstream library release need not belong to this FITS version.
+    (source / "module.py").write_text("value = 3\n")
+    git(source, "commit", "-qam", "later independent library release")
+    installer = setup_module.Installer(checkout)
+    original_run = installer.run
+    commands: list[tuple[str, ...]] = []
+
+    def run(*command: str) -> str:
+        """
+        Exercise real Git synchronization and stop before modifying an environment.
+        """
+        commands.append(command)
+        if command[:2] == ("uv", "sync"):
+            assert git(module, "rev-parse", "HEAD").strip() == required
+            assert (module / "module.py").read_text() == "value = 2\n"
+            raise RuntimeError("dependency sync reached")
+        return original_run(*command)
+
+    monkeypatch.setattr(installer, "run", run)
+    with pytest.raises(RuntimeError, match="dependency sync reached"):
+        installer.install(no_shortcut=True)
+    update = ("git", "submodule", "update", "--init", "--recursive")
+    assert commands.index(update) < commands.index(("uv", "sync", "--python", "3.12"))
+
+
 def test_subprocess_failure_is_logged_and_stops(setup_module, tmp_path):
     installer = setup_module.Installer(tmp_path)
     with pytest.raises(RuntimeError, match="Command failed"):
@@ -224,8 +267,10 @@ def test_linux_bootstrap_failure_is_reported(tmp_path, failure):
 @pytest.mark.skipif(os.name == 'nt', reason='Unix bootstrap with simulated download')
 @pytest.mark.parametrize('entry', ['install_linux.sh', 'install_macos.sh'])
 @pytest.mark.parametrize('mode', ['download', 'existing', 'download_failure'])
-def test_unix_uv_bootstrap(tmp_path, entry, mode):
-    """Download/reuse uv and reach setup immediately, without network or shell edits."""
+def test_unix_uv_bootstrap(tmp_path: Path, entry: str, mode: str) -> None:
+    """
+    Download/reuse uv and reach setup immediately, without network or shell edits.
+    """
     root = tmp_path / 'FITS checkout'
     (root / 'startup').mkdir(parents=True)
     shutil.copy2(STARTUP.parent / entry, root / entry)
@@ -238,7 +283,9 @@ def test_unix_uv_bootstrap(tmp_path, entry, mode):
     tools = tmp_path / 'tools'
     tools.mkdir()
     for command in ('dirname', 'mktemp', 'rm', 'sh', 'mkdir', 'cp', 'chmod', 'git'):
-        (tools / command).symlink_to(shutil.which(command))
+        executable = shutil.which(command)
+        assert executable is not None
+        (tools / command).symlink_to(executable)
     fake_uv = tmp_path / 'fake uv'
     fake_uv.write_text(
         f'#!{sys.executable}\nimport sys\n'
@@ -262,8 +309,10 @@ def test_unix_uv_bootstrap(tmp_path, entry, mode):
            f'pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text({installer!r})\n')
     )
     curl.chmod(0o755)
+    bash = shutil.which('bash')
+    assert bash is not None
     result = subprocess.run(
-        [shutil.which('bash'), str(root / entry), '--pause', '--without-tad'],
+        [bash, str(root / entry), '--pause', '--without-tad'],
         cwd=tmp_path, capture_output=True, text=True,
         env={**os.environ, 'HOME': str(home), 'PATH': str(tools), 'FITS_TEST_UV': str(fake_uv)},
     )

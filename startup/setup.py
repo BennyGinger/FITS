@@ -48,6 +48,9 @@ class Installer:
         return "".join(output)
 
     def check_checkout(self) -> None:
+        """
+        Allow clean older modules while protecting edits and independent commits.
+        """
         if not (self.root / ".git").exists():
             raise RuntimeError("Use a Git clone of FITS, not a downloaded ZIP archive.")
         for program in ("git", "uv"):
@@ -58,26 +61,50 @@ class Installer:
         # Inspect initialized modules recursively before changing any checkout.
         statuses = self.run("git", "submodule", "status", "--recursive")
         for line in statuses.splitlines():
-            if line.startswith(("+", "U")):
+            if line.startswith("U"):
                 raise RuntimeError(
                     "A submodule differs from FITS's recorded commit or has conflicts. "
                     "Save your module work and reconcile its commit before reinstalling:\n" + line
                 )
         dirty = self.run(
             "git", "submodule", "foreach", "--quiet", "--recursive",
-            'git status --porcelain --untracked-files=normal',
+            'git status --porcelain --untracked-files=normal --ignore-submodules=all',
         )
         if dirty.strip():
             raise RuntimeError(
                 "A submodule has local changes. Save and reconcile them before reinstalling. "
                 "No submodule checkout was changed."
             )
+        self.run("git", "submodule", "sync", "--recursive")
+        if any(line.startswith("+") for line in statuses.splitlines()):
+            self._check_submodule_versions()
+
+    def _check_submodule_versions(self) -> None:
+        """
+        Fetch required commits and allow only forward updates of clean modules.
+        """
+        self.message("Checking older submodules against the versions required by this FITS checkout...")
+        try:
+            self.run("git", "submodule", "foreach", "--quiet", "--recursive",
+                     'git cat-file -e "$sha1^{commit}" 2>/dev/null || '
+                     'git fetch --no-tags --no-recurse-submodules origin "$sha1" || exit 1; '
+                     'git merge-base --is-ancestor HEAD "$sha1" || exit 1',
+                     )
+        except RuntimeError as error:
+            raise RuntimeError(
+                "A submodule differs from FITS's required history, or its required commit could not be fetched. "
+                "Save any module commits and check the Git error above before reinstalling. "
+                "No submodule checkout was changed."
+            ) from error
 
     def install(self, no_shortcut: bool) -> None:
+        """
+        Synchronize required submodules before installing and verifying dependencies.
+        """
         self.message(f"\nFITS installation: {datetime.now().isoformat(timespec='seconds')}")
         self.message(f"Checkout: {self.root}")
         self.check_checkout()
-        self.run("git", "submodule", "sync", "--recursive")
+        self.message("Updating all submodules to the versions required by this FITS checkout...")
         self.run("git", "submodule", "update", "--init", "--recursive")
         lock_path = self.root / "uv.lock"
         previous_lock = lock_path.read_bytes() if lock_path.exists() else None

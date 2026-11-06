@@ -20,14 +20,27 @@ workflow engine.
 
 ## Install
 
-FITS supports **Linux and Windows**. A **macOS installer is available for testing**;
-Mac dependency compatibility and processing still need validation on real hardware.
-An internet connection is needed to download Python and dependencies. No
-separate Python installation or GPU is required: uv installs Python 3.12 and
-creates a `.venv` inside the repository.
+### Requirements
 
-**uv is required and will be downloaded and installed automatically if missing.**
-An existing uv installation is reused. uv is an independent third-party tool;
+Before starting, you need:
+
+- **Linux or Windows.** A macOS installer is available for testing; Mac
+  dependency compatibility and processing still need validation on real hardware.
+- **Git installed and available in your terminal.** Check with `git --version`.
+  The platform instructions below include installation links.
+- **uv is required.** It is a tool that downloads Python and installs the software
+  libraries FITS needs, keeping them together in a dedicated environment. Setup
+  installs uv automatically if missing and reuses an existing installation;
+  you do not need to install it beforehand.
+- **An internet connection** to download submodules, Python, and dependencies.
+- **A folder you can write to** for the Git clone and its Python environment.
+  Use a Git clone rather than a downloaded ZIP archive.
+
+**Installed automatically:** setup installs **uv** if missing, then uses it to
+download **Python 3.12**, create the repository's `.venv`, and install FITS
+dependencies. You do not need to install Python separately. **A GPU is optional.**
+
+An existing uv installation is reused. uv is a required, independent third-party tool;
 FITS does not maintain, update, or uninstall it. The installer uses uv's official
 installer and installs it for your user in `~/.local/bin` (on Windows,
 `%USERPROFILE%\.local\bin`), without changing shell profiles. No terminal restart
@@ -49,11 +62,11 @@ uv is maintained separately; unlike Tad, uv is mandatory.
    ```bash
    git clone https://github.com/BennyGinger/FITS.git fits
    cd fits
-   bash install_linux.sh --pause
+   bash install_linux.sh
    ```
 
    If you already cloned the repository, open a terminal in its main folder
-   and run only `bash install_linux.sh --pause`. Use the terminal command;
+   and run only `bash install_linux.sh`. Use the terminal command;
    double-clicking a shell script may open it in a text editor.
 
 3. Wait for the installation to finish. Answer the optional **Tad** viewer
@@ -94,10 +107,10 @@ uv is maintained separately; unlike Tad, uv is mandatory.
    ```bash
    git clone https://github.com/BennyGinger/FITS.git fits
    cd fits
-   bash install_macos.sh --pause
+   bash install_macos.sh
    ```
 
-   For an existing clone, run `bash install_macos.sh --pause` from its main folder.
+   For an existing clone, run `bash install_macos.sh` from its main folder.
    uv and Python are downloaded automatically when missing. Keep the terminal
    output and `startup/logs/install.log` if dependencies or verification fail.
 
@@ -110,6 +123,9 @@ This installer uses the same dependency and import checks as Linux and Windows.
 Apple Silicon/Intel compatibility and Apple GPU acceleration have not yet been
 validated; providing this script does not guarantee every backend works on a Mac.
 
+Interactive installers wait for **Enter** before finishing, so you can read the
+result. No `--pause` flag is needed; unattended runs do not wait for input.
+
 Run the FITS installers as your normal user, without `sudo` or **Run as
 administrator**. Use a Git clone rather than a downloaded ZIP; the installer
 fetches the required submodules automatically. Keep the repository folder
@@ -119,6 +135,33 @@ If installation fails, read the terminal message and
 `startup/logs/install.log` (if created), fix the reported problem, and rerun
 the same installer. See [installation details](#installation-details) for
 optional settings, updates, and repair.
+
+### Optional Tad installation
+
+**Tad** is a separate desktop application for viewing tables. FITS saves its
+measurement results as **Parquet (`.parquet`) files**, which Tad lets you open
+and inspect without writing Python code.
+
+Tad setup is included with the FITS installer. After FITS installs, the terminal
+offers to install Tad too. If you accept, it downloads Tad and keeps its files
+and licence notices alongside FITS under `startup/tools/Tad`. An existing
+discoverable Tad installation is reused. Tad is developed independently of
+FITS; FITS does not manage its updates.
+
+To use it, **double-click a Parquet file in the FITS run browser**. Tad opens in
+its own window. **Tad is optional:** skipping it, or a failed Tad installation,
+does not prevent FITS from processing images or saving measurements. If Tad is
+unavailable, it can be downloaded manually from [Tad's website](https://www.tadviewer.com/). As another
+alternative, the user can use
+[Data Wrangler for Visual Studio Code](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.datawrangler)
+to inspect Parquet files.
+
+Automatic installation supports **x86-64 Linux and Windows**, using Tad 0.14.0.
+On macOS, or if you prefer a separate installation, download it from
+[Tad's website](https://www.tadviewer.com/).
+Use `--with-tad` to install without the prompt, or `--without-tad` to skip it.
+Unattended installation skips Tad unless requested; automatic FITS updates
+also skip this optional setup.
 
 ## Design
 
@@ -406,23 +449,12 @@ are in pixels.
 
 ## Installation details
 
-After FITS installs, the terminal offers to install **Tad**, an optional,
-independently maintained third-party Parquet table viewer. Existing discoverable
-installations are reused. FITS does not manage Tad updates. A Tad installation
-failure does not prevent FITS installation or operation; the final message
-confirms that FITS is ready. Use `--with-tad` or `--without-tad` to choose without
-the prompt (noninteractive installations skip Tad by default). Automatic FITS
-updates skip this optional setup. Automatic Tad installation currently supports
-x86-64 Linux and Windows, using the official Tad 0.14.0 distribution; its files
-and bundled licence notices are retained under `startup/tools/Tad`. Install
-elsewhere from [Tad's website](https://www.tadviewer.com/) if preferred.
-Double-click a Parquet file in the FITS run browser to open it in Tad. If Tad is
-unavailable, FITS shows its installation link and suggests VS Code Data Wrangler
-as an alternative. This does not affect pipeline execution.
-
-The installer initializes the recorded submodules, runs ordinary `uv sync`,
-checks GUI/backend imports and model-cache write access, and creates a per-user
-Applications-menu entry on Linux, Start-menu and desktop shortcuts on Windows,
+The installer downloads and updates all submodules to the versions recorded by
+your FITS checkout before running ordinary `uv sync`. After pulling FITS in an
+existing clone, rerunning setup also updates clean, older submodules. Local
+module edits or independent commits stop installation without being discarded.
+It then checks GUI/backend imports and model-cache write access, and creates a
+per-user Applications-menu entry on Linux, Start-menu and desktop shortcuts on Windows,
 or a `~/Applications/FITS.command` launcher on macOS. It does
 not run the pipeline or request model weights. Model downloads happen on first
 use. GPU availability is reported without making it an installation requirement.

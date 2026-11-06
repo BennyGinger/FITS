@@ -8,13 +8,13 @@ if [[ -d "$HOME/.local/bin" ]]; then
 fi
 pause_on_exit() {
     local result=$?
-    if [[ " ${*:-} " == *" --pause "* && -t 0 ]]; then
+    if [[ -t 0 ]]; then
         read -r -p "Press Enter to close..." _ || true
     fi
     return "$result"
 }
 # Keep prerequisite and bootstrap failures visible as well as successful installs.
-trap 'pause_on_exit "$@"' EXIT
+trap 'pause_on_exit' EXIT
 install_fits() {
     local bootstrap_python
     if ! command -v git >/dev/null 2>&1; then

@@ -51,4 +51,11 @@ Run the enabled analyses and read the completion report. Each series saves its o
 
 ## When to rerun analysis
 
+Excluding or re-including a converted series changes the membership of combined
+analysis. The checker flags affected master tables as outdated. **Manage files →
+Rebuild analysis…** combines valid results from active experiments again, without
+rerunning valid measurements or deleting selected rows from an existing master.
+Missing or outdated individual results require their processing rebuild first.
+See [experiment exclusion](runs_and_settings.md#exclude-experiments-after-conversion).
+
 After changing images, object masks, or references, rerun the affected analysis with overwrite. Updating software or aggregating old tables does not update their numerical measurements. Missing physical calibration leaves the corresponding physical-distance values empty; read the [output conventions](output_tables.md#units-missing-values-and-dimensions) before interpreting null or repeated values.

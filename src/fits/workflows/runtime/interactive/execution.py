@@ -5,7 +5,7 @@ from threading import Event
 from time import monotonic
 
 from fits.workflows.definitions.models import item_runner_for
-from fits.workflows.experiments import ExperimentState
+from fits.workflows.experiments import ExperimentState, active_states
 from fits.workflows.runtime.errors import PipelineCancelled
 from fits.workflows.runtime.interactive.interaction import PipelineInteraction
 from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
@@ -49,6 +49,7 @@ class PhaseExecutor:
             stage: WorkflowStage, 
             experiment_id: str
             ) -> list[ExperimentState]:
+        current = active_states(current)
         if not steps:
             return current
         self.progress.update(experiment_id, stage, StageStatus.ACTIVE)
@@ -66,7 +67,7 @@ class PhaseExecutor:
                     produced.extend(outputs)
                     logger.info("Finished %s for %s", name, state.experiment_id)
                     self.pause()
-                current = produced
+                current = active_states(produced)
         except PipelineCancelled:
             self.progress.update(experiment_id, stage, StageStatus.SKIPPED)
             raise

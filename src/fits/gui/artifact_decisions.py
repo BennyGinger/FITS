@@ -43,7 +43,7 @@ def choose_artifacts(report: PreflightReport, parent: QWidget | None = None, *, 
         decision[0] = value
         dialog.accept()
 
-    choices = [("Rebuild results…", "rebuild")] if report.legacy else (
+    choices = [("Rebuild results…", "rebuild")] if report.legacy or report.outdated_masters else (
         [("Rebuild downstream, then compact", "rebuild"),
          ("Keep existing downstream results and compact", "continue")] if compact else
         [("Selected step and downstream" if report.overwritten else "Rebuild affected results", "rebuild"),

@@ -14,31 +14,61 @@ from fits.workflows.artifacts.provenance import compatible, read_metadata
 from fits.workflows.checks.decisions import apply_decision
 from fits.workflows.checks.models import ArtifactRecord, PreflightReport
 from fits.workflows.checks.settings import settings_problem
+from fits.workflows.checks.analysis import include_master_analysis, masters_with_outdated_inputs, outdated_master_tables
 from fits.workflows.checks.planning import downstream_steps, overwrite_steps, rebuild_sources
 from fits.workflows.definitions.inputs import configured_profile, resolve_inputs
 from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.experiments import ExperimentState, discover_saved_states
+from fits.workflows.experiments import ExperimentState, active_states, discover_saved_states
 from fits.workflows.file_management.migration import checkpoint_complete
 from fits_io.metadata.models import FitsIOMeta
 
 
-def inspect_run(root: Path, config: Mapping[str, Any], *, for_execution: bool = True) -> PreflightReport:
+def inspect_run(root: Path, config: Mapping[str, Any], *, for_execution: bool = True, check_analysis: bool = True) -> PreflightReport:
     """
     Inspect saved artifacts and describe conflicts and possible rebuilds.
 
     This is read-only: no files or settings are changed. Set ``for_execution``
     to False for GUI loading, where requested overwrites and intentionally absent
     compacted intermediates should not produce execution warnings.
+    Conversion-only launches defer master analysis checks to the next full run.
     """
     states = discover_saved_states(root)
     states_by_directory: dict[Path, ExperimentState] = {}
     for state in states:
         states_by_directory.setdefault(state.workdir, state)
 
+    states = active_states(states)
+    outdated = outdated_master_tables(root, list(states_by_directory.values())) if check_analysis else ()
+
     records = _collect_records(root, states, states_by_directory, for_execution=for_execution)
     records.extend(_missing_input_records(states, config, for_execution=for_execution))
+    records.extend(_missing_analysis_records(root, states, outdated))
     records = _propagate_conflicts(records, states_by_directory, config, for_execution=for_execution)
-    return _build_report(records, states, config, for_execution=for_execution)
+    if check_analysis:
+        outdated = tuple(dict.fromkeys((*outdated, *masters_with_outdated_inputs(root, records))))
+    if outdated:
+        config = include_master_analysis(config, outdated, records)
+        records = _propagate_conflicts(records, states_by_directory, config, for_execution=for_execution)
+    report = _build_report(records, states, config, for_execution=for_execution)
+    return replace(report, outdated_masters=outdated)
+
+
+def _missing_analysis_records(root: Path,
+                              states: Sequence[ExperimentState],
+                              outdated: Sequence[Path],
+                              ) -> list[ArtifactRecord]:
+    """
+    Include new or lost per-series measurements required by a master rebuild.
+    """
+    records: list[ArtifactRecord] = []
+    for (kind, name), step in zip(cst.MASTER_TABLES, (cst.StepName.EXTRACT, cst.StepName.DISTANCE_PROFILE)):
+        if root / name in outdated:
+            for state in states:
+                path = state.artifact(kind)
+                if path is None or not path.is_file():
+                    records.append(ArtifactRecord(state.workdir / REGISTRY[step].profile.output_name,
+                                                   step, None, 'Analysis result is missing for an active experiment.'))
+    return records
 
 
 def _collect_records(root: Path,
@@ -64,6 +94,8 @@ def _collect_records(root: Path,
         if is_internal_path(path, root):
             continue
         state = states_by_directory.get(path.parent)
+        if state is not None and state.excluded:
+            continue
         if (state is not None and state.artifact(cst.ARTI_IMG_RAW) is not None
                 and not is_branch(path) and path.name in cst.LEGACY_RESULT_NAMES):
             # Retained earlier results are not active inputs.

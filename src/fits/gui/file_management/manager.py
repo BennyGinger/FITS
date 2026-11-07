@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 from fits.gui.dialogs import size_resizable_dialog
 from fits.workflows.file_management.relocation import PortablePlan
-from fits.workflows.file_management.rebuild import ProcessingPlan, geometry_reviews, accept_reviewed_geometry, full_rebuild_folders
+from fits.workflows.file_management.rebuild import ProcessingPlan, geometry_reviews, accept_reviewed_geometry, full_rebuild_folders, rebuild_analysis_tables
 from fits.workflows.file_management.compaction import run_config
 from fits.workflows.checks.artifacts import inspect_run
 from fits.workflows.checks.locations import LocationReport, inspect_locations
@@ -203,6 +203,12 @@ def _rebuild_action(root: Path,
     """
     Review full processing, with a backup and explicit time/result-change warnings.
     """
+    report = inspect_run(root, run_config(root), for_execution=False)
+    if report.analysis_only_rebuild:
+        return lambda: run_file_task(lambda: rebuild_analysis_tables(root), parent,
+                                      title='Rebuilding analysis',
+                                      message='Combining results from active experiments…',
+                                      )
     plan = api.plan_required_rebuild(root)
     if plan is None:
         reviews = geometry_reviews(root)
@@ -377,8 +383,9 @@ def _unavailable_actions(status: RunCompatibility,
             unavailable['update'] = 'There are no saved location differences to update.'
         return unavailable
     unavailable: dict[str, str] = {}
-    full = full_rebuild_folders(status.states)
-    stale = report is not None and any(record.problem and record.step is not None for record in report.records)
+    full = () if report is not None and report.analysis_only_rebuild else full_rebuild_folders(status.states)
+    stale = report is not None and bool(report.outdated_masters or any(
+        record.problem and record.step is not None for record in report.records))
     if not full and not stale and not reviews:
         unavailable['rebuild'] = 'All existing results are current. No reconstruction or outdated results need rebuilding.'
     elif any(not state.original_image.is_file() for state in status.states if state.workdir in full):
@@ -398,6 +405,10 @@ def _primary_action(status: RunCompatibility, report: PreflightReport | None) ->
         return ('Migrate to FITS 4…', 'migrate',
                 'Migrate folders and metadata without rerunning processing. Optionally rebuild all results; '
                 'this can take a long time and may change results. Backups are retained.')
+    if report is not None and report.analysis_only_rebuild:
+        return ('Rebuild analysis…', 'rebuild',
+                'Regenerate combined analysis using valid results from active experiments. '
+                'Individual measurements and images are preserved.')
     full = full_rebuild_folders(status.states)
     stale_elsewhere = report is not None and any(record.problem and record.step is not None
                                                 and record.path.parent not in full for record in report.records)

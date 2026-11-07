@@ -134,7 +134,7 @@ def restore_history(root: Path, entry: Snapshot) -> ExperimentState | None:
     for kind, stored in parsed['artifacts'].items():
         target = current.original_image if kind == cst.ARTI_RAW else entry.series / stored.name
         artifacts[kind] = Path(os.path.relpath(target, entry.series))
-    restored = ExperimentState(workdir=entry.series, run_dir=Path(root), **{**parsed, 'artifacts': artifacts})
+    restored = ExperimentState(workdir=entry.series, run_dir=Path(root), **{**parsed, 'artifacts': artifacts, 'excluded': current.excluded})
     restored_files = [path for path in entry.files if path.name in cst.MANAGED_NAMES or is_branch(path)]
     if not restored_files:
         raise ValueError('The snapshot contains no recognized processing outputs.')

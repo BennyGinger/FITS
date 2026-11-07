@@ -92,6 +92,38 @@ reuses completed output. FITS 4 keeps each preprocessing result independently:
 
 For folder movement and hidden metadata, see [Portable projects](portable_projects.md).
 
+## Exclude experiments after conversion
+
+Select one or more folders in the run browser and press **Exclude experiments**.
+An acquisition or condition folder covers all converted series beneath it;
+overlapping selections count each experiment once. The action button sits beside
+the browser's **Selected** path display.
+
+When every selected experiment is excluded, the button becomes **Re-include
+experiments**. A mixed selection offers **Exclude experiments**, making the
+whole selection excluded. The action is disabled without a converted-folder
+selection and while the pipeline runs.
+
+Excluded series have muted text and a gray circle-minus folder badge. Parents
+with some excluded series have an amber half-circle badge; parents with all
+series excluded have the gray badge. Tooltips explain the state or show excluded
+counts. Files remain available for inspection.
+
+Exclusion applies to all pipeline processing and analysis, including batch,
+conveyor and interactive runs. The saved `excluded` flag survives rebuilding;
+conversion does not overwrite excluded siblings. Missing flags in older states
+mean active. Metadata-only legacy migration keeps experiments active; fully
+rebuild migrated checkpoints before changing their inclusion.
+
+Changing inclusion makes existing combined analysis outdated. Use **Manage
+files → Rebuild analysis…** (or the required-results rebuild when individual
+outputs also need work). FITS regenerates master tables from valid active-series
+results and schedules missing or outdated measurements first. Individual results
+are preserved. With no active results, rebuilding removes the old master tables.
+Outdated files appear amber in the browser, including master Parquets and
+downstream results invalidated by rerunning an upstream step. Their normal
+appearance returns after rebuilding or updating resolves the checker warning.
+
 ## Renaming existing channel labels
 
 Use [Edit Channel Labels](channels_and_labels.md#rename-channels-in-an-existing-run) to rename saved channel references consistently. The same operation can be inspected or previewed from the command line; `--apply` is required to write:

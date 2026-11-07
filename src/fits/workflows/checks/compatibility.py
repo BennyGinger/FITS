@@ -9,7 +9,7 @@ from fits.environment import constant as cst
 from fits.environment.paths import is_internal_path
 from fits.workflows.artifacts.provenance import compatible, read_metadata
 from fits.workflows.checks.models import RunCompatibility
-from fits.workflows.experiments import discover_saved_states
+from fits.workflows.experiments import active_states, discover_saved_states
 
 
 def inspect_run_compatibility(root: Path) -> RunCompatibility:
@@ -32,12 +32,15 @@ def inspect_run_compatibility(root: Path) -> RunCompatibility:
                                                                                                 ))
         except (OSError, ValueError):
             outdated_folders.update(state.workdir for state in states)
-    for state in states:
+    excluded = {state.workdir for state in states if state.excluded}
+    for state in active_states(states):
         local_original = state.workdir.parent / state.original_image.name
         if state.workdir.parent != state.original_image.parent and not local_original.is_file():
             problems.append(f'Acquisition grouping needs updating: {state.workdir}')
             outdated_folders.add(state.workdir)
     for path in files:
+        if path.parent in excluded:
+            continue
         try:
             if not compatible(read_metadata(path)):
                 problems.append(f'Older/incompatible artifact: {path.relative_to(root)}')

@@ -7,7 +7,7 @@ from queue import Queue
 from threading import Event
 from typing import Any, Mapping
 
-from fits.workflows.experiments import ExperimentState
+from fits.workflows.experiments import ExperimentState, active_states
 from fits.workflows.runtime.errors import PipelineCancelled
 from fits.workflows.runtime.interactive.execution import PhaseExecutor
 from fits.workflows.runtime.interactive.finalization import ExperimentFinalizer
@@ -37,6 +37,7 @@ def run_interactive_workflow(config: Mapping[str, Any],
     if step_delay_seconds < 0:
         raise ValueError("Demo step delay cannot be negative.")
 
+    states = active_states(states)
     plan = InteractivePlan.from_steps(resolve_runtime_steps(config))
     progress = progress or RunProgress()
     for state in states:

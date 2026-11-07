@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from progress_bar.api import ProgressBar
 
-from fits.workflows.experiments import ExperimentState
+from fits.workflows.experiments import ExperimentState, active_states
 from fits.workflows.definitions.models import item_runner_for
 from fits.workflows.runtime.progress.reporting import WorkflowReporter
 from fits.workflows.runtime.progress.display import DisplayProgress
@@ -117,7 +117,7 @@ def process_completed_tasks(*,
                     len(produced_states))
         next_step_index = task.step_index + 1
         
-        for state in produced_states:
+        for state in active_states(produced_states):
             if next_step_index >= len(runtime_steps):
                 final_states.append(state)
                 continue

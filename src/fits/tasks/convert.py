@@ -75,6 +75,12 @@ def convert(settings: ConvertSettings,
         out_states: list[ExperimentState] = []
         for series_index, reader in enumerate(series_readers, start=1):
             output_path = grouped.parent / f"{grouped.stem}_s{series_index}" / step_profile.output_name
+            old = (load_experiment_state(output_path.parent, run_dir=exp_state.run_dir)
+                   if experiment_state_path(output_path.parent).is_file() else None)
+            # Exclusion belongs to the series, including when conversion starts
+            # from a fresh raw state during a full rebuild.
+            if old is not None and old.excluded:
+                continue
             branch_base = pending_state
             if exp_state.execution_scope is not None:
                 old = None

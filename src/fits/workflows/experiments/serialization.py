@@ -16,7 +16,8 @@ def serialize_experiment_state(state: ExperimentState) -> dict[str, Any]:
     """
     Convert an experiment state into its JSON-compatible payload.
     """
-    return {"compacted": state.compacted,
+    return {"excluded": state.excluded,
+            "compacted": state.compacted,
             "migration_checkpoint": state.migration_checkpoint,
             "compaction_conflicts_accepted": state.compaction_conflicts_accepted,
             "artifacts": {kind: path.as_posix() for kind, path in state.artifacts.items()},
@@ -107,7 +108,8 @@ def deserialize_experiment_state(raw: dict[str, Any]) -> dict[str, Any]:
                 ordered_unique.append(item)
         return tuple(ordered_unique)
 
-    return {"compacted": bool(raw.get("compacted", raw.get("archived", False))),
+    return {"excluded": raw.get("excluded") is True,
+            "compacted": bool(raw.get("compacted", raw.get("archived", False))),
             "migration_checkpoint": raw.get("migration_checkpoint"),
             "compaction_conflicts_accepted": bool(raw.get("compaction_conflicts_accepted", raw.get("archive_conflicts_accepted", False))),
             "artifacts": as_artifacts(required("artifacts")),

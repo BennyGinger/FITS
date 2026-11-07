@@ -31,6 +31,7 @@ class ExperimentState:
     execution_scope: dict[Path, tuple[str, ...]] | None = field(default=None, repr=False, compare=False)
     # Planned before conversion; original filenames and saved state paths remain unchanged.
     acquisition_directory: Path | None = field(default=None, repr=False, compare=False)
+    excluded: bool = False
 
     @classmethod
     def init(cls,

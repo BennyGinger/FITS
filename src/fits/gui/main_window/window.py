@@ -18,6 +18,7 @@ from PySide6.QtCore import QEventLoop, QMimeData, Qt, QThread, QTimer, Signal, S
 from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QShowEvent, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 from fits.environment import constant as cst
+from fits.workflows.metadata._values import distribution_version
 from fits.workflows.artifacts.paths import first_image
 from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
 from fits.gui.settings import STEP_LAYOUTS, RuntimeSettingsEditor, SettingsAdapter, StepSettingsEditor
@@ -40,6 +41,7 @@ from fits.settings.loader import run_settings_path, write_settings
 import tomlkit
 from fits.workflows.experiments.roots import resolve_run_root
 from fits.workflows.experiments import collect_supported_files
+from fits.workflows.experiments.exclusion import active_raw_files, set_excluded
 from fits.gui.artifact_decisions import choose_artifacts
 from fits.workflows.checks.compatibility import inspect_run_compatibility
 from fits_io import FitsIO
@@ -130,7 +132,7 @@ class FitsMainWindow(QMainWindow):
         self._settings_population_generation = 0
         self._startup_height_applied = False
 
-        self.setWindowTitle("FITS")
+        self.setWindowTitle(f"FITS ({distribution_version(cst.DIST_FITS)})")
         self.setAcceptDrops(True)
         self.resize(1200, 850)
         self._build_ui()
@@ -284,6 +286,7 @@ class FitsMainWindow(QMainWindow):
         browser_layout.addWidget(summary_panel)
         browser_layout.addWidget(self.run_browser, 1)
         self.run_browser.path_selected.connect(self._selection_status_changed)
+        self.run_browser.exclusion_requested.connect(self._change_exclusion)
         top_splitter.addWidget(browser_panels)
         top_splitter.setStretchFactor(0, 1)
         top_splitter.setStretchFactor(1, 2)
@@ -1345,15 +1348,35 @@ class FitsMainWindow(QMainWindow):
         self._refresh_raw_inputs(root)
         conflicts = {record.path.parent for record in self._artifact_report.conflicts} if self._artifact_report is not None else set()
         conflicts.update(self._location_report.folders)
-        self.run_browser.set_experiment_status(self._run_status, conflicts)
+        outdated_files = {issue.path for issue in self._location_report.issues}
+        if self._artifact_report is not None:
+            outdated_files.update(record.path for record in self._artifact_report.conflicts)
+            outdated_files.update(self._artifact_report.outdated_masters)
+        self.run_browser.set_experiment_status(self._run_status, conflicts, outdated_files)
         self._selection_status_changed(self.run_browser.selected_path)
         self._refresh_tracking_viewer_button()
+
+    @Slot(object, bool)
+    def _change_exclusion(self, folders: list[Path], excluded: bool) -> None:
+        """
+        Save the selected series' inclusion and refresh shared checker results.
+        """
+        if self._running or not self.adapter.run_dir:
+            return
+        try:
+            set_excluded(Path(self.adapter.run_dir), folders, excluded)
+        except (OSError, RuntimeError, ValueError) as error:
+            self._report_validation_errors([str(error)])
+        self._refresh_run_inventory()
+        self._refresh_phase_access()
 
     def _refresh_raw_inputs(self, root: Path | None) -> None:
         """
         Reuse shared raw-input checks for channel hints and blocking run problems.
         """
-        self._raw_input_report = inspect_raw_inputs(root) if root is not None and root.is_dir() else None
+        states = self._run_status.states if self._run_status is not None else ()
+        self._raw_input_report = (inspect_raw_inputs(root, active_raw_files(collect_supported_files(root), states))
+                                  if root is not None and root.is_dir() else None)
         self.file_frames_label.setText("Frames: " + frame_count_summary(self._raw_input_report))
         counts = set(self._raw_input_report.channel_counts.values()) if self._raw_input_report is not None else set()
         if self._raw_input_report is not None and self._raw_input_report.problems and len(counts) <= 1:
@@ -1458,12 +1481,14 @@ class FitsMainWindow(QMainWindow):
         if scope.is_file():
             scope = scope.parent
         files = [path for path in status.files if path.parent == scope or scope in path.parents]
-        conflicts = self._artifact_report is not None and bool(self._artifact_report.conflicts)
+        conflicts = self._artifact_report is not None and bool(
+            self._artifact_report.conflicts or self._artifact_report.outdated_masters)
         input_error = self._raw_input_error()
         self.file_status_label.setText('Raw inputs need attention — cannot convert' if input_error else
                                        'Upgrade to FITS v4 required - read-only' if status.outdated else
                                        'Outdated results and paths/tags need updating' if conflicts and self._location_report.needs_update else
                                        'Paths or condition tags need updating' if self._location_report.needs_update else
+                                       'Combined analysis is outdated' if self._artifact_report is not None and self._artifact_report.analysis_only_rebuild else
                                        'Outdated downstream results' if conflicts else
                                        ('Current — editable' if status.states else 'Fresh inputs — conversion available'))
         color = '#e57373' if input_error else OUTDATED_COLOR if status.outdated or conflicts or self._location_report.needs_update else COMPATIBLE_COLOR
@@ -1514,7 +1539,11 @@ class FitsMainWindow(QMainWindow):
             lines.append('This run contains files or an experiment layout incompatible with the current FITS version. The entire run is read-only.')
             lines.append('You can keep viewing the existing images and masks, or use Manage files → Migrate to FITS 4.')
             lines.append('Migration changes the folder structure, metadata, paths and condition tags. It preserves image pixels and measurement values. You may optionally rebuild the complete workflow from the original acquisitions. A full rebuild can take a long time, and final results may change slightly with different processing settings or versions. Existing results are backed up before replacement.')
-        elif self._artifact_report is not None and self._artifact_report.conflicts:
+        elif self._artifact_report is not None and self._artifact_report.analysis_only_rebuild:
+            lines.append('Active experiment membership changed. Use Manage files → Rebuild analysis… to regenerate '
+                         'master tables from active experiments. Valid individual measurements are reused.')
+            lines.append(self._artifact_report.describe())
+        elif self._artifact_report is not None and (self._artifact_report.conflicts or self._artifact_report.outdated_masters):
             lines.append('Some saved results have missing inputs or no longer match their input revisions. Existing files remain viewable. Use Manage files → Rebuild outdated results… to review affected processing, or review the same choices when starting the pipeline.')
             lines.append(self._artifact_report.describe())
         if self._location_report.needs_update:
@@ -1898,6 +1927,7 @@ class FitsMainWindow(QMainWindow):
         if running and self._segmentation_preview_pending:
             self._clear_segmentation_preview_request()
         self._running = running
+        self.run_browser.set_processing(running)
         if self._channel_labels_window is not None:
             self._channel_labels_window.setEnabled(not running)
         if running:

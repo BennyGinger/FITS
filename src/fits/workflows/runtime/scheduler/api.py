@@ -11,7 +11,7 @@ from typing import Any
 from progress_bar import pbar
 
 from fits.workflows.runtime.progress import RunProgress
-from fits.workflows.experiments import ExperimentState
+from fits.workflows.experiments import ExperimentState, active_states
 from fits.workflows.runtime.progress.reporting import WorkflowReporter
 from fits.workflows.runtime.scheduler.dispatch import (
     RunningTasks, Task, process_completed_tasks, submit_ready_tasks)
@@ -32,6 +32,7 @@ def run_workflow_scheduler(effective_cfg: Mapping[str, Any],
     """
     Execute configured steps as a concurrent CPU/GPU conveyor pipeline.
     """
+    exp_states = active_states(exp_states)
     runtime_steps = resolve_runtime_steps(effective_cfg)
     require_automatic_specs(step.spec for step in runtime_steps)
     if run_progress is not None:

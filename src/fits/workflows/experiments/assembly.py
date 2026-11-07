@@ -7,6 +7,7 @@ from typing import Any
 from fits.environment.constant import StepName
 from fits.workflows.experiments.model import ExperimentState
 from fits.workflows.experiments.persistence import discover_saved_states
+from fits.workflows.experiments.exclusion import active_raw_files
 from fits.workflows.metadata import FitsMeta
 
 
@@ -18,16 +19,16 @@ def assemble_experiment_states(run_dir: Path,
     """
     Combine reusable saved states with states for previously unseen raw inputs.
     """
+    saved_states = discover_saved_states(run_dir)
     raw_states = [ExperimentState.init(raw_file.parent,
                                         raw_file,
                                         run_dir=run_dir,
                                         fits_meta=FitsMeta.init(user_name=user_name),)
-                    for raw_file in raw_files]
+                    for raw_file in active_raw_files(raw_files, saved_states)]
     
     if _convert_overwrites(workflow_cfg):
         return raw_states
     
-    saved_states = discover_saved_states(run_dir)
     converted_originals = {state.original_image for state in saved_states}
     remaining_raw_states = [state for state in raw_states
                             if state.original_image not in converted_originals]

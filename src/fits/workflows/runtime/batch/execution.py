@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from progress_bar import pbar
 
-from fits.workflows.experiments import ExperimentState
+from fits.workflows.experiments import ExperimentState, active_states
 from fits.settings.models import SettingsModel
 from fits.workflows.definitions.models import StepSpec, item_runner_for
 from fits.workflows.runtime.batch.workers import execute_items
@@ -30,6 +30,7 @@ def execute_batch_step(spec: StepSpec[Any],
     """
     Execute one configured step for every state in the current batch.
     """
+    exp_states = active_states(exp_states)
     profile = spec.profile
     item_runner = item_runner_for(spec)
     logger.debug("Executing %s with mode=%s workers=%s ordered=%s",
@@ -83,7 +84,7 @@ def execute_batch_step(spec: StepSpec[Any],
 
     if first_error is not None:
         raise first_error
-    return output_states
+    return active_states(output_states)
 
 
 def _execute_reported_item(spec: StepSpec[Any], settings: SettingsModel,

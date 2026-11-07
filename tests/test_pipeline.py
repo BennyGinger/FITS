@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from fits.workflows.experiments import ExperimentState, save_experiment_state
+from fits.environment.constant import StepName
 from fits.pipeline import start_pipeline
 
 
@@ -40,7 +41,7 @@ def _saved_state(run_dir: Path, raw_path: Path, workdir_name: str) -> Experiment
     image.parent.mkdir(parents=True, exist_ok=True)
     image.touch()
     state = ExperimentState.init(workdir, raw_path).with_complete_step(
-        step_name="convert",
+        step_name=StepName.CONVERT,
         artifact_kind="image",
         artifact_path=image,
     )
@@ -285,5 +286,5 @@ def isolate_artifact_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("fits.pipeline.resolve_run_root", lambda root: root.resolve())
     monkeypatch.setattr("fits.pipeline.require_current_run", lambda root: None)
     # This file tests dispatch/reporting with empty touched files.
-    monkeypatch.setattr('fits.pipeline.inspect_run', lambda *args: PreflightReport((), (), (), ()))
+    monkeypatch.setattr('fits.pipeline.inspect_run', lambda *args, **kwargs: PreflightReport((), (), (), ()))
     monkeypatch.setattr('fits.pipeline.refresh_branches', lambda state: None)

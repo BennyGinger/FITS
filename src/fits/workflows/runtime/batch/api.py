@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 from fits.environment.constant import WORKFLOW_ORDER
 from fits.workflows.runtime.progress import RunProgress
-from fits.workflows.experiments import ExperimentState
+from fits.workflows.experiments import ExperimentState, active_states
 from fits.settings.loader import resolve_step_params
 from fits.workflows.definitions.registry import REGISTRY
 from fits.workflows.runtime.batch.execution import execute_batch_step
@@ -24,6 +24,7 @@ def run_batch_workflow(effective_cfg: Mapping[str, Any],
     """
     Run every enabled workflow step across the entire experiment batch.
     """
+    exp_states = active_states(exp_states)
     steps = resolve_runtime_steps(effective_cfg, registry=REGISTRY, workflow_order=WORKFLOW_ORDER)
     resolved_steps = [(step.spec, step.settings) for step in steps]
     enabled_steps = [step.spec.profile.step_name for step in steps]

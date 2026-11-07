@@ -11,7 +11,8 @@ from fits.environment import constant as cst
 from fits.environment.paths import experiment_state_path
 from fits.settings.loader import run_settings_path
 from fits.tasks.analysis.aggregate import _condition_values
-from fits.workflows.experiments import ExperimentState, discover_saved_states
+from fits.workflows.experiments import ExperimentState, active_states, discover_saved_states
+from fits.workflows.checks.analysis import outdated_master_tables
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,7 @@ def _master_issue(root: Path, states: Sequence[ExperimentState], kind: cst.Artif
     try:
         expected: dict[str, tuple[str, ...]] = {}
         depth = 0
-        for state in states:
+        for state in active_states(states):
             source = state.artifact(kind)
             if source is not None and source.is_file():
                 conditions = _condition_values(state, root)
@@ -117,8 +118,13 @@ def inspect_locations(root: Path, states: Sequence[ExperimentState] | None = Non
     root = root.resolve()
     states = discover_saved_states(root) if states is None else states
     issues = [issue for state in states if (issue := _state_issue(state)) is not None]
+    outdated = set(outdated_master_tables(root, states))
     for kind, name in cst.MASTER_TABLES:
         path = root / name
+        if path in outdated:
+            # Membership changes require the analysis rebuild path, which also
+            # verifies per-series results before refreshing combined tables.
+            continue
         if path.is_file() and (issue := _master_issue(root, states, kind, path)) is not None:
             issues.append(issue)
     settings = run_settings_path(root)

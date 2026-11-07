@@ -94,6 +94,7 @@ class PreflightReport:
     states: tuple[ExperimentState, ...]
     rebuild_outputs: tuple[tuple[str, Path], ...] = ()
     disabled_steps: tuple[str, ...] = ()
+    outdated_masters: tuple[Path, ...] = ()
 
     @property
     def conflicts(self) -> tuple[ArtifactRecord, ...]:
@@ -140,13 +141,24 @@ class PreflightReport:
         """
         from fits.workflows.checks.planning import overwrite_affects_existing
 
-        return bool(self.blocking_conflicts or overwrite_affects_existing(self.records, self.overwritten, self.disabled_steps))
+        return bool(self.outdated_masters or self.blocking_conflicts
+                    or overwrite_affects_existing(self.records, self.overwritten, self.disabled_steps))
+
+    @property
+    def analysis_only_rebuild(self) -> bool:
+        """
+        Identify master rebuilds that can reuse valid individual measurements.
+        """
+        return bool(self.outdated_masters and not self.blocking_conflicts)
 
     def describe(self) -> str:
         """
         Format conflicts, overwrite requests and rebuild outputs for review.
         """
         lines: list[str] = []
+        if self.outdated_masters:
+            lines.append('Combined analysis no longer matches the active experiments or their results. Rebuild:')
+            lines.extend(f'  {path}' for path in self.outdated_masters)
         for record in self.records:
             if record.problem:
                 lines.append(f"{record.path}\n  {record.problem}")

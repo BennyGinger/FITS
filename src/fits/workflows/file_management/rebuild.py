@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
-from fits.workflows.experiments import ExperimentState, discover_saved_states, save_experiment_state
+from fits.workflows.experiments import ExperimentState, active_states, discover_saved_states, save_experiment_state
 from fits.workflows.file_management.relocation import PortablePlan, scoped_states
 from dataclasses import dataclass, replace
 import json
@@ -21,6 +21,7 @@ from fits.environment.paths import experiment_state_path
 from fits.workflows.file_management.compaction import run_config
 from fits.workflows.definitions.inputs import configured_profile
 from fits.workflows.checks.artifacts import inspect_run
+from fits.workflows.checks.analysis import include_master_analysis, outdated_master_tables
 from fits.workflows.checks.decisions import apply_decision
 from fits.workflows.checks.models import PreflightReport
 from copy import deepcopy
@@ -110,7 +111,7 @@ def plan_full_rebuild(root: Path) -> ProcessingPlan | None:
     Rebuild every existing or enabled workflow result from its original acquisition.
     """
     config = run_config(root)
-    states = discover_saved_states(root)
+    states = active_states(discover_saved_states(root))
     if not states:
         return None
     for state in states:
@@ -132,6 +133,7 @@ def full_rebuild_scope(states: Sequence[ExperimentState],
     """
     Share full-rebuild scope calculation with pre-migration reconstruction previews.
     """
+    states = active_states(states)
     if not states:
         return {}
     selected = {step for state in states for step in _full_rebuild_steps(state, config, available)}
@@ -207,7 +209,7 @@ def full_rebuild_folders(states: Sequence[ExperimentState]) -> tuple[Path, ...]:
     """
     Find compacted or migrated checkpoints that require complete reconstruction.
     """
-    return tuple(state.workdir for state in states if state.compacted or state.migration_checkpoint is not None)
+    return tuple(state.workdir for state in active_states(states) if state.compacted or state.migration_checkpoint is not None)
 
 
 def plan_required_rebuild(root: Path) -> ProcessingPlan | None:
@@ -216,6 +218,9 @@ def plan_required_rebuild(root: Path) -> ProcessingPlan | None:
     """
     config = run_config(root)
     report = inspect_run(root, config, for_execution=False)
+    if report.outdated_masters:
+        config = include_master_analysis(config, report.outdated_masters, report.records)
+        report = inspect_run(root, config, for_execution=False)
     full = full_rebuild_folders(report.states)
     scope = _downstream_scope(report, config)
     targets = [state for state in report.states if state.workdir in full]
@@ -228,6 +233,21 @@ def plan_required_rebuild(root: Path) -> ProcessingPlan | None:
     return _processing_plan(root, 'required', scope,
                             'Rebuild the reviewed results. Compacted and migrated experiments are fully reconstructed; '
                             'other experiments rebuild only outdated outputs.\n\n' + report.describe(), full)
+
+
+def rebuild_analysis_tables(root: Path) -> None:
+    """
+    Regenerate outdated masters from verified active results under the writer lock.
+    """
+    with run_write_guard(root):
+        states = discover_saved_states(root)
+        paths = outdated_master_tables(root, states)
+        report = inspect_run(root, run_config(root), for_execution=False)
+        if report.blocking_conflicts:
+            raise ValueError('Rebuild the outdated experiment results before combined analysis.\n' + report.describe())
+        for kind, name in cst.MASTER_TABLES:
+            if root / name in paths:
+                save_master_analysis_table(states, root, artifact_kind=kind, output_name=name)
 
 
 def execution_config(config: Mapping[str, Any], plan: ProcessingPlan) -> dict[str, Any]:
@@ -282,6 +302,8 @@ def _verify_processing_outputs(plan: ProcessingPlan, states: Mapping[Path, Exper
     """
     for folder, steps in plan.scope.items():
         state = states.get(folder)
+        if state is not None and state.excluded:
+            continue
         for step in steps:
             profile = REGISTRY[step].profile
             expected = folder / profile.output_name

@@ -6,7 +6,7 @@ from typing import Any
 
 from fits.environment.constant import StepName
 from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
-from fits.workflows.experiments import ExperimentState
+from fits.workflows.experiments import ExperimentState, active_states
 from fits.workflows.runtime.errors import AllExperimentsFailed
 from fits.workflows.runtime.interactive.progress import input_progress_id
 from fits.workflows.runtime.scheduler import resolve_runtime_steps
@@ -27,6 +27,7 @@ def run_conversion_only(config: Mapping[str, Any],
     """
     if step_delay_seconds < 0:
         raise ValueError('Demo step delay cannot be negative.')
+    states = active_states(states)
     conversion = [step for step in resolve_runtime_steps(config)
         if step.spec.profile.step_name == StepName.CONVERT]
     
@@ -47,7 +48,7 @@ def run_conversion_only(config: Mapping[str, Any],
                         next_states.extend(
                             item_runner(
                                 step.settings, current, step.spec.profile))
-                    produced = next_states
+                    produced = active_states(next_states)
                 progress.update(experiment_id, WorkflowStage.CONVERT, StageStatus.COMPLETED)
                 progress.replace_experiment(experiment_id,
                                             (converted.experiment_id for converted in produced))

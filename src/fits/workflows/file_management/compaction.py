@@ -17,7 +17,7 @@ from fits.settings.loader import load_settings, run_settings_path
 from fits.workflows.checks.artifacts import inspect_run
 from fits.workflows.checks.models import PreflightReport, PreflightRequired
 from fits.workflows.checks.planning import downstream_steps
-from fits.workflows.experiments import discover_saved_states, save_experiment_state, ExperimentState
+from fits.workflows.experiments import active_states, discover_saved_states, save_experiment_state, ExperimentState
 from fits_io.writers.metadata_update import rewrite_metadata
 from fits.workflows.file_management.history import snapshots
 from fits.workflows.checks.space import file_bytes, require_free_space
@@ -71,7 +71,7 @@ def run_config(root: Path) -> dict[str, Any]:
     path = run_settings_path(root)
     if path.is_file():
         return load_settings(path)
-    states = discover_saved_states(root)
+    states = active_states(discover_saved_states(root))
     return {step: {"enabled": any(step in state.completed_steps for state in states), "params": {}}
             for step in cst.WORKFLOW_ORDER}
 
@@ -82,7 +82,7 @@ def can_compact(root: Path) -> bool:
     """
     return any(not state.compacted and (image := state.artifact(cst.ARTI_IMG)) is not None
                and image.is_file() and compatible(read_metadata(image))
-               for state in discover_saved_states(root))
+               for state in active_states(discover_saved_states(root)))
 
 
 def plan_compaction(root: Path, *, conflicts_accepted: bool = False) -> CompactionPlan:
@@ -93,7 +93,7 @@ def plan_compaction(root: Path, *, conflicts_accepted: bool = False) -> Compacti
     selections = []
     remove = set()
     watched = set()
-    states = discover_saved_states(root)
+    states = active_states(discover_saved_states(root))
     if not states:
         raise ValueError("No saved experiments were found. Convert and process the run first.")
     for state in states:
@@ -274,7 +274,7 @@ def compact_run(root: str | Path,
     """
     root = Path(root).expanduser().resolve()
     require_current_run(root)
-    states = discover_saved_states(root)
+    states = active_states(discover_saved_states(root))
     if states and all(state.compacted for state in states):
         return ()
     config = run_config(root)

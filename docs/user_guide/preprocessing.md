@@ -20,8 +20,12 @@ preview feature lists.
 Click **Preview** in the Frame-shift or Channel-shift settings to open
 RegTune on its **Time registration** or **Channel registration** tab. Both tabs
 share the same image browser and navigation. When launched from the main GUI,
-its current settings take priority over saved experiment tuning. Explicit channel
-changes in the top toolbar update the active tab's fitting/reference channel. **Run preview** fits the complete
+its current settings take priority over saved experiment tuning. In time registration,
+channel changes in the top toolbar update the fitting channel. In channel registration,
+selecting a reference also selects its display channel; browsing display channels
+does not change the reference. An unset reference defaults to the first channel,
+while an existing reference is preserved. Saving accepts the displayed reference.
+**Run preview** fits the complete
 time sequence or the channels at the selected reference frame in a background
 worker; the button becomes **Cancel preview** while working. Z stacks use a
 maximum projection for fitting, and the resulting 2D transforms apply to all Z
@@ -75,13 +79,35 @@ pipeline, rather than delaying the interactive preview.
 
 ### Compare the registered image
 
-Choose Original image, Registered image, or Composite overlay. The overlay
+For time registration, choose Original image, Registered image, or Composite overlay. The overlay
 compares the original and registered images at the same frame, channel and Z
 plane. The original is grayscale and the registered image uses the selected
 channel LUT. When the registered image is grayscale, the original is magenta
 instead. Both are auto-scaled separately and blended to show registration's
 displacement. The canvas dimensions stay unchanged; transforms can leave empty
-borders or move content outside the frame. Each tab previews its registration
+borders or move content outside the frame.
+
+For channel registration, choose **Original alignment** or **Registered alignment**.
+Both show a composite of the reference and the selected comparison channel.
+Original alignment uses both original channels; Registered alignment keeps the
+reference unchanged and transforms the comparison channel. **C** cycles included
+comparison channels while keeping the reference fixed. If the selector names the
+reference, the first included comparison is used. With one comparison, cycling
+does not change the view. Excluded channels are skipped by C but can be selected
+manually to inspect their unchanged original image. **V** switches before/after
+for the current pair, keeping the same frame and Z plane. Both views
+use the same colours and contrast, based on the original planes. Distinct channel
+colours are used when available; otherwise the reference is magenta and the
+comparison green. The tooltip identifies the pair. Registered alignment falls
+back to original alignment until a matching preview is available. If no other
+included channel exists, only the reference is shown.
+
+**V** also switches original/registered images in time registration and
+original/background-subtracted images in BGTune. **X** remains the mask-overlay
+shortcut in mask tools and SegTune. Time registration keeps all channels available
+to **C**; BGTune cycles only channels included in background subtraction.
+
+Each tab previews its registration
 directly on the source image; the Channel tab does not run time registration first.
 
 ### Save and reuse accepted settings
@@ -94,8 +120,11 @@ in the main panel. Unchanged saves and named preset selections leave it
 collapsed. All tuners preserve advanced sections the user already opened.
 Save settings or Run pipeline in the main GUI persists the general settings,
 as with SegTune. **Save current settings** saves only the selected tab and keeps
-the viewer open for further time or channel tuning. **Complete session** saves
-both tabs, then closes the tuner; a save failure keeps the viewer open.
+the viewer open for further time or channel tuning. **Close window** closes
+without saving. If either used tab differs from the main GUI or has unsaved crop
+changes, a warning offers **Keep editing** or **Close without saving**. The
+title-bar close button uses the same warning. Save each changed tab explicitly;
+a save failure leaves its changes unsaved and keeps the viewer open.
 Without a matching preview, saving stores settings and the fitting rectangle
 without matrices, replacing any older accepted transforms. The pipeline fits
 those settings later. Saving never applies the whole stack. Preview caches are released when
@@ -134,8 +163,9 @@ browsing and accepts an initial experiment/image, `--experiments-dir`, and
 uv run fits-bgtune /path/to/experiment --settings /path/to/fits_settings.toml
 ```
 
-The two actions sit to the right of the LUT: orange **Run preview** and dark
-green **Save and close**. Run preview computes only the selected frame, channel
+The three actions sit to the right of the LUT, matching RegTune: orange **Run preview**,
+dark green **Save current settings**, and light red **Close window**.
+Run preview computes only the selected frame, channel
 and Z plane in a worker. Navigating afterward computes only requested planes;
 no neighboring frames or full stacks are prepared in the background. SMO's
 configured processor is reused across same-sized planes with the same sigma
@@ -160,14 +190,20 @@ analysis use the signed values, not that display copy.
 
 ### Save background settings
 
-**Save and close** accepts settings even without a preview. It transfers them
+**Save current settings** accepts settings even without a preview and keeps the
+tuner open. It transfers them
 to the main GUI without changing whether the background-subtraction step is
 enabled. Advanced settings opens only when an advanced value, such as threshold
 or statistic, changes; basic edits leave it collapsed. Standalone saving updates the supplied
 or nearest general settings file, or creates one at the selected run root.
 Images are never overwritten by the tuner; the measurement box and preview
-pixels are not saved. The status bar reports each plane's processing time.
-Press **R** to preview or **S** to save and close; **Info** lists the shortcuts.
+pixels are not saved. **Close window** checks processing settings for unsaved
+changes and offers **Keep editing** or **Close without saving**. The title-bar
+close button uses the same check. Measurement boxes and display controls do not
+count as unsaved processing settings. Closing during processing waits for the
+current plane to finish before releasing its resources.
+The status bar reports each plane's processing time.
+Press **R** to preview or **S** to save and stay open; **Info** lists the shortcuts.
 
 ## Check the saved result
 

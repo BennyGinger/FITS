@@ -79,7 +79,7 @@ def bgtune() -> None:
                         help="A FITS image artifact or experiment folder to open.",
                         )
     parser.add_argument("--experiments-dir", type=Path, help="Folder containing prepared experiments.")
-    parser.add_argument("--settings", type=Path, help="FITS settings to load and update on Save and close.")
+    parser.add_argument("--settings", type=Path, help="FITS settings to load and update on Save current settings.")
     arguments, qt_arguments = parser.parse_known_args()
     from fits.gui.viewer.background import BackgroundTunerWindow
 

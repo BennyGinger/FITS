@@ -33,11 +33,12 @@ overlays, cropping, and ImageJ metadata inspection.
 | Click **Info** (`i`) | Open searchable shortcut help. | Viewer active. |
 | `←` / `→` or `A` / `D` | Previous / next frame. | Multiple frames available. |
 | `↑` / `↓` or `W` / `Z` | Next / previous Z plane. | Multiple Z planes available. |
-| `C` | Next displayed image channel. | Multiple image channels available. |
+| `C` | Next active image channel. | BGTune skips excluded channels; ChannelReg cycles included comparison channels around a fixed reference. Other viewers retain their channel navigation. |
 | `Ctrl` + scroll | Zoom in / out. | Cursor over the image. |
 | `Ctrl` + left-drag | Pan the image. | Tracking viewer uses this gesture for rectangle selection instead. |
 | `Home` | Return to the full-image view. | Image displayed. |
-| `X` | Toggle the mask overlay. | Mask tools; registration uses it to switch images, and BGTune uses `V`. |
+| `X` | Toggle the mask overlay. | Mask tools, including SegTune. |
+| `V` | Compare original / preprocessed view. | Time registration, channel registration, and BGTune. |
 
 Letter-key shortcuts apply when you are not typing into a text field.
 
@@ -58,14 +59,15 @@ Open **Frame-shift → Preview** or the **Time registration** tab in RegTune.
   Inspect the selected frame/channel/Z plane as Original, Registered, or
   Composite overlay. Z fitting uses a maximum projection.
 - **Save current settings** saves the active tab and keeps the window open;
-  **Complete session** saves both registration tabs and closes. Settings can
+  **Close window** closes without saving. If either used tab has unsaved settings
+  or crop changes, choose to keep editing and save each tab, or close without saving. Settings can
   be saved without fitting a preview. Matching fitted transforms can be reused
   later by the pipeline.
 
 | Shortcut | Action |
 | --- | --- |
 | `R` | Run preview, or cancel an active preview. |
-| `X` | Switch between original and registered images. |
+| `V` | Switch between original and registered images (alignment composites in ChannelReg). |
 | `S` | Save the current tab's settings; fitting a preview is optional. |
 
 More: [Registration tuning](preprocessing.md#registration-tuning-and-accepted-transforms).
@@ -76,15 +78,24 @@ Open **Channel-shift → Preview** or the **Channel registration** tab in RegTun
 
 - Select a **Context** for channel shift, dual-camera shift, complex shift,
   or Custom; choose/override **Algorithm** and **Method**.
-- Select the required **Reference channel** and a **Reference frame**. Viewer
-  frame numbering starts at 1.
+- Select the **Reference channel** and a **Reference frame**. An unset reference
+  defaults to the first channel; existing choices are preserved. Selecting a reference
+  switches the display to it, while browsing display channels leaves the reference
+  unchanged. Viewer frame numbering starts at 1.
 - Select channels to **Exclude** from registration.
 - Set the pipeline overwrite option and enable/adjust a **Fitting crop** as
   in time registration.
 - **Run preview** to fit channels at the reference frame, or cancel fitting.
-  Navigate channels/frames/Z and compare Original, Registered, or Composite
-  overlay. This tab previews channel registration directly on its input image.
-- Save the current tab or complete both tabs with the same RegTune save actions.
+  Compare **Original alignment** with **Registered alignment** at the selected
+  frame/Z. Both overlay the reference and the selected comparison channel, using
+  consistent colours and contrast. The registered view transforms only the comparison
+  channel. This tab previews channel registration directly on its input image.
+- Press **C** to cycle included comparison channels while the reference stays
+  fixed; with one comparison channel the view stays the same. Selecting the reference
+  uses the first included comparison. Excluded channels remain selectable in the
+  channel menu and are shown unchanged. **V** switches before/after for the same pair.
+- **Save current settings** saves this tab and stays open. **Close window** warns
+  about unsaved changes in either used tab before closing.
 
 The [time-registration shortcut table](#time-registration-preview-gui) also
 applies to this tab; `S` saves the active channel-registration settings.
@@ -98,6 +109,8 @@ Open **Background subtraction → Preview** to use BGTune.
 - Adjust SMO **Window size** (at least 2), Gaussian **Sigma**, background
   **Threshold** (0–1), and **Statistic** (median or mean).
 - Select excluded channels and set **Overwrite existing pipeline output**.
+- **C** cycles included channels only. Excluded channels remain available in the
+  channel menu for inspection and pass through unchanged.
 - **Run preview** on the displayed frame/channel/Z plane. Afterward, navigate
   to calculate other requested planes; rerun preview after changing settings.
 - Switch between **Original image** and **Background-subtracted image** while
@@ -106,15 +119,17 @@ Open **Background subtraction → Preview** to use BGTune.
   choose its rectangle colour, and zoom to it. Read the original mean, corrected
   mean, and their difference. The box measures a region; subtraction uses the
   full image plane.
-- **Save and close** accepts settings, with or without a preview. It does not
-  overwrite the image or save the measurement box.
+- **Save current settings** accepts settings, with or without a preview, and
+  keeps the tuner open. **Close window** offers **Keep editing** or **Close without
+  saving** when processing settings are unsaved. The title-bar close button uses
+  the same check. Saving does not overwrite the image or save the measurement box.
 
 | Shortcut / gesture | Action | Applies when |
 | --- | --- | --- |
 | `R` | Run preview on the displayed plane. | Image loaded. |
 | `V` | Switch original / background-subtracted image. | Preview available. |
 | Left-drag | Draw, move, or resize the measurement box. | Measurement box enabled. |
-| `S` | Save settings and close. | A preview is optional. |
+| `S` | Save current settings and stay open. | A preview is optional. |
 
 More: [Background preview](preprocessing.md#background-subtraction-preview).
 

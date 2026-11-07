@@ -307,7 +307,7 @@ class ImageToolWindow(QMainWindow):
                 Qt.Key.Key_Up,
                 Qt.Key.Key_Down,):
             return super().eventFilter(watched, event)
-        if key == Qt.Key.Key_X:
+        if key == Qt.Key.Key_X and not self.show_mask.isHidden():
             if self._image_session is not None:
                 self.show_mask.toggle()
             return True
@@ -349,11 +349,21 @@ class ImageToolWindow(QMainWindow):
 
     def _next_channel(self) -> None:
         """
-        Next channel.
+        Cycle active channels in display order; leave excluded channels selectable manually.
         """
-        if self.channel_combo.isEnabled() and self.channel_combo.count() > 0:
-            next_index = (self.channel_combo.currentIndex() + 1) % self.channel_combo.count()
-            self.channel_combo.setCurrentIndex(next_index)
+        if not self.channel_combo.isEnabled():
+            return
+        active = self._channel_cycle_indices()
+        count = self.channel_combo.count()
+        for offset in range(1, count + 1):
+            index = (self.channel_combo.currentIndex() + offset) % count
+            if index in active:
+                self.channel_combo.setCurrentIndex(index)
+                return
+
+    def _channel_cycle_indices(self) -> list[int]:
+        """Let each tuner define active channels without changing the shared C shortcut."""
+        return list(range(self.channel_combo.count()))
 
     @staticmethod
     def _navigation_control(label: str, layout: QHBoxLayout) -> tuple[QSlider, QLabel]:

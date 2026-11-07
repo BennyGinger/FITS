@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from fits.environment import constant as cst
 import numpy as np
@@ -17,6 +18,7 @@ from fits.gui.viewer.background.settings_panel import BackgroundSettingsPanel
 from fits.gui.viewer.background.worker import BackgroundPreviewWorker
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.common.information_dialog import BACKGROUND_HELP
+from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, RUN_PREVIEW_STYLE, SAVE_SETTINGS_STYLE, confirm_discard_tuner_changes
 from fits.settings.loader import run_settings_path
 from fits.settings.models import BGSubSettings
 from fits.tasks.bg_sub_tuning import BackgroundTuningSession
@@ -39,6 +41,7 @@ class BackgroundTunerWindow(ImageToolWindow):
                  initial_path: str | Path | None = None,
                  parent: QWidget | None = None,
                  directory_locked: bool = False,
+                 settings_provider: Callable[[], BGSubSettings] | None = None,
                  ) -> None:
         """
         Load GUI settings or standalone defaults and optionally open an experiment.
@@ -46,6 +49,8 @@ class BackgroundTunerWindow(ImageToolWindow):
         self._provided = settings is not None
         self._defaults = settings or BGSubSettings()
         self._settings_path = settings_path
+        self._settings_provider = settings_provider
+        self._used = False
         self._general_adapter: SettingsAdapter | None = None
         self._general_path: Path | None = None
         self._session: BackgroundTuningSession | None = None
@@ -64,37 +69,32 @@ class BackgroundTunerWindow(ImageToolWindow):
 
     def _build_tools(self) -> QWidget:
         """
-        Build parameters, measurement controls and the two requested actions.
+        Build parameters, measurement controls and the shared preview/save/close actions.
         """
         self.settings_panel = BackgroundSettingsPanel()
         self.tool_panel = self.settings_panel
         self.run_button = QPushButton("Run preview")
         self.run_button.setToolTip("Process the selected frame/channel/Z plane. Navigation then computes "
                                    "only requested planes. Run again after changing settings.")
-        self.run_button.setStyleSheet(
-            "QPushButton { background-color: #d97706; color: white; font-weight: bold; "
-            "padding: 7px 12px; border-radius: 4px; } "
-            "QPushButton:hover { background-color: #ea8a0c; } "
-            "QPushButton:pressed { background-color: #b85f05; }")
-        self.save_button = QPushButton("Save and close")
-        self.save_button.setToolTip("Save background-subtraction settings and close. Preview is optional. "
+        self.run_button.setStyleSheet(RUN_PREVIEW_STYLE)
+        self.save_button = QPushButton("Save current settings")
+        self.save_button.setToolTip("Save background-subtraction settings and keep the tuner open. Preview is optional. "
                                     "Images and the pipeline step's enabled state are unchanged.")
-        self.save_button.setStyleSheet(
-            "QPushButton { background-color: #16803b; color: white; font-weight: bold; "
-            "padding: 7px 12px; border-radius: 4px; } "
-            "QPushButton:hover { background-color: #1c9848; } "
-            "QPushButton:pressed { background-color: #11652f; }")
+        self.save_button.setStyleSheet(SAVE_SETTINGS_STYLE)
+        self.close_button = QPushButton("Close window")
+        self.close_button.setToolTip("Close the tuner. You will be warned about unsaved background-subtraction settings.")
+        self.close_button.setStyleSheet(CLOSE_WINDOW_STYLE)
         return self.settings_panel
 
     def _build_viewer_actions(self, layout: QHBoxLayout) -> None:
         """
-        Place the orange and dark-green actions to the right of the LUT.
+        Stack the orange preview, green save and light-red close actions beside the LUT.
         """
         self.session_actions = QWidget()
         actions = QVBoxLayout(self.session_actions)
         actions.setContentsMargins(0, 0, 0, 0)
-        actions.addWidget(self.run_button)
-        actions.addWidget(self.save_button)
+        for button in (self.run_button, self.save_button, self.close_button):
+            actions.addWidget(button)
         layout.addStretch(1)
         layout.addWidget(self.session_actions)
 
@@ -127,7 +127,8 @@ class BackgroundTunerWindow(ImageToolWindow):
         self.settings_panel.measurement.changed.connect(self._display_selection)
         self.settings_panel.changed.connect(self._settings_edited)
         self.run_button.clicked.connect(self._run_preview)
-        self.save_button.clicked.connect(self._save_and_close)
+        self.save_button.clicked.connect(self._save_settings)
+        self.close_button.clicked.connect(self.close)
         self.comparison.currentIndexChanged.connect(self._display_selection)
 
     def _set_source_controls_enabled(self, enabled: bool) -> None:
@@ -196,6 +197,7 @@ class BackgroundTunerWindow(ImageToolWindow):
             self._session = session
             self._image_session = session
             self._source_path = source
+            self._used = False
             self.settings_panel.load(self._defaults, session.channel_labels)
             self.settings_panel.measurement.reset((session._axis_size("Y"), session._axis_size("X")))
             with QSignalBlocker(self.channel_combo):
@@ -217,9 +219,16 @@ class BackgroundTunerWindow(ImageToolWindow):
         """
         if self._loading:
             return
+        self._used = True
         self._preview_enabled = False
         self.status_label.setText("Settings changed. Run preview to update the processed image.")
         self._display_selection()
+
+    def _channel_cycle_indices(self) -> list[int]:
+        """Cycle only channels included in background subtraction."""
+        excluded = self.settings_panel.settings().exclude_channel or ()
+        return [index for index in super()._channel_cycle_indices()
+                if self.channel_combo.itemText(index) not in excluded]
 
     def _display_overlay(self, image: NDArray, frame: int, channel: str, z_index: int) -> None:
         """
@@ -261,6 +270,7 @@ class BackgroundTunerWindow(ImageToolWindow):
         """
         if self._session is None or self._thread is not None:
             return
+        self._used = True
         self._preview_enabled = True
         self.comparison.setCurrentIndex(1)
         self._display_selection()
@@ -323,9 +333,9 @@ class BackgroundTunerWindow(ImageToolWindow):
             self._display_selection()
 
     @Slot()
-    def _save_and_close(self) -> None:
+    def _save_settings(self) -> None:
         """
-        Save general settings without requiring preview or changing step enablement.
+        Save general settings and stay open, without requiring a preview.
         """
         if self._session is None or self._thread is not None:
             return
@@ -338,22 +348,37 @@ class BackgroundTunerWindow(ImageToolWindow):
                                                           "None" if value is None else value,
                                                           )
                 self._general_adapter.save(self._general_path)
+            self._defaults = settings.model_copy(deep=True)
             self.settings_applied.emit(settings)
         except Exception as error:
             self.status_label.setText(f"Cannot save background settings: {error}")
             return
-        self.close()
+        self.status_label.setText("Saved background-subtraction settings.")
+
+    def _has_unsaved_settings(self) -> bool:
+        """Compare processing settings with their saved values, ignoring measurement/display controls."""
+        if self._session is None or not self._used:
+            return False
+        try:
+            current = self.settings_panel.settings()
+            saved = self._settings_provider() if self._settings_provider is not None else self._defaults
+            def comparable(settings: BGSubSettings) -> dict:
+                return {**settings.to_payload_dict(), "overwrite": settings.overwrite,
+                        "exclude_channel": sorted(settings.exclude_channel or ())}
+            return comparable(current) != comparable(saved)
+        except ValueError:
+            return True
 
     def _tool_keypress(self, event: QKeyEvent) -> bool:
         """
-        Run preview, save and close, or compare source and processed images.
+        Run preview, save without closing, or compare source and processed images.
         """
         if event.modifiers() != Qt.KeyboardModifier.NoModifier:
             return False
         if event.key() == Qt.Key.Key_R:
             self._run_preview()
         elif event.key() == Qt.Key.Key_S:
-            self._save_and_close()
+            self._save_settings()
         elif event.key() == Qt.Key.Key_V:
             self.comparison.setCurrentIndex(1 - self.comparison.currentIndex())
         else:
@@ -373,6 +398,10 @@ class BackgroundTunerWindow(ImageToolWindow):
         """
         Wait for the single active SMO call before releasing its source and model.
         """
+        if (not self._closing and self._has_unsaved_settings()
+                and not confirm_discard_tuner_changes(self, ["Background subtraction"])):
+            event.ignore()
+            return
         if self._thread is not None:
             self._closing = True
             self.status_label.setText("Closing after the current plane finishes…")

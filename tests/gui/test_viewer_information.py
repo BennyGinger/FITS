@@ -43,7 +43,7 @@ def test_help_tables_keep_all_tool_controls_and_filter_by_function():
             dialog.close()
 
 
-@pytest.mark.parametrize("gui", ["REF / ROI", "SegTune", "RegTune", "Tracking"])
+@pytest.mark.parametrize("gui", ["REF / ROI", "SegTune", "RegTune", "BGTune", "Tracking"])
 def test_shared_help_catalog_filters_current_gui_and_consolidates_shortcuts(gui):
     app()
     dialog = ViewerInformationDialog(title="test", version="test", gui=gui)
@@ -57,8 +57,14 @@ def test_shared_help_catalog_filters_current_gui_and_consolidates_shortcuts(gui)
             rows.append(tuple(cell.text() for cell in cells if cell is not None))
         shortcuts = [row[0] for row in rows]
         assert shortcuts.count("S") == 1
-        assert shortcuts.count("Ctrl+Z") == (0 if gui in ("SegTune", "RegTune") else 1)
-        assert ("R" in shortcuts) == (gui in ("SegTune", "RegTune"))
+        assert shortcuts.count("Ctrl+Z") == (0 if gui in ("SegTune", "RegTune", "BGTune") else 1)
+        assert ("R" in shortcuts) == (gui in ("SegTune", "RegTune", "BGTune"))
+        assert ('V' in shortcuts) == (gui in ('RegTune', 'BGTune'))
+        assert ('X' in shortcuts) == (gui not in ('RegTune', 'BGTune'))
+        channel_row = next(row for row in rows if row[0] == 'C')
+        assert channel_row[1] == 'Next active image channel'
+        if gui in ('RegTune', 'BGTune'):
+            assert 'Excluded channels' in channel_row[3] or 'excluded channels' in channel_row[3]
         assert sum(row[1] == "Next / previous Z plane" for row in rows) == 1
         assert all(row[2] == "All viewers" or set(gui.split(" / ")).intersection(
             row[2].split(" / ")) for row in rows)

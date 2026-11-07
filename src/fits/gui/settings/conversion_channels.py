@@ -1,8 +1,8 @@
 """Conversion channel labels alongside detected ND2 display colors."""
 
-from PySide6.QtCore import QSignalBlocker, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem, QVBoxLayout
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, Qt
+from PySide6.QtGui import QColor, QIcon, QKeyEvent, QPainter, QPixmap
+from PySide6.QtWidgets import QHeaderView, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from fits_io.metadata.channel_colors import channel_color_name, conversion_channel_labels
 from fits.gui.settings.field_widgets import ValueWidget
@@ -23,6 +23,58 @@ def _color_icon(color: str) -> QIcon:
     return QIcon(pixmap)
 
 
+def _advances_label(event: QEvent) -> bool:
+    """Recognize unmodified Tab and both Enter keys."""
+    return (event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and event.modifiers() in (Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.KeypadModifier))
+
+
+class _LabelDelegate(QStyledItemDelegate):
+    """Commit label edits before navigating past the read-only columns."""
+
+    def __init__(self, table: "_ChannelLabelsTable") -> None:
+        super().__init__(table)
+        self._table = table
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """Finish editing on Tab or Enter and open the next blank label."""
+        if isinstance(watched, QWidget) and _advances_label(event):
+            row = self._table.currentRow()
+            self.commitData.emit(watched)
+            self.closeEditor.emit(watched, QStyledItemDelegate.EndEditHint.NoHint)
+            self._table.edit_next_empty_label(row)
+            return True
+        return super().eventFilter(watched, event)
+
+
+class _ChannelLabelsTable(QTableWidget):
+    """Navigate directly between empty channel names during label entry."""
+
+    def __init__(self) -> None:
+        super().__init__(0, 3)
+        self.setItemDelegateForColumn(2, _LabelDelegate(self))
+
+    def edit_next_empty_label(self, row: int) -> None:
+        """Search following rows, wrapping once and skipping the current row."""
+        count = self.rowCount()
+        for offset in range(1, count):
+            item = self.item((row + offset) % count, 2)
+            if item is not None and not item.text().strip():
+                self.setCurrentItem(item)
+                self.editItem(item)
+                return
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Keep navigation in the label column when an editor is closed."""
+        if self.currentColumn() == 2 and _advances_label(event):
+            self.edit_next_empty_label(self.currentRow())
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class ConversionChannelsWidget(ValueWidget):
     """Keep editable labels separate from read-only source colors and fallback names."""
 
@@ -34,7 +86,7 @@ class ConversionChannelsWidget(ValueWidget):
         self._labels = labels
         self._count: int | None = None
         self._colors: list[str | None] | None = None
-        self.table = QTableWidget(0, 3)
+        self.table = _ChannelLabelsTable()
         self.table.setHorizontalHeaderLabels(["Channel", "Expected color", "Label"])
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)

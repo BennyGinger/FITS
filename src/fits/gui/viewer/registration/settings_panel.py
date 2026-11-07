@@ -94,6 +94,7 @@ class RegistrationSettingsPanel(QWidget):
         else:
             form.addRow("Reference frame", self.reference_frame)
             form.addRow("Exclude channels", self.excluded)
+            self.excluded.setToolTip(field_tooltip(step, "exclude_channel"))
         self.crop_group, self.crop_layout = self._section("Fitting crop")
         self.crop_description = QLabel(
             "Use a stable area to help when full-image fitting is difficult. A smaller "
@@ -212,6 +213,8 @@ class RegistrationSettingsPanel(QWidget):
             self.channel.setCurrentIndex(selected + 1 if 0 <= selected < len(labels) else 0)
         elif selected in labels:
             self.channel.setCurrentText(selected)
+        elif self.mode == "channel" and selected in (None, "") and labels:
+            self.channel.setCurrentIndex(1)
         self.reference_frame.setMaximum(frames)
         if isinstance(settings, RegisterTimeSettings):
             self.strategy.setCurrentText(settings.reference_strategy)

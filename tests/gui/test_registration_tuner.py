@@ -5,9 +5,9 @@ import numpy as np
 import pytest
 import tifffile
 from PySide6.QtTest import QTest
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, QTimer, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication, QScrollArea, QWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QWidget
 from typing import cast
 
 from fits.gui.viewer.registration import RegistrationTunerWindow
@@ -16,6 +16,13 @@ from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
 from fits.tasks.registration.tuned import load_tuning
 
 _APP = None
+
+
+@pytest.fixture(autouse=True)
+def discard_unsaved_tuning(monkeypatch):
+    """Allow unrelated tests to clean up windows without a modal prompt."""
+    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+                        lambda parent, tabs: True)
 
 
 def drag_crop(window, start, end):
@@ -110,7 +117,7 @@ def test_shared_tabs_background_preview_save_and_stale_controls(window, source):
     assert window.mode() == 'channel'
     session = window._session
     assert session is not None
-    assert window.channel_combo.currentIndex() == 1
+    assert window.channel_combo.currentIndex() == 0
     assert window.save_button.isEnabled()
     accepted = []
     window.settings_applied.connect(lambda mode, settings: accepted.append((mode, settings)))
@@ -166,17 +173,21 @@ def test_save_current_without_preview_persists_only_selected_tab(window, source,
     assert window.isVisible()
 
 
-def test_complete_without_preview_saves_both_tabs_and_closes(window, source):
-    """Complete an unpreviewed session without calculating any transforms."""
+def test_close_unchanged_session_does_not_save(window, source, monkeypatch):
+    """Close a freshly opened tuner without saving either tab or showing a warning."""
     accepted = []
+    warnings = []
+    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+                        lambda parent, tabs: warnings.append(tabs) or False)
     window.settings_applied.connect(lambda mode, settings: accepted.append(mode))
-    assert window.complete_button.isEnabled()
-    window.complete_button.click()
+    assert window.close_button.isEnabled()
+    assert window.close_button.text() == 'Close window'
+    window.close_button.click()
     assert not window.isVisible()
-    assert accepted == ['time', 'channel']
+    assert accepted == []
+    assert warnings == []
     for mode in ('time', 'channel'):
-        saved = load_tuning(source, mode)
-        assert saved is not None and saved.register is None
+        assert load_tuning(source, mode) is None
 
 
 def test_gui_settings_take_priority_over_previous_experiment_tuning(window, source):
@@ -235,7 +246,7 @@ def test_display_channel_selects_time_fitting_channel_and_invalidates_preview(wi
     assert window.channel_combo.currentIndex() == 1
 
 
-@pytest.mark.parametrize('mode,strategy', [('time', 'previous'), ('time', 'first'), ('channel', None)])
+@pytest.mark.parametrize('mode,strategy', [('time', 'previous'), ('time', 'first')])
 def test_composite_overlays_current_original_with_registered_channel_colour(window, monkeypatch, mode, strategy):
     """Show raw-versus-registered displacement and swap the raw colour for grayscale LUTs."""
     import pyqtgraph as pg
@@ -278,6 +289,169 @@ def test_composite_overlays_current_original_with_registered_channel_colour(wind
     assert window._composite_item.isVisible()
 
 
+def test_channel_reference_selection_updates_display_in_one_direction(window):
+    """Reference choices select the display, while browsing preserves the fitted reference."""
+    panel = window.panels['channel']
+    panel.channel.setCurrentText(window.channel_combo.itemText(1))
+    assert window.channel_combo.currentIndex() == 1
+    window._run_preview()
+    wait_for_preview(window)
+    settings = window.current_settings()
+    preview = window._session.cached_preview('channel', settings)
+    window.channel_combo.setCurrentIndex(0)
+    assert window.current_settings() == settings
+    assert window._session.cached_preview('channel', settings) is preview
+    window.tabs.setCurrentIndex(0)
+    assert [window.comparison.itemText(i) for i in range(window.comparison.count())] == [
+        'Registered image', 'Original image', 'Composite overlay']
+    window.tabs.setCurrentIndex(1)
+    assert window.channel_combo.currentIndex() == 1
+    assert [window.comparison.itemText(i) for i in range(window.comparison.count())] == [
+        'Original alignment', 'Registered alignment']
+
+
+def test_channel_alignment_overlays_two_channels_with_stable_reference_and_contrast(window, monkeypatch):
+    """Render an unchanged reference with original/registered versions of the same other channel."""
+    session = window._session
+    assert session is not None
+    reference, other = session.channel_labels
+    window.frame_slider.setValue(2)
+    window.comparison.setCurrentIndex(0)
+    original = window._composite_item.image.copy()
+    window.comparison.setCurrentIndex(1)
+    np.testing.assert_allclose(window._composite_item.image, original)
+    assert 'Showing original alignment' in window.comparison.toolTip()
+    window._run_preview()
+    wait_for_preview(window)
+    requested = []
+    real_frame = session.preview_frame
+    def record_frame(preview, frame_index=0, channel=0, z_index=0):
+        requested.append((frame_index, channel, z_index))
+        return real_frame(preview, frame_index, channel, z_index)
+    monkeypatch.setattr(session, 'preview_frame', record_frame)
+    window._display_selection()
+    registered = window._composite_item.image.copy()
+    assert requested == [(2, other, 0)]
+    np.testing.assert_allclose(original[..., 0], registered[..., 0])
+    np.testing.assert_allclose(original[..., 2], registered[..., 2])
+    assert not np.array_equal(original[..., 1], registered[..., 1])
+    assert np.count_nonzero(registered[..., 0] != registered[..., 1]) < np.count_nonzero(original[..., 0] != original[..., 1])
+    assert reference in window.comparison.toolTip() and other in window.comparison.toolTip()
+    assert not window.lut_controls.isEnabled()
+    assert not window.grayscale_lut_button.isEnabled()
+    window.comparison.setCurrentIndex(0)
+    np.testing.assert_allclose(window._composite_item.image, original)
+    window.comparison.setCurrentIndex(1)
+    monkeypatch.setattr(session, 'preview_frame', lambda *args: real_frame(*args) * 0.5)
+    window._display_selection()
+    np.testing.assert_allclose(window._composite_item.image[..., 1], registered[..., 1] * 0.5)
+    np.testing.assert_allclose(window._composite_item.image[..., 0], registered[..., 0])
+    window.panels['channel'].reference_frame.setValue(2)
+    np.testing.assert_allclose(window._composite_item.image, original)
+    assert 'Showing original alignment' in window.comparison.toolTip()
+
+
+@pytest.mark.parametrize('reference_index', [None, 1])
+def test_unset_reference_defaults_to_first_channel_and_saved_reference_is_preserved(window, source, reference_index):
+    """Accept the visible default on save, preserving explicit references when present."""
+    panel = window.panels['channel']
+    panel.load(RegisterChannelSettings(reference_channel=reference_index),
+               window._session.channel_labels, window._session.frame_count)
+    expected = window._session.channel_labels[reference_index or 0]
+    assert panel.channel.currentText() == expected
+    assert window.channel_combo.currentText() == expected
+    window.save_button.click()
+    assert load_tuning(source, 'channel').settings.reference_channel == expected
+
+
+@pytest.mark.parametrize('channels', [1, 3])
+def test_channel_alignment_cycles_included_comparisons_and_handles_no_pair(window, tmp_path, channels, monkeypatch):
+    """Cycle comparisons around a fixed reference and retain manual access to excluded channels."""
+    folder = tmp_path / 'additional'
+    folder.mkdir()
+    path = folder / 'fits_array.tif'
+    pixels = np.zeros((3, channels, 32, 32), dtype=np.uint16)
+    pixels[..., 8:14, 9:13] = 1000
+    tifffile.imwrite(path, pixels, imagej=True, metadata={'axes': 'TCYX'})
+    tuner = RegistrationTunerWindow(folder, mode='channel')
+    tuner.show()
+    tuner.activateWindow()
+    monkeypatch.setattr(tuner, 'isActiveWindow', lambda: True)
+    tuner.image_viewer.setFocus()
+    try:
+        labels = tuner._session.channel_labels
+        assert tuner.current_settings().reference_channel == labels[0]
+        if channels == 3:
+            assert f'comparison: {labels[1]}' in tuner.comparison.toolTip()
+            QTest.keyClick(tuner.image_viewer, Qt.Key.Key_C)
+            assert tuner.channel_combo.currentIndex() == 2
+            assert f'comparison: {labels[2]}' in tuner.comparison.toolTip()
+            QTest.keyClick(tuner.image_viewer, Qt.Key.Key_C)
+            assert tuner.channel_combo.currentIndex() == 1
+            assert f'comparison: {labels[1]}' in tuner.comparison.toolTip()
+            tuner.channel_combo.setCurrentIndex(2)
+            assert tuner.current_settings().reference_channel == labels[0]
+            assert f'comparison: {labels[2]}' in tuner.comparison.toolTip()
+            tuner.panels['channel'].excluded.item(1).setCheckState(Qt.CheckState.Checked)
+            QTest.keyClick(tuner.image_viewer, Qt.Key.Key_C)
+            assert tuner.channel_combo.currentIndex() == 2
+            assert f'comparison: {labels[2]}' in tuner.comparison.toolTip()
+            tuner.channel_combo.setCurrentIndex(1)
+            assert 'excluded' in tuner.comparison.toolTip()
+            assert not tuner._composite_item.isVisible()
+            QTest.keyClick(tuner.image_viewer, Qt.Key.Key_C)
+            assert tuner.channel_combo.currentIndex() == 2
+            tuner.panels['channel'].excluded.item(2).setCheckState(Qt.CheckState.Checked)
+            QTest.keyClick(tuner.image_viewer, Qt.Key.Key_C)
+            assert tuner.channel_combo.currentIndex() == 2
+            tuner.channel_combo.setCurrentIndex(0)
+        QTest.keyClick(tuner.image_viewer, Qt.Key.Key_C)
+        assert tuner.channel_combo.currentIndex() == 0
+        assert not tuner._composite_item.isVisible()
+        assert tuner.image_viewer.image_item.isVisible()
+        assert 'No other included channel' in tuner.comparison.toolTip()
+        np.testing.assert_array_equal(tuner.image_viewer.image_item.image, pixels[0, 0])
+    finally:
+        tuner.close()
+
+
+@pytest.mark.parametrize('mode', ['time', 'channel'])
+def test_v_compares_registration_without_moving_selection_and_x_does_not(window, monkeypatch, mode):
+    """Use V for before/after in both modes, preserving selection, contrast and settings."""
+    window.tabs.setCurrentIndex(0 if mode == 'time' else 1)
+    window.frame_slider.setValue(2)
+    window._run_preview()
+    wait_for_preview(window)
+    window.image_viewer.set_display_levels((0, 1500))
+    window.activateWindow()
+    window.image_viewer.setFocus()
+    monkeypatch.setattr(window, 'isActiveWindow', lambda: True)
+    settings = window.current_settings()
+    selection = (window.frame_slider.value(), window.channel_combo.currentIndex(), window.z_slider.value())
+    processed_index = 0 if mode == 'time' else 1
+    original_index = 1 - processed_index
+    assert window.comparison.currentIndex() == processed_index
+    processed = (window.image_viewer.image_item.image if mode == 'time' else window._composite_item.image).copy()
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_V)
+    assert window.comparison.currentIndex() == original_index
+    original = window.image_viewer.image_item.image if mode == 'time' else window._composite_item.image
+    assert not np.array_equal(original, processed)
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_X)
+    assert window.comparison.currentIndex() == original_index
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_V)
+    assert window.comparison.currentIndex() == processed_index
+    np.testing.assert_allclose(window.image_viewer.image_item.image if mode == 'time' else window._composite_item.image,
+                               processed)
+    assert window.current_settings() == settings
+    assert selection == (window.frame_slider.value(), window.channel_combo.currentIndex(), window.z_slider.value())
+    assert window.image_viewer.display_levels == (0, 1500)
+    if mode == 'time':
+        QTest.keyClick(window.image_viewer, Qt.Key.Key_C)
+        assert window.channel_combo.currentIndex() == 1
+        QTest.keyClick(window.image_viewer, Qt.Key.Key_C)
+        assert window.channel_combo.currentIndex() == 0
+
+
 def test_standalone_saves_general_settings(source):
     """Verify standalone saves general settings."""
     global _APP
@@ -308,52 +482,64 @@ def test_close_during_preview_cancels_before_closing(window, monkeypatch):
             time.sleep(0.005)
         raise InterruptedError()
     monkeypatch.setattr(window._session, 'run_preview', slow_preview)
+    window.panels['channel'].reference_frame.setValue(2)
     window._run_preview()
     for _ in range(100):
         QTest.qWait(10)
         if entered:
             break
     assert entered
-    assert not window.complete_button.isEnabled()
-    window.close()
+    assert window.close_button.isEnabled()
+    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+                        lambda parent, tabs: False)
+    window.close_button.click()
+    assert window.isVisible()
+    assert window._thread is not None
+    assert not window._thread.isInterruptionRequested()
+    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+                        lambda parent, tabs: True)
+    window.close_button.click()
     wait_for_preview(window)
     assert not window.isVisible()
     assert window._session is None
 
 
-@pytest.mark.parametrize('stale_channel', [False, True])
-def test_complete_saves_matching_tabs_and_closes(window, source, stale_channel):
-    """Verify complete saves matching tabs and closes."""
+@pytest.mark.parametrize('use_title_bar', [False, True])
+def test_close_warns_for_both_tabs_and_discard_does_not_save(window, source, monkeypatch, use_title_bar):
+    """Protect inactive-tab changes and let users return to editing or discard."""
     accepted = []
     window.settings_applied.connect(lambda mode, settings: accepted.append(mode))
-    window._run_preview()
-    wait_for_preview(window)
+    window.panels['channel'].reference_frame.setValue(2)
     window.tabs.setCurrentIndex(0)
-    window._run_preview()
-    wait_for_preview(window)
-
+    window.panels['time'].strategy.setCurrentText('first')
+    warnings = []
+    def keep_editing(parent, tabs):
+        warnings.append(tabs)
+        return False
+    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes', keep_editing)
+    close = window.close if use_title_bar else window.close_button.click
+    close()
+    assert window.isVisible()
+    assert warnings == [['Time registration', 'Channel registration']]
+    assert accepted == []
     window.save_button.click()
     assert window.isVisible()
     assert load_tuning(source, 'time') is not None
     assert load_tuning(source, 'channel') is None
     accepted.clear()
-    if stale_channel:
-        window.panels['channel'].reference_frame.setValue(2)
-
-    window.complete_button.click()
+    assert window._unsaved_tabs() == ['Channel registration']
+    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+                        lambda parent, tabs: True)
+    close()
     assert not window.isVisible()
     assert window._session is None
-    assert accepted == ['time', 'channel']
-    saved_channel = load_tuning(source, 'channel')
-    assert saved_channel is not None
-    assert (saved_channel.register is None) == stale_channel
-    if stale_channel:
-        assert isinstance(saved_channel.settings, RegisterChannelSettings)
-        assert saved_channel.settings.reference_frame == 1
+    assert accepted == []
+    assert load_tuning(source, 'channel') is None
 
 
-def test_complete_save_failure_keeps_viewer_open(window, monkeypatch):
-    """Verify complete save failure keeps viewer open."""
+def test_save_failure_keeps_unsaved_changes(window, monkeypatch):
+    """A failed save keeps the viewer open and still warns before closing."""
+    window.panels['channel'].reference_frame.setValue(2)
     window._run_preview()
     wait_for_preview(window)
 
@@ -362,9 +548,65 @@ def test_complete_save_failure_keeps_viewer_open(window, monkeypatch):
         raise OSError('Cannot write transforms')
 
     monkeypatch.setattr(window._session, 'save_preview', fail_save)
-    window.complete_button.click()
+    window.save_button.click()
     assert window.isVisible()
     assert 'Cannot write transforms' in window.status_label.text()
+    assert window._unsaved_tabs() == ['Channel registration']
+
+
+@pytest.mark.parametrize('mode', ['time', 'channel'])
+def test_unsaved_crop_and_reverted_settings(window, mode):
+    """Track effective crop changes and clear warnings after reverting or saving."""
+    window.tabs.setCurrentIndex(0 if mode == 'time' else 1)
+    panel = window.panels[mode]
+    panel.overwrite.setChecked(True)
+    assert window._unsaved_tabs()
+    panel.overwrite.setChecked(False)
+    assert window._unsaved_tabs() == []
+    crop = window.crops[mode]
+    crop.set_bounds((4, 3, 26, 25))
+    crop.enabled.setChecked(True)
+    assert window._unsaved_tabs() == [f'{mode.title()} registration']
+    window.save_button.click()
+    assert window._unsaved_tabs() == []
+    crop.enabled.setChecked(False)
+    assert window._unsaved_tabs() == [f'{mode.title()} registration']
+    crop.enabled.setChecked(True)
+    assert window._unsaved_tabs() == []
+
+
+def test_close_compares_used_tab_with_live_main_settings(window):
+    """Resolve equivalent preset/index values and detect later main-GUI changes."""
+    saved = window._defaults['channel'].model_copy(deep=True)
+    window._settings_provider = lambda mode: saved
+    window._run_preview()
+    wait_for_preview(window)
+    assert window._unsaved_tabs() == []
+    saved.reference_frame = 1
+    assert window._unsaved_tabs() == ['Channel registration']
+
+
+def test_invalid_unsaved_settings_still_warn(window):
+    """Clearing a required reference channel must not bypass the close warning."""
+    window.panels['channel'].channel.setCurrentIndex(0)
+    assert window._unsaved_tabs() == ['Channel registration']
+
+
+@pytest.mark.parametrize('discard', [False, True])
+def test_shared_unsaved_dialog_defaults_to_keep_editing(window, discard):
+    """Exercise the actual dialog choices with a safe default and Escape action."""
+    from fits.gui.viewer.common.tuner_actions import confirm_discard_tuner_changes
+    def choose():
+        message = QApplication.activeModalWidget()
+        assert isinstance(message, QMessageBox)
+        assert 'Time registration' in message.text()
+        assert message.defaultButton().text() == 'Keep editing'
+        assert message.escapeButton().text() == 'Keep editing'
+        button = next(button for button in message.buttons()
+                      if button.text() == ('Close without saving' if discard else 'Keep editing'))
+        button.click()
+    QTimer.singleShot(0, choose)
+    assert confirm_discard_tuner_changes(window, ['Time registration']) is discard
 
 
 def test_main_gui_opens_requested_tab_and_accepts_general_settings(source):
@@ -391,6 +633,7 @@ def test_main_gui_opens_requested_tab_and_accepts_general_settings(source):
     assert editor.widgets['algorithm'].value() == 'scikit'
     assert editor.widgets['method'].value() == 'translation'
     assert load_tuning(source, 'channel') is not None
+    assert tuner._unsaved_tabs() == []
     main._open_registration_tuner('time')
     assert main._registration_tuner is tuner
     assert tuner.mode() == 'time'
@@ -402,6 +645,7 @@ def test_main_gui_opens_requested_tab_and_accepts_general_settings(source):
     assert main.adapter.field_value(StepName.REGISTER_CHANNEL, 'method') == 'affine'
     assert editor.widgets['algorithm'].value() == 'cv2'
     assert editor.widgets['method'].value() == 'affine'
+    assert tuner._unsaved_tabs() == ['Channel registration']
     tuner.panels['time'].algorithm.setCurrentText('scikit')
     tuner.panels['time'].method.setCurrentText('translation')
     tuner._run_preview()

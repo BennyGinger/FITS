@@ -20,6 +20,7 @@ from fits.gui.main_window import FitsMainWindow
 from fits.gui.settings import SettingsAdapter
 from fits.gui.viewer.background import BackgroundTunerWindow
 from fits.gui.viewer.common.information_dialog import ViewerInformationDialog
+from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, RUN_PREVIEW_STYLE, SAVE_SETTINGS_STYLE
 from fits.settings.loader import load_settings, run_settings_path
 from fits.settings.models import BGSubSettings
 
@@ -31,6 +32,13 @@ def application():
     """Keep one application alive across isolated offscreen viewer tests."""
     global _APP
     _APP = QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def discard_unsaved_settings(monkeypatch):
+    """Keep unrelated test cleanup from waiting on an unsaved-settings dialog."""
+    monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+                        lambda parent, tabs: True)
 
 
 @pytest.fixture
@@ -206,6 +214,7 @@ def test_close_waits_for_active_plane_before_releasing_session(window, monkeypat
         return real_compute(*args)
 
     monkeypatch.setattr(session, "compute_plane", compute)
+    window.settings_panel.window_size.setValue(5)
     window._run_preview()
     try:
         for _ in range(100):
@@ -213,7 +222,14 @@ def test_close_waits_for_active_plane_before_releasing_session(window, monkeypat
             if entered.is_set():
                 break
         assert entered.is_set()
-        window.close()
+        monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+                            lambda parent, tabs: False)
+        window.close_button.click()
+        assert window.isVisible() and not window._closing
+        assert window._thread is not None
+        monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+                            lambda parent, tabs: True)
+        window.close_button.click()
         assert window.isVisible() and window._closing
     finally:
         release.set()
@@ -243,11 +259,18 @@ def test_gui_selected_experiment_settings_and_save_without_preview(source, tmp_p
         assert not tuner.directory_edit.isEnabled()
         tuner.settings_panel.window_size.setValue(7)
         tuner.save_button.click()
-        assert not tuner.isVisible()
+        assert tuner.isVisible()
+        assert not tuner._has_unsaved_settings()
         assert main.adapter.field_value(StepName.BG_SUB, "size") == 7
         assert main.adapter.step_enabled(StepName.BG_SUB) == enabled
         assert not main._editors[StepName.BG_SUB].advanced_settings_visible
+        main.adapter.set_field_value(StepName.BG_SUB, 'size', 9)
+        assert tuner._has_unsaved_settings()
+        main.adapter.set_field_value(StepName.BG_SUB, 'size', 7)
+        assert not tuner._has_unsaved_settings()
     finally:
+        if main._background_tuner is not None:
+            main._background_tuner.close()
         main.close()
 
 
@@ -264,7 +287,107 @@ def test_standalone_saves_settings_without_changing_pixels(source, tmp_path):
         saved = load_settings(run_settings_path(tmp_path))
         assert saved["bg_sub"]["params"]["size"] == 9
         assert source.read_bytes() == original
-        assert not viewer.isVisible()
+        assert viewer.isVisible()
+        assert not viewer._has_unsaved_settings()
+    finally:
+        viewer.close()
+
+
+def test_shared_action_layout_and_save_shortcut_stay_open(window):
+    """Use registration's button styles/order and let S save without closing."""
+    actions = window.session_actions.layout()
+    assert [actions.itemAt(i).widget() for i in range(3)] == [
+        window.run_button, window.save_button, window.close_button]
+    assert [button.text() for button in (window.run_button, window.save_button, window.close_button)] == [
+        'Run preview', 'Save current settings', 'Close window']
+    assert window.run_button.styleSheet() == RUN_PREVIEW_STYLE
+    assert window.save_button.styleSheet() == SAVE_SETTINGS_STYLE
+    assert window.close_button.styleSheet() == CLOSE_WINDOW_STYLE
+    accepted = []
+    window.settings_applied.connect(accepted.append)
+    window.settings_panel.sigma.setValue(0.5)
+    window.image_viewer.setFocus()
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_S)
+    assert window.isVisible()
+    assert len(accepted) == 1 and accepted[0].sigma == 0.5
+    assert not window._has_unsaved_settings()
+    assert 'Saved background' in window.status_label.text()
+
+
+@pytest.mark.parametrize('title_bar', [False, True])
+def test_close_warns_and_discard_never_saves(window, monkeypatch, title_bar):
+    """Both close paths let users return to save or explicitly discard processing edits."""
+    accepted, prompts = [], []
+    window.settings_applied.connect(accepted.append)
+    window.settings_panel.window_size.setValue(7)
+    def keep_editing(parent, tabs):
+        prompts.append(tabs)
+        return False
+    monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes', keep_editing)
+    close = window.close if title_bar else window.close_button.click
+    close()
+    assert window.isVisible() and window._session is not None
+    assert prompts == [['Background subtraction']]
+    assert not accepted
+    monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+                        lambda parent, tabs: True)
+    close()
+    assert not window.isVisible() and window._session is None
+    assert not accepted
+
+
+def test_saved_and_measurement_only_changes_close_without_warning(window, monkeypatch):
+    """Measurement geometry and viewing controls are temporary, not unsaved processing work."""
+    prompts = []
+    monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+                        lambda parent, tabs: prompts.append(tabs) or False)
+    window.settings_panel.window_size.setValue(7)
+    window.save_button.click()
+    window.settings_panel.window_size.setValue(9)
+    assert window._has_unsaved_settings()
+    window.settings_panel.window_size.setValue(7)
+    assert not window._has_unsaved_settings()
+    window.settings_panel.measurement.enabled.setChecked(True)
+    window.settings_panel.measurement.set_bounds((4, 3, 26, 25))
+    window.channel_combo.setCurrentIndex(1)
+    window.close_button.click()
+    assert not window.isVisible()
+    assert prompts == []
+
+
+@pytest.mark.parametrize('field,value', [
+    ('window_size', 9), ('sigma', 0.5), ('threshold', 0.2),
+    ('statistic', 'mean'), ('overwrite', True), ('excluded', True),
+])
+def test_processing_controls_participate_in_unsaved_check(window, field, value):
+    """Track every editable processing setting, including overwrite and channel exclusions."""
+    widget = getattr(window.settings_panel, field)
+    if field == 'statistic':
+        widget.setCurrentText(value)
+    elif field == 'overwrite':
+        widget.setChecked(value)
+    elif field == 'excluded':
+        widget.item(0).setCheckState(Qt.CheckState.Checked)
+    else:
+        widget.setValue(value)
+    assert window._has_unsaved_settings()
+    window.save_button.click()
+    assert not window._has_unsaved_settings()
+
+
+def test_failed_save_keeps_changes_and_viewer_open(source, monkeypatch):
+    """A failed standalone write leaves the saved baseline intact and still warns on close."""
+    viewer = BackgroundTunerWindow(source.parent)
+    viewer.show()
+    try:
+        viewer.settings_panel.window_size.setValue(9)
+        def fail_save(path):
+            raise OSError('Cannot write settings')
+        monkeypatch.setattr(viewer._general_adapter, 'save', fail_save)
+        viewer.save_button.click()
+        assert viewer.isVisible()
+        assert viewer._has_unsaved_settings()
+        assert 'Cannot write settings' in viewer.status_label.text()
     finally:
         viewer.close()
 
@@ -282,6 +405,27 @@ def test_help_lists_comparison_and_measurement_shortcuts(window):
     assert "V" in shortcuts and "R" in shortcuts and "S" in shortcuts
     assert "X" not in shortcuts
     dialog.close()
+
+
+def test_c_cycles_included_background_channels_and_keeps_excluded_channels_selectable(window, monkeypatch):
+    """Skip exclusions for C, with safe behavior for one or no active channels."""
+    monkeypatch.setattr(window, 'isActiveWindow', lambda: True)
+    window.activateWindow()
+    window.image_viewer.setFocus()
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_C)
+    assert window.channel_combo.currentIndex() == 1
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_C)
+    assert window.channel_combo.currentIndex() == 0
+    window.settings_panel.excluded.item(1).setCheckState(Qt.CheckState.Checked)
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_C)
+    assert window.channel_combo.currentIndex() == 0
+    window.channel_combo.setCurrentIndex(1)
+    assert window.channel_combo.currentIndex() == 1
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_C)
+    assert window.channel_combo.currentIndex() == 0
+    window.settings_panel.excluded.item(0).setCheckState(Qt.CheckState.Checked)
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_C)
+    assert window.channel_combo.currentIndex() == 0
 
 
 def test_display_clamping_preserves_signed_input(window):

@@ -196,6 +196,26 @@ def test_desktop_command_quotes_special_paths(shortcuts, tmp_path):
     assert '\\\\$' in command and '\\\\`' in command and '\\\\"' in command
 
 
+def test_linux_shortcut_changes_icon_path_when_image_changes(shortcuts, tmp_path):
+    """Refresh cached desktop icons without changing canonical asset filenames."""
+    root = tmp_path / 'FITS'
+    make_install(root)
+    icon = root / 'assets/fits_icon.png'
+    menu = tmp_path / 'menu'
+    icon.write_bytes(b'first image')
+    shortcuts.install_shortcut(root, output_dir=menu)
+    entry = menu / 'fits.desktop'
+    first = Path(next(line[5:] for line in entry.read_text().splitlines() if line.startswith('Icon=')))
+    assert first.read_bytes() == b'first image'
+    icon.write_bytes(b'replacement image')
+    shortcuts.install_shortcut(root, output_dir=menu, refresh_only=True)
+    second = Path(next(line[5:] for line in entry.read_text().splitlines() if line.startswith('Icon=')))
+    assert second != first
+    assert second.read_bytes() == icon.read_bytes()
+    shortcuts.install_shortcut(root, output_dir=menu, refresh_only=True)
+    assert f'Icon={second}' in entry.read_text()
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux entry-file integration")
 def test_linux_entry_runs_installation_from_another_directory(checkout: Path, tmp_path: Path) -> None:
     """

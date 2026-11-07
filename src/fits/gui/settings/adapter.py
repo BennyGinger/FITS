@@ -220,10 +220,15 @@ STEP_FIELD_TOOLTIPS: dict[tuple[StepName, str], str] = {
         "Choose the alignment between channels:\nchannel_shift: X/Y offset only (translation).\nchannel_shift_dual_cam: offset and rotation, for example between cameras (rigid-body).\nchannel_shift_complex: offset and rotation, plus scaling/shear (affine)."
     ),
     (StepName.REGISTER_CHANNEL, "reference_channel"): (
-        "Channel index or label held fixed while the other channels are aligned."
+        "Choose the channel held fixed while the other included channels are aligned to it. "
+        "Included channels should contain recognizable corresponding structures."
     ),
     (StepName.REGISTER_CHANNEL, "exclude_channel"): (
-        "Channel labels to leave out of cross-channel registration."
+        "Exclude channels that should not be aligned to the reference, such as markers "
+        "showing different biological structures. Registration needs recognizable "
+        "corresponding features in both channels. For example, do not align a membrane "
+        "marker to a nuclear marker: they show different structures. "
+        "Excluded channels remain unchanged."
     ),
     (StepName.REGISTER_CHANNEL, "reference_frame"): (
         "Zero-based frame used to estimate the cross-channel transforms."

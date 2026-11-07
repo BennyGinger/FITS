@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from hashlib import sha256
 import os
 from pathlib import Path
 import shutil
@@ -15,7 +16,7 @@ def desktop_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
 
 
-def desktop_entry(root: Path) -> str:
+def desktop_entry(root: Path, *, icon_path: Path | None = None) -> str:
     command = str(root / "startup" / "launch_linux.sh").replace("%", "%%")
     for character in ("\\", '"', "`", "$"):
         command = command.replace(character, "\\" + character)
@@ -25,7 +26,7 @@ def desktop_entry(root: Path) -> str:
         "Comment=Fluorescent Image Tracking Software\n"
         f"Exec={desktop_value(quoted_command)}\n"
         f"Path={desktop_value(str(root))}\n"
-        f"Icon={desktop_value(str(root / 'assets' / 'fits_icon.png'))}\n"
+        f"Icon={desktop_value(str(icon_path or root / 'assets' / 'fits_icon.png'))}\n"
         "Terminal=false\nStartupNotify=true\nCategories=Science;\n"
         "Keywords=microscopy;fluorescence;tracking;images;\n"
     )
@@ -80,7 +81,12 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
     destination = destination_dir / "fits.desktop"
     if refresh_only and not destination.exists():
         return
-    contents = desktop_entry(root)
+    icon_source = root / "assets" / "fits_icon.png"
+    icon_bytes = icon_source.read_bytes()
+    # GNOME can retain an old icon when a different image reuses the same path.
+    icon_dir = output_dir / "icons" if output_dir is not None else data_home / "icons"
+    icon_path = icon_dir / f"fits-{sha256(icon_bytes).hexdigest()[:16]}.png"
+    contents = desktop_entry(root, icon_path=icon_path)
     if destination.exists():
         old = destination.read_text(encoding="utf-8")
         expected_path = f"Path={desktop_value(str(root))}"
@@ -97,6 +103,9 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
                 report("Existing shortcut kept. Open this checkout with startup/launch_linux.sh.")
                 return
     destination_dir.mkdir(parents=True, exist_ok=True)
+    icon_dir.mkdir(parents=True, exist_ok=True)
+    if not icon_path.is_file() or icon_path.read_bytes() != icon_bytes:
+        icon_path.write_bytes(icon_bytes)
     launcher = root / "startup" / "launch_linux.sh"
     launcher.chmod(launcher.stat().st_mode | 0o100)
     destination.write_text(contents, encoding="utf-8")

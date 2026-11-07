@@ -453,7 +453,7 @@ class FitsMainWindow(QMainWindow):
                     f"Open the {operation} tuner to adjust settings, optionally crop the fitting area, "
                     "and compare original and registered images without modifying the source images.\n"
                     "Save current settings updates this tab and saves the experiment's fitting crop and any "
-                    "matching preview transforms. Complete saves both registration tabs and closes the tuner. "
+                    "matching preview transforms. Close window warns about unsaved settings in either tab. "
                     "Preview is optional; otherwise fitting runs in the pipeline.\n"
                     "Opens the selected experiment, or the first available experiment in this run. "
                     "Requires converted input images; rebuild missing inputs for compacted experiments.")
@@ -467,7 +467,8 @@ class FitsMainWindow(QMainWindow):
                 self.bgtune_button.setToolTip(
                     "Open the background-subtraction tuner to adjust settings, compare original and processed "
                     "image planes, and measure intensities in a selected area without modifying the source images.\n"
-                    "Save and close copies your changes back to this step. Preview is optional, and saving "
+                    "Save current settings copies your changes back to this step and keeps the tuner open. "
+                    "Close window warns about unsaved changes. Preview is optional, and saving "
                     "keeps whether the step is included in the workflow.\n"
                     "Opens the selected experiment, or the first available experiment in this run. "
                     "Requires converted input images; rebuild missing inputs for compacted experiments.")
@@ -568,11 +569,18 @@ class FitsMainWindow(QMainWindow):
         except ValueError as error:
             QMessageBox.critical(self, "Cannot open background tuner", str(error))
             return
+        adapter = self.adapter
+
+        def background_settings() -> BGSubSettings:
+            """Read live main-window settings for the tuner's unsaved-changes check."""
+            return BGSubSettings.model_validate(adapter.as_mapping()["bg_sub"]["params"])
+
         tuner = BackgroundTunerWindow(self.adapter.run_dir or None,
                                       settings=settings,
                                       directory_locked=True,
                                       initial_path=self.run_browser.selected_path,
                                       parent=self,
+                                      settings_provider=background_settings,
                                       )
         tuner.setWindowModality(Qt.WindowModality.WindowModal)
         tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -709,6 +717,15 @@ class FitsMainWindow(QMainWindow):
         except ValueError as error:
             QMessageBox.critical(self, "Cannot open registration tuner", str(error))
             return
+        adapter = self.adapter
+
+        def registration_settings(mode: str) -> RegisterTimeSettings | RegisterChannelSettings:
+            """Read current main-window values when the tuner checks for unsaved work."""
+            mapping = adapter.as_mapping()
+            if mode == "time":
+                return RegisterTimeSettings.model_validate(mapping["register_time"]["params"])
+            return RegisterChannelSettings.model_validate(mapping["register_channel"]["params"])
+
         tuner = RegistrationTunerWindow(self.adapter.run_dir or None,
                                         mode="time" if mode == "time" else "channel",
                                         time_settings=time_settings,
@@ -716,6 +733,7 @@ class FitsMainWindow(QMainWindow):
                                         initial_path=self.run_browser.selected_path,
                                         parent=self,
                                         directory_locked=True,
+                                        settings_provider=registration_settings,
                                         )
         tuner.setWindowModality(Qt.WindowModality.WindowModal)
         tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)

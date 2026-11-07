@@ -17,7 +17,7 @@ COMMON_HELP: tuple[HelpRow, ...] = (
     ("X", "Toggle mask overlay", "All viewers", "All modes"),
     ("← / → or A / D", "Previous / next frame", "All viewers", "All modes"),
     ("↑ / ↓ or W / Z", "Next / previous Z plane", "All viewers", "All modes"),
-    ("C", "Next image channel", "All viewers", "All modes"),
+    ("C", "Next active image channel", "All viewers", "All modes"),
     ("Ctrl+left click (hold), drag", "Pan image", "All viewers", "All modes"),
     ("Ctrl+scroll", "Zoom image",
      "All viewers", "All modes"),
@@ -43,11 +43,15 @@ SEGMENTATION_HELP: tuple[HelpRow, ...] = (
     ("R", "Run preview", "SegTune / RegTune", "Tuning; RegTune can cancel an active preview"),
 )
 
-REGISTRATION_HELP = SEGMENTATION_HELP
+PREPROCESSING_HELP: tuple[HelpRow, ...] = (
+    ("V", "Toggle original / preprocessed view", "RegTune / BGTune", "Keep the same frame and Z plane"),
+)
+
+REGISTRATION_HELP = (*SEGMENTATION_HELP, *PREPROCESSING_HELP)
 
 BACKGROUND_HELP: tuple[HelpRow, ...] = (
+    *PREPROCESSING_HELP,
     ("R", "Run preview", "BGTune", "Selected frame, channel and Z plane only"),
-    ("V", "Toggle original / background-subtracted image", "BGTune", "Same LUT and intensity limits"),
     ("Left click / drag", "Draw, move or resize measurement box", "BGTune", "Enable measurement box first"),
 )
 
@@ -67,9 +71,14 @@ HELP_CONDITIONS: dict[str, dict[str, str]] = {
         "Right click / drag": "Replace / Edit; selected drawing tool",
     },
     "SegTune": {"S": "Current settings", "R": "Tuning"},
-    "BGTune": {"S": "Save settings and close; preview optional"},
+    "BGTune": {"S": "Save current settings and stay open; preview optional",
+               "C": "Included channels only; excluded channels remain selectable in the channel menu",
+               "V": "Original / background-subtracted image; same LUT and intensity limits"},
     "RegTune": {"S": "Current tab; preview optional",
-                "X": "Switch original / registered image"},
+                "C": "Time: all channels. Channel: included comparison channels; reference stays fixed. "
+                     "Excluded channels remain selectable in the channel menu.",
+                "V": "Time: original / registered image. Channel: original / registered alignment "
+                     "for the same reference and comparison channel."},
     "Tracking": {
         "S": "Split / Add/Edit; ready preview (applies in session)",
         "Ctrl+D": "Edit; selected track's mask in the current frame",
@@ -107,14 +116,11 @@ class ViewerInformationDialog(QDialog):
                 rows = [(shortcut, "Select cells in rectangle" if shortcut == "Ctrl+left click (hold), drag"
                          else function, scope, mode)
                         for shortcut, function, scope, mode in rows]
-        if gui == "BGTune":
+        if gui in ("BGTune", "RegTune"):
             rows = [row for row in rows if row[0] != "X"]
         conditions = HELP_CONDITIONS.get(gui or "", {})
         rows = [(shortcut, function, scope, conditions.get(shortcut, mode))
                 for shortcut, function, scope, mode in rows]
-        if gui == "RegTune":
-            rows = [(shortcut, "Toggle original / registered image" if shortcut == "X" else function,
-                     scope, mode) for shortcut, function, scope, mode in rows]
         layout = QVBoxLayout(self)
         intro = QLabel("Viewer controls and keyboard shortcuts")
         intro.setStyleSheet("font-weight: bold; font-size: 14px;")

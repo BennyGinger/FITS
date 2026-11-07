@@ -8,12 +8,72 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QTableWidgetItem
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QLineEdit, QTableWidgetItem
 
 from fits.environment.constant import StepName
 from fits.gui.settings import SettingsAdapter, StepSettingsEditor
 from fits.gui.settings.conversion_channels import ConversionChannelsWidget
 from fits.workflows.checks.models import RawInputReport
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Tab, Qt.Key.Key_Return, Qt.Key.Key_Enter])
+def test_label_entry_advances_to_empty_names(key: Qt.Key) -> None:
+    """Commit typed names, skip populated rows, wrap, and stop when complete."""
+    app = QApplication.instance() or QApplication([])
+    widget = ConversionChannelsWidget(["", "", "existing", ""])
+    widget.set_source(4, None)
+    widget.show()
+    table = widget.table
+    table.setCurrentCell(1, 2)
+    table.editItem(table.item(1, 2))
+    app.processEvents()
+    try:
+        for text, next_row in [("second", 3), ("fourth", 0), ("first", 0)]:
+            editor = app.focusWidget()
+            assert isinstance(editor, QLineEdit)
+            QTest.keyClicks(editor, text)
+            QTest.keyClick(editor, key)
+            app.processEvents()
+            assert table.currentRow() == next_row
+            assert table.currentColumn() == 2
+        assert widget.value() == ["first", "second", "existing", "fourth"]
+        assert app.focusWidget() is table
+    finally:
+        widget.close()
+        app.processEvents()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Tab, Qt.Key.Key_Return])
+def test_fresh_label_table_keyboard_entry(key: Qt.Key) -> None:
+    """Keep successive fresh labels editable without visiting metadata cells."""
+    app = QApplication.instance() or QApplication([])
+    widget = ConversionChannelsWidget([])
+    widget.set_source(3, None)
+    widget.show()
+    table = widget.table
+    table.setCurrentCell(0, 2)
+    table.editItem(table.item(0, 2))
+    app.processEvents()
+    try:
+        editor = app.focusWidget()
+        assert isinstance(editor, QLineEdit)
+        QTest.keyClicks(editor, "GFP")
+        QTest.keyClick(editor, key)
+        app.processEvents()
+        assert widget.value() == ["GFP", "", ""]
+        assert table.currentRow() == 1
+        assert isinstance(app.focusWidget(), QLineEdit)
+        QTest.keyClick(app.focusWidget(), Qt.Key.Key_Escape)
+        app.processEvents()
+        QTest.keyClick(table, key)
+        app.processEvents()
+        assert table.currentRow() == 2
+        assert table.currentColumn() == 2
+        assert isinstance(app.focusWidget(), QLineEdit)
+    finally:
+        widget.close()
+        app.processEvents()
 
 
 def test_dynamic_table_preserves_blanks_and_user_overrides(tmp_path: Path) -> None:

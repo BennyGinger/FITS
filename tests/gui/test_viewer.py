@@ -618,6 +618,8 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
         SegmentationTunerWindow,
         "_initialize_selected_model",
         lambda self: initialization_requests.append(True),)
+    # Count explicit R shortcuts independently of queued automatic previews.
+    monkeypatch.setattr(SegmentationTunerWindow, "_run_preview_when_ready", lambda self: None)
     window = SegmentationTunerWindow(tmp_path)
     emitted: list[SegmentChannelSettings] = []
     window.settings_applied.connect(emitted.append)
@@ -644,6 +646,7 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
     QTest.keyClick(window.image_viewer, Qt.Key.Key_Up)
     QTest.keyClick(window.image_viewer, Qt.Key.Key_C)
     QTest.keyClick(window.image_viewer, Qt.Key.Key_X)
+    QTest.keyClick(window.image_viewer, Qt.Key.Key_V)
     QTest.keyClick(window.image_viewer, Qt.Key.Key_R)
     window.channel_combo.setFocus()
     QTest.keyClick(window.channel_combo, Qt.Key.Key_D)
@@ -664,7 +667,7 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
     assert window.frame_slider.maximum() == 2
     assert window.z_slider.maximum() == 1
     QTest.keyClick(window.image_viewer, Qt.Key.Key_S)
-    assert not window.isVisible()
+    assert window.isVisible()
     assert emitted[0].channels[0].channel == "DAPI"
     assert emitted[0].channels[0].do_denoise is False
     window.close()

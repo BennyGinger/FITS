@@ -10,6 +10,7 @@ provides the overview, basic installation, and quick usage.
 - [User-guide screenshot plan](user_guide_screenshots.md): six core figures,
   two optional additions, and capture guidelines for later documentation work.
 - [Development setup](development_setup.md): manual environment setup and GPU configuration.
+- [Releases](releases.md): automatic tags and GitHub Releases on stable version bumps.
 - [Runtime and viewer internals](runtime_and_viewer_internals.md): execution,
   storage, caching, and interactive demonstration details moved from the README.
 - [Software credits](software_credits.md): scientific methods, companion libraries,

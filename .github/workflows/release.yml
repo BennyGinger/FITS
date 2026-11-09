@@ -1,0 +1,37 @@
+name: Release version bumps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Each run checks for all missing releases, including bumps in a skipped pending run.
+concurrency:
+  group: fits-releases
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'BennyGinger/FITS' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test release automation
+        run: python -m unittest discover -s tests/releases -v
+      - name: Publish missing version releases
+        run: python .github/scripts/release.py --publish
+        env:
+          GH_TOKEN: ${{ github.token }}

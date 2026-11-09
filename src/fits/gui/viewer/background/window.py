@@ -18,7 +18,7 @@ from fits.gui.viewer.background.settings_panel import BackgroundSettingsPanel
 from fits.gui.viewer.background.worker import BackgroundPreviewWorker
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.common.information_dialog import BACKGROUND_HELP
-from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, RUN_PREVIEW_STYLE, SAVE_SETTINGS_STYLE, confirm_discard_tuner_changes
+from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, MAIN_GUI_SETTINGS_HINT, RUN_PREVIEW_STYLE, SAVE_SETTINGS_STYLE, configure_tuner_window, confirm_discard_tuner_changes, set_preview_choices, toggle_preview_choice
 from fits.settings.loader import run_settings_path
 from fits.settings.models import BGSubSettings
 from fits.tasks.bg_sub_tuning import BackgroundTuningSession
@@ -47,7 +47,7 @@ class BackgroundTunerWindow(ImageToolWindow):
         Load GUI settings or standalone defaults and optionally open an experiment.
         """
         self._provided = settings is not None
-        self._defaults = settings or BGSubSettings()
+        self._defaults = (settings or BGSubSettings()).model_copy(deep=True)
         self._settings_path = settings_path
         self._settings_provider = settings_provider
         self._used = False
@@ -63,7 +63,9 @@ class BackgroundTunerWindow(ImageToolWindow):
         self.show_mask.hide()
         self.mask_opacity.hide()
         self.setWindowTitle("FITS Background Subtraction Tuner")
-        self.resize(1500, 950)
+        configure_tuner_window(self, self.status_label)
+        if self._settings_provider is not None:
+            self.save_button.setToolTip(self.save_button.toolTip() + '\n\n' + MAIN_GUI_SETTINGS_HINT)
         if experiments_dir is not None:
             self._set_experiments_directory(experiments_dir, initial_path=initial_path)
 
@@ -110,6 +112,7 @@ class BackgroundTunerWindow(ImageToolWindow):
             self.comparison.addItem(title)
             self.comparison.setItemData(self.comparison.count() - 1, description, Qt.ItemDataRole.ToolTipRole)
         self.comparison.currentIndexChanged.connect(self._comparison_changed)
+        set_preview_choices(self.comparison, False, 0)
         self._comparison_changed()
         layout.addWidget(self.comparison)
 
@@ -236,6 +239,7 @@ class BackgroundTunerWindow(ImageToolWindow):
         """
         if self._loading or self._session is None:
             return
+        set_preview_choices(self.comparison, self._preview_enabled, 0)
         settings = self.settings_panel.settings()
         result = (self._session.cached_preview(settings, frame, channel, z_index)
                   if self._preview_enabled else None)
@@ -272,6 +276,7 @@ class BackgroundTunerWindow(ImageToolWindow):
             return
         self._used = True
         self._preview_enabled = True
+        set_preview_choices(self.comparison, True, 0)
         self.comparison.setCurrentIndex(1)
         self._display_selection()
 
@@ -353,7 +358,8 @@ class BackgroundTunerWindow(ImageToolWindow):
         except Exception as error:
             self.status_label.setText(f"Cannot save background settings: {error}")
             return
-        self.status_label.setText("Saved background-subtraction settings.")
+        self.status_label.setText("Applied background-subtraction settings to the main GUI." if self._settings_provider is not None
+                                  else "Saved background-subtraction settings.")
 
     def _has_unsaved_settings(self) -> bool:
         """Compare processing settings with their saved values, ignoring measurement/display controls."""
@@ -380,7 +386,7 @@ class BackgroundTunerWindow(ImageToolWindow):
         elif event.key() == Qt.Key.Key_S:
             self._save_settings()
         elif event.key() == Qt.Key.Key_V:
-            self.comparison.setCurrentIndex(1 - self.comparison.currentIndex())
+            toggle_preview_choice(self.comparison)
         else:
             return False
         return True
@@ -390,6 +396,7 @@ class BackgroundTunerWindow(ImageToolWindow):
         Reset tool state before the shared base closes the current input.
         """
         self._preview_enabled = False
+        set_preview_choices(self.comparison, False, 0)
         self._session = None
         self.settings_panel.measurement.reset()
         self.settings_panel.means.setText("Enable the measurement box and draw a rectangle.")

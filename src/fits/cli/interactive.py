@@ -83,7 +83,6 @@ def run_pipeline_cli(settings_path: Path,
                 collection.set_expected_experiments(mask_expected_count)
             collection.experiment_finalized.connect(interaction.resolve_mask)
             collection.collection_finished.connect(interaction.finish_mask_collection)
-            collection.cancellation_requested.connect(interaction.cancel)
             collection.show()
         collection.enqueue_experiment(request)
 

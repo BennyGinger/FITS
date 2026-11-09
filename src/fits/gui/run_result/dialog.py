@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QGridLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from fits.gui.dialogs import size_resizable_dialog
 from fits.gui.run_result.report import ReportDialog
@@ -25,23 +26,28 @@ class RunResultDialog(QDialog):
         self.manage_requested = False
         self.setWindowTitle('Pipeline run finished')
         layout = QVBoxLayout(self)
+        actions = QGridLayout()
+        actions.setColumnStretch(0, 1)
+        actions.setHorizontalSpacing(20)
+        actions.setVerticalSpacing(16)
+        layout.addLayout(actions)
         message = QLabel(result.message)
         message.setWordWrap(True)
         color = '#8fd6a0' if result.successful else '#f0b66a' if result.outcome != RunOutcome.FAILED else '#f29595'
         message.setStyleSheet(f'color: {color}; font-weight: bold;')
-        layout.addWidget(message)
+        actions.addWidget(message, 0, 0, Qt.AlignmentFlag.AlignTop)
         report = QPushButton('Full report…')
         report.setToolTip('Inspect completed, skipped and failed stages and the full diagnostic information for this run.')
         report.clicked.connect(lambda: ReportDialog(None, result.report, self).exec())
-        layout.addWidget(report)
+        actions.addWidget(report, 0, 1, Qt.AlignmentFlag.AlignTop)
         if result.successful and can_compact(root):
             hint = QLabel('You can compact the experiments to free disk space by removing intermediate files while keeping essential results.')
             hint.setWordWrap(True)
-            layout.addWidget(hint)
+            actions.addWidget(hint, 1, 0, Qt.AlignmentFlag.AlignTop)
             manage = QPushButton('Manage files…')
             manage.setToolTip('Open experiment file management to compact results, update files or manage retained backups.')
             manage.clicked.connect(self._request_management)
-            layout.addWidget(manage)
+            actions.addWidget(manage, 1, 1, Qt.AlignmentFlag.AlignTop)
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         close.rejected.connect(self.reject)
         layout.addWidget(close)

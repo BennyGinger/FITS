@@ -40,8 +40,6 @@ def register_channel(settings: RegisterChannelSettings,
 
         source = exp_state.artifact(step_profile.input_artifact)
         tuned = load_tuning(source, "channel") if source is not None else None
-        if tuned is not None:
-            settings = settings.model_copy(update=tuned.settings.to_payload_dict())
         
         plan = resolve_registration_plan(settings.context,
                                          algorithm=settings.algorithm,

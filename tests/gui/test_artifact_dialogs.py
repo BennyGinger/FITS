@@ -1,5 +1,6 @@
 """Exercise shared decisions and compact publication on the Qt main thread."""
 import os
+from pathlib import Path
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import numpy as np
@@ -16,12 +17,16 @@ from fits.gui.artifact_decisions import choose_artifacts
 from fits.workflows.checks.models import ArtifactRecord, PreflightReport
 from fits.workflows.experiments import ExperimentState, save_experiment_state, discover_saved_states
 
-_APP = None
+_APP: QApplication | None = None
 
 
-def application():
+def application() -> QApplication:
+    """
+    Keep the Qt application alive while testing the real review choices.
+    """
     global _APP
-    _APP = QApplication.instance() or QApplication([])
+    current = QApplication.instance()
+    _APP = current if isinstance(current, QApplication) else QApplication([])
     return _APP
 
 
@@ -29,12 +34,20 @@ def application():
     ('Selected step only', 'selected', False),
     ('Selected step and downstream', 'rebuild', False),
     ('Cancel', 'cancel', False), ('Rebuild results…', 'rebuild', True)])
-def test_shared_preflight_choices(tmp_path, title, expected, legacy):
+@pytest.mark.parametrize('outdated_master', [False, True])
+def test_shared_preflight_choices(tmp_path: Path, title: str, expected: str, legacy: bool, outdated_master: bool) -> None:
+    """
+    Keep normal overwrite choices available even when downstream combined analysis is outdated.
+    """
     app = application()
     path = tmp_path / cst.FITS_ARRAY_BGSUB
     report = PreflightReport((ArtifactRecord(path, cst.StepName.BG_SUB, None,
-        'Input revision differs', legacy),), (cst.StepName.BG_SUB,), (cst.StepName.SEGMENT,), ())
-    def choose():
+        'Input revision differs', legacy),), (cst.StepName.BG_SUB,), (cst.StepName.SEGMENT,), (),
+        outdated_masters=(tmp_path / cst.MASTER_QUANTI_NAME,) if outdated_master else ())
+    def choose() -> None:
+        """
+        Select the expected action from the actual modal review window.
+        """
         dialog = app.activeModalWidget()
         assert isinstance(dialog, QDialog)
         button = next(button for button in dialog.findChildren(QPushButton) if button.text() == title)

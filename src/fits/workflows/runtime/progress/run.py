@@ -83,6 +83,14 @@ class RunProgress:
             return tuple(ExperimentProgress(item.experiment_id, dict(item.stages))
                         for item in self._experiments.values())
 
+    def replace_snapshot(self, experiments: Iterable[ExperimentProgress]) -> None:
+        """
+        Replace the GUI's progress view with a snapshot from its pipeline process.
+        """
+        with self._lock:
+            self._experiments = {item.experiment_id: ExperimentProgress(item.experiment_id, dict(item.stages))
+                                 for item in experiments}
+
     def skip_unfinished(self) -> None:
         """
         Mark every pending or active stage skipped when a run stops.

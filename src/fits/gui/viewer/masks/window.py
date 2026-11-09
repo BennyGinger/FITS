@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import QApplication, QColorDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTabWidget, QWidget
 from fits.workflows.artifacts.paths import image_for, first_image
 from fits.environment.constant import IMAGE_NAMES, FITS_ARRAY_NAME, FITS_REFERENCE_TEMPLATE, FITS_ROI_TEMPLATE
+from fits.gui.theme import STEP_TAB_BAR_STYLE
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.common.information_dialog import MASK_HELP
 from fits.gui.viewer.masks.reference_panel import ReferenceMaskPanel
@@ -67,7 +68,19 @@ class MaskDrawingWindow(ImageToolWindow):
         self.roi_panel = RoiMaskPanel()
         self.reference_panel.overlay_widget.hide()
         self.roi_panel.overlay_widget.hide()
+        roi_controls = self.roi_panel.controls_scroll.widget()
+        assert roi_controls is not None
+        roi_width = (roi_controls.minimumSizeHint().width()
+                     + self.roi_panel.controls_scroll.verticalScrollBar().sizeHint().width()
+                     + 2 * self.roi_panel.controls_scroll.frameWidth())
+        self.roi_panel.controls_scroll.setMinimumWidth(roi_width)
         self.tool_tabs = QTabWidget()
+        self.tool_tabs.setObjectName("stepSettingsTabs")
+        self.tool_tabs.setStyleSheet(
+            "QTabWidget::pane { border: 1px solid #626262; } "
+            "QTabBar::tab { padding: 7px 15px; } "
+            "QTabBar::tab:selected { background: #526170; font-weight: bold; }")
+        self.tool_tabs.tabBar().setStyleSheet(STEP_TAB_BAR_STYLE)
         self.tool_tabs.addTab(self.reference_panel, "Reference")
         self.tool_tabs.addTab(self.roi_panel, "ROI")
         self.tool_panel = self.tool_tabs
@@ -275,9 +288,9 @@ class MaskDrawingWindow(ImageToolWindow):
             if threshold_range is not None:
                 self.roi_panel.set_threshold_range(*threshold_range)
 
-    def _clear_tools(self) -> None:
+    def _stop_mask_preview(self) -> None:
         """
-        Clear tools.
+        Stop propagation preparation before replacing or releasing a mask draft.
         """
         if self._preview_thread is not None:
             self._preview_thread.requestInterruption()
@@ -290,6 +303,12 @@ class MaskDrawingWindow(ImageToolWindow):
         self.preview_status.hide()
         self.progress.hide()
         self._preview_failed_key = None
+
+    def _clear_tools(self) -> None:
+        """
+        Release mask sessions and reset their controls.
+        """
+        self._stop_mask_preview()
         self._threshold_image_key = None
         if self._reference_session is not None:
             self._reference_session.close()
@@ -685,12 +704,25 @@ class MaskDrawingWindow(ImageToolWindow):
         finally:
             viewer.set_preview_loading(False, animate=False)
 
+    def _require_mask_label(self, panel: ReferenceMaskPanel) -> bool:
+        """
+        Show the required-label feedback before attempting to save a file.
+        """
+        if panel.require_label():
+            self.status_label.setStyleSheet("")
+            return True
+        self.status_label.setStyleSheet("color: #ef6666;")
+        self.status_label.setText("A label name is compulsory. Enter a label before saving the mask.")
+        return False
+
     @Slot()
     def _save_reference_mask(self) -> None:
         """
         Save reference mask.
         """
         if self._reference_session is None:
+            return
+        if not self._require_mask_label(self.reference_panel):
             return
         label = self.reference_panel.reference_label
         channel = self.channel_combo.currentText()
@@ -894,6 +926,8 @@ class MaskDrawingWindow(ImageToolWindow):
         Save roi mask.
         """
         if self._roi_session is None:
+            return
+        if not self._require_mask_label(self.roi_panel):
             return
         label = self.roi_panel.roi_label
         channel = self.channel_combo.currentText()

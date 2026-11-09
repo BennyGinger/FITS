@@ -60,8 +60,8 @@ previous result as out of date until previewed again.
 
 Segmentation retains a selectable channel-settings list. **Add channel**, beside
 its heading, creates an entry for the next unused image channel. Each row's bin
-removes that entry from both the tuner and main GUI without applying unrelated
-pending edits; the last entry cannot be removed. **Save current settings** saves
+removes that entry from the tuner's private draft; the last entry cannot be removed.
+The main GUI changes only when **Save current settings** is pressed. It applies
 all segmentation channel entries and keeps the window open. Compartment's
 **Mask channels** list selects the mask geometry without add/remove controls.
 The image-channel selector independently changes the fluorescence background:
@@ -72,8 +72,9 @@ tab copies only its options into Quantification.
 Each tab remembers its display colour: **Palette**, a preset solid colour, or
 **Custom…**. Opacity and visibility remain adjustable. Colours affect display
 only, without changing labels or processing settings. Closing warns about
-unsaved processing settings in either tab. Already saved settings and immediate
-channel deletions remain applied. In the main GUI, use Save settings or Run
+unsaved processing settings in either tab, including channel additions and deletions.
+Closing without saving discards pending changes; previously applied settings remain
+in the main GUI draft. Use Save settings or Run
 pipeline to persist the updated settings. Standalone saves update the run's
 normal settings file; `fits-segtune [image-or-folder] --tab compartment` selects
 the Compartment tab directly.

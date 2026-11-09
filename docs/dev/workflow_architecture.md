@@ -85,6 +85,9 @@ set of module aliases at the workflow root.
 
 - `fits.gui.file_management.manager`: the GUI/CLI Manage files entry point, with
   Experiment files and Manage backups sections.
+- `fits.gui.file_management.guidance`: shared plain-language summary, next actions
+  and expandable affected-file details. The main status tooltip and the GUI/CLI
+  manager use the same explanations; there is no separate Details dialog.
 - `fits.gui.file_management.compaction`: conflict review and exact compaction preview.
 - `fits.gui.file_management.tasks`: shared responsive execution of reviewed file writes.
 - `fits.gui.file_preview`: reusable document-icon rendering, per-file change lists
@@ -103,6 +106,16 @@ set of module aliases at the workflow root.
 Main-window completion waits for worker shutdown before opening management. The
 interactive CLI uses a local Qt event loop, allowing nested maintenance without
 quitting the main application or showing duplicate completion dialogs.
+
+The main GUI's `PipelineWorker` supervises a spawned pipeline process from its
+Qt worker thread. `pipeline_process.py` exchanges existing mask/tracking requests,
+artifact decisions, logs and progress snapshots over a local pipe. No pixel
+arrays are transported. Stop run requests cancellation, then terminates the
+isolated process tree if processing does not return promptly. The run writer
+lock belongs to that process and is released by the OS on termination. This
+adds no persistent resume state; existing artifact publication/checks remain
+responsible for outputs. Intentional Quit terminates FITS-owned descendants and
+exits with status 0 so the startup supervisor does not offer installation repair.
 
 ## Reference
 

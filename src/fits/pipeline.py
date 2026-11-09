@@ -33,9 +33,7 @@ from fits.workflows.definitions.inputs import IMAGE_OUTPUTS
 from fits.workflows.runtime.interactive import interactive_inputs_requested, run_interactive_workflow, run_conversion_only
 from fits.workflows.artifacts.branch_masks import refresh_branches
 from fits.workflows.experiments.exclusion import active_raw_files
-from fits.environment.constant import MASTER_TABLES
-from fits.tasks.analysis.aggregate import save_master_analysis_table
-from fits.workflows.checks.analysis import include_master_analysis
+from fits.workflows.checks.analysis import master_analysis_steps
 from fits.workflows.file_management.snapshots import preserve_replaced_results
 
 
@@ -126,11 +124,6 @@ def start_pipeline(settings_path: Path | None = None,
         supported_files = sorted(origins)
     require_workflow_steps(scoped_cfg)
     report = inspect_run(run_dir, scoped_cfg, check_analysis=not convert_only)
-    if report.outdated_masters and maintenance is None:
-        # Reuse valid measurements, but let the ordinary checker rebuild stale
-        # per-series analysis even when its step was disabled for this launch.
-        scoped_cfg = include_master_analysis(scoped_cfg, report.outdated_masters, report.records)
-        report = inspect_run(run_dir, scoped_cfg)
     if maintenance is not None:
         report = replace(report,
                          states=tuple(state for state in report.states if state.workdir in maintenance.scope),
@@ -148,6 +141,7 @@ def start_pipeline(settings_path: Path | None = None,
                          )
     effective_cfg = scoped_cfg
     retain_legacy = False
+    decision: str | None = None
     if maintenance is not None:
         pass
     elif report.needs_decision:
@@ -316,11 +310,13 @@ def start_pipeline(settings_path: Path | None = None,
     if upgrading or maintenance is not None or report.outdated_masters:
         aggregate_states = discover_saved_states(run_dir)
     try:
-        aggregate_quantification(effective_cfg, aggregate_states, run_dir)
-        aggregate_distance_profiles(effective_cfg, aggregate_states, run_dir)
-        for (kind, name), step in zip(MASTER_TABLES, ('extract', 'distance_profile')):
-            if run_dir / name in report.outdated_masters and not effective_cfg.get(step, {}).get('enabled'):
-                save_master_analysis_table(aggregate_states, run_dir, artifact_kind=kind, output_name=name)
+        aggregate_cfg = deepcopy(effective_cfg)
+        if decision in ('continue', 'selected'):
+            for step in master_analysis_steps(tuple(path for path in report.outdated_masters if path.is_file())):
+                if step not in report.overwritten:
+                    aggregate_cfg.setdefault(step, {})['enabled'] = False
+        aggregate_quantification(aggregate_cfg, aggregate_states, run_dir)
+        aggregate_distance_profiles(aggregate_cfg, aggregate_states, run_dir)
     finally:
         save_progress_report()
 

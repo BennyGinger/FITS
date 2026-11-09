@@ -145,6 +145,19 @@ stage completion as **Pipeline steps**. The elapsed clock has no time-remaining
 estimate and freezes when work finishes; the blue activity indicator runs while
 the pipeline is active.
 
+## Stop run and Quit
+
+**Stop run** interrupts the active pipeline and keeps the main GUI open. It is
+disabled when no run is active. A confirmation explains that restarting may
+require enabling **Overwrite** for affected steps. The GUI remains available
+for adjusting settings and starting another run.
+
+**Quit** closes FITS normally when idle. During a run, Quit and the window's
+**X** ask before terminating processing and closing the application. **No** is
+green and selected by default; **Yes** is red. Unsaved GUI edits are lost on
+force quit. An intentional quit does not trigger installation repair or a
+second relaunch dialog. Real installation/update problems still use startup repair.
+
 ## Launching individual image tools
 
 Launch the main settings interface with `uv run fits-gui`, or open the image

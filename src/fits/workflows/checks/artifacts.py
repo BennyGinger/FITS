@@ -14,7 +14,7 @@ from fits.workflows.artifacts.provenance import compatible, read_metadata
 from fits.workflows.checks.decisions import apply_decision
 from fits.workflows.checks.models import ArtifactRecord, PreflightReport
 from fits.workflows.checks.settings import settings_problem
-from fits.workflows.checks.analysis import include_master_analysis, masters_with_outdated_inputs, outdated_master_tables
+from fits.workflows.checks.analysis import masters_with_outdated_inputs, outdated_master_tables
 from fits.workflows.checks.planning import downstream_steps, overwrite_steps, rebuild_sources
 from fits.workflows.definitions.inputs import configured_profile, resolve_inputs
 from fits.workflows.definitions.registry import REGISTRY
@@ -46,9 +46,6 @@ def inspect_run(root: Path, config: Mapping[str, Any], *, for_execution: bool = 
     records = _propagate_conflicts(records, states_by_directory, config, for_execution=for_execution)
     if check_analysis:
         outdated = tuple(dict.fromkeys((*outdated, *masters_with_outdated_inputs(root, records))))
-    if outdated:
-        config = include_master_analysis(config, outdated, records)
-        records = _propagate_conflicts(records, states_by_directory, config, for_execution=for_execution)
     report = _build_report(records, states, config, for_execution=for_execution)
     return replace(report, outdated_masters=outdated)
 

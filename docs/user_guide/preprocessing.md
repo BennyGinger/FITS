@@ -112,9 +112,17 @@ directly on the source image; the Channel tab does not run time registration fir
 
 ### Save and reuse accepted settings
 
-**Save current settings** works with or without a preview. It updates the
-general settings in the main GUI and saves the accepted experiment's settings,
-crop and any matching fitted matrices in the acquisition's `.fits_experiment/tuning/<series>/registration/time.npz` or `channel.npz`.
+Each tuner opened from the main GUI edits a private copy of its settings.
+**Save current settings** merges the active tab's values into the main GUI draft;
+other pending tuner edits stay private. Closing without saving discards those
+pending edits, including segmentation channel additions or deletions. Previously
+applied changes remain in the main draft. **Save settings** and **Run pipeline**
+in the main GUI write that draft to disk; processing starts only after saving succeeds.
+
+**Save current settings** works with or without a preview. When opened from the
+main GUI, it updates the GUI's editable settings without writing its TOML file.
+It also caches the experiment's fitting crop, settings signature and any matching
+fitted matrices in the acquisition's `.fits_experiment/tuning/<series>/registration/time.npz` or `channel.npz`.
 Accepting changed manual algorithm/method overrides opens **Advanced settings**
 in the main panel. Unchanged saves and named preset selections leave it
 collapsed. All tuners preserve advanced sections the user already opened.
@@ -130,13 +138,14 @@ without matrices, replacing any older accepted transforms. The pipeline fits
 those settings later. Saving never applies the whole stack. Preview caches are released when
 the experiment changes or the viewer closes; the source image is not modified.
 
-Both pipeline registration tasks check accepted models before fitting. Tuned
-experiments keep their accepted settings when general settings change. Matching
+Both pipeline registration tasks use the settings saved by the main GUI or CLI
+configuration. Cached tuning never overrides later changes to those settings.
+They check accepted models before fitting. Matching settings,
 fitting pixels, channel labels, and image dimensions allow matrix reuse; changed
-input triggers fresh fitting with the accepted settings. This also checks that
+input triggers fresh fitting with the configured settings. This also checks that
 channel transforms tuned after time registration match the actual pipeline
 input. Reuse avoids fitting, while resampling and saving images still run.
-Delete the relevant tuning file to return an experiment to general settings.
+Delete the relevant tuning file to remove its saved fitting crop and transforms.
 
 ### Open RegTune independently
 

@@ -20,6 +20,15 @@ if TYPE_CHECKING:
 MEMBERSHIP_KEY = b'fits_active_experiments'
 
 
+def master_analysis_steps(paths: Sequence[Path]) -> tuple[StepName, ...]:
+    """
+    Map combined analysis artifacts to their normal workflow producer steps.
+    """
+    names = {path.name for path in paths}
+    return tuple(step for (_, name), step in zip(MASTER_TABLES, (StepName.EXTRACT, StepName.DISTANCE_PROFILE))
+                 if name in names)
+
+
 def masters_with_outdated_inputs(root: Path, records: Sequence[ArtifactRecord]) -> tuple[Path, ...]:
     """
     Propagate per-series analysis conflicts to their existing combined tables.

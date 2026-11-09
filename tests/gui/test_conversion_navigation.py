@@ -71,14 +71,14 @@ def test_expected_channels_uses_all_raw_files(window: FitsMainWindow, tmp_path: 
     assert hint.isHidden() == (channels == 1)
     assert hint.font().italic()
     assert not window._raw_input_error()
-    assert window.file_frames_label.text() == "Frames: 1"
+    assert window.file_frames_label.text() == "<u>Frames:</u> 1"
     assert window.run_button.isEnabled()
     assert bool(window._channel_label_warning()) == (channels != 1)
     for path in tmp_path.glob("*.tif*"):
         path.unlink()
     window._refresh_run_inventory()
     assert hint.isHidden()
-    assert window.file_frames_label.text() == "Frames: —"
+    assert window.file_frames_label.text() == "<u>Frames:</u> —"
 
 
 def test_incompatible_steps_warn_on_activation_and_block_launch(window: FitsMainWindow,
@@ -119,7 +119,7 @@ def test_frame_summary_and_single_channel_registration_guard(window: FitsMainWin
     window.adapter.set_runtime_value("unlock_all_tabs", True)
     window._refresh_run_inventory()
     window._refresh_phase_access()
-    assert window.file_frames_label.text() == "Frames: ≥ 3"
+    assert window.file_frames_label.text() == "<u>Frames:</u> ≥ 3"
     toggle = window._editors[StepName.REGISTER_CHANNEL].enable_group
     assert not toggle.isEnabled()
     assert "at least 2 image channels" in toggle.toolTip()
@@ -226,7 +226,7 @@ def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
     assert not window.run_button.isEnabled()
     assert "Cannot convert" in window.run_button.toolTip()
     assert "input_1.tif: 1 channel" in window.file_status_label.toolTip()
-    assert "input_2.tif: 2 channels" in window._file_details_text()
+    assert "input_2.tif: 2 channels" in window._file_guidance().details
     assert "#e57373" in window.file_status_label.styleSheet()
     assert not window._channel_label_warning()
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: pytest.fail("Unexpected validation popup"))
@@ -262,7 +262,7 @@ def test_label_count_warning_is_orange_nonblocking_and_clears_after_edit(window:
     assert not window._raw_input_error()
     assert window.run_button.isEnabled()
     assert "#efb366" in editor.expected_channels_label.styleSheet()
-    assert message in window._file_details_text()
+    assert message in window._file_guidance().details
     assert window.console.toPlainText().count(message) == 1
     assert window.console.textCursor().charFormat().foreground().color().name() == "#efb366"
     window._update_run_button_text()
@@ -305,7 +305,7 @@ def test_destination_conflict_identifies_input_in_red(window: FitsMainWindow, tm
     window._refresh_run_inventory()
     assert not window.run_button.isEnabled()
     assert "Cannot create acquisition folder: sample" in window.run_button.toolTip()
-    assert "sample.tif" in window._file_details_text()
+    assert "sample.tif" in window._file_guidance().details
     assert "#e57373" in window.file_status_label.styleSheet()
 
 

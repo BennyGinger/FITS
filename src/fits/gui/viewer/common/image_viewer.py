@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 from scipy.ndimage import distance_transform_edt
 from skimage.draw import line as raster_line, polygon as raster_polygon
+from fits.gui.viewer.common.pixel_readout import PixelReadout
 
 from fits_io.metadata.imageJ_meta import COLOR_MAP, label_display_color
 
@@ -173,6 +174,7 @@ class FitsImageViewer(QWidget):
         self.view_box.setAspectLocked(True)
         self.view_box.invertY(True)
         self.image_item = pg.ImageItem(axisOrder="row-major")
+        self.pixel_readout = PixelReadout(self.image_item, self.canvas)
         self.mask_item = pg.ImageItem(axisOrder="row-major")
         self.drawing_item = MaskDrawingItem()
         self.view_box.addItem(self.image_item)
@@ -434,6 +436,7 @@ class FitsImageViewer(QWidget):
         self._has_image = True
         if fit_new_source:
             self.reset_view()
+        self.pixel_readout.set_planes((("", np.asarray(image)),))
 
     def reset_view(self) -> None:
         """Fit and center the current image without changing display levels."""

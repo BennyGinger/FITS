@@ -12,7 +12,7 @@ See the separate feature lists for the
 
 ## Draw masks during analysis
 
-Enable the drawing options for the relevant analysis. Distance profiling requires a reference; quantification can use references for distance measurements. The pipeline opens its drawing window when prepared images are ready and supplies further experiments as processing progresses. Draw and save the required channels, then finalize the mask type or session. Saved masks can be reused on later runs. Missing references omit distance profiling for that experiment; choosing no ROI permits whole-image profiling after confirmation.
+Enable the drawing options for the relevant analysis. Distance profiling requires a reference; quantification can use references for distance measurements. The pipeline opens its drawing window when prepared images are ready and supplies further experiments as processing progresses. Draw and save the requested masks, then use **Next experiment** or **Close window**. Saved masks can be reused on later runs. Missing references omit distance profiling for that experiment; choosing no ROI permits whole-image profiling after confirmation.
 
 ## Drawing and navigation
 
@@ -40,19 +40,32 @@ uv run fits-drawmask --tool pipeline
 ```
 
 Click **Load test experiments…** and choose a folder containing prepared
-FITS image artifacts. The panel starts in Reference mode. **Go to ROI** /
-**Go to ref** switches between Reference and ROI; unsaved changes require confirmation before
-being discarded. New experiments join the waiting list without replacing the
-current drawing. **Complete ref masks** or **Complete ROI masks** finalizes that
-mask type and moves to the other one; completing the second type finishes the
-experiment. **Next experiment** finishes the current experiment after any
-needed warnings, and remains unavailable until the next queued experiment is
-ready. **Complete session** ends collection normally; **Quit pipeline** is a
-separate cancellation action. Buttons explain their actions when hovered.
+FITS image artifacts. The **Reference** and **ROI** tabs each manage their own
+masks. Switching tabs or mask entries keeps unsaved drawings. New experiments
+join the waiting list without replacing the current drawing.
+
+Each tab has a fixed **REF masks** or **ROI masks** panel below its scrollable
+settings. Requested masks initially appear as numbered **Expected mask** slots.
+**Add mask** adds an empty slot and increases the expected count. Starting a
+drawing identifies its channel; entering a label names the mask. A label is
+compulsory: clicking **Save mask** without one highlights the label field and
+shows a red status warning.
+
+Each slot has a bin button. Removing an empty placeholder reduces the expected
+count without confirmation. Deleting a saved mask requires confirmation and
+**permanently deletes its file from disk**, as well as removing the slot.
+Unsaved drawings require confirmation before deletion.
+
+**Next experiment** finishes the current experiment after checking missing
+masks and unsaved work in both tabs. During processing, it remains unavailable
+until the next queued experiment is ready or preparation has finished.
+**Close window** checks both tabs and ends mask collection; the main pipeline
+decides how to continue with the saved masks. This viewer has no pipeline-stop
+action. Use the main GUI's stop control or Ctrl+C in the CLI to stop a run.
 
 The experiment tree shows all received experiments, highlights the current one,
 and lists saved masks underneath each folder. Click a current experiment's mask
-to reload it for editing. Masks from other experiments open for viewing only;
+to open its editing slot. Masks from other experiments open for viewing only;
 **Return to current experiment** restores your ongoing drawing. Newly saved
 masks appear in the tree immediately.
 

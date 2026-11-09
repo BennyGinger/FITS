@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from time import monotonic
@@ -17,18 +18,25 @@ from fits.tasks.reference_mask import ReferenceMaskSession
 _APP = None
 
 
-@pytest.mark.parametrize("action", ["finalize", "cancel"])
-def test_main_gui_runs_profile_after_drawing_finalization(tmp_path, monkeypatch, action):
+@pytest.mark.parametrize("action", ["finalize", "close"])
+def test_main_gui_runs_profile_after_drawing_finalization(tmp_path: Path,
+                                                        monkeypatch: pytest.MonkeyPatch,
+                                                        action: str,
+                                                        ) -> None:
+    """
+    Finalizing or closing mask collection lets the main pipeline continue.
+    """
     global _APP
     _APP = QApplication.instance() or QApplication([])
     monkeypatch.setattr(QDialog, 'exec', lambda self: QDialog.DialogCode.Accepted)
     monkeypatch.setattr('fits.gui.main_window.window.choose_artifacts', lambda report, parent=None, **kwargs: 'continue')
     folder = tmp_path / 'experiment'
     folder.mkdir()
+    (tmp_path / "original.nd2").touch()
     source = folder / 'fits_array_raw.tif'
     tifffile.imwrite(source, np.arange(64, dtype=np.uint16).reshape(8, 8), imagej=True, metadata={'axes': 'YX'})
     save_experiment_state(
-        ExperimentState.init(folder, folder / "original.nd2").with_complete_step(
+        ExperimentState.init(folder, tmp_path / "original.nd2").with_complete_step(
             step_name=StepName.CONVERT,
             artifact_kind="image_raw",
             artifact_path=source,
@@ -66,10 +74,9 @@ def test_main_gui_runs_profile_after_drawing_finalization(tmp_path, monkeypatch,
                     collection.close()
         assert window._thread is None, 'Pipeline did not finish'
         assert not errors, errors
-        assert saw_window
-        assert (folder / 'fits_distance_profile.parquet').is_file() == (action == 'finalize')
-        if action == 'cancel':
-            assert 'cancelled' in window.console.toPlainText().lower()
+        assert saw_window, window.console.toPlainText()
+        assert (folder / 'fits_distance_profile.parquet').is_file()
+        assert 'cancelled' not in window.console.toPlainText().lower()
         assert window._mask_collection is None
     finally:
         if window._worker is not None:

@@ -128,11 +128,14 @@ class PreflightReport:
         Summarize preserved bypassed results that are stale or affected by an overwrite.
         """
         from fits.workflows.checks.planning import overwrite_dependents
+        from fits.workflows.checks.analysis import master_analysis_steps
 
         affected = (*self.conflicts, *overwrite_dependents(self.records, self.overwritten))
-        steps = sorted({record.step for record in affected if record.step in self.disabled_steps and record.step is not None})
+        steps = {record.step for record in affected if record.step in self.disabled_steps and record.step is not None}
+        steps.update(step for step in master_analysis_steps(tuple(path for path in self.outdated_masters if path.is_file()))
+                     if step in self.disabled_steps)
         return tuple(f"Bypassed step '{step}': existing results are preserved and may be outdated. "
-                     "They will be checked before reuse when this step is included again." for step in steps)
+                     "They will be checked before reuse when this step is included again." for step in sorted(steps))
 
     @property
     def needs_decision(self) -> bool:
@@ -140,8 +143,12 @@ class PreflightReport:
         Return whether conflicts or overwrites affecting saved downstream files need review.
         """
         from fits.workflows.checks.planning import overwrite_affects_existing
+        from fits.workflows.checks.analysis import master_analysis_steps
 
-        return bool(self.outdated_masters or self.blocking_conflicts
+        existing_masters = tuple(path for path in self.outdated_masters if path.is_file())
+        included_masters = any(step not in self.disabled_steps and step not in self.overwritten
+                               for step in master_analysis_steps(existing_masters))
+        return bool(included_masters or self.blocking_conflicts
                     or overwrite_affects_existing(self.records, self.overwritten, self.disabled_steps))
 
     @property
@@ -149,7 +156,11 @@ class PreflightReport:
         """
         Identify master rebuilds that can reuse valid individual measurements.
         """
-        return bool(self.outdated_masters and not self.blocking_conflicts)
+        from fits.workflows.checks.analysis import master_analysis_steps
+
+        producers = master_analysis_steps(self.outdated_masters)
+        stale_measurements = any(record.problem and record.step in producers for record in self.records)
+        return bool(self.outdated_masters and not self.blocking_conflicts and not stale_measurements)
 
     def describe(self) -> str:
         """
@@ -157,7 +168,7 @@ class PreflightReport:
         """
         lines: list[str] = []
         if self.outdated_masters:
-            lines.append('Combined analysis no longer matches the active experiments or their results. Rebuild:')
+            lines.append('Combined analysis no longer matches the active experiments or their results:')
             lines.extend(f'  {path}' for path in self.outdated_masters)
         for record in self.records:
             if record.problem:

@@ -324,12 +324,16 @@ The collection window adds workflow controls around the REF and ROI tools:
 
 - Inspect queued experiments and saved masks in the experiment tree; open a
   saved mask, then **Return to current experiment** to resume the active drawing.
-- Increase/decrease the expected REF/ROI mask counts using **+ / −**.
-- Switch drawing modes using **Go to ROI / Go to ref**.
-- **Complete ref masks / Complete ROI masks**, advance with **Next experiment**,
-  or finish drawing with **Complete session**. Warnings explain unsaved or
-  missing masks.
-- **Quit pipeline** is a separate cancellation action.
+- Switch between **Reference** and **ROI** tabs without discarding drawings.
+- Manage each tab's masks below its scrollable settings. **Add mask** creates
+  an expected slot; its bin removes the slot and reduces the expected count.
+  Empty placeholders need no confirmation. Saved-mask deletion confirms before
+  permanently deleting the file from disk.
+- Enter a compulsory label and click the green **Save mask** button.
+- Advance with **Next experiment** or finish collection with **Close window**.
+  Both actions check missing masks and unsaved work in both tabs.
+- Closing the viewer leaves pipeline continuation to the main application.
+  Stop a run from the main GUI or with Ctrl+C in the CLI.
 - The standalone collection preview additionally offers **Load test experiments…**;
   the integrated pipeline supplies experiments automatically.
 

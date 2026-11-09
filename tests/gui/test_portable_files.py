@@ -46,20 +46,21 @@ def current_window(tmp_path):
 
 def test_summary_and_mixed_run_block_all_processing(current_window, tmp_path):
     window, series = current_window
-    assert 'Current' in window.file_status_label.text()
+    assert window.file_status_label.text() == 'Up to date - editable'
     assert 'Red' in window.file_channels_label.text()
-    assert window.file_size_label.text().startswith('Size:')
-    assert 'incompatible' not in window._file_details_text()
+    assert window.file_size_label.text().startswith('<u>Size:</u>')
+    assert 'incompatible' not in window._file_guidance().details
     old = tmp_path / 'old'
     old.mkdir()
     tifffile.imwrite(old / cst.FITS_ARRAY_NAME, np.ones((8, 8), dtype=np.uint16))
     window._refresh_run_inventory()
     window._refresh_phase_access()
-    assert window.file_status_label.text() == 'Upgrade to FITS v4 required - read-only'
+    assert window.file_status_label.text() == 'Run blocked - read-only'
     assert 'read-only' in window.file_status_label.text()
-    details = window._file_details_text()
-    assert 'incompatible' in details and 'Manage files' in details
-    assert 'preserves image pixels' in details and 'results may change' in details
+    guidance = window._file_guidance()
+    assert 'read-only' in guidance.summary
+    assert 'preserve image pixels' in guidance.next_steps and 'change results' in guidance.next_steps
+    assert not hasattr(window, 'file_details_button')
     assert not window.run_button.isEnabled()
     assert not hasattr(window, 'compact_button')
     assert not window.channel_labels_button.isEnabled()
@@ -67,9 +68,9 @@ def test_summary_and_mixed_run_block_all_processing(current_window, tmp_path):
     assert window.tracking_viewer_button.isEnabled()
 
 
-def test_folder_status_and_details_popup(current_window, tmp_path):
+def test_folder_status_and_combined_management_popup(current_window, tmp_path):
     from PySide6.QtCore import Qt, QTimer
-    from PySide6.QtWidgets import QDialog, QPlainTextEdit
+    from PySide6.QtWidgets import QDialog, QLabel, QPlainTextEdit, QToolButton
     from fits.gui.main_window.run_browser import COMPATIBLE_COLOR, OUTDATED_COLOR
     window, series = current_window
     model = window.run_browser.model
@@ -84,16 +85,24 @@ def test_folder_status_and_details_popup(current_window, tmp_path):
     assert model.data(old_index, Qt.ItemDataRole.ForegroundRole).name() == OUTDATED_COLOR
     assert not model.data(old_index, Qt.ItemDataRole.DecorationRole).isNull()
     assert model.data(index, Qt.ItemDataRole.ForegroundRole).name() == COMPATIBLE_COLOR
-    assert OUTDATED_COLOR in window.file_status_label.styleSheet()
+    assert '#e57373' in window.file_status_label.styleSheet()
     def inspect_popup():
         dialog = _APP.activeModalWidget()
         assert isinstance(dialog, QDialog)
-        assert 'read-only' in dialog.findChild(QPlainTextEdit).toPlainText()
-        dialog.reject()
+        try:
+            summary = dialog.findChild(QLabel, 'file_status_summary')
+            assert summary is not None and 'read-only' in summary.text()
+            toggle = dialog.findChild(QToolButton, 'file_details_toggle')
+            assert toggle is not None
+            toggle.click()
+            details = dialog.findChild(QPlainTextEdit, 'file_technical_details')
+            assert details is not None and str(old) in details.toPlainText()
+        finally:
+            dialog.reject()
     QTimer.singleShot(0, inspect_popup)
-    window.file_details_button.click()
+    window.manage_files_button.click()
     assert window.run_browser.select_path(series)
-    assert window.file_size_label.text().startswith('Size:')
+    assert window.file_size_label.text().startswith('<u>Size:</u>')
     assert 'Red' in window.file_channels_label.text()
 
 
@@ -180,7 +189,7 @@ def test_manage_actions_disable_unavailable_work(current_window: tuple[FitsMainW
             for title in ('Restore selected backup…', 'Delete selected backups…'):
                 assert not buttons[title].isEnabled()
             assert 'Migrate to FITS 4…' not in buttons
-            notice = dialog.findChild(QLabel, 'file_action_notice')
+            notice = dialog.findChild(QLabel, 'file_status_summary')
             assert notice is not None
             rebuild = buttons['Rebuild results…']
             assert notice.mapTo(dialog, notice.rect().topRight()).x() < rebuild.mapTo(dialog, rebuild.rect().topLeft()).x()
@@ -214,8 +223,8 @@ def test_loading_stale_results_warns_without_locking_current_format(current_wind
     window._refresh_run_inventory()
     assert not window._run_status.outdated
     assert window._artifact_report.conflicts
-    assert window.file_status_label.text() == 'Outdated downstream results'
-    assert 'Input revision differs' in window._file_details_text()
+    assert window.file_status_label.text() == 'Results outdated - editable'
+    assert 'Input revision differs' in window._file_guidance().details
     assert OUTDATED_COLOR in window.file_status_label.styleSheet()
     model = window.run_browser.model
     assert model.data(model.index(str(series)), Qt.ItemDataRole.ForegroundRole).name() == OUTDATED_COLOR
@@ -405,8 +414,8 @@ def test_empty_run_disables_file_actions(current_window: tuple[FitsMainWindow, P
         try:
             buttons = dialog.findChildren(QPushButton)
             assert all(not button.isEnabled() for button in buttons if button.text() != 'Close')
-            notice = dialog.findChild(QLabel, 'file_action_notice')
-            assert notice is not None and 'Convert your inputs' in notice.text()
+            notice = dialog.findChild(QLabel, 'file_next_steps')
+            assert notice is not None and 'Converting the original images' in notice.text()
         finally:
             dialog.reject()
 
@@ -482,9 +491,9 @@ def test_moved_master_tags_warn_and_enable_only_location_update(current_window: 
     window._refresh_run_inventory()
     assert not window._run_status.outdated
     assert not window._artifact_report.conflicts
-    assert window.file_status_label.text() == 'Paths or condition tags need updating'
+    assert window.file_status_label.text() == 'Paths/tags outdated - editable'
     assert OUTDATED_COLOR in window.file_status_label.styleSheet()
-    assert 'Update paths and condition tags' in window._file_details_text()
+    assert 'Update paths and condition tags' in window._file_guidance().next_steps
     index = window.run_browser.model.index(str(moved / series.name))
     assert window.run_browser.model.data(index, Qt.ItemDataRole.ForegroundRole).name() == OUTDATED_COLOR
     monkeypatch.setattr('fits.gui.file_management.manager.confirm_files', lambda *args, **kwargs: True)
@@ -510,7 +519,7 @@ def test_moved_master_tags_warn_and_enable_only_location_update(current_window: 
     assert manage_files(tmp_path, parent=window)
     window._refresh_run_inventory()
     assert not window._location_report.needs_update
-    assert window.file_status_label.text() == 'Current — editable'
+    assert window.file_status_label.text() == 'Up to date - editable'
     assert (moved / series.name / table.name).read_bytes() == before
 
 

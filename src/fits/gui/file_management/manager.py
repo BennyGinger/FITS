@@ -5,8 +5,8 @@ from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any
 from pathlib import Path
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
 from fits.gui.dialogs import size_resizable_dialog
 from fits.workflows.file_management.relocation import PortablePlan
 from fits.workflows.file_management.rebuild import ProcessingPlan, geometry_reviews, accept_reviewed_geometry, full_rebuild_folders, rebuild_analysis_tables
@@ -28,6 +28,7 @@ from fits.gui.file_preview.portable import portable_changes
 from fits.gui.file_preview.backups import restoration_changes
 from fits.gui.file_preview.review import review_tabs, size_file_review
 from fits.gui.file_preview.migration import MigrationPreviewWidget
+from fits.gui.file_management.guidance import FileGuidanceWidget, file_guidance
 from fits.gui.file_management.reset import confirm_reset
 from fits.workflows.file_management.reset import plan_reset
 
@@ -39,7 +40,19 @@ def _fit_manager_height(dialog: QDialog) -> None:
     layout = dialog.layout()
     assert layout is not None
     layout.invalidate()
-    height = max(layout.minimumSize().height(), layout.totalHeightForWidth(dialog.width()))
+    scroll = dialog.findChild(QScrollArea, 'file_management_content')
+    assert scroll is not None
+    content = scroll.widget()
+    assert content is not None
+    content_layout = content.layout()
+    assert content_layout is not None
+    content_layout.invalidate()
+    margins = layout.contentsMargins()
+    width = dialog.width() - margins.left() - margins.right() - scroll.verticalScrollBar().sizeHint().width()
+    height = max(content_layout.minimumSize().height(), content_layout.totalHeightForWidth(width))
+    close = dialog.findChild(QDialogButtonBox, 'file_management_close')
+    assert close is not None
+    height += close.sizeHint().height() + margins.top() + margins.bottom() + layout.spacing()
     size_resizable_dialog(dialog, dialog.width(), height)
 
 
@@ -420,7 +433,7 @@ def _primary_action(status: RunCompatibility, report: PreflightReport | None) ->
             'Existing results are backed up first. REF/ROI alignment can be reviewed when needed.')
 
 
-def _file_actions_panel(notice: QLabel,
+def _file_actions_panel(guidance: FileGuidanceWidget,
                         primary_action: tuple[str, str, str],
                         choose: Callable[[str], None],
                         unavailable: dict[str, str],
@@ -429,10 +442,8 @@ def _file_actions_panel(notice: QLabel,
     Place run guidance on the left and applicable file actions on the right.
     """
     group = QGroupBox('Experiment files')
-    row = QHBoxLayout(group)
-    row.setSpacing(24)
-    notice.setObjectName('file_action_notice')
-    row.addWidget(notice, 1, Qt.AlignmentFlag.AlignTop)
+    layout = QVBoxLayout(group)
+    layout.addWidget(guidance)
     controls = QWidget()
     controls.setMinimumWidth(320)
     buttons = QVBoxLayout(controls)
@@ -451,7 +462,7 @@ def _file_actions_panel(notice: QLabel,
         button.clicked.connect(lambda checked=False, action=action: choose(action))
         buttons.addWidget(button)
     buttons.addStretch()
-    row.addWidget(controls)
+    guidance.add_controls(controls)
     return group
 
 
@@ -460,6 +471,8 @@ def manage_files(root: str | Path,
                  parent: QWidget | None = None,
                  run_processing: Callable[[ProcessingPlan], None] | None = None,
                  reset_run: Callable[[], None] | None = None,
+                 input_problem: str = '',
+                 input_warning: str = '',
                  ) -> bool:
     """
     Present run-wide file actions and execute only an accepted review after closing.
@@ -477,25 +490,29 @@ def manage_files(root: str | Path,
     dialog.setStyleSheet('QPushButton:disabled { color: #8a8a8a; background-color: #383838; border-color: #555555; }')
     layout = QVBoxLayout(dialog)
     layout.setSpacing(12)
+    scroll = QScrollArea()
+    scroll.setObjectName('file_management_content')
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    content = QWidget()
+    content_layout = QVBoxLayout(content)
+    content_layout.setContentsMargins(0, 0, 0, 0)
+    content_layout.setSpacing(12)
+    content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+    scroll.setWidget(content)
+    layout.addWidget(scroll)
     notice = QLabel(dialog)
-    notice.setWordWrap(True)
-    notice.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-    if status.outdated:
-        _set_notice(notice, 'This run needs an upgrade to FITS v4. You can keep viewing its files read-only, or migrate without rerunning processing.')
-    elif report is not None and report.conflicts:
-        _set_notice(notice, 'This run has outdated results because their inputs changed or are missing. Choose Rebuild outdated results to review what needs to run again. Existing files remain viewable.' + ('\n\nSaved paths or master-table tags also need updating.' if locations.needs_update else ''))
-    elif locations.needs_update:
-        _set_notice(notice, 'Saved paths or master-table tags differ from the current run. Choose Update paths and condition tags.\n\n' + locations.describe())
-    elif not status.states:
-        _set_notice(notice, 'No processed experiments were found. Convert your inputs before using these file actions.')
-    else:
-        _set_notice(notice, 'Choose an available action to review its changes before applying them.')
+    guidance = FileGuidanceWidget(file_guidance(status, report, locations, reviews,
+                                               input_problem=input_problem, input_warning=input_warning), notice)
+    guidance.details_toggled.connect(lambda _expanded: QTimer.singleShot(0, dialog, partial(_fit_manager_height, dialog)))
     pending: list[Callable[[], Any] | None] = [None]
 
     def choose(action: str) -> None:
         """
         Review the requested action, keeping explanations inside the manager.
         """
+        _set_notice(notice, '')
         try:
             if action == 'migrate':
                 pending[0] = _migration_action(root, dialog, notice, processing_runner)
@@ -516,9 +533,9 @@ def manage_files(root: str | Path,
         except Exception as error:
             _set_notice(notice, str(error))
 
-    layout.addWidget(_file_actions_panel(notice, _primary_action(status, report), choose, unavailable))
+    content_layout.addWidget(_file_actions_panel(guidance, _primary_action(status, report), choose, unavailable))
     group, history, backup_notice = _history_panel(entries, root, choose)
-    layout.addWidget(group)
+    content_layout.addWidget(group)
     if reset_run is not None:
         reset_group = QGroupBox('Reset to raw inputs')
         reset_group.setObjectName('reset_to_raw')
@@ -530,8 +547,9 @@ def manage_files(root: str | Path,
                                'All FITS results and backup history are removed. Confirmation is required.')
         reset_button.clicked.connect(lambda: choose('reset'))
         reset_layout.addWidget(reset_button)
-        layout.addWidget(reset_group)
+        content_layout.addWidget(reset_group)
     close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+    close.setObjectName('file_management_close')
     close.rejected.connect(dialog.reject)
     layout.addWidget(close)
     for button in dialog.findChildren(QPushButton):

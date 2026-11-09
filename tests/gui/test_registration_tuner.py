@@ -8,7 +8,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtCore import QEvent, QPoint, QPointF, QTimer, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QWidget
-from typing import cast
+from typing import Any, cast
 
 from fits.gui.viewer.registration import RegistrationTunerWindow
 from fits.settings.loader import load_settings, run_settings_path
@@ -225,23 +225,34 @@ def test_registration_tabs_share_settings_and_resolved_panel_geometry(window, wi
     assert geometries[0] == geometries[1]
 
 
-def test_display_channel_selects_time_fitting_channel_and_invalidates_preview(window):
-    """Update the active fitting/reference channel after explicit display selection."""
+def test_display_browsing_preserves_fitting_channel_and_preview(window: RegistrationTunerWindow) -> None:
+    """
+    Browse with C without changing fitting settings; fitting selection updates display.
+    """
     window.tabs.setCurrentIndex(0)
     window._run_preview()
     wait_for_preview(window)
-    assert window.save_button.isEnabled()
-    window.channel_combo.setCurrentIndex(1)
-    assert window.panels['time'].channel.currentText() == window.channel_combo.currentText()
-    assert window.current_settings().fit_channel == window.channel_combo.currentText()
-    assert window.save_button.isEnabled()
-    window._run_preview()
-    wait_for_preview(window)
-    assert window.save_button.isEnabled(), window.status_label.text()
-    window.tabs.setCurrentIndex(1)
+    session = window._session
+    assert session is not None
+    settings = window.current_settings()
+    preview = session.cached_preview('time', settings, crop=window._crop())
+    assert preview is not None
+    QTest.keyClick(window, Qt.Key.Key_C)
+    assert window.channel_combo.currentIndex() == 1
+    assert window.current_settings() == settings
+    assert session.cached_preview('time', window.current_settings(), crop=window._crop()) is preview
+    window.panels['time'].channel.setCurrentText(window.channel_combo.itemText(1))
     window.channel_combo.setCurrentIndex(0)
+    selected_settings = window.current_settings()
+    assert isinstance(selected_settings, RegisterTimeSettings)
+    assert selected_settings.fit_channel == window.channel_combo.itemText(1)
+    window.panels['time'].channel.setCurrentText(window.channel_combo.itemText(0))
+    assert window.channel_combo.currentIndex() == 0
+    window.panels['time'].channel.setCurrentText(window.channel_combo.itemText(1))
+    assert window.channel_combo.currentIndex() == 1
+    window.tabs.setCurrentIndex(1)
+    window.channel_combo.setCurrentIndex(1)
     assert window.panels['channel'].channel.currentText() == window.channel_combo.itemText(0)
-    assert window.panels['time'].channel.currentText() == window.channel_combo.itemText(1)
     window.tabs.setCurrentIndex(0)
     assert window.channel_combo.currentIndex() == 1
 
@@ -310,17 +321,19 @@ def test_channel_reference_selection_updates_display_in_one_direction(window):
         'Original alignment', 'Registered alignment']
 
 
-def test_channel_alignment_overlays_two_channels_with_stable_reference_and_contrast(window, monkeypatch):
-    """Render an unchanged reference with original/registered versions of the same other channel."""
+def test_channel_alignment_overlays_two_channels_with_stable_reference_and_contrast(window: RegistrationTunerWindow,
+                                                                                  monkeypatch: pytest.MonkeyPatch,
+                                                                                  ) -> None:
+    """
+    Render an unchanged reference with original/registered versions of the same other channel.
+    """
     session = window._session
     assert session is not None
     reference, other = session.channel_labels
     window.frame_slider.setValue(2)
     window.comparison.setCurrentIndex(0)
-    original = window._composite_item.image.copy()
-    window.comparison.setCurrentIndex(1)
-    np.testing.assert_allclose(window._composite_item.image, original)
-    assert 'Showing original alignment' in window.comparison.toolTip()
+    original = np.asarray(window._composite_item.image).copy()
+    assert not window.comparison.model().flags(window.comparison.model().index(1, 0)) & Qt.ItemFlag.ItemIsEnabled
     window._run_preview()
     wait_for_preview(window)
     requested = []
@@ -330,25 +343,27 @@ def test_channel_alignment_overlays_two_channels_with_stable_reference_and_contr
         return real_frame(preview, frame_index, channel, z_index)
     monkeypatch.setattr(session, 'preview_frame', record_frame)
     window._display_selection()
-    registered = window._composite_item.image.copy()
+    registered = np.asarray(window._composite_item.image).copy()
     assert requested == [(2, other, 0)]
     np.testing.assert_allclose(original[..., 0], registered[..., 0])
     np.testing.assert_allclose(original[..., 2], registered[..., 2])
     assert not np.array_equal(original[..., 1], registered[..., 1])
     assert np.count_nonzero(registered[..., 0] != registered[..., 1]) < np.count_nonzero(original[..., 0] != original[..., 1])
     assert reference in window.comparison.toolTip() and other in window.comparison.toolTip()
-    assert not window.lut_controls.isEnabled()
+    assert not window.image_viewer.histogram.isEnabled()
+    assert window.image_viewer.pixel_readout.isEnabled()
     assert not window.grayscale_lut_button.isEnabled()
     window.comparison.setCurrentIndex(0)
-    np.testing.assert_allclose(window._composite_item.image, original)
+    np.testing.assert_allclose(np.asarray(window._composite_item.image), original)
     window.comparison.setCurrentIndex(1)
     monkeypatch.setattr(session, 'preview_frame', lambda *args: real_frame(*args) * 0.5)
     window._display_selection()
-    np.testing.assert_allclose(window._composite_item.image[..., 1], registered[..., 1] * 0.5)
-    np.testing.assert_allclose(window._composite_item.image[..., 0], registered[..., 0])
+    np.testing.assert_allclose(np.asarray(window._composite_item.image)[..., 1], registered[..., 1] * 0.5)
+    np.testing.assert_allclose(np.asarray(window._composite_item.image)[..., 0], registered[..., 0])
     window.panels['channel'].reference_frame.setValue(2)
-    np.testing.assert_allclose(window._composite_item.image, original)
-    assert 'Showing original alignment' in window.comparison.toolTip()
+    np.testing.assert_allclose(np.asarray(window._composite_item.image), original)
+    assert window.comparison.currentIndex() == 0
+    assert not window.comparison.model().flags(window.comparison.model().index(1, 0)) & Qt.ItemFlag.ItemIsEnabled
 
 
 @pytest.mark.parametrize('reference_index', [None, 1])
@@ -413,6 +428,77 @@ def test_channel_alignment_cycles_included_comparisons_and_handles_no_pair(windo
         np.testing.assert_array_equal(tuner.image_viewer.image_item.image, pixels[0, 0])
     finally:
         tuner.close()
+
+
+@pytest.mark.parametrize('mode', ['time', 'channel'])
+def test_composite_hover_reads_unblended_planes_without_loading_more_images(window: RegistrationTunerWindow,
+                                                                           monkeypatch: pytest.MonkeyPatch,
+                                                                           mode: str,
+                                                                           ) -> None:
+    """
+    Report each composite source intensity using only the planes already rendered.
+    """
+    window.tabs.setCurrentIndex(0 if mode == 'time' else 1)
+    window.frame_slider.setValue(2)
+    window._run_preview()
+    wait_for_preview(window)
+    window.comparison.setCurrentIndex(2 if mode == 'time' else 1)
+    session = window._session
+    assert session is not None
+    preview = session.cached_preview(window.mode(), window.current_settings(), crop=window._crop())
+    assert preview is not None
+    if mode == 'time':
+        channel = window.channel_combo.currentText()
+        names = (f'Original {channel}', f'Registered {channel}')
+        planes = (session.display_frame(2, channel, 0), session.preview_frame(preview, 2, channel, 0))
+    else:
+        reference, channel = session.channel_labels
+        names = (reference, channel)
+        planes = (session.display_frame(2, reference, 0), session.preview_frame(preview, 2, channel, 0))
+
+    def forbid_loading(*args: object, **kwargs: object) -> None:
+        """
+        Fail if hovering requests another raw or registered image plane.
+        """
+        pytest.fail('Hovering must only sample existing planes')
+
+    monkeypatch.setattr(session, 'display_frame', forbid_loading)
+    monkeypatch.setattr(session, 'preview_frame', forbid_loading)
+    readout = window.image_viewer.pixel_readout
+    monkeypatch.setattr(readout._viewport, 'underMouse', lambda: True)
+    point = window.image_viewer.image_item.mapToScene(cast(Any, QPointF(10.2, 10.2)))
+    readout._mouse_moved((cast(QPointF, point),))
+    assert [tag.toolTip() for tag in readout.tags] == list(names)
+    assert [value.toolTip() for value in readout.values] == [
+        f'{name}: {plane[10, 10].item()}' for name, plane in zip(names, planes)]
+    assert readout.isEnabled()
+
+
+@pytest.mark.parametrize('mode', ['time', 'channel'])
+def test_preview_choices_require_matching_registration(window: RegistrationTunerWindow, mode: str) -> None:
+    """
+    Disable processed choices and V until the current tab has a matching preview.
+    """
+    window.tabs.setCurrentIndex(0 if mode == 'time' else 1)
+    original = 1 if mode == 'time' else 0
+    combo = window.comparison
+    model = combo.model()
+    assert combo.currentIndex() == original
+    for index in range(combo.count()):
+        assert bool(model.flags(model.index(index, 0)) & Qt.ItemFlag.ItemIsEnabled) == (index == original)
+    QTest.keyClick(window, Qt.Key.Key_V)
+    assert combo.currentIndex() == original
+    window._run_preview()
+    wait_for_preview(window)
+    assert all(model.flags(model.index(index, 0)) & Qt.ItemFlag.ItemIsEnabled for index in range(combo.count()))
+    panel = window.panels[window.mode()]
+    if mode == 'time':
+        panel.strategy.setCurrentText('first' if panel.strategy.currentText() != 'first' else 'previous')
+    else:
+        panel.reference_frame.setValue(2)
+    assert combo.currentIndex() == original
+    for index in range(combo.count()):
+        assert bool(model.flags(model.index(index, 0)) & Qt.ItemFlag.ItemIsEnabled) == (index == original)
 
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])

@@ -46,6 +46,14 @@ legacy-format and missing-input conflicts remain subject to review; changed
 settings on a result explicitly selected for overwrite do not themselves
 require a decision when its current inputs are available.
 
+Combined tables follow the same choices as other artifacts, including when
+experiment membership changes. **Selected step only** can leave downstream
+tables unchanged and outdated. **Continue without rebuilding** retains existing
+outdated master tables. Disabled analysis steps are not enabled automatically,
+and their tables are preserved. The checker continues to flag retained stale
+tables; update them later through the included analysis step or Manage files.
+Overwriting the final analysis step can refresh its own master table directly.
+
 ### Include, bypass, and reuse
 
 Every step has an **Include in workflow** checkbox. Checked means the step's
@@ -70,12 +78,25 @@ Tracking included and its Overwrite checkbox unchecked.
 
 ## Run status and read-only results
 
-The browser status panel shows a coloured compatibility summary, followed by
-image channels and the total run-directory size, including retained backups. **Details…**, beside **Manage files…**, opens a scrollable
-explanation with read-only/upgrade guidance and retained-history size. Compatible
+The browser status panel shows a short file condition followed by `- editable`
+or `- read-only`. **Up to date** is green, **Run blocked** is red, and
+**Results outdated** or **Paths/tags outdated** is orange. **Not processed** means
+valid raw inputs are available for conversion. **No run selected**, **Not processed**
+and **Running…** are neutral white. With no run selected there is no access suffix.
+An empty selected directory is blocked because no supported inputs or results exist.
+Missing user names or invalid processing settings are explained separately in the console.
+
+**Results outdated** includes combined analysis. When paths/tags also need updating,
+that status takes priority and its tooltip mentions both. **Up to date** describes
+existing saved results; it does not mean every requested processing step has completed.
+During processing the panel stays **Running… - read-only**, and its cached file checks
+are refreshed when the worker finishes. Main settings remain editable for the next run.
+
+Below the status are image channels, frame counts and the total run-directory size, including retained backups.
+**Manage files…** opens the explanation and the available actions in one window. Compatible
 experiment folders appear green; outdated folders and their parents appear orange
 with warning icons. If any active experiment has older metadata or layout, the run is marked
-**Upgrade to FITS v4 required - read-only**. Viewers and settings remain available.
+**Run blocked - read-only**, with migration details in Manage files. Viewers and settings remain available.
 In read-only runs, **Back** and **Next** let you inspect both Convert and
 processing settings; **Next** never starts conversion in this mode.
 
@@ -102,8 +123,16 @@ Current-file actions check the whole run and use three controls:
 - **Compact experiment…**, slightly separated, removes intermediate files and
   caches while keeping essential files. It creates no persistent backup.
 
-In Manage files, run guidance appears on the left and file-action buttons on the
-right. Actions that do not apply are greyed out; their tooltips explain why.
+In Manage files, the left panel has three sections: **Summary** explains what
+needs attention, **What to do next** describes what the relevant action would do,
+and expandable **Details** lists affected files and checker reasons in a
+scrollable report. The file-action buttons sit on the right; actions that do not
+apply are greyed out. Backups remain in their own section below.
+
+If included experiments or their measurements change, the summary explains that
+the master tables are out of date. **Rebuild analysis…** combines the currently
+included experiments using valid individual measurements; it does not rerun
+image processing when those measurements are current.
 
 Current-file actions check the whole run, regardless of the selected series. The manager is also available with `uv run fits manage /path/to/run`.
 

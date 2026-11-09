@@ -113,12 +113,16 @@ def test_invalid_apply_keeps_tuner_open():
     viewer.close()
 
 
-def test_tuner_styles_actions_and_preview_restores_overlay():
+def test_tuner_styles_actions_and_preview_restores_overlay() -> None:
+    """
+    Fit the screen, share action styling, and restore the preview overlay.
+    """
     application()
     viewer = SegmentationTunerWindow()
 
-    assert viewer.width() >= 1500
-    assert viewer.height() >= 950
+    available = viewer.screen().availableGeometry()
+    assert viewer.width() == min(1800, available.width())
+    assert viewer.height() == available.height()
     panel_layout = viewer.settings_panel.layout()
     assert isinstance(panel_layout, QVBoxLayout)
     channel_list_index = panel_layout.indexOf(viewer.channel_settings_list)
@@ -145,6 +149,8 @@ def test_tuner_styles_actions_and_preview_restores_overlay():
     assert "#d97706" in viewer.settings_panel.run_button.styleSheet()
     assert "#4f8f5b" in viewer.add_channel_button.styleSheet()
     assert "#16803b" in viewer.settings_panel.apply_button.styleSheet()
+    assert "#e8a0a0" in viewer.close_button.styleSheet()
+    assert viewer.close_button.text() == "Close window"
     viewer.show_mask.setChecked(False)
     viewer._run_preview()
 

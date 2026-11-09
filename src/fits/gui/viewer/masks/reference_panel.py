@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fits.gui.theme import PREVIEW_BUTTON_STYLE
+from fits.gui.viewer.common.tuner_actions import SAVE_SETTINGS_STYLE
 
 from typing import cast
 
@@ -156,7 +157,13 @@ class ReferenceMaskPanel(QWidget):
             "Show or hide the propagated result without changing the drawn masks.")
         self.live_preview.setStyleSheet(PREVIEW_BUTTON_STYLE)
         self.live_preview.setFixedWidth(self.BUTTON_WIDTH)
-        propagation_layout.addWidget(self.live_preview, alignment=Qt.AlignmentFlag.AlignLeft)
+        assert self.interpolation_title is not None
+        propagation_layout.removeWidget(self.interpolation_title)
+        propagation_header = QHBoxLayout()
+        propagation_header.addWidget(self.interpolation_title)
+        propagation_header.addStretch(1)
+        propagation_header.addWidget(self.live_preview)
+        propagation_layout.insertLayout(0, propagation_header)
         self.controls_layout.addWidget(self.propagation_section)
         self.controls_layout.addStretch(1)
         self.controls_scroll = QScrollArea()
@@ -181,7 +188,7 @@ class ReferenceMaskPanel(QWidget):
         overlay.addWidget(self.mask_opacity, 1)
         layout.addWidget(self.overlay_widget)
 
-        self.saving_section, saving_layout = self._section("Saving")
+        self.saving_section, saving_layout = self._section(None)
         self.saving_layout = saving_layout
         save_row = QHBoxLayout()
         self.save_row = save_row
@@ -193,7 +200,8 @@ class ReferenceMaskPanel(QWidget):
             "Label used to save the mask as fits_ref_{label}.tif")
         save_row.addWidget(self.label_edit)
         self.save_button = QPushButton("Save mask")
-        self.save_button.setEnabled(False)
+        self.save_button.setStyleSheet(SAVE_SETTINGS_STYLE)
+        self.save_button.setToolTip("Save the current mask. A label name is compulsory.")
         self.save_button.clicked.connect(self.save_requested)
         save_row.addWidget(self.save_button, 1)
         saving_layout.addLayout(save_row)
@@ -203,8 +211,7 @@ class ReferenceMaskPanel(QWidget):
         self.replace_mode.toggled.connect(self.drawing_options_changed)
         self.edit_mode.toggled.connect(self.drawing_options_changed)
         self.brush_size.valueChanged.connect(self.drawing_options_changed)
-        self.label_edit.textChanged.connect(
-            lambda text: self.save_button.setEnabled(bool(text.strip())))
+        self.label_edit.textChanged.connect(self._clear_label_error)
         self.interpolate.toggled.connect(self._refresh_interpolation_controls)
         self.interpolate.toggled.connect(self.interpolation_preview_changed)
         self.interpolation_axis.currentIndexChanged.connect(
@@ -213,6 +220,23 @@ class ReferenceMaskPanel(QWidget):
         self.extrapolate_end.toggled.connect(self.interpolation_preview_changed)
         self.live_preview.toggled.connect(self.interpolation_preview_changed)
         self._refresh_interpolation_controls()
+
+    def _clear_label_error(self, text: str) -> None:
+        """
+        Clear required-label feedback once a label has been entered.
+        """
+        if text.strip():
+            self.label_edit.setStyleSheet("")
+
+    def require_label(self) -> bool:
+        """
+        Highlight the label field when a save has no label.
+        """
+        if self.label_edit.text().strip():
+            return True
+        self.label_edit.setStyleSheet("QLineEdit { border: 1px solid #ef6666; }")
+        self.label_edit.setFocus()
+        return False
 
     @staticmethod
     def _section(title: str | None) -> tuple[QFrame, QVBoxLayout]:

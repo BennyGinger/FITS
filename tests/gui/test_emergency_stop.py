@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -11,28 +12,48 @@ import time
 
 import psutil
 import pytest
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from fits.gui.main_window.window import FitsMainWindow
 from fits.gui.settings import SettingsAdapter
+from fits.gui.main_window.pipeline_worker import PipelineWorker
+from fits.gui.main_window.stop_dialog import QUIT_STYLE
+from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, SAVE_SETTINGS_STYLE
 
 
 @pytest.mark.parametrize("confirm", [False, True])
-def test_stop_requires_confirmation(monkeypatch: pytest.MonkeyPatch, confirm: bool) -> None:
+@pytest.mark.parametrize('action', ['stop', 'quit', 'close'])
+def test_stop_and_quit_require_confirmation(monkeypatch: pytest.MonkeyPatch,
+                                           tmp_path: Path,
+                                           confirm: bool,
+                                           action: str,
+                                           ) -> None:
     """
-    Keep Stop enabled during execution and terminate only after confirmation.
+    Stop only the run, or quit the application, using coloured icon-free confirmation.
     """
     app = QApplication.instance() or QApplication([])
+    assert isinstance(app, QApplication)
     window = FitsMainWindow(SettingsAdapter())
     stopped: list[bool] = []
+    worker = PipelineWorker(tmp_path / 'settings.toml', logging.NullHandler())
+    window._worker = worker
 
-    def confirm_stop(*args: object) -> QMessageBox.StandardButton:
+    def choose() -> None:
         """
-        Verify the safe default and return the requested answer.
+        Inspect the actual confirmation and click its explicit safe or destructive choice.
         """
-        assert args[1] == "Stop and exit FITS?"
-        assert args[-1] == QMessageBox.StandardButton.No
-        return QMessageBox.StandardButton.Yes if confirm else QMessageBox.StandardButton.No
+        dialog = app.activeModalWidget()
+        assert isinstance(dialog, QMessageBox)
+        assert dialog.windowTitle() == ('Stop run?' if action == 'stop' else 'Quit FITS?')
+        assert 'Overwrite' in dialog.informativeText()
+        no = dialog.button(QMessageBox.StandardButton.No)
+        yes = dialog.button(QMessageBox.StandardButton.Yes)
+        assert dialog.defaultButton() is no
+        assert no.styleSheet() == SAVE_SETTINGS_STYLE
+        assert yes.styleSheet() == QUIT_STYLE
+        assert no.icon().isNull() and yes.icon().isNull()
+        (yes if confirm else no).click()
 
     def record_stop() -> None:
         """
@@ -40,19 +61,44 @@ def test_stop_requires_confirmation(monkeypatch: pytest.MonkeyPatch, confirm: bo
         """
         stopped.append(True)
 
-    monkeypatch.setattr(QMessageBox, "warning", confirm_stop)
     monkeypatch.setattr("fits.gui.main_window.window.terminate_application", record_stop)
     try:
         app.processEvents()
-        assert window.stop_button.isEnabled()
+        window.show()
+        assert not window.stop_button.isEnabled()
+        assert window.quit_button.isEnabled()
+        assert window.stop_button.text() == 'Stop run'
+        assert window.stop_button.styleSheet() == CLOSE_WINDOW_STYLE
+        assert window.quit_button.text() == 'Quit'
         window._set_running(True)
         assert window.stop_button.isEnabled()
         assert not window.run_button.isEnabled()
-        window.stop_button.click()
-        assert stopped == ([True] if confirm else [])
+        QTimer.singleShot(0, choose)
+        if action == 'close':
+            window.close()
+        else:
+            (window.stop_button if action == 'stop' else window.quit_button).click()
+        assert stopped == ([True] if confirm and action != 'stop' else [])
+        assert worker.interaction.cancelled.is_set() == (confirm and action == 'stop')
+        assert window.isVisible()
     finally:
+        window._worker = None
         window._set_running(False)
         window.close()
+
+
+def test_idle_quit_closes_normally(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Quit without a running pipeline behaves like the ordinary window close button.
+    """
+    app = QApplication.instance() or QApplication([])
+    window = FitsMainWindow(SettingsAdapter())
+    window.show()
+    app.processEvents()
+    monkeypatch.setattr('fits.gui.main_window.window.confirm_stop',
+                        lambda *args, **kwargs: pytest.fail('Idle quit must not ask to terminate processing.'))
+    window.quit_button.click()
+    assert not window.isVisible()
 
 
 def test_emergency_stop_kills_descendants_and_busy_threads(tmp_path: Path) -> None:
@@ -93,7 +139,7 @@ def test_emergency_stop_kills_descendants_and_busy_threads(tmp_path: Path) -> No
         descendants = [psutil.Process(pid) for pid in json.loads(ready.read_text())]
         stop.touch()
         application.communicate(timeout=10)
-        assert application.returncode == 1
+        assert application.returncode == 0
         # Orphaned zombies can await reaping by the host; they execute no work.
         assert all(not process.is_running() or process.status() == psutil.STATUS_ZOMBIE
                    for process in descendants)

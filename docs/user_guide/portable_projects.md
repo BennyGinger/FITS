@@ -93,8 +93,9 @@ you copied the weights inside the project.
 3. Open FITS on the destination computer and choose the project folder at its
    **new location**. The opened location takes precedence over an old saved
    `run_dir`.
-4. Read the status and **Details…**. If location information is outdated, open
-   **Manage files → Update paths and condition tags…**, review its changes, and
+4. Open **Manage files…** to read the summary, next steps and affected-file
+   details. If location information is outdated, choose **Update paths and
+   condition tags…**, review its changes, and
    apply them. The action checks the opened run, not only the selected series.
 5. Inspect the refreshed master tables and confirm that the condition columns
    reflect your folder structure. Continue viewing or processing as required.

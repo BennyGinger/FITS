@@ -196,7 +196,6 @@ class StepSettingsEditor(QWidget):
         self.compartment_preview_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         header_layout.addWidget(self.compartment_preview_button)
         parent_layout.addWidget(header)
-        self._field_rows.append(header)
 
         self.compartment_group = QGroupBox()
         self.compartment_group.setFlat(True)

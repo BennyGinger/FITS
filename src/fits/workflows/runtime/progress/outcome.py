@@ -42,7 +42,7 @@ def summarize_run(progress: RunProgress, root: Path, *, error: str = '', cancell
     """
     stages = [stage for experiment in progress.snapshot() for stage in experiment.stages.values()]
     if cancelled:
-        outcome, message = RunOutcome.CANCELLED, 'Pipeline run cancelled. Completed work has been kept.'
+        outcome, message = RunOutcome.CANCELLED, 'Pipeline run stopped. Restarting may require Overwrite for affected steps.'
     elif error or any(stage.status == StageStatus.FAILED or stage.error for stage in stages):
         outcome, message = RunOutcome.FAILED, 'Pipeline run finished with failures. Completed work has been kept.'
     elif any(stage.status in (StageStatus.PENDING, StageStatus.ACTIVE) for stage in stages):

@@ -242,7 +242,11 @@ def rebuild_analysis_tables(root: Path) -> None:
     with run_write_guard(root):
         states = discover_saved_states(root)
         paths = outdated_master_tables(root, states)
-        report = inspect_run(root, run_config(root), for_execution=False)
+        config = run_config(root)
+        report = inspect_run(root, config, for_execution=False)
+        # This action explicitly requests combined analysis, including its prerequisites.
+        config = include_master_analysis(config, report.outdated_masters, report.records)
+        report = inspect_run(root, config, for_execution=False)
         if report.blocking_conflicts:
             raise ValueError('Rebuild the outdated experiment results before combined analysis.\n' + report.describe())
         for kind, name in cst.MASTER_TABLES:

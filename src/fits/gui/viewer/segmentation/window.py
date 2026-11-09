@@ -1,7 +1,7 @@
 from __future__ import annotations
 from copy import deepcopy
 from numpy.typing import NDArray
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from fits.environment import constant as cst
 from typing import Any
@@ -14,6 +14,7 @@ from fits.environment.constant import IMAGE_NAMES, FITS_ARRAY_NAME
 from fits.gui.settings import SettingsAdapter
 from fits.gui.theme import STEP_TAB_BAR_STYLE
 from fits.gui.viewer.common.base_window import ImageToolWindow
+from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, MAIN_GUI_SETTINGS_HINT, configure_tuner_window
 from fits.gui.viewer.common.information_dialog import SEGMENTATION_HELP
 from fits.gui.viewer.segmentation.settings_panel import CellposeSettingsPanel
 from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
@@ -50,15 +51,17 @@ class SegmentationTunerWindow(ImageToolWindow):
                  extract_settings: ExtractSettings | None = None,
                  initial_tab: str = "segmentation",
                  workflow_config: Mapping[str, Any] | None = None,
+                 settings_provider: Callable[[], tuple[SegmentSettings, ExtractSettings]] | None = None,
                  ) -> None:
         """
         Initialize the SegmentationTunerWindow state and dependencies.
         """
-        self._provided_settings = (SegmentSettings.model_validate(segment_settings)
+        self._provided_settings = (SegmentSettings.model_validate(segment_settings).model_copy(deep=True)
                                    if segment_settings is not None else None)
+        self._settings_provider = settings_provider
         self._workflow_config = deepcopy(workflow_config)
         self._extract_provided = extract_settings is not None
-        self._extract_settings = extract_settings or ExtractSettings()
+        self._extract_settings = (extract_settings or ExtractSettings()).model_copy(deep=True)
         self._mask_previews = MaskPreviewStore()
         self._saved_entries: list[SegmentChannelSettings] = []
         self._saved_baseline_set = False
@@ -93,7 +96,9 @@ class SegmentationTunerWindow(ImageToolWindow):
             widget.textChanged.connect(self._settings_edited)
         self.channel_combo.currentIndexChanged.connect(self._settings_edited)
         self.setWindowTitle("FITS Segmentation and Compartment Tuner")
-        self.resize(1500, 950)
+        configure_tuner_window(self, self.status_label)
+        if not self._standalone:
+            self.settings_panel.apply_button.setToolTip(MAIN_GUI_SETTINGS_HINT)
         self._apply_tab_appearance()
         if initial_tab == "compartment":
             self.tool_tabs.setCurrentIndex(1)
@@ -120,12 +125,15 @@ class SegmentationTunerWindow(ImageToolWindow):
         self.channel_settings_list.setMaximumHeight(300)
         self.channel_settings_list.currentRowChanged.connect(self._select_entry)
         header = QHBoxLayout()
+        header.setContentsMargins(8, 12, 8, 4)
         header.addWidget(QLabel("Channel settings"))
+        header.addStretch(1)
         self.channel_settings_header = header
         layout.addLayout(header)
         layout.addWidget(self.channel_settings_list, 1)
         layout.setStretchFactor(self.settings_panel.controls_scroll, 3)
         self.add_channel_button = QPushButton("Add channel")
+        self.add_channel_button.setFixedWidth(120)
         self.add_channel_button.setStyleSheet(
             "QPushButton { background-color: #4f8f5b; color: white; "
             "padding: 6px 12px; border-radius: 4px; } "
@@ -155,8 +163,8 @@ class SegmentationTunerWindow(ImageToolWindow):
         actions_layout = QVBoxLayout(self.preview_actions)
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.addWidget(self.settings_panel.run_button)
-        self.close_button = QPushButton("Close")
-        self.close_button.setStyleSheet("QPushButton { background: #a52a2a; color: white; font-weight: bold; padding: 7px; }")
+        self.close_button = QPushButton("Close window")
+        self.close_button.setStyleSheet(CLOSE_WINDOW_STYLE)
         self.close_button.clicked.connect(self.close)
         self.settings_panel.apply_button.setText("Save current settings")
         self.settings_panel.apply_button.setStyleSheet("QPushButton { background: #16803b; color: white; font-weight: bold; padding: 7px; }")
@@ -520,16 +528,21 @@ class SegmentationTunerWindow(ImageToolWindow):
                 if self._standalone:
                     self._persist_settings(settings)
                 self.compartment_settings_applied.emit(settings)
-                self._extract_settings = settings
-                self.status_label.setText("Compartment settings saved to Quantification.")
+                self._extract_settings = settings.model_copy(deep=True)
+                self.status_label.setText("Compartment settings saved to Quantification." if self._standalone
+                                          else "Applied compartment settings to Quantification in the main GUI.")
             else:
                 settings = self.current_settings()
+                removed = {entry.channel for entry in self._saved_entries} - {entry.channel for entry in settings.channels}
                 if self._standalone:
                     self._persist_settings(settings)
                 self.settings_applied.emit(settings)
-                self._provided_settings = settings
+                self._provided_settings = settings.model_copy(deep=True)
                 self._saved_entries = [entry.model_copy(deep=True) for entry in settings.channels]
-                self.status_label.setText("All segmentation channel settings saved.")
+                for channel in sorted(removed):
+                    self.channel_removed.emit(channel)
+                self.status_label.setText("All segmentation channel settings saved." if self._standalone
+                                          else "Applied all segmentation channel settings to the main GUI.")
         except (ValueError, OSError, RuntimeError) as error:
             self.status_label.setText(f"Cannot save settings: {error}")
 
@@ -678,17 +691,11 @@ class SegmentationTunerWindow(ImageToolWindow):
 
     def _remove_entry(self, index: int) -> None:
         """
-        Remove entry.
+        Remove a channel from the private draft until settings are explicitly applied.
         """
         if self._thread is not None or len(self._entries) <= 1:
             return
-        removed = self._entries.pop(index).channel
-        self._saved_entries = [entry for entry in self._saved_entries if entry.channel != removed]
-        if self._provided_settings is not None:
-            self._provided_settings.channels = [entry for entry in self._provided_settings.channels if entry.channel != removed]
-        self.channel_removed.emit(removed)
-        if self._standalone:
-            self._persist_settings(SegmentSettings(channels=self._saved_entries))
+        self._entries.pop(index)
         if index < self._entry_index:
             self._entry_index -= 1
         self._entry_index = min(self._entry_index, len(self._entries) - 1)
@@ -838,10 +845,14 @@ class SegmentationTunerWindow(ImageToolWindow):
 
     def _has_unsaved_settings(self) -> bool:
         """
-        Compare both processing tabs with their most recently saved values.
+        Compare private tuner edits with the main draft, or the standalone baseline.
         """
         if self._segmentation_session is None:
             return False
+        if self._settings_provider is not None:
+            segment, extract = self._settings_provider()
+            return (self._entries != segment.channels
+                    or self.compartment_panel.settings(extract) != extract)
         return (self._entries != self._saved_entries
                 or self.compartment_panel.settings(self._extract_settings) != self._extract_settings)
 

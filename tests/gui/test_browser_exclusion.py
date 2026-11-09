@@ -175,7 +175,7 @@ def test_main_browser_toggle_and_analysis_rebuild(tmp_path: Path, monkeypatch: p
         assert window._artifact_report.outdated_masters == (master,)
         master_index = window.run_browser.model.index(str(master))
         assert window.run_browser.model.data(master_index, Qt.ItemDataRole.ForegroundRole) == QColor(OUTDATED_COLOR)
-        assert window.file_status_label.text() == 'Combined analysis is outdated'
+        assert window.file_status_label.text() == 'Results outdated - editable'
         assert not window._artifact_report.blocking_conflicts, window._artifact_report.describe()
         assert not window._location_report.needs_update
         action = _rebuild_action(tmp_path, window, QLabel(), unexpected_processing)

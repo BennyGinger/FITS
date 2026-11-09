@@ -64,7 +64,7 @@ file-management checks read directly.
 **A metadata-only maintenance operation can update that structured record
 without regenerating the ImageJ Info text.** The readable summary can therefore
 reflect the earlier write. Use the current FITS status, conflict checks, and
-**Details…** when checking whether results or REF/ROI geometry are up to date.
+**Manage files…** when checking whether results or REF/ROI geometry are up to date.
 
 ### What about measurement tables?
 

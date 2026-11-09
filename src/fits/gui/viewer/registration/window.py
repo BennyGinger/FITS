@@ -20,7 +20,7 @@ from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.common.crop import CropPanel
 from fits.interaction.crop import CropBounds
 from fits.gui.viewer.common.information_dialog import REGISTRATION_HELP
-from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, RUN_PREVIEW_STYLE, SAVE_SETTINGS_STYLE, confirm_discard_tuner_changes
+from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, MAIN_GUI_SETTINGS_HINT, RUN_PREVIEW_STYLE, SAVE_SETTINGS_STYLE, configure_tuner_window, confirm_discard_tuner_changes, set_preview_choices, toggle_preview_choice
 from fits.gui.viewer.registration.settings_panel import RegistrationSettingsPanel
 from fits.gui.viewer.registration.worker import RegistrationPreviewWorker
 from fits.settings.loader import run_settings_path
@@ -54,8 +54,8 @@ class RegistrationTunerWindow(ImageToolWindow):
         """
         self._provided = time_settings is not None or channel_settings is not None
         self._defaults: dict[Mode, RegistrationSettings] = {
-            "time": time_settings or RegisterTimeSettings(),
-            "channel": channel_settings or RegisterChannelSettings()}
+            "time": (time_settings or RegisterTimeSettings()).model_copy(deep=True),
+            "channel": (channel_settings or RegisterChannelSettings()).model_copy(deep=True)}
         self._settings_path = settings_path
         self._settings_provider = settings_provider
         self._used_modes: set[Mode] = set()
@@ -74,7 +74,9 @@ class RegistrationTunerWindow(ImageToolWindow):
         self.show_mask.hide()
         self.mask_opacity.hide()
         self.setWindowTitle("FITS Registration Tuner")
-        self.resize(1500, 950)
+        configure_tuner_window(self, self.status_label)
+        if self._settings_provider is not None:
+            self.save_button.setToolTip(self.save_button.toolTip() + '\n\n' + MAIN_GUI_SETTINGS_HINT)
         if experiments_dir is not None:
             self._set_experiments_directory(experiments_dir, initial_path=initial_path)
 
@@ -180,12 +182,12 @@ class RegistrationTunerWindow(ImageToolWindow):
              "channel at the current frame and Z plane. Press C to cycle included comparison "
              "channels; press V to compare before and after registration."),
             ("Registered alignment", "Overlay the unchanged reference channel and the registered "
-             "version of the same comparison channel. Until a matching preview is ready, "
-             "show their original alignment. Both views use the same colours and contrast. "
+             "version of the same comparison channel. Requires a matching completed preview. "
+             "Both views use the same colours and contrast. "
              "Press C to cycle included comparison channels and V to compare before/after."),
         ) if mode == "channel" else (
             ("Registered image", "Show the selected image after registration using a matching "
-             "completed preview. Shows the original image until a matching preview is available."),
+             "completed preview."),
             ("Original image", "Show the original image before registration for comparison."),
             ("Composite overlay", "Overlay the original and registered images at the same frame, "
              "channel and Z plane to show how registration moved the image. The original is "
@@ -198,7 +200,8 @@ class RegistrationTunerWindow(ImageToolWindow):
             for label, tooltip in options:
                 self.comparison.addItem(label)
                 self.comparison.setItemData(self.comparison.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole)
-            self.comparison.setCurrentIndex(1 if mode == "channel" else 0)
+            self.comparison.setCurrentIndex(0 if mode == "channel" else 1)
+        set_preview_choices(self.comparison, False, 0 if mode == "channel" else 1)
         self.comparison.setToolTip(options[self.comparison.currentIndex()][1])
         self.grayscale_lut_button.setEnabled(mode == "time")
 
@@ -224,7 +227,7 @@ class RegistrationTunerWindow(ImageToolWindow):
         self.save_button.clicked.connect(self._save_settings)
         self.close_button.clicked.connect(self.close)
         self.tabs.currentChanged.connect(self._settings_edited)
-        self.channel_combo.currentIndexChanged.connect(self._display_channel_changed)
+        self.panels["time"].channel.currentIndexChanged.connect(self._fitting_channel_changed)
         self.panels["channel"].channel.currentIndexChanged.connect(self._reference_channel_changed)
         self.grayscale_lut_button.toggled.connect(self._display_selection)
         self.image_viewer.histogram.item.gradient.sigGradientChanged.connect(self._composite_lut_changed)
@@ -254,12 +257,15 @@ class RegistrationTunerWindow(ImageToolWindow):
         return self.panels[self.mode()].settings()
 
     @Slot(int)
-    def _display_channel_changed(self, index: int) -> None:
+    def _fitting_channel_changed(self, index: int) -> None:
         """
-        Retain time-registration linking; channel browsing never changes the reference.
+        Display the selected fitting channel without linking display browsing back.
         """
-        if not self._loading and self._session is not None and index >= 0 and self.mode() == "time":
-            self.panels["time"].channel.setCurrentText(self.channel_combo.itemText(index))
+        if self._loading or self.mode() != "time" or self._session is None:
+            return
+        selected = self.channel_combo.findText(self.panels["time"].channel.itemText(index))
+        if selected >= 0:
+            self.channel_combo.setCurrentIndex(selected)
 
     @Slot(int)
     def _reference_channel_changed(self, index: int) -> None:
@@ -374,7 +380,7 @@ class RegistrationTunerWindow(ImageToolWindow):
             self._used_modes.clear()
             for mode, panel in self.panels.items():
                 tuned = load_tuning(source, mode)
-                panel.load(self._defaults[mode] if self._provided or tuned is None else tuned.settings,
+                panel.load(self._defaults[mode],
                            session.channel_labels,
                            session.frame_count,
                            )
@@ -415,6 +421,7 @@ class RegistrationTunerWindow(ImageToolWindow):
             panel.update_resolved(crop_active=self._crop(mode) is not None)
         self._sync_resolved_panel_heights()
         valid = False
+        preview_available = False
         if self._session is not None:
             if self._thread is None and self.mode() != self._last_mode:
                 try:
@@ -441,6 +448,7 @@ class RegistrationTunerWindow(ImageToolWindow):
                 self.comparison.setCurrentIndex(1 if self.mode() == "channel" else 0)
             try:
                 settings = self.current_settings()
+                preview_available = self._session.cached_preview(self.mode(), settings, crop=self._crop()) is not None
                 valid = True
             except Exception as error:
                 self.panels[self.mode()].resolved.setText(str(error))
@@ -448,6 +456,7 @@ class RegistrationTunerWindow(ImageToolWindow):
         self.run_button.setEnabled(valid or self._thread is not None)
         self.save_button.setEnabled(valid and self._thread is None)
         self.close_button.setEnabled(self._session is not None)
+        set_preview_choices(self.comparison, preview_available, 0 if self.mode() == "channel" else 1)
         self._display_selection()
 
     def _display_overlay(self, image: NDArray[Any], frame: int, channel: str, z_index: int) -> None:
@@ -457,6 +466,7 @@ class RegistrationTunerWindow(ImageToolWindow):
         self._composite_item.hide()
         self.image_viewer.image_item.show()
         self.lut_controls.setEnabled(True)
+        self._set_composite_lut_enabled(True)
         if self._session is None or self._loading:
             return
         if self.mode() == "channel":
@@ -498,12 +508,24 @@ class RegistrationTunerWindow(ImageToolWindow):
         self._composite_item.setImage(composite, autoLevels=False, levels=(0, 1))
         self._composite_item.show()
         self.image_viewer.image_item.hide()
-        self.lut_controls.setEnabled(False)
+        self.image_viewer.pixel_readout.set_planes(((f"Original {channel}", image),
+                                                   (f"Registered {channel}", selected),
+                                                   ))
+        self._set_composite_lut_enabled(False)
+
+    def _set_composite_lut_enabled(self, enabled: bool) -> None:
+        """
+        Disable contrast editing for composites while keeping hover values readable.
+        """
+        self.image_viewer.histogram.setEnabled(enabled)
+        self.auto_scale_button.setEnabled(enabled)
+        self.full_range_button.setEnabled(enabled)
 
     def _display_channel_alignment(self, frame: int, z_index: int) -> None:
         """Compare a fixed pair of channels before and after channel registration."""
         assert self._session is not None
         settings = self.panels["channel"].settings()
+        assert isinstance(settings, RegisterChannelSettings)
         reference = self.panels["channel"].channel.currentText()
         selected = self.channel_combo.currentText()
         if selected in (settings.exclude_channel or ()) and selected != reference:
@@ -538,7 +560,8 @@ class RegistrationTunerWindow(ImageToolWindow):
         self._composite_item.setImage(composite, autoLevels=False, levels=(0, 1))
         self._composite_item.show()
         self.image_viewer.image_item.hide()
-        self.lut_controls.setEnabled(False)
+        self.image_viewer.pixel_readout.set_planes(((reference, original_reference), (comparison, registered)))
+        self._set_composite_lut_enabled(False)
         detail = f"Reference: {reference} ({reference_colour}); comparison: {comparison} ({comparison_colour})."
         if self.comparison.currentIndex() == 1 and preview is None:
             detail += " Showing original alignment; run preview for these settings to see registered alignment."
@@ -593,6 +616,8 @@ class RegistrationTunerWindow(ImageToolWindow):
         """
         Show the first requested plane after transforms are fitted.
         """
+        self._settings_edited()
+        self.comparison.setCurrentIndex(1 if self.mode() == "channel" else 0)
         self.status_label.setText("Transforms ready. Preview applies as you navigate; save settings to accept them.")
         self._display_selection()
 
@@ -651,8 +676,10 @@ class RegistrationTunerWindow(ImageToolWindow):
         self._defaults[mode] = settings.model_copy(deep=True)
         self._saved_crops[mode] = self._crop(mode)
         self.settings_applied.emit(mode, settings)
-        detail = "settings and fitted transforms" if preview is not None else "settings; fitting will run in the pipeline"
-        self.status_label.setText(f"Saved {mode} {detail}: {path}")
+        detail = "settings and transforms" if preview is not None else "settings"
+        self.status_label.setText(f"Applied {mode} registration settings to the main GUI."
+                                  if self._settings_provider is not None else f"Saved {mode} registration {detail}.")
+        self.status_label.setToolTip(str(path))
 
     def _comparable_settings(self, settings: RegistrationSettings) -> dict[str, Any]:
         """Compare effective choices, resolving presets and channel indices to labels."""
@@ -699,7 +726,7 @@ class RegistrationTunerWindow(ImageToolWindow):
             self._save_settings()
             return True
         if event.key() == Qt.Key.Key_V:
-            self.comparison.setCurrentIndex(1 if self.comparison.currentIndex() != 1 else 0)
+            toggle_preview_choice(self.comparison)
             return True
         return False
 
@@ -708,6 +735,7 @@ class RegistrationTunerWindow(ImageToolWindow):
         Clear registration overlays, crop controls and the session reference.
         """
         self._session = None
+        set_preview_choices(self.comparison, False, 0 if self.mode() == "channel" else 1)
         for crop in self.crops.values():
             with QSignalBlocker(crop):
                 crop.reset()

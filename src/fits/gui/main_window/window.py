@@ -1,4 +1,5 @@
 from __future__ import annotations
+from html import escape
 from fits.settings.models import ExtractSettings
 from fits.gui.theme import STEP_TAB_BAR_STYLE
 
@@ -16,7 +17,7 @@ from pathlib import Path
 from fits.environment.paths import is_internal_path, reports_dir
 from PySide6.QtCore import QEventLoop, QMimeData, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QShowEvent, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 from fits.environment import constant as cst
 from fits.workflows.metadata._values import distribution_version
 from fits.workflows.artifacts.paths import first_image
@@ -26,6 +27,7 @@ from fits.gui.settings.editor import WORKFLOW_INCLUSION_TOOLTIP
 from fits.gui.run_result.report import ReportDialog
 from fits.gui.run_result.dialog import show_run_result
 from fits.gui.file_management.manager import manage_files
+from fits.gui.file_management.guidance import FileGuidance, file_guidance
 from fits.gui.file_management.tasks import run_file_task
 from fits.workflows.file_management.reset import reset_run
 from fits.workflows.runtime.progress.outcome import RunResult, summarize_run
@@ -34,6 +36,8 @@ from fits.gui.main_window.run_browser import COMPATIBLE_COLOR, OUTDATED_COLOR, R
 from fits.gui.main_window.logging import LogEmitter, QtLogHandler
 from fits.gui.main_window.pipeline_worker import PipelineWorker
 from fits.gui.main_window.emergency_stop import terminate_application
+from fits.gui.main_window.stop_dialog import QUIT_STYLE, confirm_stop
+from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE
 from fits.gui.main_window.progress_display import PipelineProgressWidget
 from fits.settings.models import BGSubSettings, RegisterChannelSettings, RegisterTimeSettings, SegmentSettings
 from fits.tasks.registration.registration_resolver import resolve_registration_plan
@@ -45,8 +49,6 @@ from fits.workflows.experiments.exclusion import active_raw_files, set_excluded
 from fits.gui.artifact_decisions import choose_artifacts
 from fits.workflows.checks.compatibility import inspect_run_compatibility
 from fits_io import FitsIO
-from fits.workflows.file_management.history import snapshots
-from fits.gui.dialogs import size_resizable_dialog
 from fits.gui.theme import PREVIEW_BUTTON_STYLE
 from fits.gui.parquet import open_parquet
 from fits.gui.segmentation_models.loader import model_options_loader
@@ -68,6 +70,14 @@ _PHASE_STEPS = (
 _STEP_PHASE = {step: phase_index
                 for phase_index, (_, steps) in enumerate(_PHASE_STEPS)
                 for step in steps}
+
+
+def _set_metadata_label(label: QLabel, title: str, value: str) -> None:
+    """
+    Underline the metadata heading while keeping user-provided values literal.
+    """
+    label.setTextFormat(Qt.TextFormat.RichText)
+    label.setText(f'<u>{title}:</u> {escape(value)}')
 
 
 class FitsMainWindow(QMainWindow):
@@ -219,7 +229,7 @@ class FitsMainWindow(QMainWindow):
 
         self.run_browser = RunDirectoryBrowser()
         self.run_browser.path_activated.connect(self._open_selected_report)
-        self.tracking_viewer_button = QPushButton("Image / Mask Viewer")
+        self.tracking_viewer_button = QPushButton("File Viewer")
         self.tracking_viewer_button.setToolTip(
             "Inspect raw ND2/TIFF inputs and intermediate, compacted or earlier FITS images and masks, including REF/ROI. "
             "Tracking results also offer trajectories and track-length filtering.")
@@ -228,7 +238,8 @@ class FitsMainWindow(QMainWindow):
             "QPushButton:disabled { background-color: #6b4b2a; color: #aaa; }")
         self.tracking_viewer_button.clicked.connect(lambda: self._open_tracking_viewer())
         self.run_browser.selection_layout.addWidget(self.tracking_viewer_button)
-        self.tracking_edit_button = QPushButton("Edit tracking")
+        self.tracking_edit_button = QPushButton("Edit Track")
+        self.tracking_edit_button.setStyleSheet(self.tracking_viewer_button.styleSheet())
         self.tracking_edit_button.setToolTip(
             "Edit saved tracking results from the selected experiment, or the first tracked experiment in this run. "
             "Requires existing tracking files. Editing is opened separately from the pipeline.")
@@ -255,32 +266,31 @@ class FitsMainWindow(QMainWindow):
         summary_layout = QVBoxLayout(summary_panel)
         summary_layout.setContentsMargins(10, 10, 10, 10)
         summary_row = QHBoxLayout()
-        self.file_status_label = QLabel('Experiment files')
+        self.file_status_label = QLabel('No run selected')
         self.file_status_label.setWordWrap(True)
         summary_row.addWidget(self.file_status_label, 1)
-        self.file_details_button = QPushButton('Details…')
-        self.file_details_button.setToolTip('Explain file compatibility, read-only viewing and upgrade options for this run.')
-        self.file_details_button.clicked.connect(self._show_file_details)
-        summary_row.addWidget(self.file_details_button)
         self.manage_files_button = QPushButton('Manage files…')
-        self.manage_files_button.setToolTip('Migrate older results, update run paths/tags, rebuild outdated results, compact experiments, or restore/delete retained backups.')
+        self.manage_files_button.setToolTip('See the run status, affected files and what to do next. Review updates, rebuilding, compaction and backups.')
         self.manage_files_button.clicked.connect(self._manage_files)
         summary_row.addWidget(self.manage_files_button)
         summary_layout.addLayout(summary_row)
         metadata_row = QHBoxLayout()
-        self.file_channels_label = QLabel('Channels: —')
-        self.file_channels_label.setWordWrap(True)
-        self.file_channels_label.setTextFormat(Qt.TextFormat.PlainText)
-        metadata_row.addWidget(self.file_channels_label, 1)
-        self.file_frames_label = QLabel("Frames: —")
+        metadata_row.setSpacing(24)
+        self.file_channels_label = QLabel()
+        _set_metadata_label(self.file_channels_label, 'Channels', '—')
+        metadata_row.addWidget(self.file_channels_label, 2, Qt.AlignmentFlag.AlignTop)
+        self.file_frames_label = QLabel()
+        _set_metadata_label(self.file_frames_label, 'Frames', '—')
         self.file_frames_label.setToolTip(
             "Frames per input experiment across the run. Mixed lengths show ≥ followed by the minimum. "
             "Counts come from acquisition headers without reading image pixels.")
-        metadata_row.addWidget(self.file_frames_label, 1)
-        self.file_size_label = QLabel("Size: —")
+        metadata_row.addWidget(self.file_frames_label, 1, Qt.AlignmentFlag.AlignTop)
+        self.file_size_label = QLabel()
+        _set_metadata_label(self.file_size_label, 'Size', '—')
         self.file_size_label.setToolTip("Total size of the run directory, including original acquisitions, results, caches and retained backups.")
-        metadata_row.addWidget(self.file_size_label, 1)
+        metadata_row.addWidget(self.file_size_label, 1, Qt.AlignmentFlag.AlignTop)
         for label in (self.file_channels_label, self.file_frames_label, self.file_size_label):
+            label.setWordWrap(True)
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         summary_layout.addLayout(metadata_row)
         browser_layout.addWidget(summary_panel)
@@ -374,14 +384,15 @@ class FitsMainWindow(QMainWindow):
             "QPushButton:hover { background-color: #1c9848; } "
             "QPushButton:pressed { background-color: #11652f; } "
             "QPushButton:disabled { background-color: #72987c; color: #e0e0e0; }")
-        self.stop_button = QPushButton("Stop")
-        self.stop_button.setStyleSheet(
-            "QPushButton { background-color: #b32632; color: white; border: 1px solid #dc4652; "
-            "border-radius: 4px; padding: 6px 16px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #cf3040; }"
-            "QPushButton:pressed { background-color: #8d1d27; }")
-        self.stop_button.setToolTip("Immediately stop all processing and exit FITS after confirmation.")
-        self.stop_button.clicked.connect(self._confirm_emergency_stop)
+        self.stop_button = QPushButton("Stop run")
+        self.stop_button.setStyleSheet(CLOSE_WINDOW_STYLE)
+        self.stop_button.setToolTip('Stop processing and keep FITS open. Restarting may require Overwrite for affected steps.')
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self._stop_run)
+        self.quit_button = QPushButton('Quit')
+        self.quit_button.setStyleSheet(QUIT_STYLE)
+        self.quit_button.setToolTip('Close FITS. If a run is active, confirm before terminating processing and quitting.')
+        self.quit_button.clicked.connect(self.close)
         self.save_button.clicked.connect(self._save_settings)
         self.save_protocol_button.clicked.connect(self._save_protocol)
         self.load_protocol_button.clicked.connect(self._load_protocol)
@@ -410,6 +421,7 @@ class FitsMainWindow(QMainWindow):
         buttons.addWidget(self.activity_indicator, 0, Qt.AlignmentFlag.AlignVCenter)
         buttons.addWidget(self.run_button)
         buttons.addWidget(self.stop_button)
+        buttons.addWidget(self.quit_button)
         outer.addLayout(buttons)
 
         self.setCentralWidget(central)
@@ -655,6 +667,14 @@ class FitsMainWindow(QMainWindow):
         except ValueError as error:
             QMessageBox.critical(self, "Cannot open segmentation tuner", str(error))
             return
+
+        def segmentation_settings() -> tuple[SegmentSettings, ExtractSettings]:
+            """
+            Read the main draft when checking whether either tuner tab has pending edits.
+            """
+            return (self.adapter.segmentation_settings(for_tuning=True),
+                    ExtractSettings.model_validate(self.adapter.as_mapping()[cst.StepName.EXTRACT]["params"]))
+
         tuner = SegmentationTunerWindow(experiments_dir=self.adapter.run_dir or None,
                                         segment_settings=settings,
                                         extract_settings=ExtractSettings.model_validate(self.adapter.as_mapping()[cst.StepName.EXTRACT]["params"]),
@@ -663,12 +683,12 @@ class FitsMainWindow(QMainWindow):
                                         parent=self,
                                         initial_path=self.run_browser.selected_path,
                                         directory_locked=True,
+                                        settings_provider=segmentation_settings,
                                         )
         tuner.setWindowModality(Qt.WindowModality.WindowModal)
         tuner.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         tuner.settings_applied.connect(self._apply_segmentation_settings)
         tuner.compartment_settings_applied.connect(self._apply_compartment_settings)
-        tuner.channel_removed.connect(self._remove_tuner_channel)
         tuner.destroyed.connect(lambda: setattr(self, "_segmentation_tuner", None))
         self._segmentation_tuner = tuner
         tuner.show()
@@ -784,18 +804,7 @@ class FitsMainWindow(QMainWindow):
         for name in expanded:
             self._editors[name].show_advanced_settings()
         self._show_step(cst.StepName.EXTRACT)
-        self._append_log("Saved compartment settings to Quantification.")
-
-    def _remove_tuner_channel(self, channel: str) -> None:
-        """
-        Remove one saved segmentation entry without applying other tuner edits.
-        """
-        expanded = {name for name, editor in self._editors.items() if editor.advanced_settings_visible}
-        self.adapter.set_segment_channels([entry for entry in self.adapter.segment_channels()
-                                           if entry["channel"] != channel])
-        self._populate_from_adapter()
-        for name in expanded:
-            self._editors[name].show_advanced_settings()
+        self._append_log("Applied compartment settings to Quantification.")
 
     def _show_step(self, step: cst.StepName) -> None:
         """
@@ -1350,6 +1359,9 @@ class FitsMainWindow(QMainWindow):
         """
         Refresh run inventory.
         """
+        if self._running and self._thread is not None:
+            self._refresh_file_status()
+            return
         root = Path(self.adapter.run_dir).expanduser() if self.adapter.run_dir else None
         self._run_status = inspect_run_compatibility(root) if root is not None and root.is_dir() else None
         self._artifact_report = None
@@ -1395,7 +1407,7 @@ class FitsMainWindow(QMainWindow):
         states = self._run_status.states if self._run_status is not None else ()
         self._raw_input_report = (inspect_raw_inputs(root, active_raw_files(collect_supported_files(root), states))
                                   if root is not None and root.is_dir() else None)
-        self.file_frames_label.setText("Frames: " + frame_count_summary(self._raw_input_report))
+        _set_metadata_label(self.file_frames_label, 'Frames', frame_count_summary(self._raw_input_report))
         counts = set(self._raw_input_report.channel_counts.values()) if self._raw_input_report is not None else set()
         if self._raw_input_report is not None and self._raw_input_report.problems and len(counts) <= 1:
             counts.clear()
@@ -1415,7 +1427,7 @@ class FitsMainWindow(QMainWindow):
         exported = None if selected == "all" else len(self.adapter.exported_channel_labels())
         return {**step_input_problems(self._raw_input_report, exported),
                 **workflow_step_problems(workflow),
-                cst.StepName.EDIT_TRACK: "Edit tracking is temporarily unavailable inside the pipeline. Use the Edit tracking button instead."}
+                cst.StepName.EDIT_TRACK: "Edit tracking is temporarily unavailable inside the pipeline. Use the Edit Track button instead."}
 
     def _enabled_step_input_problems(self) -> dict[cst.StepName, str]:
         """
@@ -1484,38 +1496,21 @@ class FitsMainWindow(QMainWindow):
         """
         Selection status changed.
         """
+        self._refresh_file_status()
         status = self._run_status
         if status is None:
             self.adapter.saved_image_channels = []
             self._refresh_channel_choices()
-            self.file_status_label.setText('Experiment files')
-            self.file_status_label.setStyleSheet('')
-            self.file_size_label.setText('Size: —')
-            self.file_channels_label.setText('Channels: —')
-            self.file_details_button.setEnabled(False)
+            _set_metadata_label(self.file_size_label, 'Size', '—')
+            _set_metadata_label(self.file_channels_label, 'Channels', '—')
             return
-        self.file_details_button.setEnabled(True)
         scope = Path(selected) if selected is not None else status.root
         if scope.is_file():
             scope = scope.parent
         files = [path for path in status.files if path.parent == scope or scope in path.parents]
-        conflicts = self._artifact_report is not None and bool(
-            self._artifact_report.conflicts or self._artifact_report.outdated_masters)
-        input_error = self._raw_input_error()
-        self.file_status_label.setText('Raw inputs need attention — cannot convert' if input_error else
-                                       'Upgrade to FITS v4 required - read-only' if status.outdated else
-                                       'Outdated results and paths/tags need updating' if conflicts and self._location_report.needs_update else
-                                       'Paths or condition tags need updating' if self._location_report.needs_update else
-                                       'Combined analysis is outdated' if self._artifact_report is not None and self._artifact_report.analysis_only_rebuild else
-                                       'Outdated downstream results' if conflicts else
-                                       ('Current — editable' if status.states else 'Fresh inputs — conversion available'))
-        color = '#e57373' if input_error else OUTDATED_COLOR if status.outdated or conflicts or self._location_report.needs_update else COMPATIBLE_COLOR
-        self.file_status_label.setStyleSheet(f'color: {color}; font-weight: bold;')
-        self.file_status_label.setToolTip(input_error or ('See Details and Manage files for migration, rebuilding or path/tag updates.'
-                                                         if status.outdated or conflicts or self._location_report.needs_update else ''))
-        count = f'{len(files)} result ' + ('file' if len(files) == 1 else 'files')
-        self.file_size_label.setText(f"Size: {self._run_size_bytes / 1024**3:.2f} GiB" if self._run_size_bytes >= 1024**3 else
-                                     f"Size: {self._run_size_bytes / 1024**2:.1f} MiB")
+        _set_metadata_label(self.file_size_label, 'Size',
+                            f'{self._run_size_bytes / 1024**3:.2f} GiB' if self._run_size_bytes >= 1024**3 else
+                            f'{self._run_size_bytes / 1024**2:.1f} MiB')
         channels: dict[str, None] = {}
         images = {}
         for path in files:
@@ -1531,70 +1526,73 @@ class FitsMainWindow(QMainWindow):
                 channels.update(dict.fromkeys(labels))
             except Exception:
                 pass
-        self.file_channels_label.setText('Channels: ' + (', '.join(sorted(channels)) if channels else '—'))
+        _set_metadata_label(self.file_channels_label, 'Channels', ', '.join(sorted(channels)) if channels else '—')
         self.file_channels_label.setToolTip('Channel labels found in this selection’s saved images, including older and compacted arrays.')
         self.adapter.saved_image_channels = list(channels)
         self._refresh_channel_choices()
 
-    def _file_details_text(self) -> str:
+    def _refresh_file_status(self) -> None:
         """
-        File details text.
+        Present file condition and data access separately, prioritising active processing.
         """
         status = self._run_status
-        if status is None:
-            return ''
-        selected = self.run_browser.selected_path or status.root
-        scope = selected.parent if selected.is_file() else selected
-        files = [path for path in status.files if path.parent == scope or scope in path.parents]
-        lines = []
-        input_error = self._raw_input_error()
-        if input_error:
-            lines.append(input_error)
-        label_warning = self._channel_label_warning()
-        if label_warning:
-            lines.append(label_warning)
-        if status.outdated:
-            lines.append('This run contains files or an experiment layout incompatible with the current FITS version. The entire run is read-only.')
-            lines.append('You can keep viewing the existing images and masks, or use Manage files → Migrate to FITS 4.')
-            lines.append('Migration changes the folder structure, metadata, paths and condition tags. It preserves image pixels and measurement values. You may optionally rebuild the complete workflow from the original acquisitions. A full rebuild can take a long time, and final results may change slightly with different processing settings or versions. Existing results are backed up before replacement.')
-        elif self._artifact_report is not None and self._artifact_report.analysis_only_rebuild:
-            lines.append('Active experiment membership changed. Use Manage files → Rebuild analysis… to regenerate '
-                         'master tables from active experiments. Valid individual measurements are reused.')
-            lines.append(self._artifact_report.describe())
-        elif self._artifact_report is not None and (self._artifact_report.conflicts or self._artifact_report.outdated_masters):
-            lines.append('Some saved results have missing inputs or no longer match their input revisions. Existing files remain viewable. Use Manage files → Rebuild outdated results… to review affected processing, or review the same choices when starting the pipeline.')
-            lines.append(self._artifact_report.describe())
-        if self._location_report.needs_update:
-            lines.append('Saved paths or master-table condition tags differ from the current folder structure. '
-                         'Use Manage files → Update paths and condition tags…; existing measurements are preserved.')
-            lines.append(self._location_report.describe())
-        count = f'{len(files)} result ' + ('file' if len(files) == 1 else 'files')
-        lines += [f'Selection: {scope}', count + (' available for read-only use.' if status.outdated else '.'),
-                  self.file_channels_label.text()]
-        history = snapshots(status.root, scope)
-        if history:
-            lines.append(f'Retained backups: {len(history)} snapshots, approximately {sum(entry.size for entry in history)/1024**2:.1f} MiB')
-            lines.append('Compact keeps retained history. Use Manage files to review, restore or delete it.')
-        return '\n\n'.join(lines)
+        color = '#ffffff'
+        if self._running:
+            text = 'Running… - read-only'
+            tooltip = ('Processing is active. Data editing is temporarily disabled. '
+                       'File status will be checked again when processing finishes; '
+                       'settings edited now apply to the next run.')
+        elif status is None:
+            text = 'No run selected'
+            tooltip = 'Select a run directory to inspect its inputs and results.'
+        else:
+            input_error = self._raw_input_error()
+            conflicts = self._artifact_report is not None and bool(
+                self._artifact_report.conflicts or self._artifact_report.outdated_masters)
+            has_raw = self._raw_input_report is not None and bool(self._raw_input_report.channel_counts)
+            access = 'read-only' if status.outdated else 'editable'
+            if status.outdated or input_error:
+                label, color = 'Run blocked', '#e57373'
+                tooltip = self._file_guidance().summary + '\nOpen Manage files for details and next steps.'
+                if input_error:
+                    tooltip += '\n\n' + input_error
+            elif conflicts:
+                label, color = 'Results outdated', OUTDATED_COLOR
+                tooltip = 'Existing processing results or combined analysis need updating. Open Manage files for details.'
+                if self._location_report.needs_update:
+                    tooltip += '\nPaths/tags also need updating.'
+            elif self._location_report.needs_update:
+                label, color = 'Paths/tags outdated', OUTDATED_COLOR
+                tooltip = 'Saved paths or condition tags need updating. Open Manage files for details.'
+            elif not status.states and not status.files:
+                if has_raw:
+                    label = 'Not processed'
+                    tooltip = 'Valid raw inputs are available. Convert them to create experiment results.'
+                else:
+                    label, color = 'Run blocked', '#e57373'
+                    tooltip = 'No supported raw inputs or experiment results were found in this directory. Choose a run containing ND2/TIFF inputs.'
+            else:
+                label, color = 'Up to date', COMPATIBLE_COLOR
+                tooltip = ('Existing saved results and paths pass the current checks. '
+                           'This does not mean that every requested processing step has been completed.')
+            text = f'{label} - {access}'
+        if status is not None:
+            compacted = sum(state.compacted for state in status.states)
+            if compacted:
+                text += ' - <i>compacted</i>'
+                tooltip += f'\nCompacted experiments: {compacted} of {len(status.states)}. Open Manage files for details.'
+        self.file_status_label.setText(text)
+        self.file_status_label.setStyleSheet(f'color: {color}; font-weight: bold;')
+        self.file_status_label.setToolTip(tooltip)
 
-    @Slot()
-    def _show_file_details(self) -> None:
+    def _file_guidance(self) -> FileGuidance:
         """
-        Show file details.
+        Reuse Manage files explanations for the main status tooltip and input warnings.
         """
         if self._run_status is None:
-            return
-        dialog = QDialog(self)
-        dialog.setWindowTitle('Experiment file details')
-        layout = QVBoxLayout(dialog)
-        content = QPlainTextEdit(self._file_details_text())
-        content.setReadOnly(True)
-        layout.addWidget(content)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        size_resizable_dialog(dialog, 760, 460)
-        dialog.exec()
+            return FileGuidance('No run is open.', 'Open a run folder to inspect its files.', '')
+        return file_guidance(self._run_status, self._artifact_report, self._location_report,
+                             input_problem=self._raw_input_error(), input_warning=self._channel_label_warning())
 
     @Slot()
     def _manage_files(self) -> None:
@@ -1630,6 +1628,8 @@ class FitsMainWindow(QMainWindow):
                                    self,
                                    run_processing=self._run_maintenance_plan,
                                    reset_run=reset_action,
+                                   input_problem=self._raw_input_error(),
+                                   input_warning=self._channel_label_warning(),
                                    )
             if changed and not did_reset:
                 self._append_log('Experiment files updated. Measurements were reused for path/tag-only changes.')
@@ -1715,7 +1715,6 @@ class FitsMainWindow(QMainWindow):
             interaction = self._worker.interaction
             window.experiment_finalized.connect(interaction.resolve_mask)
             window.collection_finished.connect(interaction.finish_mask_collection)
-            window.cancellation_requested.connect(self._cancel_pipeline)
             self._mask_collection = window
             if self._mask_expected_count is not None:
                 window.set_expected_experiments(self._mask_expected_count)
@@ -1771,25 +1770,24 @@ class FitsMainWindow(QMainWindow):
         QTimer.singleShot(0, self._open_next_track_edit)
 
     @Slot()
-    def _confirm_emergency_stop(self) -> None:
+    def _stop_run(self) -> None:
         """
-        Confirm an immediate shutdown of FITS and its worker processes.
+        Confirm stopping the isolated run without closing the main window.
         """
-        answer = QMessageBox.warning(self,
-                                      "Stop and exit FITS?",
-                                      "Stop all processing and close FITS immediately?\n\n"
-                                      "Completed results will be kept. The current step may be incomplete, "
-                                      "and unsaved settings or edits will be lost.\n\n"
-                                      "Restart FITS to run processing again.",
-                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                      QMessageBox.StandardButton.No,
-                                      )
-        if answer != QMessageBox.StandardButton.Yes:
+        if not self._running or self._worker is None or not confirm_stop(self, quitting=False):
+            return
+        self._cancel_pipeline()
+
+    def _force_quit(self) -> None:
+        """
+        Treat confirmed termination as an intentional quit, not an installation failure.
+        """
+        if not confirm_stop(self, quitting=True):
             return
         try:
             terminate_application()
         except psutil.Error as error:
-            QMessageBox.critical(self, "Could not stop FITS", str(error))
+            QMessageBox.critical(self, 'Could not quit FITS', str(error))
 
     @Slot()
     def _cancel_pipeline(self) -> None:
@@ -1799,7 +1797,8 @@ class FitsMainWindow(QMainWindow):
         if self._worker is not None:
             self._worker.interaction.cancel()
             self.run_button.setText("Stopping…")
-            self._append_log("Stopping pipeline. Any step already running must finish; no further work will start.")
+            self.stop_button.setEnabled(False)
+            self._append_log('Stopping run. Restarting may require enabling Overwrite for affected steps.')
 
     @Slot()
     def _mask_input_complete(self) -> None:
@@ -1839,7 +1838,7 @@ class FitsMainWindow(QMainWindow):
         self._close_mask_collection()
         self._close_tracking_editor()
         self._run_cancelled = True
-        self._append_log("Pipeline cancelled. Completed work has been kept.")
+        self._append_log('Run stopped. Restarting may require enabling Overwrite for affected steps.')
 
     @Slot()
     def _pipeline_finished(self) -> None:
@@ -1945,6 +1944,7 @@ class FitsMainWindow(QMainWindow):
         if running and self._segmentation_preview_pending:
             self._clear_segmentation_preview_request()
         self._running = running
+        self._refresh_file_status()
         self.run_browser.set_processing(running)
         if self._channel_labels_window is not None:
             self._channel_labels_window.setEnabled(not running)
@@ -1954,6 +1954,7 @@ class FitsMainWindow(QMainWindow):
             self.pipeline_progress.finish()
         self._set_activity_active(running)
         self.run_button.setEnabled(not running)
+        self.stop_button.setEnabled(running)
         self._refresh_protocol_buttons()
         self.save_button.setEnabled(not running)
         self.browse_button.setEnabled(not running)
@@ -2274,12 +2275,9 @@ class FitsMainWindow(QMainWindow):
         """
         Stop active work and handle the window close event.
         """
-        if self._thread is not None and self._thread.isRunning():
-            QMessageBox.information(self,
-                                    "Pipeline is running",
-                                    "Wait for the pipeline to finish before closing FITS.",
-                                    )
+        if self._running or (self._thread is not None and self._thread.isRunning()):
             event.ignore()
+            self._force_quit()
             return
         label_window = self._channel_labels_window
         if (label_window is not None and label_window._job is not None

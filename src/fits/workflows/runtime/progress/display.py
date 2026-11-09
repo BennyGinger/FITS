@@ -56,3 +56,16 @@ class DisplayProgress:
             end = monotonic() if self._active else self._stopped
             return DisplaySnapshot(self._name, self._completed, self._total,
                                    end - self._started, self._active)
+
+    def replace_snapshot(self, snapshot: DisplaySnapshot | None) -> None:
+        """
+        Mirror the pipeline process's current display counters without restarting its clock.
+        """
+        if snapshot is None:
+            return
+        with self._lock:
+            self._name = snapshot.name
+            self._completed, self._total = snapshot.completed, snapshot.total
+            self._active = snapshot.active
+            self._stopped = monotonic()
+            self._started = self._stopped - snapshot.elapsed

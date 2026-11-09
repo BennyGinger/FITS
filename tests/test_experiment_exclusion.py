@@ -157,7 +157,7 @@ def test_excluded_artifacts_do_not_block_execution_checks(tmp_path: Path) -> Non
     assert not report.needs_decision
 
 
-def test_membership_changes_require_rebuilding_masters_and_preserve_sources(tmp_path: Path) -> None:
+def test_membership_changes_flag_masters_without_forcing_rebuild(tmp_path: Path) -> None:
     """
     Rebuild by reaggregation, detect re-inclusion, and remove masters when all series are excluded.
     """
@@ -180,8 +180,8 @@ def test_membership_changes_require_rebuilding_masters_and_preserve_sources(tmp_
     assert outdated_master_tables(tmp_path, changed) == (master,)
     from fits.workflows.checks.models import PreflightReport
     report = PreflightReport((), (), (), (), outdated_masters=(master,))
-    with pytest.raises(ValueError, match='Rebuild analysis or cancel'):
-        apply_decision({}, report, 'continue')
+    assert apply_decision({}, report, 'continue') == {}
+    assert apply_decision({}, report, 'selected') == {}
     save_master_analysis_table(changed, tmp_path, artifact_kind=cst.ARTI_DIST_PROF, output_name=name)
     assert pd.read_parquet(master)['distance'].tolist() == [1]
     assert outdated_master_tables(tmp_path, changed) == ()
@@ -205,9 +205,9 @@ def test_migrated_checkpoints_require_full_rebuilding_before_selection(tmp_path:
 
 
 @pytest.mark.parametrize('method', ['file_action', 'batch', 'conveyor'])
-def test_rebuild_analysis_reuses_valid_disabled_series_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+def test_disabled_analysis_is_preserved_until_explicit_rebuild(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str) -> None:
     """
-    Rebuild combined analysis through file actions or either engine without rerunning valid measurements.
+    Preserve bypassed combined analysis during normal runs, then rebuild it explicitly.
     """
     from fits.pipeline import start_pipeline
     from fits.tasks.common.table_results import save_parquet
@@ -250,7 +250,13 @@ def test_rebuild_analysis_reuses_valid_disabled_series_results(tmp_path: Path, m
     if method == 'file_action':
         rebuild_analysis_tables(tmp_path)
     else:
-        start_pipeline(settings, artifact_decision=lambda report: 'rebuild', terminal_progress=False)
+        before = master.read_bytes()
+        start_pipeline(settings,
+                       artifact_decision=lambda report: pytest.fail('Bypassed tables must not require a decision.'),
+                       terminal_progress=False)
+        assert master.read_bytes() == before
+        assert inspect_run(tmp_path, {}).outdated_masters == (master,)
+        rebuild_analysis_tables(tmp_path)
     assert pd.read_parquet(master)['distance'].tolist() == [1]
     assert not inspect_run(tmp_path, {}).needs_decision
     assert sources == {path: path.read_bytes() for path in sources}

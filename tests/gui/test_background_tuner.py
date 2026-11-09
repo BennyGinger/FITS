@@ -119,6 +119,25 @@ def test_requested_planes_only_comparison_shortcut_and_measurement(window):
     assert "Processed mean: run preview" in window.settings_panel.means.text()
 
 
+def test_preview_choices_require_background_preview(window: BackgroundTunerWindow) -> None:
+    """
+    Keep the processed option visible but unavailable before preview and after edits.
+    """
+    combo = window.comparison
+    model = combo.model()
+    assert combo.count() == 2
+    assert combo.currentIndex() == 0
+    assert not model.flags(model.index(1, 0)) & Qt.ItemFlag.ItemIsEnabled
+    QTest.keyClick(window, Qt.Key.Key_V)
+    assert combo.currentIndex() == 0
+    window._run_preview()
+    wait_for_preview(window)
+    assert model.flags(model.index(1, 0)) & Qt.ItemFlag.ItemIsEnabled
+    window.settings_panel.threshold.setValue(0.2)
+    assert combo.currentIndex() == 0
+    assert not model.flags(model.index(1, 0)) & Qt.ItemFlag.ItemIsEnabled
+
+
 def test_navigation_during_work_processes_latest_selection_without_propagation(window, monkeypatch):
     """Skip intermediate navigation requests and never display the previous plane's output."""
     session = window._session

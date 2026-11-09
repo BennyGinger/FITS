@@ -13,7 +13,7 @@ Start with the exact error and the latest report. Record the FITS version, opera
 | Update or startup repair fails | Read [Startup updates and repair](installation.md#startup-updates-and-repair) and its update/launcher logs. |
 | Channel choices are missing or names become generic | Check source count/order and exported channels in [Channels and labels](channels_and_labels.md). |
 | Next or Run pipeline is disabled | Complete the required fields of the enabled step; see [processing settings](runs_and_settings.md#processing-tabs-and-required-settings). |
-| Results look outdated or a run is read-only | Open Details and review [reprocessing/file management](reprocessing_and_file_management.md). |
+| Results look outdated or a run is read-only | Open Manage files and review [reprocessing/file management](reprocessing_and_file_management.md). |
 | A moved folder is reported as detached | Check that the [portable project](portable_projects.md) includes its containing run and metadata. |
 | Segmentation/tracking quality is poor | Inspect the [segmentation preview](segmentation.md) and [tracking results](tracking.md) before rerunning downstream analysis. |
 | GPU/model loading or memory problems occur | Keep the exact error; compare model/processing settings and the [GPU configuration](../dev/development_setup.md#default-gpu-setup). Model downloads can require internet access. |

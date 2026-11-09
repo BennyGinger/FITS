@@ -11,11 +11,13 @@ from fits.environment.constant import StepName
 from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
 from fits.tasks.registration.register_channel import register_channel
 from fits.tasks.registration.register_time import register_time
-from fits.tasks.registration.tuned import load_tuning, tuning_path
+from fits.tasks.registration.tuned import Mode, load_tuning, tuning_path
 from fits.tasks.registration.tuning import RegistrationTuningSession
 from fits.workflows.definitions.registry import REGISTRY
 from fits.workflows.definitions.inputs import configured_profile
 from fits.workflows.experiments import ExperimentState
+from fits.workflows.checks.models import ArtifactRecord
+from fits.workflows.checks.settings import settings_problem
 
 
 @pytest.fixture
@@ -199,8 +201,10 @@ def test_lazy_preview_cache_is_bounded_and_does_not_apply_unvisited_planes(sourc
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])
 @pytest.mark.parametrize('cropped', [False, True])
-def test_settings_only_save_is_fitted_by_pipeline(source, tmp_path, mode, cropped):
-    """Pipeline fitting honors unpreviewed per-experiment settings and optional crops."""
+def test_settings_only_save_is_fitted_by_pipeline(source: Path, tmp_path: Path, mode: Mode, cropped: bool) -> None:
+    """
+    Fit the configured settings using the tuner's optional saved crop.
+    """
     settings = time_settings() if mode == 'time' else channel_settings()
     crop = (4, 3, 26, 25) if cropped else None
     session = RegistrationTuningSession(source)
@@ -214,13 +218,53 @@ def test_settings_only_save_is_fitted_by_pipeline(source, tmp_path, mode, croppe
     state = ExperimentState.init(tmp_path, raw).with_complete_step(
         step_name=StepName.CONVERT, artifact_kind='image_raw', artifact_path=source)
     if mode == 'time':
-        register_time(RegisterTimeSettings(context='complex_drift'), state,
+        register_time(time_settings(), state,
                       configured_profile(REGISTRY[StepName.REGISTER_TIME].profile, {"convert": {"enabled": True}}))
     else:
-        register_channel(RegisterChannelSettings(reference_channel=1), state,
+        register_channel(channel_settings(), state,
                          configured_profile(REGISTRY[StepName.REGISTER_CHANNEL].profile, {"convert": {"enabled": True}}))
     output_name = 'fits_array_reg.tif' if mode == 'time' else 'fits_array_reg_channel.tif'
     np.testing.assert_array_equal(FitsIO.from_path(source.with_name(output_name)).get_array().array, expected)
+
+
+@pytest.mark.parametrize('mode', ['time', 'channel'])
+@pytest.mark.parametrize('cropped', [False, True])
+def test_pipeline_settings_override_older_tuner_cache(source: Path,
+                                                     tmp_path: Path,
+                                                     mode: Mode,
+                                                     cropped: bool,
+                                                     ) -> None:
+    """
+    Honour later channel choices and record the actual configured settings in outputs.
+    """
+    crop = (4, 3, 26, 25) if cropped else None
+    with closing(RegistrationTuningSession(source)) as session:
+        if mode == 'time':
+            old = time_settings()
+            current = old.model_copy(update={'fit_channel': 1, 'reference_strategy': 'first'})
+        else:
+            old = channel_settings()
+            current = old.model_copy(update={'reference_channel': 1, 'reference_frame': 2})
+        session.save_preview(session.run_preview(mode, old, crop=crop))
+        expected = materialize_preview(session, session.run_preview(mode, current, crop=crop))
+    raw = tmp_path / 'raw.nd2'
+    raw.write_bytes(b'raw')
+    state = ExperimentState.init(tmp_path, raw).with_complete_step(
+        step_name=StepName.CONVERT, artifact_kind='image_raw', artifact_path=source)
+    step = StepName.REGISTER_TIME if mode == 'time' else StepName.REGISTER_CHANNEL
+    profile = configured_profile(REGISTRY[step].profile, {'convert': {'enabled': True}})
+    if isinstance(current, RegisterTimeSettings):
+        result = register_time(current, state, profile)[0]
+    else:
+        result = register_channel(current, state, profile)[0]
+    output = result.artifact(profile.output_artifact)
+    assert output is not None
+    reader = FitsIO.from_path(output)
+    np.testing.assert_array_equal(reader.get_array().array, expected)
+    params = reader.metadata.custom_metadata['steps'][step]['params']
+    assert params['fit_channel' if mode == 'time' else 'reference_channel'] == 1
+    record = ArtifactRecord(output, step, reader.metadata)
+    assert settings_problem(record, {step: {'enabled': True, 'params': current.model_dump()}}) == ''
 
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])
@@ -240,8 +284,14 @@ def test_saved_models_reload_without_fitting(source, monkeypatch, mode):
 
 
 @pytest.mark.parametrize('cropped', [False, True])
-def test_pipeline_reuses_both_modes_in_order_even_after_general_settings_change(source, tmp_path, monkeypatch, cropped):
-    """Match the composed lazy preview when the pipeline writes the full image."""
+def test_pipeline_reuses_both_modes_with_matching_settings(source: Path,
+                                                          tmp_path: Path,
+                                                          monkeypatch: pytest.MonkeyPatch,
+                                                          cropped: bool,
+                                                          ) -> None:
+    """
+    Reuse both cached transforms when their settings still match the run configuration.
+    """
     session = RegistrationTuningSession(source)
     crop = (4, 3, 26, 25) if cropped else None
     time_preview = session.run_preview('time', time_settings(), crop=crop)
@@ -260,11 +310,11 @@ def test_pipeline_reuses_both_modes_in_order_even_after_general_settings_change(
     raw.write_bytes(b'raw')
     state = ExperimentState.init(tmp_path, raw).with_complete_step(
         step_name=StepName.CONVERT, artifact_kind='image_raw', artifact_path=source)
-    state = register_time(RegisterTimeSettings(context='complex_drift'), state,
+    state = register_time(time_settings(), state,
                           configured_profile(REGISTRY[StepName.REGISTER_TIME].profile, {"convert": {"enabled": True}}))[0]
     from dataclasses import replace
     profile = replace(REGISTRY[StepName.REGISTER_CHANNEL].profile, input_artifact='image_time_registered', input_alternatives=())
-    state = register_channel(RegisterChannelSettings(reference_channel=1), state, profile)[0]
+    state = register_channel(channel_settings(), state, profile)[0]
     assert state.last_step == StepName.REGISTER_CHANNEL
     output = state.artifact('image_channel_registered')
     assert output is not None

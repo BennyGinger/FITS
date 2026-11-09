@@ -26,8 +26,6 @@ def apply_decision(config: Mapping[str, Any], report: PreflightReport, decision:
     """
     if decision == "cancel":
         raise PipelineCancelled("Run cancelled before modifying artifacts.")
-    if report.outdated_masters and decision != 'rebuild':
-        raise ValueError('Combined analysis has outdated experiment membership. Rebuild analysis or cancel.')
     resolved = deepcopy(dict(config))
     if report.legacy and decision != "rebuild":
         raise ValueError("Earlier-version results are read-only. Rebuild or cancel.")

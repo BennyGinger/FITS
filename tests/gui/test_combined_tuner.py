@@ -91,7 +91,7 @@ def test_compartment_preview_bypasses_tracking(tuner: SegmentationTunerWindow,
     """
     Use included segmentation for membrane previews even when edited tracking exists.
     """
-    tuner._workflow_config = {cst.StepName.SEGMENT: {"enabled": True}, cst.StepName.TRACK: {"enabled": False}}
+    tuner._workflow_config = {cst.StepName.SEGMENT.value: {"enabled": True}, cst.StepName.TRACK.value: {"enabled": False}}
     tuner._refresh_mask_channels()
     tuner._display_selection()
     expected = compartment_masks(image_masks[1][0], CompartmentSettings(1))["mb"]
@@ -186,9 +186,9 @@ def test_colour_selections_are_per_tab_and_do_not_dirty_processing(tuner: Segmen
     assert not tuner._has_unsaved_settings()
 
 
-def test_channel_removal_emits_only_target_and_preserves_pending_values(tuner: SegmentationTunerWindow) -> None:
+def test_channel_removal_stays_pending_until_save(tuner: SegmentationTunerWindow) -> None:
     """
-    Immediately delete one saved entry while keeping another entry's edits pending.
+    Keep deletion and other channel edits private until the segmentation tab is saved.
     """
     removed: list[str] = []
     tuner.channel_removed.connect(removed.append)
@@ -196,10 +196,15 @@ def test_channel_removal_emits_only_target_and_preserves_pending_values(tuner: S
     tuner._select_entry(1)
     tuner.settings_panel.diameter.setValue(55)
     tuner._remove_entry(0)
+    assert removed == []
+    assert [entry.channel for entry in tuner._saved_entries] == ["Red", "Green"]
+    assert tuner._saved_entries[1].user_settings.get("diameter") != 55
+    assert tuner._has_unsaved_settings()
+    tuner._apply_settings()
     assert removed == ["Red"]
     assert [entry.channel for entry in tuner._saved_entries] == ["Green"]
-    assert tuner._saved_entries[0].user_settings.get("diameter") != 55
-    assert tuner._has_unsaved_settings()
+    assert tuner._saved_entries[0].user_settings['diameter'] == 55
+    assert not tuner._has_unsaved_settings()
 
 
 def test_saved_mask_revision_rebuilds_geometry(tuner: SegmentationTunerWindow, tmp_path: Path) -> None:
@@ -274,6 +279,7 @@ def test_main_gui_receives_targeted_channel_deletion_and_compartment_settings(
     app.processEvents()
     adapter = SettingsAdapter()
     adapter.run_dir = str(image_masks[0])
+    adapter.set_field_value(cst.StepName.CONVERT, 'channel_labels', ['Red', 'Green'])
     adapter.set_segment_channels([{"channel": "Red"}, {"channel": "Green", "user_settings": {"diameter": 14}}])
     adapter.set_field_value(cst.StepName.EXTRACT, "additional_properties", ["eccentricity"])
     main = FitsMainWindow(adapter)
@@ -294,9 +300,10 @@ def test_main_gui_receives_targeted_channel_deletion_and_compartment_settings(
         active._select_entry(1)
         active.settings_panel.diameter.setValue(55)
         active._remove_entry(0)
-        assert [entry["channel"] for entry in adapter.segment_channels()] == ["Green"]
-        assert adapter.segment_channels()[0]["user_settings"]["diameter"] == 14
+        assert [entry["channel"] for entry in adapter.segment_channels()] == ["Red", "Green"]
+        assert adapter.segment_channels()[1]["user_settings"]["diameter"] == 14
         active._apply_settings()
+        assert [entry["channel"] for entry in adapter.segment_channels()] == ["Green"]
         assert adapter.segment_channels()[0]["user_settings"]["diameter"] == 55
     finally:
         active.close()

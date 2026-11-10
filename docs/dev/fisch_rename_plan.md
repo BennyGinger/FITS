@@ -233,7 +233,7 @@ snapshot/transaction facilities rather than inventing a second migration system.
 ## Execution checklist
 
 1. [x] Confirm the application release/compatibility threshold: **5.0.0**.
-2. [ ] Review and checkpoint all intended local changes, submodules first and
+2. [x] Review and checkpoint all intended local changes, submodules first and
        then the parent repository/pins. Record the starting branches and commits.
 3. [ ] Create the FIScH rename branch from the tested, complete ScopeIO integration,
        using the current checkout and shared environment. Preserve the main
@@ -298,3 +298,31 @@ read newly migrated data.
 
 The application release and compatibility threshold are confirmed as 5.0.0.
 No separate schema-version decision or old-command redirect is required.
+
+
+## ScopeIO merge checkpoint — 2026-11-10
+
+The integration and the reviewed local feature/test commit `1a6a292` have been
+fast-forwarded into FITS `main`. ScopeIO is on `main`; stackalign uses its
+existing default branch `master`; tracklink is on `main`. No FIScH source rename
+has started. These are local merges; nothing was pushed or released by this step.
+
+| Repository | Normal branch | Pre-merge rollback branch |
+| --- | --- | --- |
+| FITS | `main` | `safety/pre-scopeio-merge` at `d9ef9f6` |
+| ScopeIO | `main` | `safety/pre-scopeio-merge` at `a8b831e` |
+| stackalign | `master` | `safety/pre-scopeio-merge` at `61c90e9` |
+| tracklink | `main` | `safety/pre-scopeio-merge` at `b2465aa` |
+
+The parent `safety/fits-before-fisch` branch records the complete validated FITS
+state, including its ScopeIO and companion pins and this plan. Use it for the
+future FIScH rollback procedure above. The frozen shared environment sync
+succeeded on the merged main branch.
+
+A combined test run exposed an explicit `conftest` import collision between
+submodules. ScopeIO's filesystem tests now use their scoped pytest reader fixture
+instead of importing another module named `conftest`; application code is unchanged.
+The changed test file passes Pyright with zero errors/warnings. The combined
+ScopeIO/FITS-compatibility/stackalign/tracklink run passed 427 tests; the real
+pipeline-process suite passed another 5 tests. All merge working trees are clean
+at handoff, with the shared environment synchronized to the recorded lockfile.

@@ -1,4 +1,4 @@
-"""Check FITS's upstream branch and apply a selected update without importing FITS."""
+"""Check FITS's latest GitHub release and apply it without importing FITS."""
 
 from __future__ import annotations
 
@@ -10,6 +10,9 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from locking import Lease
 from setup import Installer
@@ -17,12 +20,20 @@ from state import command_environment, module_heads, record_installation, requir
 
 
 @dataclass
+class Release:
+    version: str
+    description: str
+
+
+@dataclass
 class Update:
     branch: str
     before: str
     target: str
-    summary: str
+    description: str
     blocked: str = ""
+    release: str = ""
+    current_version: str = ""
 
 
 class Updater(Installer):
@@ -46,7 +57,9 @@ class Updater(Installer):
         return self.git(*arguments).stdout.strip()
 
     def check(self) -> Update | None:
-        """Fetch only FITS, leaving the checkout and every module untouched."""
+        """
+        Fetch only the published release tag, leaving all checkouts untouched.
+        """
         branch = self.git("symbolic-ref", "--quiet", "--short", "HEAD", check=False).stdout.strip()
         if branch not in ("main", "master"):
             self.message("Update check skipped: this is not a main/master branch checkout.")
@@ -57,22 +70,50 @@ class Updater(Installer):
             self.message("Update check skipped: no main/master upstream is configured.")
             return None
         before = self.git("rev-parse", "HEAD").stdout.strip()
-        self.git("fetch", "--no-tags", "--no-recurse-submodules", "--", remote, reference, timeout=10)
+        release = self._latest_release(remote)
+        if release is None:
+            return None
+        self.git("fetch", "--no-tags", "--no-recurse-submodules", "--", remote, f"refs/tags/{release.version}", timeout=10)
         target = self.git("rev-parse", "FETCH_HEAD^{commit}").stdout.strip()
         if target == before:
-            self.message("FITS is up to date.")
+            self.message(f"FITS is up to date (release {release.version}).")
             return None
         if self.git("merge-base", "--is-ancestor", target, before, check=False).returncode == 0:
-            self.message("Local FITS commits are ahead of the upstream; leaving this checkout unchanged.")
+            self.message(f"Local FITS commits are ahead of release {release.version}; leaving this checkout unchanged.")
             return None
         blocked = ""
         if self.git("merge-base", "--is-ancestor", before, target, check=False).returncode:
-            blocked = "Local and upstream commits have diverged. Reconcile them in Git before updating."
+            blocked = "Local commits and the release have diverged. Reconcile them in Git before updating."
         changes = self.local_changes()
         if changes:
             blocked = "This checkout has local changes. Commit or save them before updating.\n" + changes
-        summary = self.git("log", "--format=%h %s", "-8", f"{before}..{target}").stdout.strip()
-        return Update(branch, before, target, summary, blocked)
+        current_version = tomllib.loads(self.git("show", f"{before}:pyproject.toml").stdout)["project"]["version"]
+        return Update(branch, before, target, release.description, blocked, release.version, current_version)
+
+    def _latest_release(self, remote: str) -> Release | None:
+        """
+        Read the upstream GitHub repository's latest published stable release.
+        """
+        url = self.git("remote", "get-url", remote).stdout.strip()
+        repository = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?", url)
+        if repository is None:
+            self.message("Update check skipped: the upstream is not a GitHub repository.")
+            return None
+        request = Request(f"https://api.github.com/repos/{repository[1]}/releases/latest",
+                          headers={"Accept": "application/vnd.github+json", "User-Agent": "FITS-updater"},
+                          )
+        try:
+            with urlopen(request, timeout=10) as response:
+                release = json.load(response)
+        except HTTPError as error:
+            if error.code != 404:
+                raise
+            self.message("No published GitHub release is available.")
+            return None
+        tag = release["tag_name"]
+        if release["draft"] or release["prerelease"] or not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", tag):
+            raise ValueError("The latest GitHub release must have a stable X.Y.Z tag.")
+        return Release(tag, release.get("body") or "")
 
     def module_heads(self, *, recorded: bool = False) -> dict[str, str]:
         return module_heads(self.root, recorded=recorded)

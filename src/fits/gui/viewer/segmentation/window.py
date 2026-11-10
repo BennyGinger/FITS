@@ -182,6 +182,13 @@ class SegmentationTunerWindow(ImageToolWindow):
         self.settings_panel.apply_button.setEnabled(enabled)
         self.close_button.setEnabled(True)
 
+    def _build_mode_controls(self, layout: QHBoxLayout) -> None:
+        """
+        Centre the active tab name between channel and mask controls, matching REF/ROI.
+        """
+        self.mode_label = QLabel()
+        layout.addWidget(self.mode_label, 0, Qt.AlignmentFlag.AlignCenter)
+
     def _build_overlay_controls(self, layout: QHBoxLayout) -> None:
         """
         Build overlay controls.
@@ -194,13 +201,6 @@ class SegmentationTunerWindow(ImageToolWindow):
         """
         Connect tools.
         """
-        self.mode_label = QLabel("Segmentation — cell masks")
-        self.mode_label.setWordWrap(True)
-        image_parent = self.image_viewer.parentWidget()
-        assert image_parent is not None
-        image_layout = image_parent.layout()
-        assert isinstance(image_layout, QVBoxLayout)
-        image_layout.insertWidget(0, self.mode_label)
         self.tool_tabs.currentChanged.connect(self._tab_changed)
         self.compartment_panel.changed.connect(self._compartment_edited)
         self.compartment_panel.mask_channels.currentRowChanged.connect(self._mask_channel_changed)
@@ -347,8 +347,6 @@ class SegmentationTunerWindow(ImageToolWindow):
                 self.compartment_panel.thickness.value(), self.compartment_panel.dilation.value())
         self.image_viewer.set_mask(mask)
         self.compartment_panel.source_label.setText(description)
-        self.mode_label.setText(("Compartment — membrane rings" if self._in_compartment()
-                                else "Segmentation — cell masks") + " | " + description)
         if stale:
             self.status_label.setText("Preview out of date — run preview to use the changed segmentation settings.")
 
@@ -831,8 +829,7 @@ class SegmentationTunerWindow(ImageToolWindow):
         palette.setColor(QPalette.ColorRole.Window, QColor(background))
         central.setPalette(palette)
         central.setAutoFillBackground(True)
-        self.mode_label.setText("Compartment — membrane rings" if self._in_compartment()
-                                else "Segmentation — cell masks")
+        self.mode_label.setText(self.tool_tabs.tabText(self.tool_tabs.currentIndex()))
         self.mode_label.setStyleSheet(f"background: {badge}; color: {accent}; border-left: 5px solid {accent}; "
                                       "padding: 4px 8px; font-weight: bold; font-size: 14px;")
         self.diameter_reference.set_diameter(0 if self._in_compartment() else self.settings_panel.diameter.value())

@@ -42,7 +42,9 @@ def test_main_viewer_reads_raw_tiff_planes_and_source_colors(tmp_path: Path, mon
     assert window._raw_source
     assert window._tracking_session is None
     assert window.image_viewer.lut_color == "#fe0000"
-    assert not window.tool_panel.isEnabled()
+    assert window.tool_panel.isEnabled()
+    assert window.measurement is not None
+    assert window.measurement.drawing.isEnabled()
     assert not window.save_display_button.isEnabled()
     window.frame_slider.setValue(1)
     window.z_slider.setValue(2)

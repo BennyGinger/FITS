@@ -82,7 +82,8 @@ def test_saved_mask_priority_and_independent_image_channel(tuner: SegmentationTu
                                   compartment_masks(tracking[1], CompartmentSettings(1))["mb"])
     tuner.tool_tabs.setCurrentIndex(0)
     np.testing.assert_array_equal(np.asarray(tuner.image_viewer._mask_array), segmentation[0])
-    assert "Saved mask" in tuner.mode_label.text()
+    assert tuner.mode_label.text() == "Segmentation"
+    assert "Saved mask" in tuner.compartment_panel.source_label.text()
 
 
 def test_compartment_preview_bypasses_tracking(tuner: SegmentationTunerWindow,

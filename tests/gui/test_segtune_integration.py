@@ -142,6 +142,14 @@ def test_tuner_styles_actions_and_preview_restores_overlay() -> None:
     ]
     viewer.show()
     QApplication.processEvents()
+    for index, title in ((1, "Compartment"), (0, "Segmentation")):
+        viewer.tool_tabs.setCurrentIndex(index)
+        QApplication.processEvents()
+        assert viewer.mode_label.text() == title
+        title_left = viewer.mode_label.mapToGlobal(viewer.mode_label.rect().topLeft()).x()
+        title_right = viewer.mode_label.mapToGlobal(viewer.mode_label.rect().topRight()).x()
+        assert title_left > viewer.grayscale_lut_button.mapToGlobal(viewer.grayscale_lut_button.rect().topRight()).x()
+        assert title_right < viewer.overlay_label.mapToGlobal(viewer.overlay_label.rect().topLeft()).x()
     assert viewer.preview_actions.mapToGlobal(
         viewer.preview_actions.rect().topLeft()).x() > viewer.lut_controls.mapToGlobal(
             viewer.lut_controls.rect().topRight()).x()

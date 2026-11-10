@@ -86,15 +86,18 @@ class CropPanel(QWidget):
         self.color_button.clicked.connect(self._choose_color)
         self._update_controls()
 
-    def bind(self, viewer: FitsImageViewer) -> None:
-        """Attach rectangle graphics and mouse handling to a viewer."""
+    def bind(self, viewer: FitsImageViewer, *, interactive: bool = True) -> None:
+        """
+        Attach crop graphics and optionally let Draw own the pointer gestures.
+        """
         self._viewer = viewer
         viewer.view_box.addItem(self.rectangle, ignoreBounds=True)
         viewer.view_box.addItem(self.selection_rectangle, ignoreBounds=True)
         self._canvas = cast(QGraphicsView, viewer.canvas)
         self._viewport = self._canvas.viewport()
         assert self._viewport is not None
-        self._viewport.installEventFilter(self)
+        if interactive:
+            self._viewport.installEventFilter(self)
         self._viewport.setMouseTracking(True)
         viewer.home_button.clicked.connect(lambda: self.preview_button.setChecked(False))
 

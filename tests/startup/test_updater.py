@@ -1,6 +1,9 @@
 """Exercise real local Git updates and interruptions without network/downloads."""
 
 import importlib
+import io
+import json
+from email.message import Message
 import os
 from pathlib import Path
 import shutil
@@ -10,6 +13,8 @@ import stat
 from types import SimpleNamespace
 from types import ModuleType
 from unittest.mock import MagicMock
+from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 from filelock import FileLock
@@ -23,9 +28,15 @@ def git(root, *arguments):
                           capture_output=True, text=True).stdout.strip()
 
 
-def commit(root, message):
+def commit(root: Path, message: str, *, publish: bool = False) -> str:
+    """
+    Commit test changes and optionally publish an annotated stable release tag.
+    """
     git(root, "add", ".")
     git(root, "commit", "-qm", message)
+    if publish:
+        count = len(git(root, "tag", "--list").splitlines())
+        git(root, "tag", "-a", f"4.1.{count}", "-m", message)
     return git(root, "rev-parse", "HEAD")
 
 
@@ -43,24 +54,165 @@ def modules(monkeypatch):
 
 
 @pytest.fixture
-def repositories(tmp_path, monkeypatch):
+def repositories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                 modules: tuple[ModuleType, ModuleType],
+                 ) -> tuple[Path, Path]:
+    """
+    Use real local Git remotes with a simulated published-release lookup.
+    """
     monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
     remote = tmp_path / "upstream FITS"
     initialize(remote)
     (remote / ".gitignore").write_text(".venv/\nstartup/logs/\n__pycache__/\n")
     (remote / "app.py").write_text("version = 1\n")
     (remote / "uv.lock").write_text("test lockfile\n")
-    commit(remote, "initial")
+    (remote / "pyproject.toml").write_text('[project]\nversion = "4.1.0"\n')
+    commit(remote, "initial", publish=True)
     root = tmp_path / "local FITS"
     subprocess.run(["git", "clone", str(remote), str(root)], check=True, capture_output=True)
     git(root, "config", "user.name", "Updater Test")
     git(root, "config", "user.email", "test@example.org")
+
+    def latest_release(self: object, remote_name: str) -> object:
+        """
+        Simulate GitHub selecting the newest published release in the test remote.
+        """
+        return modules[0].Release(git(remote, "tag", "--sort=-version:refname").splitlines()[0], "Published release notes")
+
+    monkeypatch.setattr(modules[0].Updater, "_latest_release", latest_release)
     return remote, root
 
 
-def change_remote(remote, message="new FITS"):
+def change_remote(remote: Path, message: str = "new FITS", *, publish: bool = True) -> str:
+    """
+    Add an upstream commit, publishing a release unless explicitly disabled.
+    """
     (remote / "app.py").write_text(message + "\n")
-    return commit(remote, message)
+    return commit(remote, message, publish=publish)
+
+
+def test_only_published_release_commits_are_offered(modules: tuple[ModuleType, ModuleType],
+                                                 repositories: tuple[Path, Path],
+                                                 monkeypatch: pytest.MonkeyPatch,
+                                                 ) -> None:
+    """
+    Ignore unpublished commits and bare tags, then apply only the chosen release.
+    """
+    module, _ = modules
+    remote, root = repositories
+    engine = module.Updater(root)
+    before = git(root, "rev-parse", "HEAD")
+    change_remote(remote, "unreleased work", publish=False)
+    git(remote, "tag", "99.0.0")
+    monkeypatch.setattr(engine, "_latest_release", lambda remote_name: module.Release("4.1.0", "Initial release"))
+    assert engine.check() is None
+    target = change_remote(remote, "released work", publish=False)
+    git(remote, "tag", "-a", "4.2.0", "-m", "FITS 4.2.0")
+    monkeypatch.setattr(engine, "_latest_release", lambda remote_name: module.Release("4.2.0", "## Changes\n\nReleased work"))
+    change_remote(remote, "after release", publish=False)
+    update = engine.check()
+    assert update is not None
+    assert update.before == before and update.target == target
+    assert update.release == "4.2.0"
+    assert update.current_version == "4.1.0"
+    assert update.description == "## Changes\n\nReleased work"
+    engine.prepare(update)
+    monkeypatch.setattr(engine, "synchronize", lambda: None)
+    engine.resume()
+    assert git(root, "rev-parse", "HEAD") == target
+    git(root, "fetch", "origin", "main")
+    git(root, "merge", "--ff-only", "FETCH_HEAD")
+    assert engine.check() is None
+
+
+@pytest.mark.parametrize("url", ["https://github.com/BennyGinger/fits.git",
+                                "git@github.com:BennyGinger/fits.git",
+                                "ssh://git@github.com/BennyGinger/fits.git",
+                                "https://github.com/BennyGinger/fits/",
+                                ])
+@pytest.mark.parametrize("kind", ["stable", "draft", "prerelease", "invalid-tag", "missing", "rate-limit"])
+def test_github_release_lookup(modules: tuple[ModuleType, ModuleType], tmp_path: Path,
+                              monkeypatch: pytest.MonkeyPatch, url: str, kind: str,
+                              ) -> None:
+    """
+    Query GitHub releases with bounded requests and reject nonstable responses.
+    """
+    module, _ = modules
+    root = tmp_path / "checkout"
+    initialize(root)
+    git(root, "remote", "add", "origin", url)
+    engine = module.Updater(root)
+
+    def open_release(request: Request, *, timeout: int) -> io.BytesIO:
+        """
+        Return a release response or simulate an HTTP failure without network access.
+        """
+        assert request.full_url == "https://api.github.com/repos/BennyGinger/fits/releases/latest"
+        assert timeout == 10
+        if kind in ("missing", "rate-limit"):
+            raise HTTPError(request.full_url, 404 if kind == "missing" else 403, kind, Message(), None)
+        return io.BytesIO(json.dumps({"tag_name": "4.2.0rc1" if kind == "invalid-tag" else "4.2.0",
+                                     "draft": kind == "draft", "prerelease": kind == "prerelease",
+                                     "body": "## Changes\n\nRelease description from GitHub.",
+                                     }).encode())
+
+    monkeypatch.setattr(module, "urlopen", open_release)
+    if kind == "stable":
+        assert engine._latest_release("origin") == module.Release("4.2.0", "## Changes\n\nRelease description from GitHub.")
+    elif kind == "missing":
+        assert engine._latest_release("origin") is None
+    elif kind == "rate-limit":
+        with pytest.raises(HTTPError):
+            engine._latest_release("origin")
+    else:
+        with pytest.raises(ValueError, match="stable X.Y.Z"):
+            engine._latest_release("origin")
+
+
+@pytest.mark.parametrize("error", [ValueError("invalid JSON"), HTTPError("https://api.github.com", 403, "rate limit", Message(), None)])
+def test_failed_release_lookup_launches_current_version(modules: tuple[ModuleType, ModuleType],
+                                                      repositories: tuple[Path, Path],
+                                                      monkeypatch: pytest.MonkeyPatch,
+                                                      error: Exception,
+                                                      ) -> None:
+    """
+    Preserve normal startup when the release service fails or returns invalid JSON.
+    """
+    module, launcher = modules
+    _, root = repositories
+    engine = module.Updater(root)
+    monkeypatch.setattr(launcher, "needs_repair", lambda root: False)
+    monkeypatch.setattr(engine, "_latest_release", MagicMock(side_effect=error))
+    launches: list[bool] = []
+    monkeypatch.setattr(launcher, "launch_gui", lambda *args: launches.append(True) or 0)
+    monkeypatch.setattr(launcher, "ask", lambda *args: pytest.fail("offered an unavailable release"))
+    assert launcher.startup(engine, []) == 0
+    assert launches == [True]
+
+
+def test_startup_prompt_uses_versions_and_release_description(modules: tuple[ModuleType, ModuleType],
+                                                            repositories: tuple[Path, Path],
+                                                            monkeypatch: pytest.MonkeyPatch,
+                                                            ) -> None:
+    """
+    Pass version numbers and the unmodified release body to the update dialog.
+    """
+    module, launcher = modules
+    remote, root = repositories
+    change_remote(remote)
+    description = "## Release highlights\n\n- Improved tracking.\n- Updated GUI."
+    engine = module.Updater(root)
+    monkeypatch.setattr(engine, "_latest_release", lambda remote: module.Release("4.1.1", description))
+    monkeypatch.setattr(launcher, "needs_repair", lambda root: False)
+    requests: list[dict[str, object]] = []
+    monkeypatch.setattr(launcher, "ask", lambda updater, request: requests.append(request) or "current")
+    monkeypatch.setattr(launcher, "launch_gui", lambda *args: 0)
+    assert launcher.startup(engine, []) == 0
+    assert len(requests) == 1
+    assert requests[0]["message"] == "A newer version of FITS is available: 4.1.1.\nThe current version installed is 4.1.0.\n\nWould you like to update?"
+    assert requests[0]["release"] == "4.1.1"
+    assert requests[0]["current_version"] == "4.1.0"
+    assert requests[0]["details"] == description
 
 
 def test_check_current_and_offer_fast_forward_without_changing_checkout(modules, repositories):
@@ -73,7 +225,8 @@ def test_check_current_and_offer_fast_forward_without_changing_checkout(modules,
     update = engine.check()
     assert update.before == before and update.target == target
     assert not update.blocked
-    assert "new FITS" in update.summary
+    assert update.description == "Published release notes"
+    assert update.current_version == "4.1.0"
     assert git(root, "rev-parse", "HEAD") == before
     assert (root / "app.py").read_text() == "version = 1\n"
 
@@ -168,7 +321,7 @@ def test_dirty_pinned_submodule_allows_only_environment_repair(modules: tuple[Mo
     (source / "module.py").write_text("original module")
     pin = commit(source, "module")
     git(remote, "submodule", "add", str(source), "example")
-    commit(remote, "include module")
+    commit(remote, "include module", publish=True)
     engine = module.Updater(root)
     monkeypatch.setattr(engine, "synchronize", lambda: None)
     engine.prepare(engine.check())
@@ -258,7 +411,7 @@ def test_new_submodule_is_initialized_and_existing_one_is_pinned(modules, reposi
     (source / "module.py").write_text("version = 1\n")
     first = commit(source, "module one")
     git(remote, "submodule", "add", str(source), "example module")
-    commit(remote, "add module")
+    commit(remote, "add module", publish=True)
     engine = module.Updater(root)
     monkeypatch.setattr(engine, "synchronize", lambda: None)
     engine.prepare(engine.check())
@@ -271,7 +424,7 @@ def test_new_submodule_is_initialized_and_existing_one_is_pinned(modules, reposi
     assert git(root / "example module", "rev-parse", "HEAD") == first
     git(remote / "example module", "fetch")
     git(remote / "example module", "checkout", second)
-    commit(remote, "adopt module two")
+    commit(remote, "adopt module two", publish=True)
     engine.prepare(engine.check())
     engine.resume()
     assert git(root / "example module", "rev-parse", "HEAD") == second
@@ -286,7 +439,7 @@ def test_crash_between_parent_and_module_update_is_repairable(modules, repositor
     (source / "module.py").write_text("one")
     commit(source, "one")
     git(remote, "submodule", "add", str(source), "example")
-    commit(remote, "add example")
+    commit(remote, "add example", publish=True)
     engine = module.Updater(root)
     monkeypatch.setattr(engine, "synchronize", lambda: None)
     engine.prepare(engine.check())
@@ -297,7 +450,7 @@ def test_crash_between_parent_and_module_update_is_repairable(modules, repositor
     second = commit(source, "two")
     git(remote / "example", "fetch")
     git(remote / "example", "checkout", second)
-    commit(remote, "adopt two")
+    commit(remote, "adopt two", publish=True)
     update = engine.check()
     if route == "interrupted":
         engine.prepare(update)
@@ -430,7 +583,7 @@ def test_update_runs_real_installer_with_simulated_dependencies(modules, reposit
     (remote / "assets").mkdir()
     (remote / "assets/fits_icon.png").touch()
     (remote / "startup/verify.py").write_text("print('Backend verification reached')\n")
-    target = commit(remote, "include installer")
+    target = commit(remote, "include installer", publish=True)
     tools = tmp_path / "tools"
     tools.mkdir()
     uv = tools / "uv"
@@ -514,6 +667,7 @@ def test_direct_gui_holds_and_releases_updater_compatible_lock(modules, tmp_path
     process = subprocess.Popen([sys.executable, "-c", code], env=environment,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
+        assert process.stdout is not None
         assert process.stdout.readline().strip() == "holding lease"
         with pytest.raises(launcher.BusyError):
             with launcher.Lease(lock):
@@ -533,7 +687,7 @@ def test_legacy_hidden_configs_are_made_visible(modules, monkeypatch):
     files = {}
     for name in ("pyproject.toml", "uv.lock"):
         path = MagicMock(spec=Path)
-        path.__str__.return_value = "C:\\fits\\" + name
+        path.configure_mock(**{"__str__.return_value": "C:\\fits\\" + name})
         path.exists.return_value = True
         path.stat.return_value = SimpleNamespace(st_file_attributes=stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_READONLY)
         files[name] = path

@@ -50,8 +50,8 @@ def native_choice(request: dict) -> str:
         if kind == "message" or request.get("blocked"):
             subprocess.run([zenity, "--info", "--no-markup", "--title", title, "--text", message])
             return decline
-        label = "Update FITS" if kind == "update" else "Repair and launch"
-        cancel = "Use current version" if kind == "update" else "Close"
+        label = "Yes" if kind == "update" else "Repair and launch"
+        cancel = "Skip" if kind == "update" else "Close"
         result = subprocess.run([
             zenity, "--question", "--no-markup", "--title", title, "--text", message,
             "--ok-label", label, "--cancel-label", cancel,
@@ -146,6 +146,9 @@ def launch_gui(updater: Updater, arguments: list[str]) -> int:
 
 
 def startup(updater: Updater, arguments: list[str], *, skip_check: bool = False, repair: bool = False) -> int:
+    """
+    Offer release updates or repairs before launching this checkout's GUI.
+    """
     # The supervisor lease lasts through GUI exit. The application lease is also
     # used by direct `uv run fits-gui` instances, and by the update worker.
     with Lease(updater.root / "startup/logs/application.lock"):
@@ -154,15 +157,18 @@ def startup(updater: Updater, arguments: list[str], *, skip_check: bool = False,
         if not skip_check and not updater.pending.exists():
             try:
                 update = updater.check()
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
                 updater.message(f"Update check unavailable; keeping the current version: {error}")
         if update is not None and not incomplete and not repair:
-            message = (f"A newer FITS version is available.\n\n"
-                       f"Installed: {update.before[:8]}\nAvailable: {update.target[:8]}\n\n{update.summary}")
+            message = (f"A newer version of FITS is available: {update.release}.\n"
+                       f"The current version installed is {update.current_version}.\n\n"
+                       "Would you like to update?")
             if update.blocked:
                 message += "\n\n" + update.blocked
             action = ask(updater, {"kind": "update", "title": "FITS update available",
-                                   "message": message, "blocked": bool(update.blocked)})
+                                   "message": message, "details": update.description,
+                                   "release": update.release, "current_version": update.current_version,
+                                   "blocked": bool(update.blocked), "blocked_reason": update.blocked})
             if action == "update" and not update.blocked:
                 updater.prepare(update)
                 repair = True

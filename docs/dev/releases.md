@@ -55,5 +55,8 @@ Run the standalone automation tests without installing FITS or its submodules:
 python -m unittest discover -s tests/releases -v
 ```
 
-The action takes effect once its files are pushed to `main`. It does not change
-the desktop updater: switching that updater from commits to releases is separate.
+The action takes effect once its files are pushed to `main`. The desktop updater
+checks GitHub's latest published stable release and offers its exact tagged
+commit. Ordinary commits after that tag are excluded until another release is
+published. Existing installations need the release-aware updater code installed
+once before their startup checks follow releases.

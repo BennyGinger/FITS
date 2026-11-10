@@ -4,8 +4,8 @@ from numpy.typing import NDArray
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTimer, Qt, Slot
-from PySide6.QtGui import QCloseEvent, QKeyEvent
-from PySide6.QtWidgets import QAbstractSpinBox, QFileDialog, QCheckBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar, QPushButton, QSlider, QSplitter, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QCloseEvent, QKeyEvent, QShowEvent
+from PySide6.QtWidgets import QAbstractSpinBox, QFileDialog, QCheckBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar, QPushButton, QSlider, QSplitter, QToolButton, QVBoxLayout, QWidget
 from fits.gui.viewer.common.information_dialog import HelpRow, ViewerInformationDialog
 from fits.workflows.artifacts.paths import image_for, first_image
 from fits.environment.constant import IMAGE_NAMES, FITS_ARRAY_NAME
@@ -18,7 +18,9 @@ from fits.interaction import FitsImageSession
 class ImageToolWindow(QMainWindow):
     """Shared image browsing, display and navigation for focused tools."""
 
-    source_panel_sizes = (230, 750)
+    source_panel_sizes = (320, 660)
+    initial_panel_sizes = (500, 1050)
+    initial_left_width: int | None = None
     auto_open_first_image = True
     file_filters: tuple[str, ...]
     help_gui: str
@@ -36,6 +38,7 @@ class ImageToolWindow(QMainWindow):
         """
         super().__init__(parent)
         self._directory_locked = directory_locked
+        self._initial_width_applied = False
         self.resize(1700, 1150)
         self._image_session: FitsImageSession | None = None
         self._source_path: Path | None = None
@@ -58,6 +61,7 @@ class ImageToolWindow(QMainWindow):
         outer_layout.setContentsMargins(8, 8, 8, 8)
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter = main_splitter
         outer_layout.addWidget(main_splitter)
 
         left = QWidget()
@@ -82,7 +86,8 @@ class ImageToolWindow(QMainWindow):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_splitter = QSplitter(Qt.Orientation.Vertical)
-        right_layout.addWidget(right_splitter)
+        self.right_splitter = right_splitter
+        right_layout.addWidget(right_splitter, 1)
 
         image_panel = QWidget()
         image_layout = QVBoxLayout(image_panel)
@@ -143,39 +148,53 @@ class ImageToolWindow(QMainWindow):
         lut_panel = QWidget()
         footer_layout = QHBoxLayout(lut_panel)
         footer_layout.setContentsMargins(24, 0, 24, 0)
+        footer_layout.setSpacing(24)
         self.lut_controls = QWidget()
-        lut_layout = QHBoxLayout(self.lut_controls)
-        lut_layout.setContentsMargins(0, 0, 0, 0)
-        self.image_viewer.histogram.setMaximumHeight(125)
+        self.lut_controls.setFixedSize(560, 125)
+        lut_layout = QGridLayout(self.lut_controls)
+        lut_layout.setHorizontalSpacing(12)
+        lut_layout.setVerticalSpacing(2)
+        lut_layout.setContentsMargins(0, 0, 4, 0)
         self.image_viewer.histogram.setToolTip(
             "Adjust the displayed intensity range. Add a colour marker from the "
             "gradient menu; click a marker to edit its colour, or remove it from "
             "the colour dialog.")
-        lut_layout.addWidget(cast(QWidget, self.image_viewer.histogram), 1)
-        lut_actions = QVBoxLayout()
-        self.auto_scale_button = QPushButton("Auto-scale")
-        self.auto_scale_button.setFixedWidth(self.image_viewer.pixel_readout.width())
-        lut_actions.addWidget(self.auto_scale_button)
         self.full_range_button = QPushButton("Full range")
-        self.full_range_button.setFixedWidth(self.image_viewer.pixel_readout.width())
-        lut_actions.addWidget(self.full_range_button)
-        lut_actions.addWidget(self.image_viewer.pixel_readout)
-        lut_actions.addStretch(1)
-        lut_layout.addLayout(lut_actions)
-        footer_layout.addWidget(self.lut_controls, 1)
+        self.auto_scale_button = QPushButton("Auto-scale")
+        for button in (self.auto_scale_button, self.full_range_button):
+            button.setFixedSize(self.image_viewer.pixel_readout.width(), button.sizeHint().height())
+        lut_layout.addWidget(self.full_range_button, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        lut_layout.addWidget(self.auto_scale_button, 0, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        profile_header = QWidget()
+        profile_header.setFixedWidth(self.image_viewer.pixel_readout.width())
+        self.lut_profile_layout = QVBoxLayout(profile_header)
+        self.lut_profile_layout.setContentsMargins(0, 0, 0, 0)
+        self.lut_profile_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        lut_layout.addWidget(profile_header, 0, 2, Qt.AlignmentFlag.AlignTop)
+        lut_layout.addWidget(cast(QWidget, self.image_viewer.histogram), 1, 0, 1, 2)
+        lut_layout.addWidget(self.image_viewer.pixel_readout, 1, 2)
+        lut_layout.setColumnStretch(0, 1)
+        lut_layout.setColumnStretch(1, 1)
+        lut_layout.setRowStretch(1, 1)
+        footer_layout.addWidget(self.lut_controls, 0, Qt.AlignmentFlag.AlignBottom)
+        footer_layout.addStretch(1)
         self.viewer_actions = QWidget()
         action_layout = QHBoxLayout(self.viewer_actions)
         action_layout.setContentsMargins(0, 0, 0, 0)
         self._build_viewer_actions(action_layout)
-        footer_layout.addWidget(self.viewer_actions, 1)
-        right_splitter.addWidget(lut_panel)
-        right_splitter.setStretchFactor(0, 7)
-        right_splitter.setStretchFactor(1, 1)
-        right_splitter.setSizes([875, 125])
+        self.viewer_actions.setFixedSize(self.viewer_actions.sizeHint().width(),
+                                         max(125, self.viewer_actions.sizeHint().height()))
+        action_layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        footer_layout.addWidget(self.viewer_actions, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        right_layout.addWidget(lut_panel)
+        right_splitter.addWidget(QWidget())
+        right_splitter.setStretchFactor(0, 1)
+        right_splitter.setStretchFactor(1, 0)
+        right_splitter.setSizes([875, 0])
         main_splitter.addWidget(right)
-        main_splitter.setStretchFactor(0, 1)
+        main_splitter.setStretchFactor(0, 1 if self.initial_left_width is None else 0)
         main_splitter.setStretchFactor(1, 2)
-        main_splitter.setSizes([500, 1050])
+        main_splitter.setSizes(list(self.initial_panel_sizes))
 
         self.status_bar = QWidget()
         self.status_bar.setFixedHeight(28)
@@ -189,6 +208,16 @@ class ImageToolWindow(QMainWindow):
         self.progress.hide()
         status_layout.addWidget(self.progress)
         outer_layout.addWidget(self.status_bar)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """
+        Give measurement windows the same initial sidebar width while retaining resizing.
+        """
+        super().showEvent(event)
+        if self.initial_left_width is not None and not self._initial_width_applied:
+            self._initial_width_applied = True
+            self.main_splitter.setSizes([self.initial_left_width,
+                                         max(1, self.main_splitter.width() - self.initial_left_width)])
 
     def _build_source_controls(self) -> QWidget:
         """
@@ -213,6 +242,7 @@ class ImageToolWindow(QMainWindow):
 
         self.directory_browser = DirectoryBrowser("Experiments directory contents",
                                                   file_name_filters=self.file_filters,
+                                                  highlight_selection_path=True,
                                                   )
         layout.addWidget(self.directory_browser)
         return container

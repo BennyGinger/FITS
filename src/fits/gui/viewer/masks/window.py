@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 from PySide6.QtCore import QEventLoop, QThread, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent, QShowEvent
 from PySide6.QtWidgets import QApplication, QColorDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTabWidget, QWidget
 from fits.workflows.artifacts.paths import image_for, first_image
 from fits.environment.constant import IMAGE_NAMES, FITS_ARRAY_NAME, FITS_REFERENCE_TEMPLATE, FITS_ROI_TEMPLATE
@@ -37,6 +37,8 @@ class _InterpolationOptions(TypedDict):
 class MaskDrawingWindow(ImageToolWindow):
     """Create and edit reference and ROI masks in a shared image context."""
 
+    initial_left_width = 0
+
     mask_saved = Signal(str, object)
 
     file_filters = (*IMAGE_NAMES, FITS_REFERENCE_TEMPLATE.format(label="*"),
@@ -59,6 +61,16 @@ class MaskDrawingWindow(ImageToolWindow):
         super().__init__(experiments_dir, parent)
         self.setWindowTitle("FITS Mask Drawing")
         self._refresh_mask_colour_controls()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """
+        Open with the sidebar at its minimum, preserving later manual resizing.
+        """
+        if not self._initial_width_applied:
+            sidebar = self.main_splitter.widget(0)
+            assert sidebar is not None
+            self.initial_left_width = sidebar.minimumSizeHint().width()
+        super().showEvent(event)
 
     def _build_tools(self) -> QWidget:
         """
@@ -258,7 +270,6 @@ class MaskDrawingWindow(ImageToolWindow):
         self._set_source_controls_enabled(True)
         self.reference_panel.label_edit.setText(self._reference_session.reference_label or "")
         self.roi_panel.label_edit.setText(self._roi_session.roi_label or "")
-        self.roi_panel.reset_for_source()
         self._update_drawing_options()
         self._display_selection()
         self.status_label.setText(

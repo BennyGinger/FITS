@@ -17,6 +17,7 @@ from fits.gui.settings.wheel_widgets import FocusWheelComboBox
 from fits.gui.viewer.background.settings_panel import BackgroundSettingsPanel
 from fits.gui.viewer.background.worker import BackgroundPreviewWorker
 from fits.gui.viewer.common.base_window import ImageToolWindow
+from fits.gui.viewer.common.area_measurement import AreaMeasurement
 from fits.gui.viewer.common.information_dialog import BACKGROUND_HELP
 from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, MAIN_GUI_SETTINGS_HINT, RUN_PREVIEW_STYLE, SAVE_SETTINGS_STYLE, configure_tuner_window, confirm_discard_tuner_changes, set_preview_choices, toggle_preview_choice
 from fits.settings.loader import run_settings_path
@@ -29,6 +30,8 @@ class BackgroundTunerWindow(ImageToolWindow):
 
     settings_applied = Signal(object)
     auto_open_first_image = True
+    initial_panel_sizes = (380, 1170)
+    initial_left_width = 460
     file_filters = IMAGE_NAMES
     help_gui = "BGTune"
     tool_help = BACKGROUND_HELP
@@ -92,6 +95,11 @@ class BackgroundTunerWindow(ImageToolWindow):
         """
         Stack the orange preview, green save and light-red close actions beside the LUT.
         """
+        self.measurement = AreaMeasurement(self.image_viewer, self)
+        self.settings_panel.drawing_layout.addWidget(self.measurement.drawing)
+        self.measurement.profile_button.setFixedSize(self.auto_scale_button.size())
+        self.measurement.profile_button.setFont(self.auto_scale_button.font())
+        self.lut_profile_layout.insertWidget(0, self.measurement.profile_button)
         self.session_actions = QWidget()
         actions = QVBoxLayout(self.session_actions)
         actions.setContentsMargins(0, 0, 0, 0)
@@ -124,10 +132,8 @@ class BackgroundTunerWindow(ImageToolWindow):
 
     def _connect_tools(self) -> None:
         """
-        Connect actions and the shared measurement rectangle.
+        Connect processing actions, settings and image comparison controls.
         """
-        self.settings_panel.measurement.bind(self.image_viewer)
-        self.settings_panel.measurement.changed.connect(self._display_selection)
         self.settings_panel.changed.connect(self._settings_edited)
         self.run_button.clicked.connect(self._run_preview)
         self.save_button.clicked.connect(self._save_settings)
@@ -202,7 +208,6 @@ class BackgroundTunerWindow(ImageToolWindow):
             self._source_path = source
             self._used = False
             self.settings_panel.load(self._defaults, session.channel_labels)
-            self.settings_panel.measurement.reset((session._axis_size("Y"), session._axis_size("X")))
             with QSignalBlocker(self.channel_combo):
                 self.channel_combo.addItems(list(session.channel_labels))
             self.frame_slider.setRange(0, session.frame_count - 1)
@@ -247,25 +252,10 @@ class BackgroundTunerWindow(ImageToolWindow):
             levels = self.image_viewer.display_levels
             self.image_viewer.set_image(result)
             self.image_viewer.set_display_levels(levels)
-        self._update_means(image, result)
+        self.measurement.update(self._session, image, frame, channel, z_index,
+                                processed=result, background=settings if self._preview_enabled else None)
         if self._preview_enabled and result is None and self._thread is None and not self._closing:
             self._start_plane(image, settings, frame, channel, z_index)
-
-    def _update_means(self, original: NDArray, processed: NDArray | None) -> None:
-        """
-        Measure identical raw pixel coordinates independently of LUT scaling.
-        """
-        box = self.settings_panel.measurement
-        if not box.enabled.isChecked() or box.bounds is None:
-            self.settings_panel.means.setText("Enable the measurement box and draw a rectangle.")
-            return
-        x0, y0, x1, y1 = box.bounds
-        before = float(np.mean(original[y0:y1, x0:x1], dtype=np.float64))
-        after = float(np.mean(processed[y0:y1, x0:x1], dtype=np.float64)) if processed is not None else None
-        text = f"Original mean: {before:.6g}\n"
-        text += (f"Processed mean: {after:.6g}\nDifference (original − processed): {before - after:.6g}"
-                 if after is not None else "Processed mean: run preview or wait for the selected plane.")
-        self.settings_panel.means.setText(text)
 
     @Slot()
     def _run_preview(self) -> None:
@@ -398,8 +388,7 @@ class BackgroundTunerWindow(ImageToolWindow):
         self._preview_enabled = False
         set_preview_choices(self.comparison, False, 0)
         self._session = None
-        self.settings_panel.measurement.reset()
-        self.settings_panel.means.setText("Enable the measurement box and draw a rectangle.")
+        self.measurement.reset()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """

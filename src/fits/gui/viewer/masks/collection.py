@@ -44,7 +44,7 @@ class _MaskSlot:
 class MaskCollectionWindow(MaskDrawingWindow):
     """One active experiment, an append-only waiting queue, and explicit outcomes."""
 
-    source_panel_sizes = (230, 790)
+    source_panel_sizes = (213, 807)
 
     experiment_finalized = Signal(object)
     collection_finished = Signal()
@@ -86,15 +86,6 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self._targets = {"reference": 0, "roi": 0}
         super().__init__(parent=parent)
         self.viewer_actions.setFixedWidth(400)
-        self.lut_controls.setFixedWidth(460)
-        footer = self.viewer_actions.parentWidget()
-        assert footer is not None
-        footer_layout = footer.layout()
-        assert isinstance(footer_layout, QHBoxLayout)
-        footer_layout.setStretchFactor(self.lut_controls, 0)
-        footer_layout.setStretchFactor(self.viewer_actions, 0)
-        footer_layout.insertSpacing(1, 24)
-        footer_layout.insertStretch(2, 1)
         self.setWindowTitle("FITS Mask Collection" + (" — Preview" if preview else ""))
         configure_tuner_window(self, self.status_label)
         self.mask_saved.connect(self._saved_mask)
@@ -377,7 +368,6 @@ class MaskCollectionWindow(MaskDrawingWindow):
         else:
             self._roi_session = RoiSession(self._source_path, roi_path=self._roi_path)
             self.roi_panel.label_edit.setText(self._roi_session.roi_label or "")
-            self.roi_panel.reset_for_source()
         self._remember(kind)
         self._display_selection()
 
@@ -506,7 +496,6 @@ class MaskCollectionWindow(MaskDrawingWindow):
             assert isinstance(slot.session, RoiSession)
             self._roi_session = slot.session
             self._roi_path = slot.path
-            self.roi_panel.reset_for_source()
         panel.label_edit.setText(slot.label)
         if slot.baseline is None:
             self._remember(kind)
@@ -1020,8 +1009,9 @@ class MaskCollectionWindow(MaskDrawingWindow):
         for mask_kind in ("reference", "roi"):
             self.add_mask_buttons[mask_kind].setEnabled(editable)
             self.mask_lists[mask_kind].setEnabled(editable)
-            self._session_panel(mask_kind)[1].controls_scroll.setEnabled(
-                editable and self._current_slot(mask_kind) is not None)
+            controls = self._session_panel(mask_kind)[1].controls_scroll.widget()
+            assert controls is not None
+            controls.setEnabled(editable and self._current_slot(mask_kind) is not None)
         self._refresh_mask_lists()
         self._update_drawing_options()
         self.return_button.setText("Return to current experiment" if self._active else "Return to collection")

@@ -10,6 +10,15 @@ For tool-specific settings, see [segmentation](segmentation.md),
 [reference/ROI drawing](reference_and_roi_masks.md). Developer details about
 storage and caches are in [runtime and viewer internals](../dev/runtime_and_viewer_internals.md).
 
+## Experiment browser
+
+Tuners, File Viewer and Track Editor show the selected experiment directly in
+the browser. Its parent folders expand automatically and the complete ancestry
+is highlighted in blue, following each row's indentation. The browser starts
+taller; drag the horizontal divider to adjust its height. There is no wrapping selected-path label below the
+tree; that space is used for additional browser rows. The highlighted parents
+are visual context, not additional selected experiments.
+
 ## Inspecting artifact metadata in ImageJ/Fiji
 
 FITS-generated **TIFF images and masks carry metadata inside the file**. Along
@@ -117,9 +126,9 @@ unlimited number of selected cells; Ctrl+click and text entry stay synchronised.
 The tracking editor keeps its single-ID input and maximum of two selected tracks.
 Press Enter or Select to apply IDs; unavailable or filtered-out IDs leave the
 current selection unchanged. In the tracking viewer, Ctrl+left-click toggles a
-cell, while Ctrl+left-drag selects all current-frame centroids inside a
-temporary rectangle. In the editor, Ctrl+left-click selects a cell and
-Ctrl+left-drag pans. Ctrl+scroll zooms in both.
+cell. A plain left drag draws a measurement rectangle and selects cells whose
+current-frame centroids lie inside it. Ctrl+left-drag pans and Ctrl+scroll zooms
+in both the viewer and editor.
 To inspect the complete shortcut catalog, including its GUI applicability, run
 `.venv/bin/python -m fits.gui.viewer.common.inspect_shortcuts` from the repository.
 Info dialogs size their wrapped columns and rows to the current screen. REF/ROI
@@ -142,16 +151,49 @@ Open it in ImageJ/Fiji with **File → Open** and toggle annotations with
 the separately named masks, paths, centroid markers, and IDs. Save as TIFF to
 retain the overlay.
 
-The viewer's **Crop** panel sits below Track filtering. Turn on **Enable crop**
-and click **Crop** to fit a rectangle around every selected cell's complete
-masks across the recording, with 5% padding on each side. Fitting runs in the
-background. You can also draw a rectangle with a left drag, with or without
-Ctrl; cells whose current-frame centroids are inside it become selected. The
-rectangle stays until you change or disable crop mode. Drag inside it to move
-it, or drag an edge/corner to resize it. Clicking Crop again fits the rectangle
-around the selected cells across time. Width and Height are
-editable pixel dimensions. Manual rectangles and adjustments receive no added
-padding. The rectangle colour is only a display aid.
+The viewer's **Draw** section sits above **Crop**. Rectangle is the default:
+left-drag empty space to draw, drag inside the outline to move it, and drag its
+edges or corners to resize it. Choose Ellipse for an elliptical area, or Polygon
+and click vertices, double-clicking the last vertex to finish. Polygon vertices
+can be dragged individually. A single click outside clears the selection; a new
+drag replaces it. The shape remains visible independently of crop mode. Shape
+colour is a display aid and is not exported.
+
+The **Full range** (left) and **Auto-scale** (right) buttons match **Show profile**
+in font and size. They share one top-aligned row immediately above the LUT graph.
+The controls, graph and Intensities box form a fixed 560 × 125 px block, with padding around the intensity border.
+Resizing the image pane or window does not stretch the LUT or the save/action
+panels. The footer sits outside the image splitter, so changing the image
+height leaves the controls at the same positions. Extra window space goes to
+the image display. Intensities fills
+the height below Show profile, aligned with the graph at its top and bottom. The bordered **Intensities** box aligns with its bottom and normally shows
+the hovered pixel. With a shape selected it shows the signed source mean,
+labelled **Mean**, over the actual shape interior. **Show profile**, above the
+Intensities box, opens a live mean-intensity curve for the selected channel. Its x-axis
+dropdown selects Time (seconds when calibrated, otherwise frame) or Z plane; unavailable dimensions are disabled.
+Time holds the current Z plane fixed, and Z holds the current frame fixed. Moving
+or reshaping the area refreshes the profile in the background. The shape stays
+at fixed image coordinates rather than following a tracked cell. Closing the
+plot stops profile processing. Prepared planes remain in a temporary mapped
+cache for fast area changes and reopening; changing the source/axis context or
+closing the viewer releases those files. Plot opening starts immediately, while
+selection changes are throttled briefly to keep interaction responsive.
+
+In the profile window, **Home** at the upper left fits and centres all curves.
+Double-click the X or Y axis to enter its minimum and maximum. Each axis has an
+**R** control: above Y and at the right end of X. R restores that axis's automatic
+range without changing the other axis; Home resets both. Opening or reopening
+the profile also fits and centres both axes automatically. Manual ranges remain
+in effect during live curve updates. Switching Time/Z resets the X range for
+the new dimension. Curve labels appear in one centred row below the Time/Z
+selector, outside the graph in the gray footer.
+
+Turn on **Enable crop** and click **Crop** to fit a rectangle around every
+selected cell's complete trajectory, with 5% padding on each side. This replaces
+the shared drawing selection. Width and Height remain editable; numeric changes
+produce a rectangular selection. For ellipses and polygons, export uses the
+shape's bounding rectangle while intensity measurements use its actual interior.
+Manual selections receive no added padding.
 **Preview** zooms to the rectangle; unchecking Preview or pressing Home shows
 the full image. **Save current display** uses the current rectangle whenever
 crop mode is enabled, in either view, and adds `_cropped` to the filename.

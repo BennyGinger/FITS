@@ -7,7 +7,7 @@ from fits.workflows.checks.models import RunCompatibility
 from fits.workflows.experiments import ExperimentState
 from fits.workflows.experiments.exclusion import selected_experiments
 from pathlib import Path
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QStandardItemModel
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QFileSystemModel, QHBoxLayout, QLabel, QPushButton, QStyle, QTreeView, QVBoxLayout, QWidget
 
 
@@ -27,6 +27,7 @@ class _StatusFileSystemModel(QFileSystemModel):
         self.outdated_files: set[Path] = set()
         self.folder_exclusion: dict[Path, tuple[int, int]] = {}
         self._badge_icons: dict[tuple[int, bool], QIcon] = {}
+        self.highlighted_paths: set[Path] = set()
 
     def data(self,
              index: QModelIndex | QPersistentModelIndex,
@@ -37,6 +38,11 @@ class _StatusFileSystemModel(QFileSystemModel):
         """
         if index.isValid() and index.column() == 0:
             folder = Path(self.filePath(index))
+            if folder in self.highlighted_paths:
+                if role == Qt.ItemDataRole.BackgroundRole:
+                    return QApplication.palette().color(QPalette.ColorRole.Highlight)
+                if role == Qt.ItemDataRole.ForegroundRole:
+                    return QApplication.palette().color(QPalette.ColorRole.HighlightedText)
             excluded, total = self.folder_exclusion.get(folder, (0, 0))
             if excluded:
                 if role == Qt.ItemDataRole.ForegroundRole and excluded == total:
@@ -58,6 +64,17 @@ class _StatusFileSystemModel(QFileSystemModel):
                     return ('Experiment files need attention. See Manage files for migration, rebuilding or path/tag updates.' if outdated else
                             'Compatible experiment files. Processing availability follows the whole run status.')
         return super().data(index, role)
+
+    def highlight_paths(self, paths: set[Path]) -> None:
+        """
+        Highlight one ancestry branch without adding parents to the actual selection.
+        """
+        changed = self.highlighted_paths.symmetric_difference(paths)
+        self.highlighted_paths = paths
+        for path in changed:
+            index = self.index(str(path))
+            if index.isValid():
+                self.dataChanged.emit(index, index, [Qt.ItemDataRole.BackgroundRole, Qt.ItemDataRole.ForegroundRole])
 
 
     def _exclusion_icon(self, base: QIcon, fully_excluded: bool) -> QIcon:
@@ -96,6 +113,8 @@ class DirectoryBrowser(QWidget):
                  title: str = "Directory contents",
                  file_name_filters: tuple[str, ...] | None = None,
                  parent: QWidget | None = None,
+                 *,
+                 highlight_selection_path: bool = False,
                  ) -> None:
         """
         Initialize the DirectoryBrowser state and dependencies.
@@ -103,6 +122,7 @@ class DirectoryBrowser(QWidget):
         super().__init__(parent)
         self._root_path: Path | None = None
         self._selected_path: Path | None = None
+        self._highlight_selection_path = highlight_selection_path
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -122,6 +142,14 @@ class DirectoryBrowser(QWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setAnimated(True)
         self.tree.setUniformRowHeights(True)
+        if highlight_selection_path:
+            palette = QApplication.palette()
+            background = palette.color(QPalette.ColorRole.Highlight).name()
+            foreground = palette.color(QPalette.ColorRole.HighlightedText).name()
+            base = palette.color(QPalette.ColorRole.Base).name()
+            self.tree.setStyleSheet("QTreeView { show-decoration-selected: 0; } "
+                                   f"QTreeView::branch:selected {{ background: {base}; }} "
+                                   f"QTreeView::item:selected {{ background: {background}; color: {foreground}; }}")
         self.tree.setSortingEnabled(False)
         for column in range(1, self.model.columnCount()):
             self.tree.hideColumn(column)
@@ -193,6 +221,7 @@ class DirectoryBrowser(QWidget):
             self.tree.setModel(self.empty_model)
             self.selection_label.clear()
             self.selection_label.hide()
+            self.model.highlight_paths(set())
             self.path_selected.emit(None)
             return
 
@@ -205,7 +234,8 @@ class DirectoryBrowser(QWidget):
         self.tree.setRootIndex(root_index)
         self.tree.collapseAll()
         self.selection_label.setText("Selected: .")
-        self.selection_label.show()
+        self.selection_label.setVisible(not self._highlight_selection_path)
+        self._highlight_path(root)
         self.path_selected.emit(root)
 
     @Slot(QModelIndex)
@@ -221,6 +251,7 @@ class DirectoryBrowser(QWidget):
             self._selected_path = None
             self.selection_label.clear()
             self.selection_label.hide()
+            self.model.highlight_paths(set())
             self.path_selected.emit(None)
             return
 
@@ -239,8 +270,27 @@ class DirectoryBrowser(QWidget):
             except ValueError:
                 label = selected.name
         self.selection_label.setText(f"Selected: {label}")
-        self.selection_label.show()
+        self.selection_label.setVisible(not self._highlight_selection_path)
+        self._highlight_path(selected)
         self.path_selected.emit(selected)
+
+    def _highlight_path(self, selected: Path) -> None:
+        """
+        Reveal the experiment branch inside viewer browsers instead of wrapping its path.
+        """
+        if not self._highlight_selection_path or self._root_path is None:
+            return
+        paths = {selected}
+        parent = selected if selected.is_dir() else selected.parent
+        while parent == self._root_path or self._root_path in parent.parents:
+            paths.add(parent)
+            index = self.model.index(str(parent))
+            if index.isValid() and index != self.tree.rootIndex():
+                self.tree.expand(index)
+            if parent == self._root_path:
+                break
+            parent = parent.parent
+        self.model.highlight_paths(paths)
 
     @Slot(QModelIndex)
     def _on_activated(self, index: QModelIndex) -> None:

@@ -3,14 +3,20 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel
+from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
 from fits.gui.main_window.run_browser import DirectoryBrowser, RunDirectoryBrowser
 
 
 def _application() -> QApplication:
-    return QApplication.instance() or QApplication([])
+    """
+    Return the shared widget application used by browser checks.
+    """
+    application = QApplication.instance() or QApplication([])
+    assert isinstance(application, QApplication)
+    return application
 
 
 def test_run_browser_is_rooted_at_selected_directory(tmp_path: Path) -> None:
@@ -100,6 +106,61 @@ def test_browser_can_promote_a_folder_selection_to_its_artifact(tmp_path: Path) 
     assert browser.select_path(artifact) is True
     assert browser.selected_path == artifact.resolve()
     assert browser.selection_label.text() == "Selected: experiment/fits_array.tif"
+
+
+def test_viewer_browser_reveals_and_highlights_ancestors_without_selecting_them(tmp_path: Path) -> None:
+    """
+    Show the active experiment path in the tree instead of a wrapping label below it.
+    """
+    app = _application()
+    experiment = tmp_path / "condition" / "acquisition" / "series_1"
+    experiment.mkdir(parents=True)
+    artifact = experiment / "fits_array.tif"
+    artifact.touch()
+    browser = DirectoryBrowser(highlight_selection_path=True)
+    browser.set_root(tmp_path)
+    assert browser.select_path(artifact)
+    app.processEvents()
+    assert browser.selection_label.isHidden()
+    assert browser.selected_path == artifact
+    expected = {artifact, experiment, experiment.parent, experiment.parent.parent, tmp_path}
+    assert browser.model.highlighted_paths == expected
+    for parent in (experiment, experiment.parent, experiment.parent.parent):
+        index = browser.model.index(str(parent))
+        assert browser.tree.isExpanded(index)
+        assert browser.model.data(index, Qt.ItemDataRole.BackgroundRole) == app.palette().color(QPalette.ColorRole.Highlight)
+    selected = browser.tree.selectionModel().selectedRows()
+    assert [Path(browser.model.filePath(index)) for index in selected] == [artifact]
+    other = tmp_path / "other"
+    other.mkdir()
+    assert browser.select_path(other)
+    assert browser.model.highlighted_paths == {tmp_path, other}
+    browser._on_clicked(browser.model.index(str(other)))
+    assert not browser.model.highlighted_paths
+    assert browser.selected_path is None
+    browser.close()
+
+
+def test_viewer_browser_uses_reclaimed_path_label_height_for_the_tree(tmp_path: Path) -> None:
+    """
+    Keep long experiment names from consuming vertical browser space.
+    """
+    app = _application()
+    experiment = tmp_path / ("long_condition_" * 4) / ("long_acquisition_" * 3) / "series_1"
+    experiment.mkdir(parents=True)
+    artifact = experiment / "fits_array.tif"
+    artifact.touch()
+    default = DirectoryBrowser()
+    viewer = DirectoryBrowser(highlight_selection_path=True)
+    for browser in (default, viewer):
+        browser.resize(360, 300)
+        browser.set_root(tmp_path)
+        browser.select_path(artifact)
+        browser.show()
+    app.processEvents()
+    assert viewer.tree.height() > default.tree.height()
+    default.close()
+    viewer.close()
 
 
 def test_double_click_activates_file_path(tmp_path: Path) -> None:

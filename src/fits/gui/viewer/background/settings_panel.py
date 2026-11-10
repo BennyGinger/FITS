@@ -1,21 +1,24 @@
-"""Background parameters and a measurement-only rectangle using shared controls."""
+"""Background parameters and a host for the shared drawing controls."""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QCheckBox, QFormLayout, QGroupBox, QLabel, QListWidget, QListWidgetItem
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from fits.gui.settings.wheel_widgets import FocusWheelComboBox, FocusWheelDoubleSpinBox, FocusWheelSpinBox
-from fits.gui.viewer.common.crop import CropPanel
 from fits.settings.models import BGSubSettings
 
 
 class BackgroundSettingsPanel(QWidget):
-    """Edit processing parameters and report unscaled mean intensities."""
+    """
+    Edit processing parameters alongside independent drawing controls.
+    """
 
     changed = Signal()
 
     def __init__(self) -> None:
-        """Build scrolling settings and measurement controls with pinned results."""
+        """
+        Build scrolling processing settings with a shared Draw subsection.
+        """
         super().__init__()
         self._baseline = BGSubSettings()
         self._loading = False
@@ -59,27 +62,13 @@ class BackgroundSettingsPanel(QWidget):
         self.excluded.setToolTip("Checked channels pass through without background subtraction.")
         form.addRow("Exclude channels", self.excluded)
         sections.addWidget(group)
-        measurement_group = QGroupBox("Intensity measurement")
-        measurement_layout = QVBoxLayout(measurement_group)
-        explanation = QLabel("Draw a box to compare original and processed mean intensities. "
-                             "The box measures pixels only; processing always uses the full plane.")
-        explanation.setWordWrap(True)
-        measurement_layout.addWidget(explanation)
-        self.measurement = CropPanel(automatic=False)
-        self.measurement.enabled.setText("Enable measurement box")
-        self.measurement.enabled.setToolTip("Enable drawing, moving and resizing an intensity measurement box.")
-        self.measurement.preview_button.setText("Zoom to box")
-        measurement_layout.addWidget(self.measurement)
-        sections.addWidget(measurement_group)
+        drawing_group = QGroupBox("Draw")
+        drawing_layout = QVBoxLayout(drawing_group)
+        self.drawing_layout = drawing_layout
+        sections.addWidget(drawing_group)
         sections.addStretch(1)
         scroll.setWidget(contents)
         outer.addWidget(scroll, 1)
-        results = QGroupBox("Mean intensity in box")
-        results_layout = QVBoxLayout(results)
-        self.means = QLabel("Enable the measurement box and draw a rectangle.")
-        self.means.setWordWrap(True)
-        results_layout.addWidget(self.means)
-        outer.addWidget(results)
         for widget in (self.window_size, self.sigma, self.threshold):
             widget.valueChanged.connect(self._edited)
         self.statistic.currentIndexChanged.connect(self._edited)

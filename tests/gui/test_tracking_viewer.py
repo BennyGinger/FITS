@@ -536,11 +536,10 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     assert "#b23a48" in window.delete_mask_button.styleSheet()
     assert "#8f1d2c" in window.delete_track_button.styleSheet()
     assert "#a33a3a" in window.unlink_track_button.styleSheet()
-    assert window.local_cell_diameter.parent() is window.image_viewer.canvas
+    assert window.local_cell_diameter.isHidden()
+    assert window.local_cell_diameter.parent() is window.tool_panel
     assert window.local_cell_diameter.value() == 4  # From the 3x3 mask, clamped to the control minimum.
-    assert window.diameter_reference.rect().width() == 4
-    window.local_cell_diameter.setValue(32)
-    assert window.diameter_reference.rect().width() == 32
+    assert window.diameter_reference is None
     assert window.image_viewer.mask_item.image[3, 4, 3] == 255
     assert window._track_at_position(4, 3) == 7
     window.show_track_paths.setChecked(False)

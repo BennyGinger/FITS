@@ -75,35 +75,34 @@ def window(source):
     viewer.close()
 
 
-def test_requested_planes_only_comparison_shortcut_and_measurement(window):
+def test_requested_planes_only_comparison_shortcut_and_measurement(window: BackgroundTunerWindow) -> None:
     """Measure raw values, preserve display levels and process only visited selections."""
     session = window._session
     assert session is not None
     assert window._source_path is not None
     assert not session._previews
     assert window.settings_panel.settings().bg_workers == 2
-    box = window.settings_panel.measurement
-    assert not box.enabled.isChecked()
-    box.enabled.setChecked(True)
-    box.set_bounds((4, 3, 26, 25))
+    box = window.measurement.drawing
+    box.set_rectangle((4, 3, 26, 25))
     window.image_viewer.set_display_levels((0, 2000))
     window.run_button.click()
     wait_for_preview(window)
     assert len(session._previews) == 1
     channel = window.channel_combo.currentText()
     raw = session.display_frame(0, channel, 0)
-    expected = bg_sub(raw, size=3, execution="sequential")
-    np.testing.assert_array_equal(window.image_viewer.image_item.image, np.maximum(expected, 0))
+    expected = np.asarray(bg_sub(raw, size=3, execution="sequential"), dtype=np.float32)
+    np.testing.assert_array_equal(np.asarray(window.image_viewer.image_item.image), np.maximum(expected, 0))
     assert expected.dtype == np.float32 and np.any(expected < 0)
     cached = session.cached_preview(window.settings_panel.settings(), 0, channel, 0)
     assert cached is not None and np.any(cached < 0)
-    text = window.settings_panel.means.text()
-    assert f"Original mean: {np.mean(raw[3:25, 4:26]):.6g}" in text
-    assert f"Processed mean: {np.mean(expected[3:25, 4:26], dtype=np.float64):.6g}" in text
+    values = window.image_viewer.pixel_readout._measurements
+    assert values is not None
+    assert values[0][1] == pytest.approx(np.mean(raw[3:25, 4:26], dtype=np.float64))
+    assert values[1][1] == pytest.approx(np.mean(np.asarray(expected[3:25, 4:26], dtype=np.float64)))
     window.image_viewer.setFocus()
     QTest.keyClick(window.image_viewer, Qt.Key.Key_V)
     assert window.comparison.currentIndex() == 0
-    np.testing.assert_array_equal(window.image_viewer.image_item.image, raw)
+    np.testing.assert_array_equal(np.asarray(window.image_viewer.image_item.image), raw)
     assert window.image_viewer.display_levels == (0, 2000)
     QTest.keyClick(window.image_viewer, Qt.Key.Key_V)
     assert window.comparison.currentIndex() == 1
@@ -115,8 +114,10 @@ def test_requested_planes_only_comparison_shortcut_and_measurement(window):
     window.settings_panel.threshold.setValue(0.2)
     assert not window._preview_enabled
     assert window._thread is None
-    np.testing.assert_array_equal(window.image_viewer.image_item.image, session.display_frame(2, channel, 0))
-    assert "Processed mean: run preview" in window.settings_panel.means.text()
+    np.testing.assert_array_equal(np.asarray(window.image_viewer.image_item.image), session.display_frame(2, channel, 0))
+    assert window.image_viewer.pixel_readout.single_tag.text() == "Mean"
+    assert window.image_viewer.pixel_readout._measurements is not None
+    assert len(window.image_viewer.pixel_readout._measurements) == 1
 
 
 def test_preview_choices_require_background_preview(window: BackgroundTunerWindow) -> None:
@@ -175,27 +176,26 @@ def test_navigation_during_work_processes_latest_selection_without_propagation(w
     np.testing.assert_array_equal(window.image_viewer.image_item.image, np.maximum(result, 0))
 
 
-def test_measurement_box_requires_enable_and_uses_actual_drawing(window):
+def test_measurement_box_is_always_available_and_uses_actual_drawing(window: BackgroundTunerWindow) -> None:
     """Bind the reused rectangle tool to image pixels without cropping processing."""
     canvas = window.image_viewer.canvas
     viewport = cast(QWidget, canvas.viewport())
     start = cast(QPoint, canvas.mapFromScene(window.image_viewer.view_box.mapViewToScene(QPointF(4, 3))))
     end = cast(QPoint, canvas.mapFromScene(window.image_viewer.view_box.mapViewToScene(QPointF(26, 25))))
-    box = window.settings_panel.measurement
+    box = window.measurement.drawing
     QTest.mousePress(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
     QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
-    assert box.bounds is None
-    box.enabled.setChecked(True)
+    assert box.selection is None
     QTest.mousePress(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
     move = QMouseEvent(QMouseEvent.Type.MouseMove, QPointF(end), QPointF(viewport.mapToGlobal(end)),
                        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     QApplication.sendEvent(viewport, move)
     QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
-    assert box.bounds is not None
-    assert "Original mean:" in window.settings_panel.means.text()
+    assert box.selection is not None
+    assert window.image_viewer.pixel_readout.single_tag.text() == "Mean"
     window._run_preview()
     wait_for_preview(window)
-    assert window.image_viewer.image_item.image.shape == (32, 32)
+    assert np.asarray(window.image_viewer.image_item.image).shape == (32, 32)
 
 
 def test_histogram_failure_shows_error_and_preserves_original(window, monkeypatch):
@@ -355,7 +355,7 @@ def test_close_warns_and_discard_never_saves(window, monkeypatch, title_bar):
     assert not accepted
 
 
-def test_saved_and_measurement_only_changes_close_without_warning(window, monkeypatch):
+def test_saved_and_measurement_only_changes_close_without_warning(window: BackgroundTunerWindow, monkeypatch: pytest.MonkeyPatch) -> None:
     """Measurement geometry and viewing controls are temporary, not unsaved processing work."""
     prompts = []
     monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
@@ -366,8 +366,7 @@ def test_saved_and_measurement_only_changes_close_without_warning(window, monkey
     assert window._has_unsaved_settings()
     window.settings_panel.window_size.setValue(7)
     assert not window._has_unsaved_settings()
-    window.settings_panel.measurement.enabled.setChecked(True)
-    window.settings_panel.measurement.set_bounds((4, 3, 26, 25))
+    window.measurement.drawing.set_rectangle((4, 3, 26, 25))
     window.channel_combo.setCurrentIndex(1)
     window.close_button.click()
     assert not window.isVisible()

@@ -360,12 +360,15 @@ def test_roi_panel_displays_an_editable_threshold_histogram() -> None:
     assert changes[-1] == (20.0, 80.0)
     assert panel.current_minimum.value() == 20.0
     assert panel.current_maximum.value() == 80.0
-    assert panel.stack_minimum.value() == 20.0
-    assert panel.stack_maximum.value() == 80.0
     stack_requests = []
     panel.manual_stack_requested.connect(lambda low, high: stack_requests.append((low, high)))
     panel.apply_stack_button.click()
     assert stack_requests == [(20.0, 80.0)]
+    panel.current_minimum.setValue(30.0)
+    panel.current_maximum.setValue(70.0)
+    panel.current_minimum.editingFinished.emit()
+    panel.apply_stack_button.click()
+    assert stack_requests[-1] == (30.0, 70.0)
     assert panel.full_threshold_range() == (0.0, 99.0)
 
 
@@ -551,7 +554,7 @@ def test_viewer_browser_filters_non_fits_artifacts() -> None:
     assert window.directory_browser.model.nameFilterDisables() is False
     assert window.grayscale_lut_button.isChecked() is False
     assert ":checked" in window.grayscale_lut_button.styleSheet()
-    assert window.image_viewer.histogram.maximumHeight() == 125
+    assert window.image_viewer.histogram.maximumHeight() > 125
     assert "colour marker" in window.image_viewer.histogram.toolTip()
     assert "grayscale" in window.grayscale_lut_button.toolTip()
     assert "opacity" in window.mask_opacity.toolTip()

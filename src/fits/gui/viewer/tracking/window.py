@@ -21,12 +21,12 @@ from fits.workflows.experiments import collect_supported_files
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK, FITS_MASK_TRACK_EDITED, FITS_MASK_TRACK_EDITED_FILTERED
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.common.information_dialog import TRACKING_HELP
-from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
 from fits.gui.viewer.tracking.session import TrackingViewerSession
 from fits.gui.viewer.tracking.path_item import PreparedPaths, TrackPathsItem, prepare_paths
 from fits.gui.viewer.tracking.path_cache import PathDrawingCache
 from fits.gui.viewer.tracking.colors import track_rgb
 from fits.gui.viewer.tracking.crop import CropFitWorker, CropPanel
+from fits.gui.viewer.common.area_measurement import AreaMeasurement
 from fits.tasks.segmentation.local_seg import component_at_point, fill_clicked_enclosure, remove_clicked_component
 from fits.workflows.runtime.interactive.messages import TrackEditOutcome, TrackEditRequest
 
@@ -383,6 +383,11 @@ class TrackingViewerWindow(ImageToolWindow):
         self._pending_tracking_save: tuple[Path, dict[str, Any]] | None = None
         self._selected_track_ids: list[int] = []
         self.crop_panel: CropPanel | None = None
+        self.measurement: AreaMeasurement | None = None
+        self._syncing_area = False
+        if not editing_enabled:
+            self.initial_panel_sizes = (380, 1170)
+            self.initial_left_width = 460
         self._crop_thread: QThread | None = None
         self._crop_worker: CropFitWorker | None = None
         self._crop_context: tuple | None = None
@@ -578,8 +583,14 @@ class TrackingViewerWindow(ImageToolWindow):
         self.filter_section = filter_section
 
         if not self.editing_enabled:
+            draw_section, self.drawing_layout = self._section("Draw")
+            layout.addWidget(draw_section)
             crop_section, crop_layout = self._section("Crop")
             self.crop_panel = CropPanel()
+            policy = self.crop_panel.color_button.sizePolicy()
+            policy.setRetainSizeWhenHidden(True)
+            self.crop_panel.color_button.setSizePolicy(policy)
+            self.crop_panel.color_button.hide()
             crop_layout.addWidget(self.crop_panel)
             layout.addWidget(crop_section)
 
@@ -715,7 +726,13 @@ class TrackingViewerWindow(ImageToolWindow):
         """
         layout.addSpacing(24)
         if not self.editing_enabled:
+            self.measurement = AreaMeasurement(self.image_viewer, self)
+            self.drawing_layout.addWidget(self.measurement.drawing)
+            self.measurement.profile_button.setFixedSize(self.auto_scale_button.size())
+            self.measurement.profile_button.setFont(self.auto_scale_button.font())
+            self.lut_profile_layout.insertWidget(0, self.measurement.profile_button)
             section, saving = self._section("Save current display")
+            section.setFixedWidth(400)
             row = QHBoxLayout()
             row.addWidget(QLabel("Optional label"))
             self.display_label_edit = QLineEdit()
@@ -774,20 +791,9 @@ class TrackingViewerWindow(ImageToolWindow):
         Connect tools.
         """
         self.image_viewer.canvas.setBackground("black")
-        self.local_cell_diameter.setParent(cast(QWidget, self.image_viewer.canvas))
-        self.local_cell_diameter.setFixedSize(105, 30)
-        self.local_cell_diameter.move(44, 8)
-        self.local_cell_diameter.setStyleSheet(
-            "QSpinBox { background: rgba(35, 35, 35, 215); color: #e8edf2; "
-            "border: 1px solid #777; border-radius: 4px; padding: 2px 5px; }")
-        self.local_cell_diameter.raise_()
+        self.local_cell_diameter.setParent(self.tool_panel)
+        self.local_cell_diameter.hide()
         self.diameter_reference = None
-        if self.editing_enabled:
-            self.diameter_reference = DiameterReference(self.image_viewer.view_box,
-                                                        self.image_viewer.image_item,
-                                                        )
-            self.local_cell_diameter.valueChanged.connect(self.diameter_reference.set_diameter)
-            self.diameter_reference.set_diameter(self.local_cell_diameter.value())
         self.raw_image_toggle.toggled.connect(self.image_viewer.image_item.setVisible)
         self.trajectory_status = QLabel()
         self.trajectory_progress = QProgressBar()
@@ -816,7 +822,12 @@ class TrackingViewerWindow(ImageToolWindow):
         if not self.editing_enabled:
             self.save_display_button.clicked.connect(self._save_current_display)
         if self.crop_panel is not None:
-            self.crop_panel.bind(self.image_viewer)
+            self.crop_panel.bind(self.image_viewer, interactive=False)
+            assert self.measurement is not None
+            self.measurement.drawing.rectangle_selected.connect(self._viewer_rectangle_selected)
+            self.measurement.drawing.cell_clicked.connect(self._viewer_cell_clicked)
+            self.measurement.drawing.changed.connect(self._area_changed)
+            self.crop_panel.changed.connect(self._crop_area_changed)
             self.crop_panel.crop_requested.connect(self._create_crop)
             self.crop_panel.cell_clicked.connect(self._viewer_cell_clicked)
             self.crop_panel.rectangle_selected.connect(self._viewer_rectangle_selected)
@@ -1028,8 +1039,6 @@ class TrackingViewerWindow(ImageToolWindow):
             self.save_tracking_button.setEnabled(can_edit)
         self.local_cell_diameter.setEnabled(True)
         self._display_selection()
-        if self.diameter_reference is not None:
-            self.diameter_reference.refresh()
         self._update_edit_buttons()
         image_note = "with raw image" if has_raw_image else "without raw image"
         mode_note = "new empty tracking session" if session.started_from_image else image_note
@@ -1077,6 +1086,8 @@ class TrackingViewerWindow(ImageToolWindow):
         self.z_slider.setRange(0, session.plane_count - 1)
         self._set_source_controls_enabled(True)
         self.tool_panel.setEnabled(False)
+        if self.measurement is not None:
+            self.tool_panel.setEnabled(True)
         self.filter_section.hide()
         self.trajectory_section.hide()
         self.track_edit_section.hide()
@@ -1120,8 +1131,6 @@ class TrackingViewerWindow(ImageToolWindow):
         del image, channel
         if self._raw_source:
             return
-        if self.diameter_reference is not None:
-            self.diameter_reference.refresh()
         if self._tracking_session is not None and self.mask_channel_combo.currentIndex() >= 0:
             if self._split_preview is not None and self._preview_matches_current_view():
                 self.image_viewer.set_mask_color(None)
@@ -1212,6 +1221,45 @@ class TrackingViewerWindow(ImageToolWindow):
         super()._display_selection()
         self.image_viewer.image_item.setVisible(self.raw_image_toggle.isChecked())
         self._display_track_paths()
+        if self.measurement is not None and self._image_session is not None:
+            image = self.image_viewer.pixel_readout._planes
+            if image:
+                self.measurement.update(self._image_session, image[0][1], self.frame_slider.value(),
+                                        self.channel_combo.currentText(), self.z_slider.value(),
+                                        series=max(0, self.series_combo.currentIndex()))
+
+    def _area_changed(self) -> None:
+        """
+        Reuse the selection bounds for crop without displaying a second rectangle.
+        """
+        if self._syncing_area or self.measurement is None or self.crop_panel is None:
+            return
+        self._syncing_area = True
+        try:
+            area = self.measurement.drawing.selection
+            if area is not None:
+                if self.crop_panel._shape != self.measurement.drawing._shape:
+                    self.crop_panel.reset(self.measurement.drawing._shape)
+                self.crop_panel.set_bounds(area.bounds(self.measurement.drawing._shape))
+            else:
+                self.crop_panel.bounds = None
+                self.crop_panel.preview_button.setChecked(False)
+                self.crop_panel._update_controls()
+            self.crop_panel.rectangle.hide()
+        finally:
+            self._syncing_area = False
+
+    def _crop_area_changed(self) -> None:
+        """
+        Reflect automatically fitted or numerically adjusted crop bounds in Draw.
+        """
+        if self._syncing_area or self.measurement is None or self.crop_panel is None:
+            return
+        self.crop_panel.rectangle.hide()
+        if self.crop_panel.bounds is not None:
+            area = self.measurement.drawing.selection
+            if area is None or area.bounds(self.measurement.drawing._shape) != self.crop_panel.bounds:
+                self.measurement.drawing.set_rectangle(self.crop_panel.bounds)
 
     def _trajectory_key(self) -> tuple | None:
         """
@@ -3049,6 +3097,8 @@ class TrackingViewerWindow(ImageToolWindow):
         Clear tools.
         """
         self._raw_source = False
+        if self.measurement is not None:
+            self.measurement.reset()
         if hasattr(self, "series_combo"):
             self.series_combo.hide()
             self.series_label.hide()
@@ -3072,8 +3122,6 @@ class TrackingViewerWindow(ImageToolWindow):
         self.trajectory_progress.hide()
         self.trajectory_status.hide()
         self.image_viewer.set_preview_loading(False)
-        if self.diameter_reference is not None:
-            self.diameter_reference.hide()
         self.local_cell_diameter.setEnabled(False)
         if (self._local_segmentation_thread is not None
                 and self._local_segmentation_thread.isRunning()):

@@ -52,11 +52,12 @@ REGISTRATION_HELP = (*SEGMENTATION_HELP, *PREPROCESSING_HELP)
 BACKGROUND_HELP: tuple[HelpRow, ...] = (
     *PREPROCESSING_HELP,
     ("R", "Run preview", "BGTune", "Selected frame, channel and Z plane only"),
-    ("Left click / drag", "Draw, move or resize measurement box", "BGTune", "Enable measurement box first"),
+    ("Left click / drag", "Draw, move or resize measurement area", "BGTune", "Rectangle is the default; click outside to clear"),
 )
 
 TRACKING_HELP: tuple[HelpRow, ...] = (
     ("Ctrl+left click mask or centroid", "Select / unselect track", "Tracking", "Edit or selection enabled"),
+    ("Left click / drag", "Draw, move or resize measurement area", "Tracking", "Viewer only; rectangle also selects masks"),
 )
 
 # Mode details preserve the differences behind the shared gestures. Full-catalog
@@ -112,10 +113,8 @@ class ViewerInformationDialog(QDialog):
                     if (editing_enabled or (not row[3].startswith("Edit")
                                             and row[0] not in {"S", "Ctrl+Z"}))
                     or (row[0] == "Ctrl+left click mask or centroid" and selection_enabled)]
-            if not editing_enabled:
-                rows = [(shortcut, "Select cells in rectangle" if shortcut == "Ctrl+left click (hold), drag"
-                         else function, scope, mode)
-                        for shortcut, function, scope, mode in rows]
+            if editing_enabled:
+                rows = [row for row in rows if row[3] != "Viewer only; rectangle also selects masks"]
         if gui in ("BGTune", "RegTune"):
             rows = [row for row in rows if row[0] != "X"]
         conditions = HELP_CONDITIONS.get(gui or "", {})

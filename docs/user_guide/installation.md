@@ -197,22 +197,26 @@ new location and rerun the installer; virtual environments are not portable.
 
 ## Startup updates and repair
 
-Menu/desktop shortcuts and the launchers check FITS's configured upstream
-`main`/`master` branch on startup. Every new FITS commit counts as an update;
-tags/releases are not required. The check fetches only FITS, without checking
+Menu/desktop shortcuts and the launchers check the configured upstream GitHub
+repository's latest published stable release on startup. Only published releases
+with an `X.Y.Z` tag count as updates; ordinary commits, tags without a release,
+drafts, and prereleases do not. The check fetches only that FITS release tag, without checking
 submodule remotes or changing the working checkout. If an update is available,
-choose **Update FITS** or **Use current version**. Closing the prompt also keeps
-the current version. If the network check fails, a working installation opens
+the prompt shows the available and current version numbers. Choose **Yes** to
+update or **Skip** to keep the current version. **Details** starts collapsed;
+opening it expands the window downward to show the GitHub release description.
+Closing the prompt also keeps the current version. If the network check fails, a working installation opens
 with its current version; the failed check is recorded in the update log.
 
 Updates require a clean checkout and a fast-forward from the installed commit.
 Local edits, untracked files, conflicting module commits, or divergent history
 disable automatic updating. FITS never stashes, resets, deletes local work, or
 advances modules independently of their recorded commits. Developer branches
-and checkouts without a configured main/master upstream skip automatic checks.
+and checkouts without a configured main/master upstream on GitHub skip automatic
+checks. Checkouts already ahead of the release are left unchanged.
 
 The prompt closes before installation starts. An independent process then
-updates FITS to the selected commit, initializes/synchronizes the pinned
+updates FITS to the selected release's exact commit, initializes/synchronizes the pinned
 submodules, runs the installer checks, and refreshes this checkout's existing
 shortcuts. Progress appears in a terminal window (Linux requires an installed
 GNOME Terminal, Konsole, or xterm when launching from a desktop shortcut).

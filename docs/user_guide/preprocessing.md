@@ -176,21 +176,23 @@ The three actions sit to the right of the LUT, matching RegTune: orange **Run pr
 dark green **Save current settings**, and light red **Close window**.
 Run preview computes only the selected frame, channel
 and Z plane in a worker. Navigating afterward computes only requested planes;
-no neighboring frames or full stacks are prepared in the background. SMO's
+no neighboring frames or full stacks are prepared unless Show profile explicitly
+requests a time/Z profile. SMO's
 configured processor is reused across same-sized planes with the same sigma
 and window size. Window size must be at least 2 pixels (usually 3 or larger);
 the SMO probability threshold is between 0 and 1. Visited results use an 8-plane/64 MiB cache (one oversized
 current plane can remain displayable). Changing settings requires Run preview
 again. Excluded channels pass through unchanged.
 
-### Compare intensities and use the measurement box
+### Compare intensities and draw measurement areas
 
 Choose **Original image** or **Background-subtracted image**, or press **V** to
-switch rapidly with the same LUT and intensity limits. **Enable measurement
-box** enables drawing, moving and resizing a rectangle. Its pinned results
-show original and processed means and their difference, from the same raw pixel
-coordinates. Measurements follow frame/channel/Z changes and ignore display
-contrast. The rectangle only measures; processing always uses the full plane.
+switch with the same LUT and intensity limits. **Draw** provides rectangle,
+ellipse and polygon selections that can be moved and reshaped. The compact
+**Intensities** box below the LUT buttons shows a hovered pixel when no area is
+selected, the original **Mean** before preview, and **Original** / **BGSub** means
+after preview. Measurements follow frame/channel/Z changes and ignore display
+contrast. Areas only measure; processing always uses the full plane.
 Background-subtracted arrays and preview caches retain signed `float32` values,
 including negative and fractional residuals. Pipeline TIFF output also uses
 `float32`; excluded channels keep their values in that dtype. Viewers show
@@ -217,3 +219,24 @@ Press **R** to preview or **S** to save and stay open; **Info** lists the shortc
 ## Check the saved result
 
 Tuners preview changes and save settings; **Run pipeline** applies the enabled steps to the full data. Inspect the registered/background-subtracted output in the [image viewer](viewers.md). Signed corrected values can differ from their zero-clipped display copy; use the stored values for analysis.
+
+### Drawing and live profiles in BGTune
+
+BGTune shares the File Viewer's Draw controls and compact Intensities box.
+Rectangle is the default; ellipse and polygon areas can also be drawn, moved,
+and reshaped. With no area, the box shows the hovered pixel of the displayed
+image. An area shows its original **Mean** before Run preview. After preview,
+two columns show **Original** and **BGSub** means, including signed values.
+Changing processing settings invalidates the processed measurement until the
+next preview. Drawing does not enable processing or crop the input.
+
+**Show profile** opens a live plot across time frames or Z planes. After Run
+preview, the plot contains separate Original and BGSub curves; calculating them
+processes the required full planes on demand in a background worker. The
+Original curve appears first, and BGSub fills in progressively. The current
+preview plane is reused; prepared full planes are retained in temporary mapped
+files, so moving the area or reopening the plot does not repeat subtraction.
+Changed numerical settings invalidate processed cached planes. The first full
+BGSub profile still requires processing previously unseen planes. Changing
+the area or the fixed frame/plane updates the open plot. The original images
+and pipeline outputs are unchanged. BGTune has no crop/export-crop controls.

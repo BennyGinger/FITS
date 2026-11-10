@@ -118,26 +118,22 @@ def test_viewer_selection_is_unlimited_and_synced_with_ctrl_clicks(window):
     assert window.track_id_input.text() == ""
 
 
-def test_ctrl_drag_selects_current_frame_centroids_and_drops_rectangle(window):
-    """Verify ctrl drag selects current frame centroids and drops rectangle."""
+def test_plain_drag_selects_masks_and_measures_without_enabling_crop(window: TrackingViewerWindow) -> None:
+    """
+    Keep mask selection and area measurement together; Ctrl-drag remains navigation.
+    """
     panel = window.crop_panel
-    control = Qt.KeyboardModifier.ControlModifier
-    viewport = cast(QWidget, window.image_viewer.canvas.viewport())
-    QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, control,
-                     image_point(window, 12, 22))
-    assert window._selected_track_ids == [7]
-    before = window.image_viewer.view_box.viewRange()
-    drag(window, (5, 15), (70, 65), control)
+    assert panel is not None
+    assert not panel.enabled.isChecked()
+    drag(window, (5, 15), (70, 65))
     assert window._selected_track_ids == [7, 11]
-    assert window.track_id_input.text() == "7, 11"
-    assert not panel.selection_rectangle.isVisible()
-    assert panel.bounds is None
-    assert window.image_viewer.view_box.viewRange() == before
-
-    window.frame_slider.setValue(1)
-    drag(window, (5, 15), (18, 30), control)
-    assert window._selected_track_ids == []  # Cell 7 moved out of the rectangle.
-    assert not panel.selection_rectangle.isVisible()
+    assert panel.bounds is not None
+    assert window.measurement is not None
+    assert window.measurement.drawing.selection is not None
+    assert window.image_viewer.pixel_readout.single_tag.text() == "Mean"
+    bounds = panel.bounds
+    drag(window, (5, 15), (18, 30), Qt.KeyboardModifier.ControlModifier)
+    assert panel.bounds == bounds
 
 
 def test_crop_rectangle_selects_cells_and_crop_refits_selected_tracks(window):
@@ -149,9 +145,10 @@ def test_crop_rectangle_selects_cells_and_crop_refits_selected_tracks(window):
     assert panel.bounds[0] <= 5 and panel.bounds[1] <= 15
     assert panel.bounds[2] >= 70 and panel.bounds[3] >= 65
     assert window._selected_track_ids == [7, 11]
-    drag(window, (5, 15), (18, 30), Qt.KeyboardModifier.ControlModifier)
+    window.measurement.drawing.clear()
+    drag(window, (5, 15), (18, 30))
     assert panel.bounds is not None and panel.bounds[2] <= 19
-    assert panel.rectangle.isVisible()
+    assert window.measurement.drawing._roi.isVisible()
     assert window._selected_track_ids == [7]
     panel.crop_button.click()
     wait_until(lambda: window._crop_thread is None, window)
@@ -165,7 +162,8 @@ def test_editor_retains_two_cell_limit_and_has_no_crop_panel(tracking):
     try:
         assert isinstance(editor.track_id_input, QSpinBox)
         assert editor.crop_panel is None
-        assert editor.diameter_reference is not None
+        assert editor.diameter_reference is None
+        assert editor.local_cell_diameter.isHidden()
         for track in (7, 11, 23):
             editor._toggle_track_selection(track)
         assert editor._selected_track_ids == [7, 11]
@@ -185,7 +183,7 @@ def test_automatic_crop_uses_all_selected_cells_and_preview_only_changes_zoom(wi
     assert panel.bounds == (5, 17, 100, 78)
     assert panel.width_input.value() == 95
     assert panel.height_input.value() == 61
-    assert panel.rectangle.isVisible()
+    assert window.measurement.drawing._roi.isVisible()
     assert panel.rectangle.pen().color() == QColor("yellow")
     home = window.image_viewer.view_box.viewRange()
     panel.preview_button.click()
@@ -220,10 +218,10 @@ def test_rectangle_draw_move_edge_corner_resize_and_numeric_sizes(window, monkey
     panel.width_input.setValue(60)
     panel.height_input.setValue(40)
     assert panel.bounds == (20, 21, 80, 61)
-    monkeypatch.setattr("fits.gui.viewer.common.crop.QColorDialog.getColor",
+    monkeypatch.setattr("fits.gui.viewer.common.drawing_panel.QColorDialog.getColor",
                         lambda *args: QColor("cyan"))
-    panel.color_button.click()
-    assert panel.rectangle.pen().color() == QColor("cyan")
+    window.measurement.drawing.color_button.click()
+    assert window.measurement.drawing._roi.pen.color() == QColor("cyan")
     panel.enabled.setChecked(False)
     assert not panel.rectangle.isVisible()
 

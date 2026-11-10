@@ -788,7 +788,10 @@ def test_zero_count_tab_stays_uneditable_after_navigation(window: MaskCollection
     window.enqueue_experiment(request(tmp_path))
     window.switch_mode('roi')
     window.frame_slider.setValue(1)
-    assert not window.roi_panel.controls_scroll.isEnabled()
+    assert window.roi_panel.controls_scroll.isEnabled()
+    controls = window.roi_panel.controls_scroll.widget()
+    assert controls is not None
+    assert not controls.isEnabled()
     assert not window.saving_stack.isEnabled()
     event = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_S, Qt.KeyboardModifier.NoModifier)
     assert window._tool_keypress(event)
@@ -860,3 +863,58 @@ def test_unsaved_edits_without_missing_masks_still_warn_once(window: MaskCollect
     assert len(warnings) == 1
     assert 'unsaved changes will be lost' in warnings[0]
     assert 'expected' not in warnings[0]
+
+
+def test_mask_window_opens_at_minimum_sidebar_width(window: MaskCollectionWindow, tmp_path: Path) -> None:
+    """
+    Start fully compacted and preserve an explicitly widened sidebar on reopening.
+    """
+    window.enqueue_experiment(request(tmp_path))
+    window.resize(1800, 1000)
+    window.show()
+    QApplication.processEvents()
+    sidebar = window.main_splitter.widget(0)
+    assert sidebar is not None
+    minimum = sidebar.minimumSizeHint().width()
+    assert window.main_splitter.sizes()[0] == minimum
+    window.main_splitter.setSizes([minimum + 100, 1000])
+    widened = window.main_splitter.sizes()[0]
+    assert widened > minimum
+    window.hide()
+    window.show()
+    QApplication.processEvents()
+    assert window.main_splitter.sizes()[0] == widened
+
+
+def test_empty_mask_tabs_allow_scrolling_disabled_settings(window: MaskCollectionWindow, tmp_path: Path) -> None:
+    """
+    Keep both empty tabs scrollable while their editing controls stay disabled.
+    """
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtGui import QWheelEvent
+    req = request(tmp_path)
+    window.enqueue_experiment(MaskCollectionRequest(req.experiment_id, req.image_path,
+                                                   expected_ref_masks=0, expected_roi_masks=0,
+                                                   requires_reference=False))
+    window.show()
+    for kind in ('reference', 'roi'):
+        window.switch_mode(kind)
+        panel = window._session_panel(kind)[1]
+        panel.controls_scroll.setFixedHeight(150)
+        QApplication.processEvents()
+        controls = panel.controls_scroll.widget()
+        assert controls is not None
+        assert panel.controls_scroll.isEnabled()
+        assert not controls.isEnabled()
+        assert not panel.clear_button.isEnabled()
+        scrollbar = panel.controls_scroll.verticalScrollBar()
+        assert scrollbar.isEnabled() and scrollbar.maximum() > 0
+        viewport = panel.controls_scroll.viewport()
+        assert viewport is not None
+        event = QWheelEvent(QPointF(20, 20), QPointF(viewport.mapToGlobal(QPoint(20, 20))),
+                            QPoint(), QPoint(0, -120), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(viewport, event)
+        assert scrollbar.value() > 0
+    window._new_mask()
+    assert controls.isEnabled()

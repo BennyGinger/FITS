@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import QPointF
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QHBoxLayout
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget
 
 from fits.gui.viewer.common.base_window import ImageToolWindow
 from fits.gui.viewer.common.image_viewer import FitsImageViewer
@@ -92,20 +92,31 @@ def test_composite_hover_samples_both_planes_and_elides_only_names(viewer: FitsI
     assert readout.single_value.text() == "—"
 
 
-def test_shared_lut_layout_reserves_matching_button_and_readout_width(viewer: FitsImageViewer) -> None:
+def test_shared_lut_layout_places_compact_buttons_above_graph_and_readout_at_bottom(viewer: FitsImageViewer) -> None:
     """
-    Use the default LUT allocation and a stable top-aligned column in all tools.
+    Align the compact range controls above the graph and values with its bottom.
     """
     window: ImageToolWindow = MaskDrawingWindow()
     try:
         readout = window.image_viewer.pixel_readout
-        assert window.auto_scale_button.width() == readout.width()
-        assert window.full_range_button.width() == readout.width()
+        window.resize(1700, 1000)
+        window.show()
+        QApplication.processEvents()
+        assert window.auto_scale_button.width() == window.full_range_button.width() == readout.width()
+        histogram = cast(QWidget, window.image_viewer.histogram)
+        auto = window.auto_scale_button.mapTo(window.lut_controls, window.auto_scale_button.rect().topLeft())
+        full = window.full_range_button.mapTo(window.lut_controls, window.full_range_button.rect().topLeft())
+        graph = histogram.mapTo(window.lut_controls, histogram.rect().topLeft())
+        assert full.x() < auto.x()
+        assert full.y() == auto.y()
+        assert auto.y() + window.auto_scale_button.height() <= graph.y()
+        graph_bottom = histogram.mapTo(window.lut_controls, histogram.rect().bottomLeft()).y()
+        readout_bottom = readout.mapTo(window.lut_controls, readout.rect().bottomLeft()).y()
+        assert abs(graph_bottom - readout_bottom) <= 1
         footer = window.viewer_actions.parentWidget()
         assert footer is not None
         layout = footer.layout()
         assert isinstance(layout, QHBoxLayout)
-        assert layout.stretch(layout.indexOf(window.lut_controls)) == 1
-        assert layout.stretch(layout.indexOf(window.viewer_actions)) == 1
+        assert layout.indexOf(window.lut_controls) < layout.indexOf(window.viewer_actions)
     finally:
         window.close()

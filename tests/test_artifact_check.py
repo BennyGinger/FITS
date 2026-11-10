@@ -6,13 +6,13 @@ import pytest
 from scope_io import ScopeIO
 import tifffile
 
-from fits.environment import constant as cst
-from fits.gui.settings import SettingsAdapter
-from fits.workflows.checks.artifacts import inspect_run
-from fits.workflows.checks.decisions import apply_decision
-from fits.workflows.checks.models import ArtifactRecord, PreflightReport
-from fits.settings.resolution import apply_overwrite_cascade
-from fits.workflows.experiments import ExperimentState, save_experiment_state
+from fisch.environment import constant as cst
+from fisch.gui.settings import SettingsAdapter
+from fisch.workflows.checks.artifacts import inspect_run
+from fisch.workflows.checks.decisions import apply_decision
+from fisch.workflows.checks.models import ArtifactRecord, PreflightReport
+from fisch.settings.resolution import apply_overwrite_cascade
+from fisch.workflows.experiments import ExperimentState, save_experiment_state
 
 
 @pytest.mark.parametrize("selected,other,same_experiment,exists,review", [
@@ -53,7 +53,7 @@ def test_overwrite_review_preserves_drawing_geometry_dependencies(tmp_path: Path
     Review geometry changes affecting drawings while permitting intensity-only reruns.
     """
     image = tmp_path / "image.tif"
-    drawing = tmp_path / "fits_ref_edge.tif"
+    drawing = tmp_path / "proc_ref_edge.tif"
     image.touch()
     drawing.touch()
     report = PreflightReport((ArtifactRecord(image, step, None), ArtifactRecord(drawing, None, None)),
@@ -80,9 +80,9 @@ def test_converted_run_with_unfinished_pipeline_has_no_artifact_conflicts(tmp_pa
     pixels = np.zeros((8, 8), dtype=np.uint16)
     tifffile.imwrite(source, pixels, photometric="minisblack", metadata={"axes": "YX"})
     reader = ScopeIO.from_path(source)
-    output = tmp_path / cst.FITS_ARRAY_RAW
+    output = tmp_path / cst.ARRAY_RAW
     payload = reader.build_payload(export_channels="all", artifact_type=cst.ARTI_IMG_RAW,
-                                   custom_metadata={"pipeline_meta": {"version": "4.0.0"}}).new_revision(
+                                   custom_metadata={"pipeline_meta": {"version": "5.0.0"}}).new_revision(
                                        [{"artifact_path": source.name, "external": True, "created_at": None}])
     reader.save_array(pixels, metadata=payload, output_path=output)
     state = ExperimentState.init(tmp_path, source).with_complete_step(
@@ -97,7 +97,7 @@ def test_converted_run_with_unfinished_pipeline_has_no_artifact_conflicts(tmp_pa
     assert not report.conflicts
     assert not report.needs_decision
 
-    missing = tmp_path / cst.FITS_MASK_SEG
+    missing = tmp_path / cst.MASK_SEG
     state = state.with_complete_step(step_name=cst.StepName.SEGMENT,
                                     artifact_kind=cst.ARTI_SEG, artifact_path=missing)
     save_experiment_state(state)
@@ -114,16 +114,16 @@ def test_checker_detects_input_revisions_and_selected_only_scope(tmp_path):
     state = ExperimentState.init(tmp_path, source)
     parent = None
     for step, role, name in [
-        (cst.StepName.CONVERT, cst.ARTI_IMG_RAW, cst.FITS_ARRAY_RAW),
-        (cst.StepName.REGISTER_CHANNEL, cst.ARTI_IMG_CHANNEL, cst.FITS_ARRAY_REG_CHANNEL),
-        (cst.StepName.REGISTER_TIME, cst.ARTI_IMG_TIME, cst.FITS_ARRAY_REG_TIME),
-        (cst.StepName.BG_SUB, cst.ARTI_IMG_BGSUB, cst.FITS_ARRAY_BGSUB),
+        (cst.StepName.CONVERT, cst.ARTI_IMG_RAW, cst.ARRAY_RAW),
+        (cst.StepName.REGISTER_CHANNEL, cst.ARTI_IMG_CHANNEL, cst.ARRAY_REG_CHANNEL),
+        (cst.StepName.REGISTER_TIME, cst.ARTI_IMG_TIME, cst.ARRAY_REG_TIME),
+        (cst.StepName.BG_SUB, cst.ARTI_IMG_BGSUB, cst.ARRAY_BGSUB),
     ]:
         refs = [] if parent is None else [{"artifact_path": parent.name, "created_at": reader.reader.metadata.artifact.created_at}]
         if parent is None:
             refs = [{"artifact_path": source.name, "external": True, "created_at": None}]
         payload = reader.build_payload(export_channels="all", artifact_type=role,
-                                       custom_metadata={"pipeline_meta": {"version": "4.0.0"}}).new_revision(refs)
+                                       custom_metadata={"pipeline_meta": {"version": "5.0.0"}}).new_revision(refs)
         output = tmp_path / name
         reader.save_array(pixels, metadata=payload, output_path=output)
         state = state.with_complete_step(step_name=step, artifact_kind=role, artifact_path=output)
@@ -136,7 +136,7 @@ def test_checker_detects_input_revisions_and_selected_only_scope(tmp_path):
     config = adapter.as_mapping()
     assert not inspect_run(tmp_path, config).conflicts
 
-    channel = tmp_path / cst.FITS_ARRAY_REG_CHANNEL
+    channel = tmp_path / cst.ARRAY_REG_CHANNEL
     old = ScopeIO.from_path(channel)
     changed = old.reader.metadata.new_revision(old.reader.metadata.artifact.derived_from)
     old.save_array(pixels + 1, metadata=changed, output_path=channel)

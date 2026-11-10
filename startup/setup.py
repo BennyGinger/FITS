@@ -1,4 +1,4 @@
-"""Install this FITS checkout using only the Python standard library."""
+"""Install this FIScH checkout using only the Python standard library."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ class Installer:
         Allow clean older modules while protecting edits and independent commits.
         """
         if not (self.root / ".git").exists():
-            raise RuntimeError("Use a Git clone of FITS, not a downloaded ZIP archive.")
+            raise RuntimeError("Use a Git clone of FIScH, not a downloaded ZIP archive.")
         for program in ("git", "uv"):
             if shutil.which(program) is None:
                 raise RuntimeError(f"{program} is required and must be on PATH.")
@@ -63,7 +63,7 @@ class Installer:
         for line in statuses.splitlines():
             if line.startswith("U"):
                 raise RuntimeError(
-                    "A submodule differs from FITS's recorded commit or has conflicts. "
+                    "A submodule differs from FIScH's recorded commit or has conflicts. "
                     "Save your module work and reconcile its commit before reinstalling:\n" + line
                 )
         dirty = self.run(
@@ -83,7 +83,7 @@ class Installer:
         """
         Fetch required commits and allow only forward updates of clean modules.
         """
-        self.message("Checking older submodules against the versions required by this FITS checkout...")
+        self.message("Checking older submodules against the versions required by this FIScH checkout...")
         try:
             self.run("git", "submodule", "foreach", "--quiet", "--recursive",
                      'git cat-file -e "$sha1^{commit}" 2>/dev/null || '
@@ -92,7 +92,7 @@ class Installer:
                      )
         except RuntimeError as error:
             raise RuntimeError(
-                "A submodule differs from FITS's required history, or its required commit could not be fetched. "
+                "A submodule differs from FIScH's required history, or its required commit could not be fetched. "
                 "Save any module commits and check the Git error above before reinstalling. "
                 "No submodule checkout was changed."
             ) from error
@@ -101,10 +101,10 @@ class Installer:
         """
         Synchronize required submodules before installing and verifying dependencies.
         """
-        self.message(f"\nFITS installation: {datetime.now().isoformat(timespec='seconds')}")
+        self.message(f"\nFIScH installation: {datetime.now().isoformat(timespec='seconds')}")
         self.message(f"Checkout: {self.root}")
         self.check_checkout()
-        self.message("Updating all submodules to the versions required by this FITS checkout...")
+        self.message("Updating all submodules to the versions required by this FIScH checkout...")
         self.run("git", "submodule", "update", "--init", "--recursive")
         lock_path = self.root / "uv.lock"
         previous_lock = lock_path.read_bytes() if lock_path.exists() else None
@@ -118,13 +118,13 @@ class Installer:
         record_installation(self.root)
         if not no_shortcut:
             install_shortcut(self.root, report=self.message)
-        self.message("FITS installation complete. No GPU is required to open the GUI.")
+        self.message("FIScH installation complete. No GPU is required to open the GUI.")
         self.message("Models are downloaded on first use; no model weights were requested by this installer.")
 
 
 def main() -> int:
     """
-    Install FITS first, then offer the independent optional table viewer.
+    Install FIScH first, then offer the independent optional table viewer.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-shortcut", action="store_true", help="Install without creating a menu shortcut.")
@@ -155,12 +155,12 @@ def main() -> int:
     option = ('--with-tad',) if args.tad is True else ('--without-tad',) if args.tad is False else ()
     try:
         # Inherit the terminal so input prompts remain visible before a newline.
-        subprocess.run([str(python), '-m', 'fits.external_tools.tad', str(ROOT), *option],
+        subprocess.run([str(python), '-m', 'fisch.external_tools.tad', str(ROOT), *option],
                        cwd=ROOT, env=command_environment(ROOT), check=True,
                        )
     except (OSError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
         installer.message(f'Optional Tad installation was unsuccessful: {error}')
-    installer.message('FITS installed successfully and is ready to use.')
+    installer.message('FIScH installed successfully and is ready to use.')
     if args.pause and sys.stdin is not None and sys.stdin.isatty():
         try:
             input('Press Enter to close…')

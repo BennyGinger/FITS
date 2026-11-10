@@ -24,23 +24,23 @@ Saved REF/ROI drawings depend on registration geometry, not image intensity revi
 
 ## Standalone drawing tools
 
-`fits-drawmask` opens a dedicated mask editor with **Reference** and **ROI**
+`fisch-drawmask` opens a dedicated mask editor with **Reference** and **ROI**
 tabs sharing the same experiment and image controls.
 Opening an image also loads the first reference and ROI masks beside it, in
 filename order. Selecting a mask file opens its sibling image and that specific
 mask in the matching tab.
-The former `fits-viewer` command has been removed.
+The former `fisch-viewer` command has been removed.
 
 ## Collection-panel preview and experiment navigation
 
 To open the collection panel in preview mode without running the pipeline:
 
 ```bash
-uv run fits-drawmask --tool pipeline
+uv run fisch-drawmask --tool pipeline
 ```
 
 Click **Load test experiments…** and choose a folder containing prepared
-FITS image artifacts. The **Reference** and **ROI** tabs each manage their own
+FIScH image artifacts. The **Reference** and **ROI** tabs each manage their own
 masks. Switching tabs or mask entries keeps unsaved drawings. New experiments
 join the waiting list without replacing the current drawing.
 
@@ -74,10 +74,10 @@ window, the pipeline supplies prepared experiments automatically; there is no
 manual folder loader.
 
 This is a preview with no running pipeline, but **Save writes real mask files**
-to the selected experiment folders. The regular `fits-drawmask` command keeps
+to the selected experiment folders. The regular `fisch-drawmask` command keeps
 the standalone browser and visible tabs.
 
 You can also supply `--experiments-dir /path/to/run` and
-`--settings /path/to/fits_settings.toml`. Without a settings file, the preview
+`--settings /path/to/settings.toml`. Without a settings file, the preview
 requests one reference per experiment and no ROI. With settings, it uses the
 enabled extraction/distance-profile steps and their drawing options.

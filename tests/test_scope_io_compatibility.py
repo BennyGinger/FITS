@@ -1,4 +1,4 @@
-"""Existing FITS experiments remain usable after switching their I/O library."""
+"""Existing FIScH experiments remain usable after switching their I/O library."""
 
 from __future__ import annotations
 
@@ -15,14 +15,14 @@ import pytest
 import tifffile
 
 from scope_io import ScopeIO
-from fits.environment import constant as cst
-from fits.settings.models import ConvertSettings
-from fits.tasks.convert import convert
-from fits.workflows.artifacts.provenance import PARQUET_PROVENANCE_KEY, compatible, read_metadata
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.experiments import ExperimentState
-from fits.workflows.file_management.relocation import PortablePlan, _provenance
-from fits.workflows.metadata import FitsMeta
+from fisch.environment import constant as cst
+from fisch.settings.models import ConvertSettings
+from fisch.tasks.convert import convert
+from fisch.workflows.artifacts.provenance import PARQUET_PROVENANCE_KEY, compatible, read_metadata
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.experiments import ExperimentState
+from fisch.workflows.file_management.relocation import PortablePlan, _provenance
+from fisch.workflows.metadata import PipelineMetadata
 
 
 @pytest.mark.parametrize('historical', ['fits-io', 'fits_io'])
@@ -30,7 +30,7 @@ def test_recorded_io_producer_can_continue_with_scope_io(historical: str) -> Non
     """
     Append new channel parameters without rewriting historical producer identity.
     """
-    metadata = FitsMeta.init().with_step(cst.StepName.CONVERT, historical, [0], {'channel': 'GFP'})
+    metadata = PipelineMetadata.init().with_step(cst.StepName.CONVERT, historical, [0], {'channel': 'GFP'})
     recorded = metadata.steps[cst.StepName.CONVERT]
     updated = metadata.with_step(cst.StepName.CONVERT, cst.DIST_IO, [1], {'channel': 'RFP'})
     step = updated.steps[cst.StepName.CONVERT]
@@ -85,8 +85,8 @@ def test_parquet_and_location_updates_accept_both_metadata_keys(tmp_path: Path, 
                                     'created_at': '2026-11-01T09:00:00+00:00',
                                     'derived_from': [{'artifact_path': str(old / 'input.tif'),
                                                       'created_at': '2026-11-01T08:00:00+00:00'}]},
-                               'custom_metadata': {'pipeline_meta': {'version': '4.1.0'}}}
-    path = tmp_path / cst.FITS_QUANTI_NAME
+                               'custom_metadata': {'pipeline_meta': {'version': '5.0.0'}}}
+    path = tmp_path / cst.QUANTI_NAME
     table = pa.Table.from_pandas(pd.DataFrame({'label': [1], 'intensity_mean': [42.5]}))
     table = table.replace_schema_metadata({PARQUET_PROVENANCE_KEY: json.dumps(payload).encode()})
     pq.write_table(table, path)

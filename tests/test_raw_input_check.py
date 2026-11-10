@@ -9,13 +9,13 @@ import numpy as np
 import pytest
 from tifffile import imwrite
 
-from fits.environment.constant import WORKFLOW_ORDER, StepName
-from fits.environment.paths import EXPERIMENT_DIR_NAME
-from fits.gui.settings import SettingsAdapter
-from fits.pipeline import start_pipeline
-from fits.workflows.checks.raw_inputs import inspect_raw_inputs
-from fits.workflows.experiments.acquisitions import group_acquisition
-from fits.workflows.experiments import discover_saved_states
+from fisch.environment.constant import WORKFLOW_ORDER, StepName
+from fisch.environment.paths import ACQUISITION_METADATA_DIR_NAME
+from fisch.gui.settings import SettingsAdapter
+from fisch.pipeline import start_pipeline
+from fisch.workflows.checks.raw_inputs import inspect_raw_inputs
+from fisch.workflows.experiments.acquisitions import group_acquisition
+from fisch.workflows.experiments import discover_saved_states
 
 
 def _write_tiff(path: Path, channels: int = 2) -> None:
@@ -69,7 +69,7 @@ def test_duplicate_stems_only_change_planned_folders_in_same_parent(tmp_path: Pa
     for path in files:
         path.parent.mkdir(exist_ok=True)
         path.touch()
-    monkeypatch.setattr("fits.workflows.checks.raw_inputs.ScopeIO.from_path",
+    monkeypatch.setattr("fisch.workflows.checks.raw_inputs.ScopeIO.from_path",
                         lambda path: SimpleNamespace(reader=SimpleNamespace(
                             channel_count=2, channel_colors=None, split_series=lambda: [SimpleNamespace(axes="YX", shape=(8, 8))])))
     report = inspect_raw_inputs(tmp_path)
@@ -78,7 +78,7 @@ def test_duplicate_stems_only_change_planned_folders_in_same_parent(tmp_path: Pa
         files[0]: files[0].parent / "sample_nd2", files[1]: files[1].parent / "sample_tif",
         files[2]: files[2].parent / "sample", files[3]: files[3].parent / "sample"}
     assert all(path.is_file() for path in files)
-    assert not list(tmp_path.rglob(EXPERIMENT_DIR_NAME))
+    assert not list(tmp_path.rglob(ACQUISITION_METADATA_DIR_NAME))
 
 
 @pytest.mark.parametrize("existing", [True, False])
@@ -116,7 +116,7 @@ def test_frame_counts_use_headers_for_every_series(tmp_path: Path, monkeypatch: 
     source.touch()
     series = [SimpleNamespace(axes="CYX", shape=(2, 8, 8)),
               SimpleNamespace(axes="TCYX", shape=(5, 2, 8, 8))]
-    monkeypatch.setattr("fits.workflows.checks.raw_inputs.ScopeIO.from_path",
+    monkeypatch.setattr("fisch.workflows.checks.raw_inputs.ScopeIO.from_path",
                         lambda path: SimpleNamespace(reader=SimpleNamespace(
                             channel_count=2, channel_colors=None, split_series=lambda: series)))
     report = inspect_raw_inputs(tmp_path)
@@ -162,9 +162,9 @@ def test_pipeline_warns_and_uses_defaults_for_label_count_mismatch(tmp_path: Pat
     from scope_io import ScopeIO
 
     start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
-    output = next(run.rglob("fits_array_raw.tif"))
+    output = next(run.rglob("proc_array_raw.tif"))
     assert ScopeIO.from_path(output).channel_labels == ["C1", "C2", "C3"]
-    log = next((run / ".fits" / "logs").glob("*.log")).read_text()
+    log = next((run / ".pipeline" / "logs").glob("*.log")).read_text()
     assert "Expected 3 channels, got 2 channel labels" in log
     assert "default names: C1, C2, C3." in log
 
@@ -182,7 +182,7 @@ def test_pipeline_empty_labels_uses_reader_defaults(tmp_path: Path) -> None:
     adapter.user_name = "Test"
     settings = adapter.save(tmp_path / "settings.toml")
     start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
-    output = next(run.rglob("fits_array_raw.tif"))
+    output = next(run.rglob("proc_array_raw.tif"))
     assert ScopeIO.from_path(output).channel_labels == ["C1", "C2"]
 
 
@@ -203,7 +203,7 @@ def test_pipeline_uses_run_color_consensus_for_defaults(tmp_path: Path, monkeypa
     adapter.user_name = "Test"
     settings = adapter.save(tmp_path / "settings.toml")
     start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
-    outputs = list(run.rglob("fits_array_raw.tif"))
+    outputs = list(run.rglob("proc_array_raw.tif"))
     assert len(outputs) == 2
     assert all(ScopeIO.from_path(output).channel_labels == ["green", "C2"] for output in outputs)
 
@@ -212,7 +212,7 @@ def test_duplicates_inside_existing_acquisition_require_resolution(tmp_path: Pat
     """
     Preserve existing acquisition paths instead of allowing two originals to overwrite the same series.
     """
-    (tmp_path / EXPERIMENT_DIR_NAME).mkdir()
+    (tmp_path / ACQUISITION_METADATA_DIR_NAME).mkdir()
     _write_tiff(tmp_path / "sample.tif")
     _write_tiff(tmp_path / "sample.tiff")
     report = inspect_raw_inputs(tmp_path)
@@ -230,7 +230,7 @@ def test_grouping_logs_folder_adjustment_and_preserves_filename(tmp_path: Path, 
     _write_tiff(source)
     before = source.read_bytes()
     target = tmp_path / "sample_tif"
-    with caplog.at_level("INFO", logger="fits.workflows.experiments.acquisitions"):
+    with caplog.at_level("INFO", logger="fisch.workflows.experiments.acquisitions"):
         moved = group_acquisition(source, target)
         assert group_acquisition(moved) == moved
     assert moved == target / "sample.tif"
@@ -269,7 +269,7 @@ def test_pipeline_converts_duplicate_stems_and_reopens_grouped_inputs(tmp_path: 
     for extension in ("tif", "tiff"):
         acquisition = run_dir / f"sample_{extension}"
         assert (acquisition / f"sample.{extension}").read_bytes() == before[f"sample.{extension}"]
-        assert (acquisition / "sample_s1" / "fits_array_raw.tif").is_file()
+        assert (acquisition / "sample_s1" / "proc_array_raw.tif").is_file()
     report = inspect_raw_inputs(run_dir)
     assert not report.problems
     assert not report.acquisition_directories

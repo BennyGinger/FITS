@@ -12,22 +12,22 @@ from PySide6.QtCore import QPointF
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget
 
-from fits.gui.viewer.common.base_window import ImageToolWindow
-from fits.gui.viewer.common.image_viewer import FitsImageViewer
-from fits.gui.viewer.masks import MaskDrawingWindow
+from fisch.gui.viewer.common.base_window import ImageToolWindow
+from fisch.gui.viewer.common.image_viewer import FischImageViewer
+from fisch.gui.viewer.masks import MaskDrawingWindow
 
 
 _APP: QApplication | None = None
 
 
 @pytest.fixture
-def viewer(monkeypatch: pytest.MonkeyPatch) -> Iterator[FitsImageViewer]:
+def viewer(monkeypatch: pytest.MonkeyPatch) -> Iterator[FischImageViewer]:
     """
     Open the shared canvas and deliver hover events without relying on a desktop pointer.
     """
     global _APP
     _APP = cast(QApplication, QApplication.instance() or QApplication([]))
-    window = FitsImageViewer()
+    window = FischImageViewer()
     window.resize(600, 400)
     window.show()
     QApplication.processEvents()
@@ -38,7 +38,7 @@ def viewer(monkeypatch: pytest.MonkeyPatch) -> Iterator[FitsImageViewer]:
     QApplication.processEvents()
 
 
-def _hover(viewer: FitsImageViewer, x: float, y: float) -> None:
+def _hover(viewer: FischImageViewer, x: float, y: float) -> None:
     """
     Send a scene mouse event through the throttled hover connection.
     """
@@ -47,7 +47,7 @@ def _hover(viewer: FitsImageViewer, x: float, y: float) -> None:
     QTest.qWait(80)
 
 
-def test_single_hover_uses_unclipped_values_and_updates_with_stationary_mouse(viewer: FitsImageViewer) -> None:
+def test_single_hover_uses_unclipped_values_and_updates_with_stationary_mouse(viewer: FischImageViewer) -> None:
     """
     Keep scientific intensities independent of display clipping, LUTs and masks.
     """
@@ -69,7 +69,7 @@ def test_single_hover_uses_unclipped_values_and_updates_with_stationary_mouse(vi
     assert readout.single_value.text() == "—"
 
 
-def test_composite_hover_samples_both_planes_and_elides_only_names(viewer: FitsImageViewer) -> None:
+def test_composite_hover_samples_both_planes_and_elides_only_names(viewer: FischImageViewer) -> None:
     """
     Show two numeric columns with bounded tags and complete labels in tooltips.
     """
@@ -92,7 +92,7 @@ def test_composite_hover_samples_both_planes_and_elides_only_names(viewer: FitsI
     assert readout.single_value.text() == "—"
 
 
-def test_shared_lut_layout_places_compact_buttons_above_graph_and_readout_at_bottom(viewer: FitsImageViewer) -> None:
+def test_shared_lut_layout_places_compact_buttons_above_graph_and_readout_at_bottom(viewer: FischImageViewer) -> None:
     """
     Align the compact range controls above the graph and values with its bottom.
     """

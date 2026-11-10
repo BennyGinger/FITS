@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from fits.environment.constant import StepName, WORKFLOW_ORDER
-from fits.gui.settings import SettingsAdapter
-from fits.pipeline import start_pipeline
-from fits.workflows.file_management.rebuild import ProcessingPlan, execution_config
-from fits.workflows.definitions.inputs import configured_profile
-from fits.workflows.definitions.registry import REGISTRY
+from fisch.environment.constant import StepName, WORKFLOW_ORDER
+from fisch.gui.settings import SettingsAdapter
+from fisch.pipeline import start_pipeline
+from fisch.workflows.file_management.rebuild import ProcessingPlan, execution_config
+from fisch.workflows.definitions.inputs import configured_profile
+from fisch.workflows.definitions.registry import REGISTRY
 
 
 def test_cli_rejects_quantification_without_mask_producer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -24,7 +24,7 @@ def test_cli_rejects_quantification_without_mask_producer(tmp_path: Path, monkey
     for step in WORKFLOW_ORDER:
         adapter.set_step_enabled(step, step == StepName.EXTRACT)
     settings = adapter.save(tmp_path / "settings.toml")
-    monkeypatch.setattr("fits.pipeline.inspect_run", lambda *args: pytest.fail("Invalid workflow reached artifact inspection"))
+    monkeypatch.setattr("fisch.pipeline.inspect_run", lambda *args: pytest.fail("Invalid workflow reached artifact inspection"))
     with pytest.raises(ValueError, match="Quantification requires Segmentation or Tracking"):
         start_pipeline(settings, terminal_progress=False)
     assert list(root.iterdir()) == []

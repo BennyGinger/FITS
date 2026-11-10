@@ -13,10 +13,10 @@ from tifffile import TiffWriter, imwrite
 
 from scope_io import ScopeIO
 from scope_io.metadata.imageJ_meta import make_color_lut
-from fits.gui.viewer.tracking import TrackingViewerWindow
-from fits.gui.main_window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.interaction import FitsImageSession
+from fisch.gui.viewer.tracking import TrackingViewerWindow
+from fisch.gui.main_window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.interaction import FischImageSession
 
 
 def test_main_viewer_reads_raw_tiff_planes_and_source_colors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,7 +79,7 @@ def test_main_gui_launches_raw_image_and_switches_series(tmp_path: Path) -> None
         tif.write(np.full((2, 6, 8), 22, dtype=np.uint16), photometric="minisblack", metadata={"axes": "CYX"})
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    main = FitsMainWindow(adapter)
+    main = FischMainWindow(adapter)
     main._open_selected_report(source)
     viewer = main._tracking_viewer
     assert isinstance(viewer, TrackingViewerWindow)
@@ -103,7 +103,7 @@ def test_raw_inputs_are_not_accepted_by_editing_sessions(tmp_path: Path) -> None
     source = tmp_path / "acquisition.tif"
     imwrite(source, np.ones((5, 7), dtype=np.uint16), imagej=True, metadata={"axes": "YX"})
     with pytest.raises(ValueError, match="only accept"):
-        FitsImageSession(source)
+        FischImageSession(source)
     editor = TrackingViewerWindow(tracking_path=source, editing_enabled=True)
     assert editor._image_session is None
     assert not editor._raw_source

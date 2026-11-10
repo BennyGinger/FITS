@@ -4,7 +4,7 @@ import sys
 from types import ModuleType
 
 import numpy as np
-from fits.tasks.segmentation.local_seg import (
+from fisch.tasks.segmentation.local_seg import (
     MicroSamPredictor,
     SplitPredictor,
     component_at_point,

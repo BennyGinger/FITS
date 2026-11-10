@@ -10,16 +10,16 @@ import pytest
 import tifffile
 
 from scope_io import ScopeIO
-from fits.environment.constant import ARTI_IMG, ARTI_TRACK, StepName
-from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
-from fits.workflows.experiments import ExperimentState
-from fits.settings.models import (
+from fisch.environment.constant import ARTI_IMG, ARTI_TRACK, StepName
+from fisch.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
+from fisch.workflows.experiments import ExperimentState
+from fisch.settings.models import (
     DistanceProfileSettings, EditTrackSettings, ExtractSettings)
-from fits.workflows.runtime.interactive.messages import (
+from fisch.workflows.runtime.interactive.messages import (
     MaskCollectionOutcome, TrackEditOutcome)
-from fits.workflows.definitions.registry import REGISTRY
-from fits.tasks.reference_mask import ReferenceMaskSession
-from fits.workflows.runtime.interactive import (
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.tasks.reference_mask import ReferenceMaskSession
+from fisch.workflows.runtime.interactive import (
     AllExperimentsFailed,
     PipelineInteraction,
     PipelineCancelled,
@@ -28,19 +28,19 @@ from fits.workflows.runtime.interactive import (
     run_conversion_only,
     run_interactive_workflow,
 )
-from fits.workflows.runtime.interactive.masks import (
+from fisch.workflows.runtime.interactive.masks import (
     existing_mask_outcome as _existing_outcome)
-from fits.workflows.runtime.interactive.progress import (
+from fisch.workflows.runtime.interactive.progress import (
     input_progress_id as _input_progress_id)
 
 
 def state(tmp_path, name):
     folder = tmp_path / name
     folder.mkdir()
-    image = folder / 'fits_array.tif'
+    image = folder / 'proc_array.tif'
     tifffile.imwrite(image, np.arange(64, dtype=np.uint16).reshape(8, 8), imagej=True, metadata={'axes': 'YX'})
     reader = ScopeIO.from_path(image)
-    payload = reader.build_payload(export_channels='all', custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+    payload = reader.build_payload(export_channels='all', custom_metadata={'pipeline_meta': {'version': '5.0.0'}}).new_revision()
     reader.save_array(np.arange(64, dtype=np.uint16).reshape(8, 8), metadata=payload, output_path=image)
     session = ReferenceMaskSession(image)
     session.set_mask_plane(np.ones((8, 8), dtype=np.uint8))
@@ -108,7 +108,7 @@ def test_conversion_only_continues_after_one_input_fails(tmp_path, monkeypatch):
         output.mkdir()
         return [ExperimentState.init(output, current.original_image)]
 
-    monkeypatch.setattr('fits.workflows.runtime.interactive.conversion.resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.conversion.resolve_runtime_steps', lambda cfg: [
         step(StepName.CONVERT, convert)])
     progress = RunProgress()
 
@@ -133,7 +133,7 @@ def test_queue_grows_and_each_experiment_waits_for_its_own_masks(tmp_path, monke
         analysed.append(current.workdir.name)
         analysis_done.set()
         return [current]
-    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.BG_SUB, prepare),
         step(StepName.DISTANCE_PROFILE, analyse, DistanceProfileSettings())])
     requests = Queue()
@@ -169,7 +169,7 @@ def test_raw_files_in_same_folder_have_separate_progress_entries(tmp_path, monke
     def convert(settings, current, profile):
         output = current.workdir / f'{current.original_image.stem}_s1'
         output.mkdir()
-        image = output / 'fits_array.tif'
+        image = output / 'proc_array.tif'
         tifffile.imwrite(image, np.ones((8, 8), dtype=np.uint16), imagej=True,
                          metadata={'axes': 'YX'})
         converted = ExperimentState.init(output, current.original_image)
@@ -177,7 +177,7 @@ def test_raw_files_in_same_folder_have_separate_progress_entries(tmp_path, monke
             step_name=StepName.CONVERT, artifact_kind=ARTI_IMG,
             artifact_path=image)]
 
-    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.CONVERT, convert)])
     interaction = PipelineInteraction(lambda request: interaction.resolve_mask(_existing_outcome(request)))
     progress = RunProgress()
@@ -188,12 +188,12 @@ def test_raw_files_in_same_folder_have_separate_progress_entries(tmp_path, monke
 
 def test_reference_skip_omits_profile_but_allows_extraction(tmp_path, monkeypatch):
     current = state(tmp_path, 'a')
-    (current.workdir / 'fits_ref_edge.tif').unlink()
+    (current.workdir / 'proc_ref_edge.tif').unlink()
     ran = []
     def runner(settings, current, profile):
         ran.append(profile.step_name)
         return [current]
-    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.DISTANCE_PROFILE, runner, DistanceProfileSettings()),
         step(StepName.EXTRACT, runner, ExtractSettings())])
     interaction = PipelineInteraction(lambda request: interaction.resolve_mask(_existing_outcome(request)))
@@ -209,7 +209,7 @@ def test_reference_skip_omits_profile_but_allows_extraction(tmp_path, monkeypatc
 def test_finish_drawing_handles_later_arrivals_without_reopening_gui(tmp_path, monkeypatch):
     states = [state(tmp_path, 'a'), state(tmp_path, 'b')]
     calls = []
-    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.DISTANCE_PROFILE, lambda settings, current, profile: [current], DistanceProfileSettings())])
     def request_mask(request):
         calls.append(request)
@@ -225,7 +225,7 @@ def test_cancel_interrupts_long_demo_pause(tmp_path, monkeypatch):
     def prepare(settings, current, profile):
         started.set()
         return [current]
-    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, prepare)])
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, prepare)])
     interaction = PipelineInteraction(lambda request: pytest.fail('Cancelled request must not open'))
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run_interactive_workflow, {}, [current], interaction, step_delay_seconds=30)
@@ -239,7 +239,7 @@ def test_all_experiments_failed_reports_preparation_error(tmp_path, monkeypatch)
     current = state(tmp_path, 'a')
     def fail(*args):
         raise ValueError('broken preparation')
-    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, fail)])
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [step(StepName.BG_SUB, fail)])
     interaction = PipelineInteraction(lambda request: None)
     with pytest.raises(AllExperimentsFailed, match='broken preparation'):
         run_interactive_workflow({}, [current], interaction)
@@ -247,7 +247,7 @@ def test_all_experiments_failed_reports_preparation_error(tmp_path, monkeypatch)
 
 def test_changed_mask_manifest_stops_analysis(tmp_path, monkeypatch):
     current = state(tmp_path, 'a')
-    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.DISTANCE_PROFILE, lambda *args: pytest.fail('Must not run analysis'), DistanceProfileSettings())])
     def request_masks(request):
         outcome = _existing_outcome(request)
@@ -270,7 +270,7 @@ def test_middle_experiment_failure_does_not_stop_later_work(tmp_path, monkeypatc
         processed.append(current.workdir.name)
         return [current]
 
-    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.BG_SUB, prepare)])
     interaction = PipelineInteraction(
         lambda request: interaction.resolve_mask(_existing_outcome(request)),
@@ -297,7 +297,7 @@ def test_progress_records_parallel_process_and_drawing_join(tmp_path, monkeypatc
             analysed.set()
         return [state]
 
-    monkeypatch.setattr('fits.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
+    monkeypatch.setattr('fisch.workflows.runtime.interactive.api.resolve_runtime_steps', lambda cfg: [
         step(StepName.BG_SUB, runner),
         step(StepName.SEGMENT, runner),
         step(StepName.DISTANCE_PROFILE, runner, DistanceProfileSettings()),
@@ -331,8 +331,8 @@ def test_progress_records_parallel_process_and_drawing_join(tmp_path, monkeypatc
 
 def test_tracking_edit_replaces_active_artifact_before_analysis(tmp_path, monkeypatch):
     current = state(tmp_path, 'edit')
-    source = current.workdir / 'fits_track.tif'
-    edited = current.workdir / 'fits_track_edited.tif'
+    source = current.workdir / 'proc_masks_track.tif'
+    edited = current.workdir / 'proc_track_edited.tif'
     tifffile.imwrite(source, np.ones((8, 8), dtype=np.uint16), imagej=True,
                      metadata={'axes': 'YX'})
     current = current.with_complete_step(
@@ -352,7 +352,7 @@ def test_tracking_edit_replaces_active_artifact_before_analysis(tmp_path, monkey
     analysis_runtime = step(
         StepName.EXTRACT, analyse, ExtractSettings(draw_ref_mask=False))
     monkeypatch.setattr(
-        'fits.workflows.runtime.interactive.api.resolve_runtime_steps',
+        'fisch.workflows.runtime.interactive.api.resolve_runtime_steps',
         lambda cfg: [edit_runtime, analysis_runtime])
 
     def edit_request(request):
@@ -368,7 +368,7 @@ def test_tracking_edit_replaces_active_artifact_before_analysis(tmp_path, monkey
                 'operations_used': ['merge'],
                 'filter_condition': None,
                 'timestamp': '2026-09-22 10:00:00',
-                'fits_version': 'test',
+                'pipeline_version': 'test',
             },
         ))
 

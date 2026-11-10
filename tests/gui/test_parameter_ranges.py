@@ -3,11 +3,11 @@
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from fits.environment.constant import StepName
-from fits.gui.settings import SettingsAdapter, StepSettingsEditor
-from fits.gui.settings.field_widgets import FloatWidget
-from fits.gui.viewer.segmentation.settings_panel import CellposeSettingsPanel
-from fits.settings.models import SegmentChannelSettings
+from fisch.environment.constant import StepName
+from fisch.gui.settings import SettingsAdapter, StepSettingsEditor
+from fisch.gui.settings.field_widgets import FloatWidget
+from fisch.gui.viewer.segmentation.settings_panel import CellposeSettingsPanel
+from fisch.settings.models import SegmentChannelSettings
 
 
 @pytest.mark.parametrize("step, path", [

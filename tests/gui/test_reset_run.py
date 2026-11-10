@@ -12,10 +12,10 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QLineEdit, QPushButton, QWidget
 
-from fits.gui.file_management.reset import confirm_reset
-from fits.gui.main import _run_gui
-from fits.gui.main_window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
+from fisch.gui.file_management.reset import confirm_reset
+from fisch.gui.main import _run_gui
+from fisch.gui.main_window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
 
 
 @pytest.fixture
@@ -68,9 +68,9 @@ def raw_run(tmp_path: Path) -> Path:
     Create a portable acquisition with a cache and a valid raw TIFF for GUI discovery.
     """
     acquisition = tmp_path / 'control/sample'
-    (acquisition / '.fits_experiment/cache').mkdir(parents=True)
+    (acquisition / '.acquisition/cache').mkdir(parents=True)
     tifffile.imwrite(acquisition / 'sample.tif', np.ones((8, 8), dtype=np.uint16), photometric='minisblack')
-    (acquisition / '.fits_experiment/cache/preview.npy').write_bytes(b'cached preview')
+    (acquisition / '.acquisition/cache/preview.npy').write_bytes(b'cached preview')
     return tmp_path
 
 
@@ -83,7 +83,7 @@ def test_manager_reset_requires_confirmation(app: QApplication,
     """
     The third section resets the whole run only after confirmation and manager closure.
     """
-    from fits.gui.file_management.manager import manage_files
+    from fisch.gui.file_management.manager import manage_files
     calls: list[bool] = []
 
     def choose_reset(dialog: QDialog) -> int:
@@ -104,7 +104,7 @@ def test_manager_reset_requires_confirmation(app: QApplication,
         calls.append(app.activeModalWidget() is None)
 
     monkeypatch.setattr(QDialog, 'exec', choose_reset)
-    monkeypatch.setattr('fits.gui.file_management.manager.confirm_reset', lambda root, parent: confirmed)
+    monkeypatch.setattr('fisch.gui.file_management.manager.confirm_reset', lambda root, parent: confirmed)
     assert manage_files(raw_run, selected=raw_run / 'control/sample', reset_run=on_reset) is confirmed
     assert calls == ([True] if confirmed else [])
 
@@ -116,9 +116,9 @@ def test_reset_opens_fresh_window_with_same_run(app: QApplication,
     """
     Reset through Manage files replaces stale GUI settings without recreating run metadata.
     """
-    windows: list[FitsMainWindow] = []
+    windows: list[FischMainWindow] = []
 
-    class RecordingWindow(FitsMainWindow):
+    class RecordingWindow(FischMainWindow):
         def __init__(self, adapter: SettingsAdapter | None = None, **kwargs: Any) -> None:
             """
             Record actual windows while giving the initial window a run and user name.
@@ -154,13 +154,13 @@ def test_reset_opens_fresh_window_with_same_run(app: QApplication,
         assert fresh.adapter.document == _template_document(fresh.adapter, raw_run)
         assert not fresh._prepared_available
         assert (raw_run / 'control/sample.tif').is_file()
-        assert not (raw_run / '.fits').exists()
+        assert not (raw_run / '.pipeline').exists()
         assert not (raw_run / 'control/sample').exists()
         fresh.close()
         return 0
 
-    monkeypatch.setattr('fits.gui.main_window.FitsMainWindow', RecordingWindow)
-    monkeypatch.setattr('fits.gui.main_window.window.manage_files', accept_reset)
+    monkeypatch.setattr('fisch.gui.main_window.FischMainWindow', RecordingWindow)
+    monkeypatch.setattr('fisch.gui.main_window.window.manage_files', accept_reset)
     monkeypatch.setattr(QApplication, 'exec', inspect_event_loop)
     with pytest.raises(SystemExit) as result:
         _run_gui(argparse.Namespace(demo_step_delay=0.0), [])
@@ -194,7 +194,7 @@ def test_cancelled_editor_close_preserves_run(app: QApplication,
     adapter = SettingsAdapter()
     adapter.run_dir = str(raw_run)
     adapter.user_name = 'User'
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     editor = UnsavedEditor()
     window._manual_tracking_editor = editor
     replacements: list[str] = []
@@ -207,7 +207,7 @@ def test_cancelled_editor_close_preserves_run(app: QApplication,
         reset_run()
         return True
 
-    monkeypatch.setattr('fits.gui.main_window.window.manage_files', reset_action)
+    monkeypatch.setattr('fisch.gui.main_window.window.manage_files', reset_action)
     try:
         window._manage_files()
         assert (raw_run / 'control/sample/sample.tif').is_file()

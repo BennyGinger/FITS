@@ -7,24 +7,24 @@ import tifffile
 from scope_io import ScopeIO
 from stackalign import RegisterModel
 
-from fits.environment.constant import StepName
-from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
-from fits.tasks.registration.register_channel import register_channel
-from fits.tasks.registration.register_time import register_time
-from fits.tasks.registration.tuned import Mode, load_tuning, tuning_path
-from fits.tasks.registration.tuning import RegistrationTuningSession
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.definitions.inputs import configured_profile
-from fits.workflows.experiments import ExperimentState
-from fits.workflows.checks.models import ArtifactRecord
-from fits.workflows.checks.settings import settings_problem
+from fisch.environment.constant import StepName
+from fisch.settings.models import RegisterChannelSettings, RegisterTimeSettings
+from fisch.tasks.registration.register_channel import register_channel
+from fisch.tasks.registration.register_time import register_time
+from fisch.tasks.registration.tuned import Mode, load_tuning, tuning_path
+from fisch.tasks.registration.tuning import RegistrationTuningSession
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.definitions.inputs import configured_profile
+from fisch.workflows.experiments import ExperimentState
+from fisch.workflows.checks.models import ArtifactRecord
+from fisch.workflows.checks.settings import settings_problem
 
 
 @pytest.fixture
 def source(tmp_path):
     """Write a small multichannel Z stack with known time and channel shifts."""
-    (tmp_path / '.fits_experiment').mkdir(exist_ok=True)
-    path = tmp_path / 'fits_array.tif'
+    (tmp_path / '.acquisition').mkdir(exist_ok=True)
+    path = tmp_path / 'proc_array.tif'
     first = np.zeros((32, 32), dtype=np.uint16)
     first[8:13, 9:15] = 1000
     array = np.stack([np.stack([np.stack([np.roll(first, t + c, axis=0) * (z + 1)
@@ -81,7 +81,7 @@ def test_legacy_tuning_keeps_its_transforms(source: Path, monkeypatch: pytest.Mo
         """
         pytest.fail("The algorithm rename invalidated saved fitting transforms.")
 
-    monkeypatch.setattr("fits.tasks.registration.tuning.fit_planes", unexpected_fit)
+    monkeypatch.setattr("fisch.tasks.registration.tuning.fit_planes", unexpected_fit)
     with closing(RegistrationTuningSession(source)) as session:
         reused = session.run_preview("time", time_settings())
         assert reused.result.signature == restored.signature
@@ -101,7 +101,7 @@ def test_preview_is_virtual_cached_and_does_not_modify_source(source, monkeypatc
     assert len(preview.planes) == 1
     assert session.preview_frame(preview, 2, 1, 0) is plane
     assert source.read_bytes() == original
-    monkeypatch.setattr('fits.tasks.registration.tuning.fit_planes',
+    monkeypatch.setattr('fisch.tasks.registration.tuning.fit_planes',
                         lambda *a, **kw: pytest.fail('Repeated fitting for unchanged controls'))
     assert session.run_preview('time', time_settings()) is preview
     session.close()
@@ -110,7 +110,7 @@ def test_preview_is_virtual_cached_and_does_not_modify_source(source, monkeypatc
 @pytest.mark.parametrize('mode', ['time', 'channel'])
 def test_crop_limits_fit_and_preserves_full_image_preview(source, monkeypatch, mode):
     """Fit only ROI pixels while retaining full-image output and persistent crop scope."""
-    from fits.tasks.registration import tuning
+    from fisch.tasks.registration import tuning
     real_fit = tuning.fit_planes
     fitted_shapes = []
 
@@ -148,7 +148,7 @@ def test_crop_limits_fit_and_preserves_full_image_preview(source, monkeypatch, m
 def test_crop_origin_conversion_matches_local_warp(algorithm, method):
     """Verify translation, rotation and affine crop origins using each real algorithm."""
     from scipy.ndimage import gaussian_filter
-    from fits.tasks.registration.tuned import full_image_model
+    from fisch.tasks.registration.tuned import full_image_model
     crop = (30, 20, 110, 100)
     full = np.zeros((128, 150), dtype=np.float32)
     full[35:85, 45:95] = gaussian_filter(np.random.default_rng(6).random((50, 50)), 1)
@@ -196,7 +196,7 @@ def test_lazy_preview_cache_is_bounded_and_does_not_apply_unvisited_planes(sourc
     assert len(calls) == 17
     session.close()
     assert not session._previews
-    assert not (source.parent / '.fits' / 'viewer_cache' / 'registration').exists()
+    assert not (source.parent / '.pipeline' / 'viewer_cache' / 'registration').exists()
 
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])
@@ -223,7 +223,7 @@ def test_settings_only_save_is_fitted_by_pipeline(source: Path, tmp_path: Path, 
     else:
         register_channel(channel_settings(), state,
                          configured_profile(REGISTRY[StepName.REGISTER_CHANNEL].profile, {"convert": {"enabled": True}}))
-    output_name = 'fits_array_reg.tif' if mode == 'time' else 'fits_array_reg_channel.tif'
+    output_name = 'proc_array_reg.tif' if mode == 'time' else 'proc_array_reg_channel.tif'
     np.testing.assert_array_equal(ScopeIO.from_path(source.with_name(output_name)).get_array().array, expected)
 
 
@@ -276,7 +276,7 @@ def test_saved_models_reload_without_fitting(source, monkeypatch, mode):
     expected = materialize_preview(session, preview)
     session.save_preview(preview)
     session.close()
-    monkeypatch.setattr('fits.tasks.registration.tuning.fit_planes',
+    monkeypatch.setattr('fisch.tasks.registration.tuning.fit_planes',
                         lambda *a, **kw: pytest.fail('Saved transform was fitted again'))
     restored = RegistrationTuningSession(source)
     np.testing.assert_array_equal(materialize_preview(restored, restored.run_preview(mode, settings)), expected)
@@ -304,7 +304,7 @@ def test_pipeline_reuses_both_modes_with_matching_settings(source: Path,
     monkeypatch.setattr('stackalign.backends.execution.EXECUTOR_MODE', 'thread')
     monkeypatch.setattr(RegisterModel, 'fit_time', lambda *a, **kw: pytest.fail('Time fitted again'))
     monkeypatch.setattr(RegisterModel, 'fit_channel', lambda *a, **kw: pytest.fail('Channels fitted again'))
-    monkeypatch.setattr('fits.tasks.registration.tuned.fit_planes',
+    monkeypatch.setattr('fisch.tasks.registration.tuned.fit_planes',
                         lambda *a, **kw: pytest.fail('Accepted crop was fitted again'))
     raw = tmp_path / 'raw.nd2'
     raw.write_bytes(b'raw')
@@ -322,9 +322,9 @@ def test_pipeline_reuses_both_modes_with_matching_settings(source: Path,
 
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])
-def test_saved_crop_refits_only_its_pixels_when_pipeline_input_changes(source, monkeypatch, mode):
+def test_saved_crop_reproc_only_its_pixels_when_pipeline_input_changes(source, monkeypatch, mode):
     """Ignore changes outside the fitting crop and preserve ROI scope when refitting."""
-    from fits.tasks.registration import tuned
+    from fisch.tasks.registration import tuned
     session = RegistrationTuningSession(source)
     settings = time_settings() if mode == 'time' else channel_settings()
     crop = (4, 3, 26, 25)
@@ -366,7 +366,7 @@ def test_changed_fitting_pixels_recompute_and_corrupt_cache_is_ignored(source, m
     array = ScopeIO.from_path(source).get_array().array
     array[1, :, 0, 3, 4] = 777
     tifffile.imwrite(source, array, imagej=True, metadata={'axes': 'TZCYX'})
-    from fits.tasks.registration import tuning
+    from fisch.tasks.registration import tuning
     original = tuning.fit_planes
     calls = []
     def fit(*args, **kwargs):
@@ -407,7 +407,7 @@ def test_source_changes_block_lazy_preview_and_saving(source):
 
 def test_excluded_channel_is_not_fitted_or_changed(source, monkeypatch):
     """Leave excluded channels unchanged without running a fitting kernel."""
-    from fits.tasks.registration import tuning
+    from fisch.tasks.registration import tuning
     from stackalign.planes import plane_functions
     original = plane_functions
     def functions(algorithm, method):

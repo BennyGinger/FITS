@@ -15,10 +15,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QCheckBox, QDialog, QFileDialog, QMessageBox
 
-from fits.environment.constant import StepName, WORKFLOW_ORDER
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.settings.loader import write_settings
+from fisch.environment.constant import StepName, WORKFLOW_ORDER
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.settings.loader import write_settings
 
 
 @pytest.fixture
@@ -99,7 +99,7 @@ def test_protocol_buttons_follow_run_selection_and_processing(app: QApplication,
     """
     Replace manual settings loading and gate both protocol actions on an idle run.
     """
-    window = FitsMainWindow()
+    window = FischMainWindow()
     try:
         assert not hasattr(window, "load_button")
         assert not window.load_protocol_button.isEnabled()
@@ -141,7 +141,7 @@ def test_loading_protocol_is_transactional(app: QApplication, tmp_path: Path,
     current.set_field_value(StepName.CONVERT, "channel_labels", ["Before", "Other"])
     destination = current.save_to_run_dir()
     previous = destination.read_bytes()
-    window = FitsMainWindow(current)
+    window = FischMainWindow(current)
     app.processEvents()
     warnings: list[str] = []
     confirmations: list[str] = []
@@ -159,7 +159,8 @@ def test_loading_protocol_is_transactional(app: QApplication, tmp_path: Path,
         """
         assert dialog.defaultButton().text() == "Cancel"
         confirmations.append(dialog.text())
-        next(button for button in dialog.buttons() if button.text() == choice).click()
+        selected = 'Cancel' if choice == 'mismatch' else choice
+        next(button for button in dialog.buttons() if button.text() == selected).click()
         return 0
 
     monkeypatch.setattr(QFileDialog, "getOpenFileName", pick_file)
@@ -181,9 +182,9 @@ def test_loading_protocol_is_transactional(app: QApplication, tmp_path: Path,
         else:
             assert window.adapter is current
             assert window.adapter.source_channel_labels() == ["Before", "Other"]
-        assert bool(confirmations) == (choice in ("Continue", "Cancel"))
-        if choice == "mismatch":
-            assert "Either change your input file or modify settings" in warnings[0]
+        # Label-count differences are warnings with reader-label fallback,
+        # rather than invalid protocols. Cancelling still preserves the draft.
+        assert bool(confirmations) == (choice != "invalid")
     finally:
         window.close()
         app.processEvents()
@@ -199,7 +200,7 @@ def test_save_protocol_uses_gui_draft_without_saving_run(app: QApplication, tmp_
     current.run_dir = str(tmp_path)
     destination = current.save_to_run_dir()
     previous = destination.read_bytes()
-    window = FitsMainWindow(current)
+    window = FischMainWindow(current)
     app.processEvents()
     protocol = tmp_path / "export.toml"
 

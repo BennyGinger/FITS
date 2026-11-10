@@ -8,25 +8,25 @@ import pytest
 import tifffile
 from PySide6.QtCore import QThread
 
-from fits.environment import constant as cst
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.main_window.run_browser import COMPATIBLE_COLOR, OUTDATED_COLOR
-from fits.gui.settings import SettingsAdapter
-from fits.gui.theme import get_application
-from fits.workflows.checks.locations import LocationIssue, LocationReport
-from fits.workflows.checks.models import ArtifactRecord, PreflightReport, RawInputReport, RunCompatibility
-from fits.workflows.experiments import ExperimentState
+from fisch.environment import constant as cst
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.main_window.run_browser import COMPATIBLE_COLOR, OUTDATED_COLOR
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.theme import get_application
+from fisch.workflows.checks.locations import LocationIssue, LocationReport
+from fisch.workflows.checks.models import ArtifactRecord, PreflightReport, RawInputReport, RunCompatibility
+from fisch.workflows.experiments import ExperimentState
 
 
 @pytest.fixture
-def window() -> Iterator[FitsMainWindow]:
+def window() -> Iterator[FischMainWindow]:
     """
     Start with no selected run and release the window after each status check.
     """
     app = get_application()
     adapter = SettingsAdapter()
     adapter.run_dir = ''
-    main = FitsMainWindow(adapter)
+    main = FischMainWindow(adapter)
     yield main
     main._running = False
     main.close()
@@ -47,7 +47,7 @@ def window() -> Iterator[FitsMainWindow]:
     ('current', 'Up to date - editable', COMPATIBLE_COLOR),
     ('running', 'Running… - read-only', '#ffffff'),
 ])
-def test_file_condition_labels_and_colors(window: FitsMainWindow,
+def test_file_condition_labels_and_colors(window: FischMainWindow,
                                           tmp_path: Path,
                                           case: str,
                                           label: str,
@@ -64,7 +64,7 @@ def test_file_condition_labels_and_colors(window: FitsMainWindow,
     counts = {tmp_path / 'sample.nd2': 1} if case in ('raw', 'bad_raw') else {}
     window._raw_input_report = RawInputReport(counts, {}, raw_problems)
     if case in ('results', 'mixed', 'running'):
-        record = ArtifactRecord(state.workdir / cst.FITS_MASK_SEG, cst.StepName.SEGMENT,
+        record = ArtifactRecord(state.workdir / cst.MASK_SEG, cst.StepName.SEGMENT,
                                 None, 'Input revision differs.')
         window._artifact_report = PreflightReport((record,), (), (), states)
     elif case == 'masters':
@@ -82,7 +82,7 @@ def test_file_condition_labels_and_colors(window: FitsMainWindow,
         assert 'Paths/tags also need updating.' in window.file_status_label.toolTip()
 
 
-def test_only_valid_raw_inputs_are_not_processed(window: FitsMainWindow, tmp_path: Path) -> None:
+def test_only_valid_raw_inputs_are_not_processed(window: FischMainWindow, tmp_path: Path) -> None:
     """
     Distinguish a selected empty directory, readable acquisitions and corrupt inputs.
     """
@@ -99,7 +99,7 @@ def test_only_valid_raw_inputs_are_not_processed(window: FitsMainWindow, tmp_pat
     assert 'input.tif' in window.file_status_label.toolTip()
 
 
-def test_running_freezes_checks_until_worker_finishes(window: FitsMainWindow,
+def test_running_freezes_checks_until_worker_finishes(window: FischMainWindow,
                                                      tmp_path: Path,
                                                      monkeypatch: pytest.MonkeyPatch,
                                                      ) -> None:
@@ -123,7 +123,7 @@ def test_running_freezes_checks_until_worker_finishes(window: FitsMainWindow,
         pytest.fail('File inventory must remain frozen until the worker finishes.')
 
     with monkeypatch.context() as context:
-        context.setattr('fits.gui.main_window.window.inspect_run_compatibility', unexpected_check)
+        context.setattr('fisch.gui.main_window.window.inspect_run_compatibility', unexpected_check)
         window._refresh_run_inventory()
         window._selection_status_changed(tmp_path)
         assert window._run_status is snapshot
@@ -134,7 +134,7 @@ def test_running_freezes_checks_until_worker_finishes(window: FitsMainWindow,
     assert window.file_status_label.text() == 'Not processed - editable'
 
 
-def test_missing_username_does_not_mark_data_blocked(window: FitsMainWindow, tmp_path: Path) -> None:
+def test_missing_username_does_not_mark_data_blocked(window: FischMainWindow, tmp_path: Path) -> None:
     """
     Keep launch-configuration validation separate from the condition of valid input files.
     """

@@ -7,8 +7,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from typer.testing import CliRunner
 
-from fits.cli.interactive import run_pipeline_cli
-from fits.cli.main import app
+from fisch.cli.interactive import run_pipeline_cli
+from fisch.cli.main import app
 
 
 runner = CliRunner()
@@ -18,7 +18,7 @@ def test_run_command_accepts_a_settings_file(tmp_path: Path, monkeypatch) -> Non
     settings = tmp_path / "settings.toml"
     settings.touch()
     captured: list[Path] = []
-    monkeypatch.setattr("fits.cli.main.run_pipeline_cli", captured.append)
+    monkeypatch.setattr("fisch.cli.main.run_pipeline_cli", captured.append)
 
     result = runner.invoke(app, ["run", str(settings)])
 
@@ -40,7 +40,7 @@ def test_cli_supplies_interactive_mask_bridge(tmp_path: Path, monkeypatch) -> No
     settings = tmp_path / "settings.toml"
     settings.touch()
     monkeypatch.setattr(
-        "fits.cli.interactive.load_settings",
+        "fisch.cli.interactive.load_settings",
         lambda _: {"run_dir": str(tmp_path)},
     )
 
@@ -51,7 +51,7 @@ def test_cli_supplies_interactive_mask_bridge(tmp_path: Path, monkeypatch) -> No
         interaction.mask_input_complete()
 
     monkeypatch.setattr(
-        "fits.cli.interactive.start_pipeline", fake_start_pipeline)
+        "fisch.cli.interactive.start_pipeline", fake_start_pipeline)
 
     run_pipeline_cli(settings)
 

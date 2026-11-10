@@ -1,4 +1,4 @@
-"""Check FITS's latest GitHub release and apply it without importing FITS."""
+"""Check FIScH's latest GitHub release and apply it without importing FIScH."""
 
 from __future__ import annotations
 
@@ -76,10 +76,10 @@ class Updater(Installer):
         self.git("fetch", "--no-tags", "--no-recurse-submodules", "--", remote, f"refs/tags/{release.version}", timeout=10)
         target = self.git("rev-parse", "FETCH_HEAD^{commit}").stdout.strip()
         if target == before:
-            self.message(f"FITS is up to date (release {release.version}).")
+            self.message(f"FIScH is up to date (release {release.version}).")
             return None
         if self.git("merge-base", "--is-ancestor", target, before, check=False).returncode == 0:
-            self.message(f"Local FITS commits are ahead of release {release.version}; leaving this checkout unchanged.")
+            self.message(f"Local FIScH commits are ahead of release {release.version}; leaving this checkout unchanged.")
             return None
         blocked = ""
         if self.git("merge-base", "--is-ancestor", before, target, check=False).returncode:
@@ -100,7 +100,7 @@ class Updater(Installer):
             self.message("Update check skipped: the upstream is not a GitHub repository.")
             return None
         request = Request(f"https://api.github.com/repos/{repository[1]}/releases/latest",
-                          headers={"Accept": "application/vnd.github+json", "User-Agent": "FITS-updater"},
+                          headers={"Accept": "application/vnd.github+json", "User-Agent": "FIScH-updater"},
                           )
         try:
             with urlopen(request, timeout=10) as response:
@@ -135,9 +135,9 @@ class Updater(Installer):
         if update.blocked or self.local_changes():
             raise RuntimeError(update.blocked or "Local changes prevent automatic updating.")
         if self.git("rev-parse", "HEAD").stdout.strip() != update.before:
-            raise RuntimeError("FITS changed since the update check. Restart FITS to check again.")
+            raise RuntimeError("FIScH changed since the update check. Restart FIScH to check again.")
         if self.git("symbolic-ref", "--short", "HEAD").stdout.strip() != update.branch:
-            raise RuntimeError("The FITS branch changed since the update check.")
+            raise RuntimeError("The FIScH branch changed since the update check.")
         write_json(self.pending, {
             "branch": update.branch, "before": update.before, "target": update.target,
             "modules_before": self.module_heads(),
@@ -153,13 +153,13 @@ class Updater(Installer):
             raise RuntimeError("The branch changed during an unfinished update. Reconcile it manually.")
         current = self.git("rev-parse", "HEAD").stdout.strip()
         if current not in (before, target):
-            raise RuntimeError("FITS changed during an unfinished update. Reconcile it manually.")
+            raise RuntimeError("FIScH changed during an unfinished update. Reconcile it manually.")
         if state.get("repair_only") and before == target and self._modules_at_required_versions():
             self._synchronize_environment()
             self.pending.unlink()
             return
         if not state.get("repair_only") and self.local_changes(ignore_module_commits=True):
-            raise RuntimeError("Local FITS changes prevent resuming this update. Nothing will be discarded.")
+            raise RuntimeError("Local FIScH changes prevent resuming this update. Nothing will be discarded.")
         dirty = self.git(
             "submodule", "foreach", "--quiet", "--recursive",
             "git status --porcelain --untracked-files=normal --ignore-submodules=all",
@@ -189,7 +189,7 @@ class Updater(Installer):
         """
         Verify the current dependencies without modifying any source checkout.
         """
-        self.message("Repairing the environment only; preserving local FITS and submodule edits.")
+        self.message("Repairing the environment only; preserving local FIScH and submodule edits.")
         self.run("uv", "sync", "--python", "3.12")
         python = self.root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         self.run(str(python), str(self.root / "startup/verify.py"))
@@ -197,7 +197,7 @@ class Updater(Installer):
 
     def synchronize(self) -> None:
         """
-        Update FITS dependencies and shortcuts without prompting about optional tools.
+        Update FIScH dependencies and shortcuts without prompting about optional tools.
         """
         # Run the newly checked-out installer in independent Python. The GUI and
         # its Qt prompt have both exited before this process touches .venv.
@@ -206,7 +206,7 @@ class Updater(Installer):
 
 
 def main() -> int:
-    if os.name == "nt" and os.environ.get("FITS_UPDATE_CONSOLE") == "1":
+    if os.name == "nt" and os.environ.get("FISCH_UPDATE_CONSOLE") == "1":
         # A pythonw parent has no standard handles to inherit. Bind explicitly
         # to the new console so progress and the retry prompt remain visible.
         sys.stdin = open("CONIN$", "r", encoding="utf-8")
@@ -230,7 +230,7 @@ def main() -> int:
                     updater.resume()
                 else:
                     raise RuntimeError("There is no selected update to apply.")
-            updater.message("FITS is ready. The launcher will now open the GUI.")
+            updater.message("FIScH is ready. The launcher will now open the GUI.")
             if args.result_token:
                 write_json(updater.root / "startup/logs/update-result.json", {"token": args.result_token, "ready": True})
             return 0

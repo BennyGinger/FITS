@@ -1,7 +1,7 @@
 [project]
-name = "fits"
-version = "4.1.0"
-description = "Fluorescent Image Tracking Software, or FITS, is a Python package to analyze fluorescent microscopy images and track individual cells over time."
+name = "fisch"
+version = "5.0.0"
+description = "Fluorescent Imaging and Single-cell Histories, or FIScH, is a Python package to analyze fluorescent microscopy images and track individual cells over time."
 readme = "README.md"
 authors = [
     { name = "Benoit Roux", email = "benoit.roux@gmail.com" }
@@ -45,15 +45,15 @@ cuda129 = [
 ]
 
 [project.scripts]
-fits = "fits.cli.main:main"
-fits-gui = "fits.gui.main:main"
-fits-segtune = "fits.gui.viewer.main:segtune"
-fits-regtune = "fits.gui.viewer.main:regtune"
-fits-bgtune = "fits.gui.viewer.main:bgtune"
-fits-trackedit = "fits.gui.viewer.main:trackedit"
-fits-drawmask = "fits.gui.viewer.main:drawmask"
-fits-trackviewer = "fits.gui.viewer.main:trackviewer"
-fits-channel-labels = "fits.gui.channel_labels.main:main"
+fisch = "fisch.cli.main:main"
+fisch-gui = "fisch.gui.main:main"
+fisch-segtune = "fisch.gui.viewer.main:segtune"
+fisch-regtune = "fisch.gui.viewer.main:regtune"
+fisch-bgtune = "fisch.gui.viewer.main:bgtune"
+fisch-trackedit = "fisch.gui.viewer.main:trackedit"
+fisch-drawmask = "fisch.gui.viewer.main:drawmask"
+fisch-trackviewer = "fisch.gui.viewer.main:trackviewer"
+fisch-channel-labels = "fisch.gui.channel_labels.main:main"
 
 [build-system]
 requires = ["uv_build>=0.8.4,<0.9.0"]

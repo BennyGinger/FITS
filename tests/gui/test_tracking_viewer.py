@@ -16,19 +16,19 @@ from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyleOptionGraphicsItem
 from skimage.draw import disk
 
-from fits.environment.constant import (
-    FITS_ARRAY_NAME,
-    FITS_MASK_TRACK,
-    FITS_MASK_TRACK_EDITED_FILTERED,
+from fisch.environment.constant import (
+    ARRAY_NAME,
+    MASK_TRACK,
+    MASK_TRACK_EDITED_FILTERED,
     StepName,
 )
-from fits.gui.main_window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.gui.viewer.tracking import TrackingViewerSession, TrackingViewerWindow
-from fits.gui.viewer.tracking.path_item import TrackPathsItem
-from fits.tasks.segmentation.local_seg import SplitPredictor
-from fits.workflows.runtime.interactive.messages import TrackEditRequest
-from fits.workflows.metadata import FitsMeta
+from fisch.gui.main_window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.viewer.tracking import TrackingViewerSession, TrackingViewerWindow
+from fisch.gui.viewer.tracking.path_item import TrackPathsItem
+from fisch.tasks.segmentation.local_seg import SplitPredictor
+from fisch.workflows.runtime.interactive.messages import TrackEditRequest
+from fisch.workflows.metadata import PipelineMetadata
 
 
 def _app() -> QApplication:
@@ -144,13 +144,13 @@ def test_delete_track_removes_all_masks_and_is_undoable() -> None:
 def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    monkeypatch.setattr("fits.gui.viewer.tracking.session.input_references", lambda *args: [])
+    monkeypatch.setattr("fisch.gui.viewer.tracking.session.input_references", lambda *args: [])
     tracks = np.zeros((3, 2, 5, 5), dtype=np.uint16)
     tracks[:, 0, 1, 1] = 1
     tracks[0, 0, 2, 2] = 2
     tracks[0, 1, 3, 3] = 9
     session = object.__new__(TrackingViewerSession)
-    session.source_path = tmp_path / FITS_MASK_TRACK
+    session.source_path = tmp_path / MASK_TRACK
     session.is_tracking = True
     session.image_session = None
     session._tracks = tracks
@@ -182,7 +182,7 @@ def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
             saved.update(array=array.copy(), kwargs=kwargs) or kwargs["output_path"]),
     )
 
-    pipeline_metadata = FitsMeta.init(user_name="Ben").with_step(
+    pipeline_metadata = PipelineMetadata.init(user_name="Ben").with_step(
         step_name=StepName.SEGMENT,
         created_by="cellpose-kit",
         exported_channel=[0],
@@ -194,7 +194,7 @@ def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
         pipeline_metadata=pipeline_metadata,
     )
 
-    assert path == tmp_path / FITS_MASK_TRACK_EDITED_FILTERED
+    assert path == tmp_path / MASK_TRACK_EDITED_FILTERED
     assert set(np.unique(saved["array"])) == {0, 1}
     assert saved["kwargs"]["metadata"].axes == "TCYX"
     assert metadata["mask_channels"] == ["Blue mask", "Red mask"]
@@ -203,7 +203,7 @@ def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
         "mask_channel": "Blue mask", "image_channel": "iRed"}]
     assert metadata["filter_condition"]["expression"] == "track_length_frames >= 2"
     assert metadata["timestamp"]
-    assert metadata["fits_version"]
+    assert metadata["pipeline_version"]
     custom = saved["kwargs"]["metadata"].custom_metadata
     assert custom["pipeline_meta"]["user_name"] == "Ben"
     assert custom["steps"][StepName.SEGMENT]["channels"]["0"]["channel"] == 0
@@ -294,7 +294,7 @@ def test_microsam_new_mask_does_not_use_the_rendered_click_as_mask_prompt() -> N
 
 
 def test_opencv_registration_translates_previous_mask_to_current_cell() -> None:
-    from fits.gui.viewer.tracking.session import _register_mask_translation
+    from fisch.gui.viewer.tracking.session import _register_mask_translation
 
     previous = np.zeros((80, 80), dtype=np.float32)
     previous[25:39, 28:45] = 1.0
@@ -329,7 +329,7 @@ def test_microsam_automatic_registered_prior_is_used_without_legacy_locks(
             mask=registered.copy(), bounds=(0, 30, 0, 30))
 
     monkeypatch.setattr(
-        "fits.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.predict", fake_predict)
+        "fisch.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.predict", fake_predict)
 
     preview = session.preview_add_edit(
         7, 1, 0, 0, 0, [], [], 20, initial_mask=registered)
@@ -354,7 +354,7 @@ def test_registered_prototype_survives_a_collapsed_corrective_prediction(
     session._resolve_channel = lambda channel: 0
 
     monkeypatch.setattr(
-        "fits.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.predict",
+        "fisch.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.predict",
         lambda *args, **kwargs: SimpleNamespace(
             mask=collapsed, bounds=(0, 40, 0, 40)))
 
@@ -403,11 +403,11 @@ def test_negative_click_can_remove_a_broader_local_area(monkeypatch) -> None:
     session._resolve_channel = lambda channel: 0
 
     monkeypatch.setattr(
-        "fits.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.predict",
+        "fisch.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.predict",
         lambda *args, **kwargs: SimpleNamespace(
             mask=candidate, bounds=(0, 40, 0, 40)))
     monkeypatch.setattr(
-        "fits.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.synchronize_mask",
+        "fisch.gui.viewer.tracking.session.DEFAULT_MICROSAM_BACKEND.synchronize_mask",
         lambda *args: True)
 
     preview = session.preview_add_edit(
@@ -450,8 +450,8 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     monkeypatch.setattr(
         TrackingViewerWindow, "_prepare_local_backend", lambda *args: None)
     _app()
-    image_path = tmp_path / FITS_ARRAY_NAME
-    track_path = tmp_path / FITS_MASK_TRACK
+    image_path = tmp_path / ARRAY_NAME
+    track_path = tmp_path / MASK_TRACK
     image_path.touch()
     track_path.touch()
     image = np.arange(2 * 2 * 8 * 8, dtype=np.uint16).reshape(2, 2, 8, 8)
@@ -488,14 +488,14 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
         reader = readers[path]
         reader.axes = "TCYX"
         from scope_io.metadata.models import ImageMetadata
-        metadata = ImageMetadata().with_custom_metadata({'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+        metadata = ImageMetadata().with_custom_metadata({'pipeline_meta': {'version': '5.0.0'}}).new_revision()
         reader.reader = SimpleNamespace(shape=array.shape, dtype=array.dtype, img_path=path, metadata=metadata)
         reader.get_plane = lambda frame_index=0, channel=0, z_index=0, array=array: (
             SimpleNamespace(array=array[frame_index, channel], axes="YX"))
     monkeypatch.setattr(
-        "fits.interaction.image.ScopeIO.from_path", lambda path: readers[Path(path)])
+        "fisch.interaction.image.ScopeIO.from_path", lambda path: readers[Path(path)])
     monkeypatch.setattr(
-        "fits.gui.viewer.tracking.session.ScopeIO.from_path",
+        "fisch.gui.viewer.tracking.session.ScopeIO.from_path",
         lambda path: readers[Path(path)])
 
     empty_session = TrackingViewerSession(image_path)
@@ -725,12 +725,12 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
 
     view_only_window = TrackingViewerWindow(
         tracking_path=track_path, editing_enabled=False, selection_enabled=True)
-    assert view_only_window.windowTitle() == "FITS Tracking Viewer"
+    assert view_only_window.windowTitle() == "FIScH Tracking Viewer"
     assert view_only_window.track_edit_section.isHidden()
     assert view_only_window.mask_edit_section.isHidden()
     assert view_only_window.local_cell_diameter.isHidden()
-    assert FITS_MASK_TRACK in view_only_window.file_filters
-    assert FITS_ARRAY_NAME in view_only_window.file_filters
+    assert MASK_TRACK in view_only_window.file_filters
+    assert ARRAY_NAME in view_only_window.file_filters
     assert view_only_window.display_label_edit.placeholderText() == "Optional"
     assert view_only_window.save_display_button.text() == "Save current display"
     assert view_only_window.save_display_button.isEnabled()
@@ -760,7 +760,7 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
         pipeline_window.use_original_button.styleSheet())
     outcomes = []
     pipeline_window.tracking_finalized.connect(outcomes.append)
-    edited_path = tmp_path / "fits_track_edited.tif"
+    edited_path = tmp_path / "proc_track_edited.tif"
     pipeline_window._edited_tracking_saved((edited_path, {"edited": True}))
     assert outcomes == []
     assert not pipeline_window._pipeline_resolved
@@ -775,13 +775,13 @@ def test_main_window_tracking_button_and_double_click_launch(
     tmp_path: Path, monkeypatch,
 ) -> None:
     _app()
-    track_path = tmp_path / "experiment" / FITS_MASK_TRACK
+    track_path = tmp_path / "experiment" / MASK_TRACK
     track_path.parent.mkdir()
     track_path.touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     launched: list[Path] = []
     monkeypatch.setattr(window, "_open_tracking_viewer", launched.append)
 
@@ -801,13 +801,13 @@ def test_main_window_tracking_viewer_loads_selected_experiment(
     for directory in (first, selected, empty):
         directory.mkdir()
     for directory in (first, selected):
-        (directory / FITS_MASK_TRACK).touch()
-    edited = selected / "fits_track_edited.tif"
+        (directory / MASK_TRACK).touch()
+    edited = selected / "proc_track_edited.tif"
     edited.touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     launches = []
     messages = []
     monkeypatch.setattr(QMessageBox, "information",
@@ -841,7 +841,7 @@ def test_main_window_tracking_viewer_loads_selected_experiment(
             self.visible = False
 
     monkeypatch.setattr(
-        "fits.gui.viewer.tracking.TrackingViewerWindow", FakeViewer)
+        "fisch.gui.viewer.tracking.TrackingViewerWindow", FakeViewer)
     try:
         assert window.run_browser.select_path(selected)
         window.tracking_viewer_button.click()
@@ -852,8 +852,8 @@ def test_main_window_tracking_viewer_loads_selected_experiment(
         assert len(launches) == 1
         assert window._tracking_viewer is opened
         assert opened.activations == 2
-        window._open_tracking_viewer(selected / FITS_MASK_TRACK)
-        assert launches[-1]["tracking_path"] == selected / FITS_MASK_TRACK
+        window._open_tracking_viewer(selected / MASK_TRACK)
+        assert launches[-1]["tracking_path"] == selected / MASK_TRACK
         assert not opened.visible
         assert window.run_browser.select_path(empty)
         window.tracking_viewer_button.click()
@@ -874,12 +874,12 @@ def test_main_window_viewer_stays_visible_and_reuses_its_window(tmp_path: Path) 
     masks[:, 8:12, 8:12] = 7
     input_path = tmp_path / "input.tif"
     tifffile.imwrite(input_path, raw, imagej=True, metadata={"axes": "TYX"})
-    source = ScopeIO.from_path(input_path).save_array(raw, output_path=tmp_path / FITS_ARRAY_NAME)
+    source = ScopeIO.from_path(input_path).save_array(raw, output_path=tmp_path / ARRAY_NAME)
     tracking = ScopeIO.from_path(source).save_array(
-        masks, output_path=tmp_path / FITS_MASK_TRACK)
+        masks, output_path=tmp_path / MASK_TRACK)
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    main = FitsMainWindow(adapter)
+    main = FischMainWindow(adapter)
     try:
         main.show()
         main._open_tracking_viewer(tracking)

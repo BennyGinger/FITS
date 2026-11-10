@@ -1,4 +1,4 @@
-"""Independent startup check, update/repair handoff, and FITS process supervisor."""
+"""Independent startup check, update/repair handoff, and FIScH process supervisor."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def native_choice(request: dict) -> str:
     kind = request["kind"]
     accept = "update" if kind == "update" else "repair" if kind == "repair" else "cancel"
     decline = "current" if kind == "update" else "cancel"
-    title, message = request.get("title", "FITS"), request["message"]
+    title, message = request.get("title", "FIScH"), request["message"]
     if request.get("blocked"):
         accept = decline
     if os.name == "nt":
@@ -43,7 +43,7 @@ def native_choice(request: dict) -> str:
         if kind == "message" or request.get("blocked"):
             box(None, message, title, 0x40)
             return decline
-        explanation = "\n\nYes: update FITS. No: use current version." if kind == "update" else "\n\nRepair this installation now?"
+        explanation = "\n\nYes: update FIScH. No: use current version." if kind == "update" else "\n\nRepair this installation now?"
         return accept if box(None, message + explanation, title, 0x124) == 6 else decline
     zenity = shutil.which("zenity")
     if zenity:
@@ -60,7 +60,7 @@ def native_choice(request: dict) -> str:
     if sys.stdin and sys.stdin.isatty():
         print(message)
         if kind != "message" and not request.get("blocked"):
-            return accept if input(f"{accept.capitalize()} FITS now? [y/N] ").strip().lower() in ("y", "yes") else decline
+            return accept if input(f"{accept.capitalize()} FIScH now? [y/N] ").strip().lower() in ("y", "yes") else decline
     elif shutil.which("notify-send"):
         subprocess.run(["notify-send", title, message])
     return decline
@@ -103,7 +103,7 @@ def run_progress(updater: Updater, *, repair: bool) -> bool:
     if os.name == "nt":
         # pythonw has no console; explicitly use its managed python.exe sibling.
         command[0] = str(Path(sys.executable).with_name("python.exe"))
-        environment["FITS_UPDATE_CONSOLE"] = "1"
+        environment["FISCH_UPDATE_CONSOLE"] = "1"
         flags = subprocess.CREATE_NEW_CONSOLE
     elif sys.stdin and sys.stdin.isatty():
         pass
@@ -115,8 +115,8 @@ def run_progress(updater: Updater, *, repair: bool) -> bool:
         command = ["xterm", "-e", *command]
     else:
         launcher = "launch_macos.sh" if sys.platform == "darwin" else "launch_linux.sh"
-        ask(updater, {"kind": "message", "title": "FITS needs a terminal",
-                      "message": f"Run bash startup/{launcher} in a terminal to update or repair FITS.\n"
+        ask(updater, {"kind": "message", "title": "FIScH needs a terminal",
+                      "message": f"Run bash startup/{launcher} in a terminal to update or repair FIScH.\n"
                                  "Your installation has not been changed."})
         return False
     result = subprocess.run(command, cwd=updater.root, env=environment, creationflags=flags)
@@ -126,7 +126,7 @@ def run_progress(updater: Updater, *, repair: bool) -> bool:
     except (OSError, ValueError):
         ready = False
     # Terminal emulators do not all propagate their child's status reliably.
-    # Require this specific worker's verification receipt before opening FITS.
+    # Require this specific worker's verification receipt before opening FIScH.
     if result.returncode or not ready or needs_repair(updater.root):
         updater.message("Update/repair did not report verified completion; the GUI was not started.")
         return False
@@ -135,10 +135,10 @@ def run_progress(updater: Updater, *, repair: bool) -> bool:
 
 def launch_gui(updater: Updater, arguments: list[str]) -> int:
     environment = command_environment(updater.root)
-    environment["FITS_APPLICATION_LOCK"] = str(updater.root / "startup/logs/application.lock")
+    environment["FISCH_APPLICATION_LOCK"] = str(updater.root / "startup/logs/application.lock")
     with (updater.log_path.parent / "launcher.log").open("a", encoding="utf-8") as log:
         result = subprocess.run(
-            [str(application_python(updater.root)), "-m", "fits.gui.main", *arguments],
+            [str(application_python(updater.root)), "-m", "fisch.gui.main", *arguments],
             cwd=updater.root, env=environment, stdout=log, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
@@ -150,7 +150,7 @@ def startup(updater: Updater, arguments: list[str], *, skip_check: bool = False,
     Offer release updates or repairs before launching this checkout's GUI.
     """
     # The supervisor lease lasts through GUI exit. The application lease is also
-    # used by direct `uv run fits-gui` instances, and by the update worker.
+    # used by direct `uv run fisch-gui` instances, and by the update worker.
     with Lease(updater.root / "startup/logs/application.lock"):
         incomplete = needs_repair(updater.root)
         update = None
@@ -160,12 +160,12 @@ def startup(updater: Updater, arguments: list[str], *, skip_check: bool = False,
             except (OSError, RuntimeError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
                 updater.message(f"Update check unavailable; keeping the current version: {error}")
         if update is not None and not incomplete and not repair:
-            message = (f"A newer version of FITS is available: {update.release}.\n"
+            message = (f"A newer version of FIScH is available: {update.release}.\n"
                        f"The current version installed is {update.current_version}.\n\n"
                        "Would you like to update?")
             if update.blocked:
                 message += "\n\n" + update.blocked
-            action = ask(updater, {"kind": "update", "title": "FITS update available",
+            action = ask(updater, {"kind": "update", "title": "FIScH update available",
                                    "message": message, "details": update.description,
                                    "release": update.release, "current_version": update.current_version,
                                    "blocked": bool(update.blocked), "blocked_reason": update.blocked})
@@ -173,8 +173,8 @@ def startup(updater: Updater, arguments: list[str], *, skip_check: bool = False,
                 updater.prepare(update)
                 repair = True
         elif incomplete or repair:
-            action = ask(updater, {"kind": "repair", "title": "FITS installation needs repair",
-                                   "message": "This installation needs synchronization before FITS can open.\n"
+            action = ask(updater, {"kind": "repair", "title": "FIScH installation needs repair",
+                                   "message": "This installation needs synchronization before FIScH can open.\n"
                                               "Repair it now? An interrupted update will resume its selected version."})
             if action != "repair":
                 return 0
@@ -183,9 +183,9 @@ def startup(updater: Updater, arguments: list[str], *, skip_check: bool = False,
         return 1
     result = launch_gui(updater, arguments)
     if result:
-        updater.message(f"FITS exited with code {result}. Details: {updater.log_path.parent / 'launcher.log'}")
-        action = ask(updater, {"kind": "repair", "title": "FITS did not exit normally",
-                               "message": "FITS reported an error. Details are in startup/logs/launcher.log.\n"
+        updater.message(f"FIScH exited with code {result}. Details: {updater.log_path.parent / 'launcher.log'}")
+        action = ask(updater, {"kind": "repair", "title": "FIScH did not exit normally",
+                               "message": "FIScH reported an error. Details are in startup/logs/launcher.log.\n"
                                           "You can repair the installation and try again, or close."})
         if action == "repair" and run_progress(updater, repair=True):
             return launch_gui(updater, arguments)
@@ -196,7 +196,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-update-check", action="store_true", help="Launch the current version without a network check.")
     parser.add_argument("--repair", action="store_true", help="Offer repair of the current installation.")
-    parser.add_argument("--check-only", action="store_true", help="Report available FITS updates as JSON without launching.")
+    parser.add_argument("--check-only", action="store_true", help="Report available FIScH updates as JSON without launching.")
     args, application_arguments = parser.parse_known_args()
     updater = Updater(ROOT)
     try:
@@ -210,11 +210,11 @@ def main() -> int:
                 return 0
             return startup(updater, application_arguments, skip_check=args.skip_update_check, repair=args.repair)
     except BusyError as error:
-        ask(updater, {"kind": "message", "title": "FITS is already open", "message": str(error) + "\nClose that instance before updating."})
+        ask(updater, {"kind": "message", "title": "FIScH is already open", "message": str(error) + "\nClose that instance before updating."})
         return 0
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         updater.message(f"Launcher failed: {error}")
-        ask(updater, {"kind": "message", "title": "FITS launcher error",
+        ask(updater, {"kind": "message", "title": "FIScH launcher error",
                       "message": f"{error}\n\nDetails: startup/logs/update.log\n"
                                  "Run the installer again if necessary."})
         return 1

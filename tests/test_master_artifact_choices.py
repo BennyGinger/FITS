@@ -10,23 +10,23 @@ import pyarrow.parquet as pq
 import pytest
 from scope_io import ScopeIO
 
-from fits.environment import constant as cst
-from fits.gui.settings import SettingsAdapter
-from fits.pipeline import start_pipeline
-from fits.settings.loader import resolve_step_params
-from fits.settings.models import SettingsModel
-from fits.tasks.analysis.aggregate import save_master_analysis_table
-from fits.tasks.common.artifact_results import complete_step_result, save_step_result
-from fits.tasks.common.table_results import save_parquet
-from fits.tasks.common.preparation import load_input_reader
-from fits.workflows.artifacts.provenance import read_metadata, revision_payload
-from fits.workflows.checks.artifacts import inspect_run
-from fits.workflows.checks.analysis import MEMBERSHIP_KEY
-from fits.workflows.definitions.inputs import configured_profile
-from fits.workflows.definitions.models import StepProfile
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.experiments import ExperimentState, save_experiment_state
-from fits.workflows.experiments.exclusion import set_excluded
+from fisch.environment import constant as cst
+from fisch.gui.settings import SettingsAdapter
+from fisch.pipeline import start_pipeline
+from fisch.settings.loader import resolve_step_params
+from fisch.settings.models import SettingsModel
+from fisch.tasks.analysis.aggregate import save_master_analysis_table
+from fisch.tasks.common.artifact_results import complete_step_result, save_step_result
+from fisch.tasks.common.table_results import save_parquet
+from fisch.tasks.common.preparation import load_input_reader
+from fisch.workflows.artifacts.provenance import read_metadata, revision_payload
+from fisch.workflows.checks.artifacts import inspect_run
+from fisch.workflows.checks.analysis import MEMBERSHIP_KEY
+from fisch.workflows.definitions.inputs import configured_profile
+from fisch.workflows.definitions.models import StepProfile
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.experiments import ExperimentState, save_experiment_state
+from fisch.workflows.experiments.exclusion import set_excluded
 from test_experiment_exclusion import _series
 
 
@@ -71,7 +71,7 @@ def _run_with_stale_table(root: Path) -> tuple[SettingsAdapter, ExperimentState,
     payload = reader.metadata.with_artifact(artifact_type=cst.ARTI_QUANTI).new_revision([
         {'artifact_path': image.name, 'created_at': 'older image revision'},
         {'artifact_path': mask.name, 'created_at': read_metadata(mask).artifact.created_at}])
-    table = save_parquet(_measurements(label), state.workdir / cst.FITS_QUANTI_NAME, payload)
+    table = save_parquet(_measurements(label), state.workdir / cst.QUANTI_NAME, payload)
     state = state.with_complete_step(step_name=cst.StepName.EXTRACT, artifact_kind=cst.ARTI_QUANTI, artifact_path=table)
     save_experiment_state(state)
     master = save_master_analysis_table([state], root, artifact_kind=cst.ARTI_QUANTI, output_name=cst.MASTER_QUANTI_NAME)
@@ -124,7 +124,7 @@ def test_tables_follow_normal_artifact_choices(tmp_path: Path,
         adapter.set_step_enabled(cst.StepName.SEGMENT, False)
         adapter.set_step_enabled(cst.StepName.EXTRACT, False)
     calls = _mock_processing(monkeypatch)
-    files = [state.workdir / name for name in (cst.FITS_MASK_SEG, cst.FITS_QUANTI_NAME)] + [master]
+    files = [state.workdir / name for name in (cst.MASK_SEG, cst.QUANTI_NAME)] + [master]
     before = {path: path.read_bytes() for path in files}
     reviewed: list[Any] = []
 

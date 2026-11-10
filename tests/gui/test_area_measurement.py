@@ -16,12 +16,12 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
-from fits.gui.viewer.common.area_selection import AreaSelection
-from fits.gui.viewer.background import BackgroundTunerWindow
-from fits.gui.viewer.tracking import TrackingViewerWindow
-from fits.settings.models import BGSubSettings
-from fits.interaction import FitsImageSession
-from fits.tasks.bg_sub_tuning import BackgroundTuningSession
+from fisch.gui.viewer.common.area_selection import AreaSelection
+from fisch.gui.viewer.background import BackgroundTunerWindow
+from fisch.gui.viewer.tracking import TrackingViewerWindow
+from fisch.settings.models import BGSubSettings
+from fisch.interaction import FischImageSession
+from fisch.tasks.bg_sub_tuning import BackgroundTuningSession
 
 
 _APP: QApplication | None = None
@@ -41,7 +41,7 @@ def source(tmp_path: Path) -> Path:
     """
     Write distinct time and Z offsets over the same spatially varying pixels.
     """
-    path = tmp_path / "fits_array.tif"
+    path = tmp_path / "proc_array.tif"
     base = np.random.default_rng(42).integers(100, 400, (24, 32), dtype=np.uint16)
     pixels = np.stack([np.stack([base + t * 100 + z * 10 for z in range(2)]) for t in range(3)])
     tifffile.imwrite(path, pixels, imagej=True, metadata={"axes": "TZYX"})
@@ -135,7 +135,7 @@ def test_background_area_before_after_preview_and_two_labelled_profile_curves(so
     """
     Keep drawing independent of preview, then expose original and processed means.
     """
-    monkeypatch.setattr("fits.gui.viewer.background.window.confirm_discard_tuner_changes", lambda *args: True)
+    monkeypatch.setattr("fisch.gui.viewer.background.window.confirm_discard_tuner_changes", lambda *args: True)
     window = BackgroundTunerWindow(source.parent, settings=BGSubSettings(size=3))
     window.show()
     QApplication.processEvents()
@@ -340,7 +340,7 @@ def test_background_profile_reuses_prepared_planes_after_area_changes_and_reopen
             """
             pytest.fail("Prepared profiles must reuse existing image planes")
 
-        monkeypatch.setattr(FitsImageSession, "display_frame", forbid_recompute)
+        monkeypatch.setattr(FischImageSession, "display_frame", forbid_recompute)
         monkeypatch.setattr(BackgroundTuningSession, "compute_plane", forbid_recompute)
         measurement.drawing.set_rectangle((10, 3, 23, 18))
         _wait(lambda: dialog._thread is None and not dialog._timer.isActive())

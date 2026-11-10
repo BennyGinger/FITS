@@ -1,4 +1,4 @@
-"""Real FITS exports and compaction of optional derived cell masks."""
+"""Real FIScH exports and compaction of optional derived cell masks."""
 
 from pathlib import Path
 
@@ -9,21 +9,21 @@ import tifffile
 from bioimagequant import CompartmentSettings, compartment_masks
 from scope_io import ScopeIO
 
-from fits.environment import constant as cst
-from fits.gui.settings import SettingsAdapter
-from fits.pipeline import start_pipeline
-from fits.settings.models import ExtractSettings
-from fits.tasks.analysis.extraction.compartment_export import compartment_export_paths
-from fits.tasks.analysis.extraction.extract import extract
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.experiments import ExperimentState, discover_saved_states, save_experiment_state
-from fits.workflows.file_management.compaction import apply_compaction, plan_compaction
+from fisch.environment import constant as cst
+from fisch.gui.settings import SettingsAdapter
+from fisch.pipeline import start_pipeline
+from fisch.settings.models import ExtractSettings
+from fisch.tasks.analysis.extraction.compartment_export import compartment_export_paths
+from fisch.tasks.analysis.extraction.extract import extract
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.experiments import ExperimentState, discover_saved_states, save_experiment_state
+from fisch.workflows.file_management.compaction import apply_compaction, plan_compaction
 
 
 @pytest.fixture
 def tracked_experiment(tmp_path: Path) -> ExperimentState:
     """
-    Create a genuine two-frame/channel FITS experiment without segmentation hardware.
+    Create a genuine two-frame/channel FIScH experiment without segmentation hardware.
     """
     source = tmp_path / "source.tif"
     image = np.arange(2 * 2 * 8 * 8, dtype=np.uint16).reshape(2, 2, 8, 8)
@@ -41,7 +41,7 @@ def tracked_experiment(tmp_path: Path) -> ExperimentState:
     labels = np.zeros_like(image)
     labels[:, 0, :4, :4] = 24
     labels[:, 1, 3:7, 3:7] = 91
-    path = reader.save_array(labels, output_path=state.workdir / cst.FITS_MASK_TRACK,
+    path = reader.save_array(labels, output_path=state.workdir / cst.MASK_TRACK,
                              artifact_kind=cst.ARTI_TRACK)
     state = state.with_complete_step(step_name=cst.StepName.TRACK,
                                      artifact_kind=cst.ARTI_TRACK, artifact_path=path)
@@ -91,7 +91,7 @@ def test_exports_preserve_source_channels_labels_and_provenance_then_compact(
     apply_compaction(plan)
     assert not mb_path.exists() and not cyto_path.exists()
     assert table_path.read_bytes() == table_bytes
-    assert (state.workdir / cst.FITS_MASKS_COMPACTED).is_file()
+    assert (state.workdir / cst.MASKS_COMPACTED).is_file()
 
 
 def test_disabled_export_creates_no_tiffs(tracked_experiment: ExperimentState) -> None:
@@ -114,11 +114,11 @@ def test_full_rebuild_after_compaction_obeys_saved_export_setting(
     """
     from dataclasses import replace
     from typing import Any
-    from fits.settings.loader import run_settings_path
-    from fits.tasks.common.artifact_results import save_step_result
-    from fits.tasks.common.preparation import load_input_reader
-    from fits.workflows.definitions.models import StepProfile
-    from fits.workflows.file_management.rebuild import execute_plan, plan_full_rebuild
+    from fisch.settings.loader import run_settings_path
+    from fisch.tasks.common.artifact_results import save_step_result
+    from fisch.tasks.common.preparation import load_input_reader
+    from fisch.workflows.definitions.models import StepProfile
+    from fisch.workflows.file_management.rebuild import execute_plan, plan_full_rebuild
 
     state = tracked_experiment
     assert state.run_dir is not None

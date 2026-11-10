@@ -6,9 +6,9 @@ from typing import Any, Mapping
 
 import pytest
 
-from fits.workflows.experiments import ExperimentState
-from fits.settings.resolution import apply_overwrite_cascade
-from fits.workflows.runtime.batch import run_batch_workflow
+from fisch.workflows.experiments import ExperimentState
+from fisch.settings.resolution import apply_overwrite_cascade
+from fisch.workflows.runtime.batch import run_batch_workflow
 
 
 @dataclass
@@ -63,12 +63,12 @@ def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
     convert = DummyStepSpec("convert")
     other = DummyStepSpec("other")
     monkeypatch.setattr(
-        "fits.workflows.runtime.batch.api.WORKFLOW_ORDER", ["convert", "other"])
+        "fisch.workflows.runtime.batch.api.WORKFLOW_ORDER", ["convert", "other"])
     monkeypatch.setattr(
-        "fits.workflows.runtime.batch.api.REGISTRY",
+        "fisch.workflows.runtime.batch.api.REGISTRY",
         {"convert": convert, "other": other})
     monkeypatch.setattr(
-        "fits.workflows.runtime.batch.execution.pbar",
+        "fisch.workflows.runtime.batch.execution.pbar",
         lambda **kwargs: DummyProgress())
 
     states = [make_state()]
@@ -87,9 +87,9 @@ def test_run_workflow_runs_enabled_steps_in_order(monkeypatch) -> None:
 def test_run_workflow_skips_disabled_or_missing_config(monkeypatch) -> None:
     spec = DummyStepSpec("convert")
     monkeypatch.setattr(
-        "fits.workflows.runtime.batch.api.WORKFLOW_ORDER", ["convert"])
+        "fisch.workflows.runtime.batch.api.WORKFLOW_ORDER", ["convert"])
     monkeypatch.setattr(
-        "fits.workflows.runtime.batch.api.REGISTRY", {"convert": spec})
+        "fisch.workflows.runtime.batch.api.REGISTRY", {"convert": spec})
     states = [make_state()]
 
     assert run_batch_workflow({}, states) == states
@@ -99,8 +99,8 @@ def test_run_workflow_skips_disabled_or_missing_config(monkeypatch) -> None:
 
 def test_run_workflow_rejects_enabled_step_missing_from_registry(monkeypatch) -> None:
     monkeypatch.setattr(
-        "fits.workflows.runtime.batch.api.WORKFLOW_ORDER", ["convert"])
-    monkeypatch.setattr("fits.workflows.runtime.batch.api.REGISTRY", {})
+        "fisch.workflows.runtime.batch.api.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fisch.workflows.runtime.batch.api.REGISTRY", {})
 
     with pytest.raises(ValueError, match="missing from the registry"):
         run_batch_workflow({"convert": {"enabled": True}}, [make_state()])
@@ -119,11 +119,11 @@ def test_apply_overwrite_cascade_propagates_downstream() -> None:
 def test_batch_rejects_interactive_steps_before_execution(monkeypatch) -> None:
     spec = DummyStepSpec("edit_track", interactive=True)
     monkeypatch.setattr(
-        "fits.workflows.runtime.batch.api.WORKFLOW_ORDER", ["edit_track"])
+        "fisch.workflows.runtime.batch.api.WORKFLOW_ORDER", ["edit_track"])
     monkeypatch.setattr(
-        "fits.workflows.runtime.batch.api.REGISTRY", {"edit_track": spec})
+        "fisch.workflows.runtime.batch.api.REGISTRY", {"edit_track": spec})
 
-    with pytest.raises(ValueError, match="require the FITS GUI"):
+    with pytest.raises(ValueError, match="require the FIScH GUI"):
         run_batch_workflow(
             {"edit_track": {"enabled": True, "params": {}}}, [make_state()])
 
@@ -132,5 +132,5 @@ def test_batch_rejects_interactive_steps_before_execution(monkeypatch) -> None:
 def isolate_profile_configuration(monkeypatch):
     # These orchestration tests supply fake profiles; real input resolution is
     # exercised by test_fits4_execution with actual TIFF artifacts.
-    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.replace', lambda spec, **kwargs: spec)
-    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.configured_profile', lambda profile, config: profile)
+    monkeypatch.setattr('fisch.workflows.runtime.scheduler.planning.replace', lambda spec, **kwargs: spec)
+    monkeypatch.setattr('fisch.workflows.runtime.scheduler.planning.configured_profile', lambda profile, config: profile)

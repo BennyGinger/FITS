@@ -9,15 +9,15 @@ import numpy as np
 import pytest
 
 from scope_io.metadata.models import ImageMetadata
-from fits.environment.constant import StepName
-from fits.workflows.experiments import ExperimentState
-from fits.settings.models import ConvertSettings
-from fits.tasks.convert import convert
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.runtime.errors import StepExecutionError
+from fisch.environment.constant import StepName
+from fisch.workflows.experiments import ExperimentState
+from fisch.settings.models import ConvertSettings
+from fisch.tasks.convert import convert
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.runtime.errors import StepExecutionError
 
 
-convert_module = importlib.import_module("fits.tasks.convert")
+convert_module = importlib.import_module("fisch.tasks.convert")
 
 
 class DummySeriesReader:
@@ -62,8 +62,8 @@ def test_convert_builds_each_series_branch(monkeypatch, tmp_path: Path) -> None:
     raw.write_bytes(b"")
     state = ExperimentState.init(tmp_path, raw)
     series = [
-        DummySeriesReader(tmp_path / "series_1" / "fits_array.tif"),
-        DummySeriesReader(tmp_path / "series_2" / "fits_array.tif"),
+        DummySeriesReader(tmp_path / "series_1" / "proc_array.tif"),
+        DummySeriesReader(tmp_path / "series_2" / "proc_array.tif"),
     ]
     source = DummySource(series)
     monkeypatch.setattr(convert_module, "decide_run", lambda *args: SimpleNamespace(is_complete=False))
@@ -76,7 +76,7 @@ def test_convert_builds_each_series_branch(monkeypatch, tmp_path: Path) -> None:
     )
 
     assert source.selection_calls == [{"channel_labels": ["GFP", "RFP"], "export_channels": ["RFP"]}]
-    assert [result.artifact("image") for result in results] == [tmp_path / f"input/input_s{index}/fits_array_raw.tif" for index in (1, 2)]
+    assert [result.artifact("image") for result in results] == [tmp_path / f"input/input_s{index}/proc_array_raw.tif" for index in (1, 2)]
     assert all(result.last_step == StepName.CONVERT for result in results)
     assert all(result.original_image == tmp_path / "input/input.nd2" for result in results)
     assert all(reader.prepare_calls[0]["selection"] is source.selection for reader in series)
@@ -117,7 +117,7 @@ def test_convert_wraps_conversion_errors(monkeypatch, tmp_path: Path) -> None:
 def test_convert_real_z_stack(tmp_path: Path, projection: str) -> None:
     from tifffile import imwrite
     from scope_io import ScopeIO
-    from fits.gui.settings import SettingsAdapter
+    from fisch.gui.settings import SettingsAdapter
 
     raw = tmp_path / "input.tif"
     array = (np.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5) + 40000).astype(np.uint16)

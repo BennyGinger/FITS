@@ -15,11 +15,11 @@ from PySide6.QtCore import QThread
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from fits.gui.viewer.masks.window import MaskDrawingWindow, _InterpolationOptions
-from fits.interaction.mask_preview import MaskPreviewCache, PreviewCancelled
-from fits.tasks.reference_mask import ReferenceMaskSession
-from fits.tasks.roi_mask import RoiSession
-from fits.environment.paths import experiment_cache
+from fisch.gui.viewer.masks.window import MaskDrawingWindow, _InterpolationOptions
+from fisch.interaction.mask_preview import MaskPreviewCache, PreviewCancelled
+from fisch.tasks.reference_mask import ReferenceMaskSession
+from fisch.tasks.roi_mask import RoiSession
+from fisch.environment.paths import experiment_cache
 
 
 _APP: QApplication | None = None
@@ -36,7 +36,7 @@ def source_image(tmp_path: Path) -> Path:
     raw = tmp_path / "raw.tif"
     tifffile.imwrite(raw, image, photometric="minisblack", metadata={"axes": "TZCYX"})
     return ScopeIO.from_path(raw).save_array(
-        image, channel_labels=("GFP", "iRed"), output_path=tmp_path / "fits_array.tif")
+        image, channel_labels=("GFP", "iRed"), output_path=tmp_path / "proc_array.tif")
 
 
 @pytest.mark.parametrize("roi", [False, True])
@@ -101,7 +101,7 @@ def test_cancelled_preview_does_not_publish_or_leave_temporary_files(tmp_path: P
     """
     Remove incomplete cache files from the current cache directory after cancellation.
     """
-    cache = MaskPreviewCache(tmp_path / "fits_array.tif")
+    cache = MaskPreviewCache(tmp_path / "proc_array.tif")
     count = 0
     def read(_index: int) -> NDArray[np.uint8]:
         """
@@ -144,7 +144,7 @@ def test_preview_uses_system_temp_when_experiment_cache_is_unwritable(
     """
     Fall back outside the preferred cache directory when that location is unwritable.
     """
-    import fits.interaction.mask_preview as preview
+    import fisch.interaction.mask_preview as preview
     temporary = preview.TemporaryDirectory
     def fallback(*args: Any, **kwargs: Any) -> TemporaryDirectory[str]:
         """
@@ -154,7 +154,7 @@ def test_preview_uses_system_temp_when_experiment_cache_is_unwritable(
             raise PermissionError("read-only experiment")
         return temporary(*args, **kwargs)
     monkeypatch.setattr(preview, "TemporaryDirectory", fallback)
-    cache = MaskPreviewCache(tmp_path / "fits_array.tif")
+    cache = MaskPreviewCache(tmp_path / "proc_array.tif")
     try:
         plane = cache.plane((1,), 0, count=3, shape=(4, 4),
                             read=lambda _: np.ones((4, 4), dtype=np.uint8),
@@ -218,7 +218,7 @@ def test_navigation_stays_responsive_during_background_preview(
         key = session.preview_cache.key
         window.reference_panel.label_edit.setText("cached")
         window._save_reference_mask()
-        assert (tmp_path / "fits_ref_cached.tif").is_file(), window.status_label.text()
+        assert (tmp_path / "proc_ref_cached.tif").is_file(), window.status_label.text()
         assert session._mask.revision == revision
         assert session.preview_cache.key == key
         assert not np.any(session.mask_plane(2, "iRed"))
@@ -322,7 +322,7 @@ def test_save_reuses_preview_and_preserves_encoded_states(
 
 
 def test_progressive_cache_prioritizes_navigation_and_never_saves_partial_output(tmp_path: Path):
-    cache = MaskPreviewCache(tmp_path / 'fits_array.tif')
+    cache = MaskPreviewCache(tmp_path / 'proc_array.tif')
     center = 3
     visited = []
     key = ('progressive',)

@@ -8,8 +8,8 @@ import tifffile
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtWidgets import QApplication
 
-from fits.gui.viewer.common.image_viewer import FitsImageViewer
-from fits.gui.viewer.masks.window import MaskDrawingWindow
+from fisch.gui.viewer.common.image_viewer import FischImageViewer
+from fisch.gui.viewer.masks.window import MaskDrawingWindow
 
 _APP: QApplication | None = None
 
@@ -23,7 +23,7 @@ def app() -> QApplication:
 @pytest.mark.parametrize('roi', [False, True])
 def test_shift_move_preserves_other_regions_and_roi_threshold_with_undo(tmp_path: Path, roi: bool):
     app()
-    source = tmp_path / 'fits_array.tif'
+    source = tmp_path / 'proc_array.tif'
     tifffile.imwrite(source, np.zeros((2, 20, 22), dtype=np.uint16),
                      imagej=True, metadata={'axes': 'TYX'})
     window = MaskDrawingWindow()
@@ -80,7 +80,7 @@ class MouseEvent:
 
 def test_shift_click_selects_without_edit_and_plain_drag_moves_selection():
     app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.enable_mask_movement()
     mask = np.zeros((20, 22), dtype=np.uint8)
     mask[3:6, 3:6] = 1
@@ -108,7 +108,7 @@ def test_shift_click_selects_without_edit_and_plain_drag_moves_selection():
 
 def test_brush_is_a_stroke_and_polygon_fills_the_interior():
     app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     try:
         for tool in ('brush', 'freehand'):
             viewer.set_drawing_mask(np.zeros((30, 30), dtype=np.uint8))
@@ -132,14 +132,14 @@ def test_brush_is_a_stroke_and_polygon_fills_the_interior():
 @pytest.mark.parametrize('roi', [False, True])
 def test_clear_all_is_session_only_and_keeps_other_channels(tmp_path: Path, roi: bool):
     from scope_io import ScopeIO
-    from fits.tasks.reference_mask import ReferenceMaskSession
-    from fits.tasks.roi_mask import RoiSession
+    from fisch.tasks.reference_mask import ReferenceMaskSession
+    from fisch.tasks.roi_mask import RoiSession
     app()
     image = np.zeros((3, 2, 2, 20, 22), dtype=np.uint16)
     raw = tmp_path / 'raw.tif'
     tifffile.imwrite(raw, image, photometric='minisblack', metadata={'axes': 'TZCYX'})
     source = ScopeIO.from_path(raw).save_array(
-        image, channel_labels=('GFP', 'iRed'), output_path=tmp_path / 'fits_array.tif')
+        image, channel_labels=('GFP', 'iRed'), output_path=tmp_path / 'proc_array.tif')
     session = RoiSession(source) if roi else ReferenceMaskSession(source)
     mask = np.zeros((20, 22), dtype=np.uint8)
     mask[3:6, 4:7] = 4 if roi else 1

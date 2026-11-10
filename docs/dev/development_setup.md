@@ -12,8 +12,8 @@ Clone the repository together with its submodules, then synchronize the uv
 workspace:
 
 ```bash
-git clone --recurse-submodules https://github.com/BennyGinger/FITS.git fits
-cd fits
+git clone --recurse-submodules https://github.com/BennyGinger/fisch.git
+cd fisch
 uv sync
 ```
 
@@ -27,13 +27,13 @@ Plain `uv sync` and `uv run` select the development defaults automatically:
   existing package source. The Windows accelerator group does not apply there.
 
 These describe the current dependency configuration, not a hardware validation.
-Check GPU availability on the machine where FITS will run.
+Check GPU availability on the machine where FIScH will run.
 
 No extra flags are needed for everyday development:
 
 ```bash
-uv run fits-gui
-uv run fits-segtune
+uv run fisch-gui
+uv run fisch-segtune
 uv run cellpose
 ```
 
@@ -42,7 +42,7 @@ The shared default is `[tool.uv].default-groups = ["dev", "cuda129"]` in
 
 ```bash
 uv sync --no-group cuda129
-uv run --no-group cuda129 fits-gui
+uv run --no-group cuda129 fisch-gui
 ```
 
 A later plain `uv sync` or `uv run` restores the shared default. The former
@@ -50,7 +50,7 @@ A later plain `uv sync` or `uv run` restores the shared default. The former
 Omitting `cuda129` removes that group selection; it does not select a dedicated
 CPU profile.
 
-Check GPU availability from the FITS directory:
+Check GPU availability from the FIScH directory:
 
 ```bash
 uv run python -c "import torch; from cellpose import core; print(torch.__version__, torch.version.cuda); print('Cellpose GPU:', core.use_gpu())"

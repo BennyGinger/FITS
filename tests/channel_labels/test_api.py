@@ -7,9 +7,9 @@ import pytest
 import tifffile
 from typer.testing import CliRunner
 
-from fits.channel_labels import apply_labels, files_to_update, inspect_run
-from fits.channel_labels.lock import run_write_guard
-from fits.cli.main import app
+from fisch.channel_labels import apply_labels, files_to_update, inspect_run
+from fisch.channel_labels.lock import run_write_guard
+from fisch.cli.main import app
 from scope_io import ScopeIO
 
 
@@ -21,14 +21,14 @@ def _run(tmp_path):
     tifffile.imwrite(source, raw, imagej=True, metadata={"axes": "TCYX"})
     array_path = ScopeIO.from_path(source).save_array(
         raw, channel_labels=["GFP", "RFP"],
-        output_path=experiment / "fits_array.tif", compression="none",
+        output_path=experiment / "proc_array.tif", compression="none",
         custom_metadata={"tracking_viewer_display": {
             "raw_image_channel": "GFP", "mask_channel": "RFP"}},
         imagej_overlays=[b"track ROI", b"mask ROI"])
     ScopeIO.from_path(array_path).save_array(
         raw[:, 1], export_channels=["RFP"],
-        output_path=experiment / "fits_mask.tif")
-    settings = tmp_path / ".fits" / "fits_settings.toml"
+        output_path=experiment / "proc_masks_seg.tif")
+    settings = tmp_path / ".pipeline" / "settings.toml"
     settings.parent.mkdir()
     settings.write_text('''[convert.params]
 channel_labels = ["GFP", "RFP"] # keep me
@@ -40,7 +40,7 @@ channel_to_track = ["RFP"]
         "experiment_id": ["experiment"], "cell_id": ["old"],
         "object_name": ["tracking"], "object_channel": ["RFP"],
         "intensity_channel": ["GFP"], "label": [1], "frame": [0]})
-    table.to_parquet(experiment / "fits_quantification.parquet", index=False)
+    table.to_parquet(experiment / "proc_quantification.parquet", index=False)
     return raw, array_path, settings
 
 
@@ -62,12 +62,12 @@ def test_run_rename_preserves_pixels_overlay_indices_and_updates_references(tmp_
     assert renamed.artifact_channel_indices == [0, 1]
     assert renamed.metadata.custom_metadata["tracking_viewer_display"] == {
         "raw_image_channel": "Green", "mask_channel": "Red"}
-    subset = ScopeIO.from_path(array_path.with_name("fits_mask.tif"))
+    subset = ScopeIO.from_path(array_path.with_name("proc_masks_seg.tif"))
     assert subset.channel_labels == ["Red"]
     assert subset.artifact_channel_indices == [1]
     assert 'channel_to_track = ["Red"]' in settings.read_text()
     assert "# keep me" in settings.read_text()
-    table = pd.read_parquet(array_path.with_name("fits_quantification.parquet"))
+    table = pd.read_parquet(array_path.with_name("proc_quantification.parquet"))
     assert table.loc[0, "object_channel"] == "Red"
     assert table.loc[0, "intensity_channel"] == "Green"
     assert "|channel=Red|" in table.loc[0, "cell_id"]
@@ -75,7 +75,7 @@ def test_run_rename_preserves_pixels_overlay_indices_and_updates_references(tmp_
 
 def test_scan_rejects_conflicting_index_labels(tmp_path):
     _, array_path, _ = _run(tmp_path)
-    subset = ScopeIO.from_path(array_path.with_name("fits_mask.tif"))
+    subset = ScopeIO.from_path(array_path.with_name("proc_masks_seg.tif"))
     subset.set_channel_labels(["Wrong"])
     with pytest.raises(ValueError, match="Channel 1"):
         inspect_run(tmp_path)
@@ -103,11 +103,11 @@ def test_failed_table_update_restores_earlier_tiffs(tmp_path, monkeypatch):
     def fail(*_args):
         raise OSError("table unavailable")
 
-    monkeypatch.setattr("fits.channel_labels.apply.rename_table", fail)
+    monkeypatch.setattr("fisch.channel_labels.apply.rename_table", fail)
     with pytest.raises(RuntimeError, match="table unavailable"):
         apply_labels(plan, {0: "Green", 1: "Red"})
     assert ScopeIO.from_path(array_path).channel_labels == ["GFP", "RFP"]
-    assert ScopeIO.from_path(array_path.with_name("fits_mask.tif")).channel_labels == ["RFP"]
+    assert ScopeIO.from_path(array_path.with_name("proc_masks_seg.tif")).channel_labels == ["RFP"]
 
 
 def test_inspection_refuses_active_run_writer(tmp_path):
@@ -119,15 +119,15 @@ def test_inspection_refuses_active_run_writer(tmp_path):
 
 def test_state_and_distance_table_references_follow_renamed_channels(tmp_path):
     _, array_path, _ = _run(tmp_path)
-    from fits.environment.paths import experiment_state_path
+    from fisch.environment.paths import experiment_state_path
     state_path = experiment_state_path(array_path.parent, acquisition=array_path.parent)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps({"series_path": ".", "artifacts": {"raw_image": "input.tif", "image": "fits_array.tif"},
-        "meta": {"steps": {"segment": {"step_name": "segment", "created_by": "fits",
+    state_path.write_text(json.dumps({"series_path": ".", "artifacts": {"raw_image": "input.tif", "image": "proc_array.tif"},
+        "meta": {"steps": {"segment": {"step_name": "segment", "created_by": "fisch",
             "params": {"reference_channel": "GFP"},
             "channels": {"1": {"channel": 1, "channel_label": "RFP"}},
         }}}}))
-    distance_path = array_path.with_name("fits_distance_profile.parquet")
+    distance_path = array_path.with_name("proc_distance_profile.parquet")
     pd.DataFrame({"channel": ["GFP"], "ref_channel": ["RFP"],
                   "roi_channel": [None], "distance": [2.5]}).to_parquet(distance_path)
     apply_labels(inspect_run(tmp_path), {0: "Green", 1: "Red"})
@@ -162,21 +162,21 @@ def test_only_files_referencing_changed_channel_are_written(tmp_path):
     tifffile.imwrite(source, raw, imagej=True, metadata={"axes": "TCYX"})
     array_path = ScopeIO.from_path(source).save_array(
         raw, channel_labels=["BFP", "GFP", "RFP"],
-        output_path=experiment / "fits_array.tif")
+        output_path=experiment / "proc_array.tif")
     mask_path = ScopeIO.from_path(array_path).save_array(
         raw[:, 2], export_channels=["RFP"],
-        output_path=experiment / "fits_mask.tif")
-    table_path = experiment / "fits_quantification.parquet"
+        output_path=experiment / "proc_masks_seg.tif")
+    table_path = experiment / "proc_quantification.parquet"
     pd.DataFrame({"experiment_id": ["experiment"], "cell_id": ["old"],
                   "object_name": ["tracking"], "object_channel": ["RFP"],
                   "intensity_channel": ["GFP"], "label": [1], "frame": [0],
                   "area": [17]}).to_parquet(table_path, index=False)
-    from fits.environment.paths import experiment_state_path
+    from fisch.environment.paths import experiment_state_path
     state_path = experiment_state_path(experiment, acquisition=experiment)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps({"series_path": ".", "artifacts": {"raw_image": "input.tif", "image": "fits_array.tif"}, "meta": {"steps": {"track": {"step_name": "track", "created_by": "fits",
+    state_path.write_text(json.dumps({"series_path": ".", "artifacts": {"raw_image": "input.tif", "image": "proc_array.tif"}, "meta": {"steps": {"track": {"step_name": "track", "created_by": "fisch",
         "channels": {"2": {"channel": 2, "channel_label": "RFP"}}}}}}))
-    settings_path = tmp_path / ".fits" / "fits_settings.toml"
+    settings_path = tmp_path / ".pipeline" / "settings.toml"
     settings_path.parent.mkdir()
     settings_path.write_text('[convert.params]\nchannel_labels = ["BFP", "GFP", "RFP"]\n')
 
@@ -190,10 +190,10 @@ def test_only_files_referencing_changed_channel_are_written(tmp_path):
     assert files_to_update(plan, proposed) == (array_path, settings_path)
     preview = CliRunner().invoke(app, ["channel-labels", str(tmp_path), "--set", "0=Blue"])
     assert preview.exit_code == 0
-    assert "experiment/fits_array.tif" in preview.output
-    assert ".fits/fits_settings.toml" in preview.output
-    assert "fits_mask.tif" not in preview.output
-    assert "fits_quantification.parquet" not in preview.output
+    assert "experiment/proc_array.tif" in preview.output
+    assert ".pipeline/settings.toml" in preview.output
+    assert "proc_masks_seg.tif" not in preview.output
+    assert "proc_quantification.parquet" not in preview.output
     assert "experiment_state.json" not in preview.output
     untouched = {path: (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns)
                  for path in (mask_path, table_path, state_path)}
@@ -210,7 +210,7 @@ def test_only_files_referencing_changed_channel_are_written(tmp_path):
 
 def test_tiff_with_only_metadata_reference_is_updated(tmp_path):
     _, array_path, _ = _run(tmp_path)
-    mask_path = array_path.with_name("fits_mask.tif")
+    mask_path = array_path.with_name("proc_masks_seg.tif")
     ScopeIO.from_path(mask_path).set_channel_labels(
         ["RFP"], custom_metadata={"tracking_viewer_display": {
             "raw_image_channel": "GFP"}})
@@ -225,7 +225,7 @@ def test_tiff_with_only_metadata_reference_is_updated(tmp_path):
 
 def test_intensity_only_rename_keeps_cell_identity(tmp_path):
     _, array_path, _ = _run(tmp_path)
-    table_path = array_path.with_name("fits_quantification.parquet")
+    table_path = array_path.with_name("proc_quantification.parquet")
     plan = inspect_run(tmp_path)
     apply_labels(plan, {0: "Green", 1: "RFP"})
     table = pd.read_parquet(table_path)
@@ -237,16 +237,16 @@ def test_intensity_only_rename_keeps_cell_identity(tmp_path):
 @pytest.fixture(autouse=True)
 def write_current_format_fixtures(monkeypatch):
     from scope_io.metadata.models import ImageMetadata
-    from fits.tasks.common.table_results import save_parquet
+    from fisch.tasks.common.table_results import save_parquet
     original_save = ScopeIO.save_array
     def save(reader, *args, **kwargs):
         if kwargs.get('metadata') is None:
             custom = dict(kwargs.get('custom_metadata') or {})
-            custom['pipeline_meta'] = {'version': '4.0.0'}
+            custom['pipeline_meta'] = {'version': '5.0.0'}
             kwargs['custom_metadata'] = custom
         return original_save(reader, *args, **kwargs)
     monkeypatch.setattr(ScopeIO, 'save_array', save)
     def table(frame, path, **kwargs):
-        metadata = ImageMetadata().with_custom_metadata({'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+        metadata = ImageMetadata().with_custom_metadata({'pipeline_meta': {'version': '5.0.0'}}).new_revision()
         return save_parquet(frame, path, metadata)
     monkeypatch.setattr(pd.DataFrame, 'to_parquet', table)

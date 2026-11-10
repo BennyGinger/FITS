@@ -8,12 +8,12 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from fits.environment.constant import StepName
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.segmentation_models.loader import ModelOptionsLoader
-from fits.gui.segmentation_models.options import CellposeModelOptions
-from fits.gui.settings import SettingsAdapter, StepSettingsEditor
-from fits.gui.settings.field_widgets import ChoiceWidget, IntWidget
+from fisch.environment.constant import StepName
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.segmentation_models.loader import ModelOptionsLoader
+from fisch.gui.segmentation_models.options import CellposeModelOptions
+from fisch.gui.settings import SettingsAdapter, StepSettingsEditor
+from fisch.gui.settings.field_widgets import ChoiceWidget, IntWidget
 
 
 OPTIONS = CellposeModelOptions('v3', 'cyto2', ('cyto2', 'cyto3', 'nuclei'))
@@ -43,9 +43,9 @@ def delayed_loader(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[QApplicati
         return OPTIONS
 
     loader = ModelOptionsLoader(app, discover)
-    monkeypatch.setattr('fits.gui.settings.editor.model_options_loader', lambda: loader)
-    monkeypatch.setattr('fits.gui.main_window.window.model_options_loader', lambda: loader)
-    monkeypatch.setattr('fits.gui.settings.editor.model_setting_path', lambda: 'user_settings.model_type')
+    monkeypatch.setattr('fisch.gui.settings.editor.model_options_loader', lambda: loader)
+    monkeypatch.setattr('fisch.gui.main_window.window.model_options_loader', lambda: loader)
+    monkeypatch.setattr('fisch.gui.settings.editor.model_setting_path', lambda: 'user_settings.model_type')
     try:
         yield app, loader, release, calls
     finally:
@@ -123,7 +123,7 @@ def test_preview_waits_for_existing_discovery(delayed_loader: tuple[QApplication
     Queue one early Preview request and resume it when the shared worker completes.
     """
     app, loader, release, calls = delayed_loader
-    window = FitsMainWindow()
+    window = FischMainWindow()
     try:
         window._open_segmentation_tuner()
         window._open_segmentation_tuner()
@@ -145,13 +145,13 @@ def test_discovery_failure_keeps_saved_settings(delayed_loader: tuple[QApplicati
     """
     app, _, _, _ = delayed_loader
     failed_loader = ModelOptionsLoader(app, Mock(side_effect=RuntimeError('Backend unavailable')))
-    monkeypatch.setattr('fits.gui.settings.editor.model_options_loader', lambda: failed_loader)
-    monkeypatch.setattr('fits.gui.main_window.window.model_options_loader', lambda: failed_loader)
+    monkeypatch.setattr('fisch.gui.settings.editor.model_options_loader', lambda: failed_loader)
+    monkeypatch.setattr('fisch.gui.main_window.window.model_options_loader', lambda: failed_loader)
     warning = Mock()
-    monkeypatch.setattr('fits.gui.main_window.window.QMessageBox.warning', warning)
+    monkeypatch.setattr('fisch.gui.main_window.window.QMessageBox.warning', warning)
     adapter = SettingsAdapter()
     adapter.set_segment_channels([{'channel': 'GFP', 'user_settings': {'model_type': 'saved-model'}}])
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     try:
         window._open_segmentation_tuner()
         deadline = monotonic() + 5

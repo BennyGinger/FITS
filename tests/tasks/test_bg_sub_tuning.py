@@ -4,13 +4,13 @@ import numpy as np
 import tifffile
 
 from bg_sub import bg_sub
-from fits.settings.models import BGSubSettings
-from fits.tasks.bg_sub_tuning import BackgroundTuningSession
+from fisch.settings.models import BGSubSettings
+from fisch.tasks.bg_sub_tuning import BackgroundTuningSession
 
 
 def test_session_reuses_processor_invalidates_keys_and_bounds_cache(tmp_path):
     """Reuse configuration across settings while caching only requested planes."""
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
     image = np.random.default_rng(4).integers(100, 400, (32, 32), dtype=np.uint16)
     tifffile.imwrite(source, image, imagej=True, metadata={"axes": "YX"})
     session = BackgroundTuningSession(source)

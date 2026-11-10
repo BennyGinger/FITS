@@ -6,10 +6,10 @@ import pytest
 from scope_io import ScopeIO
 import tifffile
 
-from fits.environment import constant as cst
-from fits.gui.settings import SettingsAdapter
-from fits.pipeline import start_pipeline
-from fits.workflows.experiments import discover_saved_states, save_experiment_state
+from fisch.environment import constant as cst
+from fisch.gui.settings import SettingsAdapter
+from fisch.pipeline import start_pipeline
+from fisch.workflows.experiments import discover_saved_states, save_experiment_state
 
 
 class IdentityRegistration:
@@ -28,8 +28,8 @@ def test_intermediates_preserve_inputs_and_bypass_disabled_stage(tmp_path: Path,
     Rerun the last image stage without reviewing nonexistent downstream results.
     """
     for module in ("register_channel", "register_time"):
-        monkeypatch.setattr(import_module("fits.tasks.registration." + module), "RegisterModel", IdentityRegistration)
-    monkeypatch.setattr(import_module("fits.tasks.bg_sub"), "bg_sub", lambda array, **kw: array.astype(np.float32) + 0.5)
+        monkeypatch.setattr(import_module("fisch.tasks.registration." + module), "RegisterModel", IdentityRegistration)
+    monkeypatch.setattr(import_module("fisch.tasks.bg_sub"), "bg_sub", lambda array, **kw: array.astype(np.float32) + 0.5)
     pixels = np.arange(3 * 2 * 8 * 8, dtype=np.uint16).reshape(3, 2, 8, 8)
     tifffile.imwrite(tmp_path / "source.tif", pixels, photometric="minisblack", metadata={"axes": "TCYX"})
     adapter = SettingsAdapter()
@@ -57,9 +57,9 @@ def test_intermediates_preserve_inputs_and_bypass_disabled_stage(tmp_path: Path,
 
     # A bypassed downstream result is retained and does not require a decision.
     reader = ScopeIO.from_path(bg)
-    segmentation = state.workdir / cst.FITS_MASK_SEG
+    segmentation = state.workdir / cst.MASK_SEG
     payload = reader.build_payload(export_channels="all", artifact_type=cst.ARTI_SEG,
-                                   custom_metadata={"pipeline_meta": {"version": "4.0.0"}}).new_revision(
+                                   custom_metadata={"pipeline_meta": {"version": "5.0.0"}}).new_revision(
                                        [{"artifact_path": bg.name, "created_at": metadata.artifact.created_at}])
     reader.save_array(pixels, metadata=payload, output_path=segmentation)
     state = state.with_complete_step(step_name=cst.StepName.SEGMENT,
@@ -75,7 +75,7 @@ def test_intermediates_preserve_inputs_and_bypass_disabled_stage(tmp_path: Path,
     assert ScopeIO.from_path(bg).reader.metadata.artifact.derived_from[0]["created_at"] == (
         ScopeIO.from_path(channel).reader.metadata.artifact.created_at)
     assert segmentation.read_bytes() == preserved
-    from fits.workflows.checks.artifacts import inspect_run
+    from fisch.workflows.checks.artifacts import inspect_run
     report = inspect_run(tmp_path, adapter.as_mapping())
     assert not report.needs_decision
     assert any("Bypassed step 'segment'" in warning for warning in report.warnings)
@@ -88,9 +88,9 @@ def test_real_artifacts_segmentation_tracking_and_analysis_provenance(tmp_path: 
     Preserve lineage and rerun terminal Quantification without reviewing the overwrite.
     """
     from types import SimpleNamespace
-    from fits.workflows.artifacts.provenance import read_metadata
-    from fits.workflows.file_management.compaction import compact_run
-    from fits.workflows.checks.artifacts import inspect_run
+    from fisch.workflows.artifacts.provenance import read_metadata
+    from fisch.workflows.file_management.compaction import compact_run
+    from fisch.workflows.checks.artifacts import inspect_run
     class Segmenter:
         output_axis_order = 'TYX'
         def setup(self): pass
@@ -98,9 +98,9 @@ def test_real_artifacts_segmentation_tracking_and_analysis_provenance(tmp_path: 
             result = np.zeros((3, 8, 8), dtype=np.uint16)
             result[:, 2:5, 2:5] = 1
             return result
-    monkeypatch.setattr(import_module('fits.tasks.segmentation.channels').CellposeWrapper,
+    monkeypatch.setattr(import_module('fisch.tasks.segmentation.channels').CellposeWrapper,
                         'from_dict', lambda settings: Segmenter())
-    monkeypatch.setattr(import_module('fits.tasks.tracking.track'), 'create_tracker',
+    monkeypatch.setattr(import_module('fisch.tasks.tracking.track'), 'create_tracker',
                         lambda settings: SimpleNamespace(track=lambda image, masks: masks))
     tifffile.imwrite(tmp_path / 'source.tif', np.ones((3, 8, 8), dtype=np.uint16),
                      photometric='minisblack', metadata={'axes': 'TYX'})
@@ -118,10 +118,10 @@ def test_real_artifacts_segmentation_tracking_and_analysis_provenance(tmp_path: 
     start_pipeline(settings, terminal_progress=False)
     state = discover_saved_states(tmp_path)[0]
     track = read_metadata(state.artifact(cst.ARTI_TRACK))
-    assert {ref['artifact_path'] for ref in track.artifact.derived_from} == {cst.FITS_MASK_SEG, cst.FITS_ARRAY_RAW}
+    assert {ref['artifact_path'] for ref in track.artifact.derived_from} == {cst.MASK_SEG, cst.ARRAY_RAW}
     table = read_metadata(state.artifact(cst.ARTI_QUANTI))
-    assert state.artifact(cst.ARTI_QUANTI).name == cst.FITS_QUANTI_NAME
-    assert {ref['artifact_path'] for ref in table.artifact.derived_from} == {cst.FITS_MASK_TRACK, cst.FITS_ARRAY_RAW}
+    assert state.artifact(cst.ARTI_QUANTI).name == cst.QUANTI_NAME
+    assert {ref['artifact_path'] for ref in table.artifact.derived_from} == {cst.MASK_TRACK, cst.ARRAY_RAW}
     assert not inspect_run(tmp_path, adapter.as_mapping()).conflicts
     adapter.set_field_value(cst.StepName.EXTRACT, 'overwrite', True)
     adapter.set_field_value(cst.StepName.EXTRACT, 'membrane_thickness', 2.0)
@@ -136,8 +136,8 @@ def test_real_artifacts_segmentation_tracking_and_analysis_provenance(tmp_path: 
     tracking_path = state.artifact(cst.ARTI_TRACK)
     tracking_reader = ScopeIO.from_path(tracking_path)
     stale = tracking_reader.reader.metadata.new_revision(
-        [{"artifact_path": cst.FITS_MASK_SEG, "created_at": "superseded revision"},
-         *[ref for ref in track.artifact.derived_from if ref['artifact_path'] != cst.FITS_MASK_SEG]])
+        [{"artifact_path": cst.MASK_SEG, "created_at": "superseded revision"},
+         *[ref for ref in track.artifact.derived_from if ref['artifact_path'] != cst.MASK_SEG]])
     tracking_reader.save_array(tracking_reader.get_array().array, metadata=stale, output_path=tracking_path)
     track = read_metadata(tracking_path)
     preserved_tracking = tracking_path.read_bytes()
@@ -151,7 +151,7 @@ def test_real_artifacts_segmentation_tracking_and_analysis_provenance(tmp_path: 
                    artifact_decision=lambda report: pytest.fail("Bypassed tracking must not require a decision"))
     assert tracking_path.read_bytes() == preserved_tracking
     assert {ref['artifact_path'] for ref in read_metadata(state.artifact(cst.ARTI_QUANTI)).artifact.derived_from} == {
-        cst.FITS_MASK_SEG, cst.FITS_ARRAY_RAW}
+        cst.MASK_SEG, cst.ARRAY_RAW}
     adapter.set_step_enabled(cst.StepName.TRACK, True)
     adapter.set_field_value(cst.StepName.EXTRACT, 'overwrite', False)
     assert inspect_run(tmp_path, adapter.as_mapping()).needs_decision
@@ -162,6 +162,6 @@ def test_real_artifacts_segmentation_tracking_and_analysis_provenance(tmp_path: 
     assert any(row.step == cst.StepName.TRACK for row in inspect_run(tmp_path, adapter.as_mapping()).conflicts)
     compact_run(tmp_path, choose=lambda report: 'continue', confirm=lambda plan: True)
     state = discover_saved_states(tmp_path)[0]
-    assert state.artifact(cst.ARTI_TRACK).name == cst.FITS_MASKS_COMPACTED
+    assert state.artifact(cst.ARTI_TRACK).name == cst.MASKS_COMPACTED
     assert state.compaction_conflicts_accepted
     assert read_metadata(state.artifact(cst.ARTI_TRACK)).artifact.created_at == track.artifact.created_at

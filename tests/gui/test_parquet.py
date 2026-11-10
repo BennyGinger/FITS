@@ -8,9 +8,9 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 import pytest
 
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.parquet import open_parquet
-from fits.gui.settings import SettingsAdapter
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.parquet import open_parquet
+from fisch.gui.settings import SettingsAdapter
 
 
 @pytest.fixture
@@ -34,8 +34,8 @@ def test_browser_activation_launches_tad(application: QApplication, tmp_path: Pa
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     launch = Mock()
-    monkeypatch.setattr('fits.gui.parquet.launch_tad', launch)
-    window = FitsMainWindow(adapter)
+    monkeypatch.setattr('fisch.gui.parquet.launch_tad', launch)
+    window = FischMainWindow(adapter)
     try:
         window.run_browser.path_activated.emit(parquet)
         launch.assert_called_once_with(Path(__file__).resolve().parents[2], parquet)
@@ -46,9 +46,9 @@ def test_browser_activation_launches_tad(application: QApplication, tmp_path: Pa
 
 def test_missing_tad_explains_alternatives(application: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    Display a clickable installation link and reassure users that FITS remains usable.
+    Display a clickable installation link and reassure users that FIScH remains usable.
     """
-    monkeypatch.setattr('fits.gui.parquet.launch_tad', Mock(side_effect=FileNotFoundError('missing')))
+    monkeypatch.setattr('fisch.gui.parquet.launch_tad', Mock(side_effect=FileNotFoundError('missing')))
     inspected: list[str] = []
 
     def inspect() -> None:
@@ -62,7 +62,7 @@ def test_missing_tad_explains_alternatives(application: QApplication, tmp_path: 
             assert message.textFormat() == Qt.TextFormat.RichText
             assert 'href="https://www.tadviewer.com/"' in message.text()
             assert 'Data Wrangler' in message.text()
-            assert 'FITS remains fully operational' in message.text()
+            assert 'FIScH remains fully operational' in message.text()
             assert any(label.openExternalLinks() for label in message.findChildren(QLabel))
             inspected.append(message.text())
         finally:
@@ -77,7 +77,7 @@ def test_launch_failure_is_reported(application: QApplication, tmp_path: Path, m
     """
     Report an installed viewer that cannot start without raising into the GUI.
     """
-    monkeypatch.setattr('fits.gui.parquet.launch_tad', Mock(side_effect=PermissionError('Permission denied')))
+    monkeypatch.setattr('fisch.gui.parquet.launch_tad', Mock(side_effect=PermissionError('Permission denied')))
     warning = Mock()
     monkeypatch.setattr(QMessageBox, 'warning', warning)
     open_parquet(tmp_path / 'table.parquet')

@@ -1,8 +1,8 @@
 # µSAM tracking editor: cleanup direction
 
-Status: the headless µSAM Add/Edit backend is integrated and working. The FITS
-integration is committed as `d12cb23`, and the fork revision used by FITS is
-`8b3b337`. Focused FITS tests pass, a real-image MobileSAM prediction was
+Status: the headless µSAM Add/Edit backend is integrated and working. The FIScH
+integration is committed as `d12cb23`, and the fork revision used by FIScH is
+`8b3b337`. Focused FIScH tests pass, a real-image MobileSAM prediction was
 successful, and the TrackEdit behavior has been checked manually.
 
 ## Agreed responsibilities
@@ -72,7 +72,7 @@ be tuned or disabled without changing registration or µSAM.
 
 The upstream `micro-sam` distribution currently installs GUI and broader
 application dependencies such as napari, a Qt binding, magicgui, superqt,
-training utilities, and tracking packages. FITS only needs model loading,
+training utilities, and tracking packages. FIScH only needs model loading,
 checkpoint caching, embeddings, point/mask/box prompts, and iterative logits.
 
 The packaging work is tracked by
@@ -95,15 +95,15 @@ without napari, Qt, magicgui, superqt, torch-em, trackastra, or python-elf. The
 normal full test jobs install `micro-sam[full]` so the upstream test suite keeps
 its previous dependency coverage.
 
-FITS currently keeps the fork as the `micro-sam-headless` Git submodule and
+FIScH currently keeps the fork as the `micro-sam-headless` Git submodule and
 resolves `micro-sam` to that local path with uv. `micro-sam` and `mobile-sam`
-remain in the default-installed `dev` group while FITS has only one user. This
-is sufficient for current FITS development but is not a publication solution:
+remain in the default-installed `dev` group while FIScH has only one user. This
+is sufficient for current FIScH development but is not a publication solution:
 PyPI installations do not retrieve Git submodules or apply uv source overrides.
 
-Until the upstream PR is reviewed, FITS should remain pinned to the tested fork
-revision. If the change is accepted and released, FITS can depend on the
-official release. Before distributing FITS to other users, move the runtime
+Until the upstream PR is reviewed, FIScH should remain pinned to the tested fork
+revision. If the change is accepted and released, FIScH can depend on the
+official release. Before distributing FIScH to other users, move the runtime
 dependencies out of `dev` and verify how MobileSAM will be installed.
 
 ## Cleanup progress
@@ -125,4 +125,4 @@ Remaining work:
 9. Add static-only edit-delta propagation.
 10. Add independently configurable static-only shrinkage protection.
 11. After an upstream release, replace the fork pin and prepare the dependencies
-    for distributing FITS to other users.
+    for distributing FIScH to other users.

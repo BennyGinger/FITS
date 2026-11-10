@@ -34,7 +34,7 @@ This is a capture checklist, not a requirement to illustrate every chapter.
 - Use identical display limits when comparing image intensities.
 - Put each figure in one main location; link to it from other chapters.
 - Avoid separate captures for every operating system or every setting.
-- Record the FITS version and example settings used, so captures can be checked
+- Record the FIScH version and example settings used, so captures can be checked
   after GUI changes.
 
 ## Topics that do not need screenshots

@@ -36,7 +36,7 @@ def commit(root: Path, message: str, *, publish: bool = False) -> str:
     git(root, "commit", "-qm", message)
     if publish:
         count = len(git(root, "tag", "--list").splitlines())
-        git(root, "tag", "-a", f"4.1.{count}", "-m", message)
+        git(root, "tag", "-a", f"5.0.{count}", "-m", message)
     return git(root, "rev-parse", "HEAD")
 
 
@@ -61,14 +61,14 @@ def repositories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     Use real local Git remotes with a simulated published-release lookup.
     """
     monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
-    remote = tmp_path / "upstream FITS"
+    remote = tmp_path / "upstream FIScH"
     initialize(remote)
     (remote / ".gitignore").write_text(".venv/\nstartup/logs/\n__pycache__/\n")
     (remote / "app.py").write_text("version = 1\n")
     (remote / "uv.lock").write_text("test lockfile\n")
-    (remote / "pyproject.toml").write_text('[project]\nversion = "4.1.0"\n')
+    (remote / "pyproject.toml").write_text('[project]\nversion = "5.0.0"\n')
     commit(remote, "initial", publish=True)
-    root = tmp_path / "local FITS"
+    root = tmp_path / "local FIScH"
     subprocess.run(["git", "clone", str(remote), str(root)], check=True, capture_output=True)
     git(root, "config", "user.name", "Updater Test")
     git(root, "config", "user.email", "test@example.org")
@@ -83,7 +83,7 @@ def repositories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     return remote, root
 
 
-def change_remote(remote: Path, message: str = "new FITS", *, publish: bool = True) -> str:
+def change_remote(remote: Path, message: str = "new FIScH", *, publish: bool = True) -> str:
     """
     Add an upstream commit, publishing a release unless explicitly disabled.
     """
@@ -104,17 +104,17 @@ def test_only_published_release_commits_are_offered(modules: tuple[ModuleType, M
     before = git(root, "rev-parse", "HEAD")
     change_remote(remote, "unreleased work", publish=False)
     git(remote, "tag", "99.0.0")
-    monkeypatch.setattr(engine, "_latest_release", lambda remote_name: module.Release("4.1.0", "Initial release"))
+    monkeypatch.setattr(engine, "_latest_release", lambda remote_name: module.Release("5.0.0", "Initial release"))
     assert engine.check() is None
     target = change_remote(remote, "released work", publish=False)
-    git(remote, "tag", "-a", "4.2.0", "-m", "FITS 4.2.0")
-    monkeypatch.setattr(engine, "_latest_release", lambda remote_name: module.Release("4.2.0", "## Changes\n\nReleased work"))
+    git(remote, "tag", "-a", "5.1.0", "-m", "FIScH 5.1.0")
+    monkeypatch.setattr(engine, "_latest_release", lambda remote_name: module.Release("5.1.0", "## Changes\n\nReleased work"))
     change_remote(remote, "after release", publish=False)
     update = engine.check()
     assert update is not None
     assert update.before == before and update.target == target
-    assert update.release == "4.2.0"
-    assert update.current_version == "4.1.0"
+    assert update.release == "5.1.0"
+    assert update.current_version == "5.0.0"
     assert update.description == "## Changes\n\nReleased work"
     engine.prepare(update)
     monkeypatch.setattr(engine, "synchronize", lambda: None)
@@ -125,10 +125,10 @@ def test_only_published_release_commits_are_offered(modules: tuple[ModuleType, M
     assert engine.check() is None
 
 
-@pytest.mark.parametrize("url", ["https://github.com/BennyGinger/fits.git",
-                                "git@github.com:BennyGinger/fits.git",
-                                "ssh://git@github.com/BennyGinger/fits.git",
-                                "https://github.com/BennyGinger/fits/",
+@pytest.mark.parametrize("url", ["https://github.com/BennyGinger/fisch.git",
+                                "git@github.com:BennyGinger/fisch.git",
+                                "ssh://git@github.com/BennyGinger/fisch.git",
+                                "https://github.com/BennyGinger/fisch/",
                                 ])
 @pytest.mark.parametrize("kind", ["stable", "draft", "prerelease", "invalid-tag", "missing", "rate-limit"])
 def test_github_release_lookup(modules: tuple[ModuleType, ModuleType], tmp_path: Path,
@@ -147,18 +147,18 @@ def test_github_release_lookup(modules: tuple[ModuleType, ModuleType], tmp_path:
         """
         Return a release response or simulate an HTTP failure without network access.
         """
-        assert request.full_url == "https://api.github.com/repos/BennyGinger/fits/releases/latest"
+        assert request.full_url == "https://api.github.com/repos/BennyGinger/fisch/releases/latest"
         assert timeout == 10
         if kind in ("missing", "rate-limit"):
             raise HTTPError(request.full_url, 404 if kind == "missing" else 403, kind, Message(), None)
-        return io.BytesIO(json.dumps({"tag_name": "4.2.0rc1" if kind == "invalid-tag" else "4.2.0",
+        return io.BytesIO(json.dumps({"tag_name": "5.1.0rc1" if kind == "invalid-tag" else "5.1.0",
                                      "draft": kind == "draft", "prerelease": kind == "prerelease",
                                      "body": "## Changes\n\nRelease description from GitHub.",
                                      }).encode())
 
     monkeypatch.setattr(module, "urlopen", open_release)
     if kind == "stable":
-        assert engine._latest_release("origin") == module.Release("4.2.0", "## Changes\n\nRelease description from GitHub.")
+        assert engine._latest_release("origin") == module.Release("5.1.0", "## Changes\n\nRelease description from GitHub.")
     elif kind == "missing":
         assert engine._latest_release("origin") is None
     elif kind == "rate-limit":
@@ -202,16 +202,16 @@ def test_startup_prompt_uses_versions_and_release_description(modules: tuple[Mod
     change_remote(remote)
     description = "## Release highlights\n\n- Improved tracking.\n- Updated GUI."
     engine = module.Updater(root)
-    monkeypatch.setattr(engine, "_latest_release", lambda remote: module.Release("4.1.1", description))
+    monkeypatch.setattr(engine, "_latest_release", lambda remote: module.Release("5.0.1", description))
     monkeypatch.setattr(launcher, "needs_repair", lambda root: False)
     requests: list[dict[str, object]] = []
     monkeypatch.setattr(launcher, "ask", lambda updater, request: requests.append(request) or "current")
     monkeypatch.setattr(launcher, "launch_gui", lambda *args: 0)
     assert launcher.startup(engine, []) == 0
     assert len(requests) == 1
-    assert requests[0]["message"] == "A newer version of FITS is available: 4.1.1.\nThe current version installed is 4.1.0.\n\nWould you like to update?"
-    assert requests[0]["release"] == "4.1.1"
-    assert requests[0]["current_version"] == "4.1.0"
+    assert requests[0]["message"] == "A newer version of FIScH is available: 5.0.1.\nThe current version installed is 5.0.0.\n\nWould you like to update?"
+    assert requests[0]["release"] == "5.0.1"
+    assert requests[0]["current_version"] == "5.0.0"
     assert requests[0]["details"] == description
 
 
@@ -226,7 +226,7 @@ def test_check_current_and_offer_fast_forward_without_changing_checkout(modules,
     assert update.before == before and update.target == target
     assert not update.blocked
     assert update.description == "Published release notes"
-    assert update.current_version == "4.1.0"
+    assert update.current_version == "5.0.0"
     assert git(root, "rev-parse", "HEAD") == before
     assert (root / "app.py").read_text() == "version = 1\n"
 
@@ -287,7 +287,7 @@ def test_resume_refuses_new_local_edits(modules, repositories, monkeypatch):
     engine.prepare(engine.check())
     (root / "app.py").write_text("new local work")
     monkeypatch.setattr(engine, "synchronize", lambda: pytest.fail("synchronized over local work"))
-    with pytest.raises(RuntimeError, match="Local FITS changes"):
+    with pytest.raises(RuntimeError, match="Local FIScH changes"):
         engine.resume()
     assert (root / "app.py").read_text() == "new local work"
 
@@ -332,7 +332,7 @@ def test_dirty_pinned_submodule_allows_only_environment_repair(modules: tuple[Mo
     if repair_only:
         (root / "uv.lock").write_text("changed dependencies")
         engine.prepare_repair()
-        (root / "app.py").write_text("local FITS work")
+        (root / "app.py").write_text("local FIScH work")
     else:
         change_remote(remote)
         engine.prepare(engine.check())
@@ -360,7 +360,7 @@ def test_dirty_pinned_submodule_allows_only_environment_repair(modules: tuple[Mo
         assert calls[1][-1] == str(root / "startup/verify.py")
         assert not engine.pending.exists()
         assert not state.needs_repair(root)
-        assert (root / "app.py").read_text() == "local FITS work"
+        assert (root / "app.py").read_text() == "local FIScH work"
     else:
         with pytest.raises(RuntimeError, match="Local submodule edits"):
             engine.resume()
@@ -419,7 +419,7 @@ def test_new_submodule_is_initialized_and_existing_one_is_pinned(modules, reposi
     assert git(root / "example module", "rev-parse", "HEAD") == first
     (source / "module.py").write_text("version = 2\n")
     second = commit(source, "module two")
-    # A module-only push does not offer a FITS update or fetch module remotes.
+    # A module-only push does not offer a FIScH update or fetch module remotes.
     assert engine.check() is None
     assert git(root / "example module", "rev-parse", "HEAD") == first
     git(remote / "example module", "fetch")
@@ -581,7 +581,7 @@ def test_update_runs_real_installer_with_simulated_dependencies(modules, reposit
     remote, root = repositories
     shutil.copytree(STARTUP, remote / "startup", ignore=shutil.ignore_patterns("logs", "__pycache__", "tools"))
     (remote / "assets").mkdir()
-    (remote / "assets/fits_icon.png").touch()
+    (remote / "assets/fisch_icon.png").touch()
     (remote / "startup/verify.py").write_text("print('Backend verification reached')\n")
     target = commit(remote, "include installer", publish=True)
     tools = tmp_path / "tools"
@@ -630,7 +630,7 @@ def test_supervisor_shell_launches_current_and_exits_with_gui(modules, repositor
     logs = root / "startup/logs"
     logs.mkdir()
     (logs / "bootstrap-python.txt").write_text(sys.executable)
-    package = root / "src/fits/gui"
+    package = root / "src/fisch/gui"
     package.mkdir(parents=True)
     (package.parent / "__init__.py").touch()
     (package / "__init__.py").touch()
@@ -654,8 +654,8 @@ def test_direct_gui_holds_and_releases_updater_compatible_lock(modules, tmp_path
     lock = tmp_path / "application.lock"
     code = (
         "import sys, time\n"
-        "from fits.gui import main\n"
-        "sys.argv = ['fits-gui']\n"
+        "from fisch.gui import main\n"
+        "sys.argv = ['fisch-gui']\n"
         "def run(arguments, qt_arguments):\n"
         "    print('holding lease', flush=True)\n"
         "    time.sleep(0.5)\n"
@@ -663,7 +663,7 @@ def test_direct_gui_holds_and_releases_updater_compatible_lock(modules, tmp_path
         "main.main()\n"
     )
     environment = os.environ.copy()
-    environment["FITS_APPLICATION_LOCK"] = str(lock)
+    environment["FISCH_APPLICATION_LOCK"] = str(lock)
     process = subprocess.Popen([sys.executable, "-c", code], env=environment,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:

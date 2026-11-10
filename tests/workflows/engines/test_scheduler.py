@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from fits.workflows.experiments import ExperimentState
-from fits.workflows.runtime.scheduler import (
+from fisch.workflows.experiments import ExperimentState
+from fisch.workflows.runtime.scheduler import (
     resolve_runtime_steps,
     run_workflow_scheduler,
 )
@@ -52,10 +52,10 @@ def make_state() -> ExperimentState:
 def test_resolve_runtime_steps_uses_enabled_workflow_order(monkeypatch) -> None:
     spec = DummyStepSpec("convert", lambda *args: [])
     monkeypatch.setattr(
-        "fits.workflows.runtime.scheduler.planning.WORKFLOW_ORDER",
+        "fisch.workflows.runtime.scheduler.planning.WORKFLOW_ORDER",
         ["convert", "segment"],)
     monkeypatch.setattr(
-        "fits.workflows.runtime.scheduler.planning.REGISTRY", {"convert": spec})
+        "fisch.workflows.runtime.scheduler.planning.REGISTRY", {"convert": spec})
 
     resolved = resolve_runtime_steps({
         "convert": {"enabled": True, "params": {"overwrite": True}},
@@ -77,15 +77,15 @@ def test_run_workflow_scheduler_runs_single_enabled_step(monkeypatch) -> None:
         return [state.with_complete_step(
             step_name=profile.step_name,
             artifact_kind="image",
-            artifact_path=state.workdir / "fits_array.tif",)]
+            artifact_path=state.workdir / "proc_array.tif",)]
 
     spec = DummyStepSpec("convert", runner)
     monkeypatch.setattr(
-        "fits.workflows.runtime.scheduler.planning.WORKFLOW_ORDER", ["convert"])
+        "fisch.workflows.runtime.scheduler.planning.WORKFLOW_ORDER", ["convert"])
     monkeypatch.setattr(
-        "fits.workflows.runtime.scheduler.planning.REGISTRY", {"convert": spec})
+        "fisch.workflows.runtime.scheduler.planning.REGISTRY", {"convert": spec})
     monkeypatch.setattr(
-        "fits.workflows.runtime.scheduler.api.pbar",
+        "fisch.workflows.runtime.scheduler.api.pbar",
         lambda **kwargs: DummyProgress(),)
 
     result = run_workflow_scheduler(
@@ -96,8 +96,8 @@ def test_run_workflow_scheduler_runs_single_enabled_step(monkeypatch) -> None:
 
 def test_resolve_runtime_steps_rejects_missing_registry_step(monkeypatch) -> None:
     monkeypatch.setattr(
-        "fits.workflows.runtime.scheduler.planning.WORKFLOW_ORDER", ["convert"])
-    monkeypatch.setattr("fits.workflows.runtime.scheduler.planning.REGISTRY", {})
+        "fisch.workflows.runtime.scheduler.planning.WORKFLOW_ORDER", ["convert"])
+    monkeypatch.setattr("fisch.workflows.runtime.scheduler.planning.REGISTRY", {})
 
     with pytest.raises(ValueError, match="missing from the registry"):
         resolve_runtime_steps({"convert": {"enabled": True}})
@@ -107,13 +107,13 @@ def test_scheduler_rejects_interactive_steps_before_submission(monkeypatch) -> N
     spec = DummyStepSpec(
         "edit_track", None, interactive=True)
     monkeypatch.setattr(
-        "fits.workflows.runtime.scheduler.planning.WORKFLOW_ORDER",
+        "fisch.workflows.runtime.scheduler.planning.WORKFLOW_ORDER",
         ["edit_track"])
     monkeypatch.setattr(
-        "fits.workflows.runtime.scheduler.planning.REGISTRY",
+        "fisch.workflows.runtime.scheduler.planning.REGISTRY",
         {"edit_track": spec})
 
-    with pytest.raises(ValueError, match="require the FITS GUI"):
+    with pytest.raises(ValueError, match="require the FIScH GUI"):
         run_workflow_scheduler(
             {"edit_track": {"enabled": True, "params": {}}}, [make_state()])
 
@@ -122,5 +122,5 @@ def test_scheduler_rejects_interactive_steps_before_submission(monkeypatch) -> N
 def isolate_profile_configuration(monkeypatch):
     # These orchestration tests supply fake profiles; real input resolution is
     # exercised by test_fits4_execution with actual TIFF artifacts.
-    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.replace', lambda spec, **kwargs: spec)
-    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.configured_profile', lambda profile, config: profile)
+    monkeypatch.setattr('fisch.workflows.runtime.scheduler.planning.replace', lambda spec, **kwargs: spec)
+    monkeypatch.setattr('fisch.workflows.runtime.scheduler.planning.configured_profile', lambda profile, config: profile)

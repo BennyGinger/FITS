@@ -25,7 +25,7 @@ def test_user_quit_does_not_offer_installation_repair(tmp_path: Path, monkeypatc
         Terminate only a disposable Python process using the actual Quit implementation.
         """
         return subprocess.run([sys.executable, '-c',
-                               'from fits.gui.main_window.emergency_stop import terminate_application; terminate_application()'],
+                               'from fisch.gui.main_window.emergency_stop import terminate_application; terminate_application()'],
                                timeout=15).returncode
 
     monkeypatch.setattr(launcher, 'launch_gui', quit_gui)

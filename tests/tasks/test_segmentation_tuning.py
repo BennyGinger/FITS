@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from fits.settings.models import SegmentChannelSettings
-from fits.tasks.segmentation.tuning import SegmentationTuningSession
+from fisch.settings.models import SegmentChannelSettings
+from fisch.tasks.segmentation.tuning import SegmentationTuningSession
 
 
 class FakeScopeIO:
@@ -51,12 +51,12 @@ def test_session_navigates_noncanonical_time_and_channel_axes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
     source.touch()
     array = np.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5)
     reader = FakeScopeIO(array, "CTYX", ["GFP", "RFP"])
     monkeypatch.setattr(
-        "fits.interaction.image.ScopeIO.from_path",
+        "fisch.interaction.image.ScopeIO.from_path",
         lambda _: reader,
     )
 
@@ -73,18 +73,18 @@ def test_preview_is_cached_by_frame_channels_and_settings_and_cleaned_on_close(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
     source.touch()
     array = np.arange(3 * 2 * 4 * 5).reshape(3, 2, 4, 5)
     reader = FakeScopeIO(array, "TCYX", ["GFP", "RFP"])
     wrapper = FakeWrapper()
     wrapper_settings: list[dict] = []
     monkeypatch.setattr(
-        "fits.interaction.image.ScopeIO.from_path",
+        "fisch.interaction.image.ScopeIO.from_path",
         lambda _: reader,
     )
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",
+        "fisch.tasks.segmentation.tuning.CellposeWrapper.from_dict",
         lambda settings: wrapper_settings.append(settings) or wrapper,
     )
 
@@ -128,12 +128,12 @@ def test_session_preserves_z_and_selects_planes_only_for_display(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
     source.touch()
     array = np.arange(2 * 1 * 3 * 4 * 5).reshape(2, 1, 3, 4, 5)
     reader = FakeScopeIO(array, "TCZYX", ["GFP"])
     monkeypatch.setattr(
-        "fits.interaction.image.ScopeIO.from_path",
+        "fisch.interaction.image.ScopeIO.from_path",
         lambda _: reader,
     )
 
@@ -151,17 +151,17 @@ def test_preview_passes_z_axis_unchanged_to_cellpose(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
     source.touch()
     array = np.arange(2 * 1 * 3 * 4 * 5).reshape(2, 1, 3, 4, 5)
     reader = FakeScopeIO(array, "TCZYX", ["RFP"])
     wrapper = FakeWrapper()
     monkeypatch.setattr(
-        "fits.interaction.image.ScopeIO.from_path",
+        "fisch.interaction.image.ScopeIO.from_path",
         lambda _: reader,
     )
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",
+        "fisch.tasks.segmentation.tuning.CellposeWrapper.from_dict",
         lambda _: wrapper,
     )
 
@@ -182,16 +182,16 @@ def test_preview_passes_z_axis_unchanged_to_cellpose(
 def test_2d_preview_uses_the_displayed_z_plane(tmp_path: Path,
                                               monkeypatch: pytest.MonkeyPatch,
                                               ) -> None:
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
     source.touch()
     array = np.arange(1 * 3 * 4 * 5).reshape(1, 3, 4, 5)
     reader = FakeScopeIO(array, "CZYX", ["GFP"])
     wrapper = FakeWrapper()
     monkeypatch.setattr(
-        "fits.interaction.image.ScopeIO.from_path",
+        "fisch.interaction.image.ScopeIO.from_path",
         lambda _: reader,)
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",
+        "fisch.tasks.segmentation.tuning.CellposeWrapper.from_dict",
         lambda _: wrapper,)
 
     with SegmentationTuningSession(source, cache_parent=tmp_path) as session:
@@ -205,7 +205,7 @@ def test_preview_selects_display_and_nuclear_channels(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
     source.touch()
     array = np.arange(1 * 2 * 4 * 5).reshape(1, 2, 4, 5)
     reader = FakeScopeIO(array, "TCYX", ["GFP", "RFP"])
@@ -214,10 +214,10 @@ def test_preview_selects_display_and_nuclear_channels(
                                nuclear_channel="GFP",
                                do_denoise=False,)
     monkeypatch.setattr(
-        "fits.interaction.image.ScopeIO.from_path",
+        "fisch.interaction.image.ScopeIO.from_path",
         lambda _: reader,)
     monkeypatch.setattr(
-        "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",
+        "fisch.tasks.segmentation.tuning.CellposeWrapper.from_dict",
         lambda _: wrapper,)
 
     with SegmentationTuningSession(source,
@@ -229,16 +229,16 @@ def test_preview_selects_display_and_nuclear_channels(
     assert wrapper.calls[0][1] == "CYX"
 
 
-def test_session_rejects_non_fits_image_artifacts(tmp_path: Path) -> None:
+def test_session_rejects_non_proc_image_artifacts(tmp_path: Path) -> None:
     source = tmp_path / "input.tif"
     source.touch()
 
-    with pytest.raises(ValueError, match="fits_array.tif"):
+    with pytest.raises(ValueError, match="proc_array.tif"):
         SegmentationTuningSession(source, cache_parent=tmp_path)
 
 
 def test_session_reports_missing_source_before_filename_validation(tmp_path: Path) -> None:
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
 
     with pytest.raises(FileNotFoundError, match="does not exist"):
         SegmentationTuningSession(source, cache_parent=tmp_path)

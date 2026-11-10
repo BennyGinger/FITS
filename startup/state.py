@@ -13,7 +13,7 @@ from tempfile import NamedTemporaryFile
 
 def require_independent_python(root: Path) -> None:
     if Path(sys.executable).absolute().is_relative_to(root / ".venv"):
-        raise RuntimeError("Use the OS launcher or installer: the updater must run outside FITS's .venv.")
+        raise RuntimeError("Use the OS launcher or installer: the updater must run outside FIScH's .venv.")
 
 
 def show_project_files(root: Path) -> None:

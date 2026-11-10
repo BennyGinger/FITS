@@ -1,0 +1,902 @@
+from __future__ import annotations
+
+import colorsys
+from collections.abc import Callable
+from functools import lru_cache
+from time import monotonic
+from typing import Any, Literal, cast
+
+import numpy as np
+import pyqtgraph as pg
+from numpy.typing import NDArray
+from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QPropertyAnimation, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QPolygonF
+from PySide6.QtWidgets import (
+    QColorDialog, QDialog, QGraphicsOpacityEffect, QLabel, QPushButton, QToolButton, QVBoxLayout, QWidget,
+)
+from scipy.ndimage import distance_transform_edt
+from skimage.draw import line as raster_line, polygon as raster_polygon
+from fisch.gui.viewer.common.pixel_readout import PixelReadout
+
+from scope_io.metadata.imageJ_meta import COLOR_MAP, label_display_color
+
+
+DrawingMode = Literal["replace", "edit"]
+DrawingTool = Literal["brush", "freehand", "line", "circle", "square", "triangle"]
+DrawingOperation = Literal["add", "erase"]
+DRAWING_REFRESH_SECONDS = 1 / 60
+
+
+@lru_cache(maxsize=8192)
+def _label_rgba(label: int) -> tuple[int, int, int, int]:
+    """Cache stable label colours without retaining rendered image planes."""
+    if label == 0:
+        return (0, 0, 0, 0)
+    hue = (label * 0.61803398875) % 1.0
+    red, green, blue = colorsys.hsv_to_rgb(hue, 0.75, 1.0)
+    return (int(red * 255), int(green * 255), int(blue * 255), 255)
+
+
+@lru_cache(maxsize=4)
+def _label_palette(size: int) -> NDArray[np.uint8]:
+    """Build a bounded lookup table with the same colours as ``_label_rgba``."""
+    hue = (np.arange(size, dtype=np.float64) * 0.61803398875) % 1.0
+    sector = (hue * 6).astype(np.intp)
+    fraction = hue * 6 - sector
+    low = np.full(size, 0.25)
+    high = np.ones(size)
+    falling = 1 - 0.75 * fraction
+    rising = 1 - 0.75 * (1 - fraction)
+    rgb = np.stack([
+        np.choose(sector, [high, falling, low, low, rising, high]),
+        np.choose(sector, [rising, high, high, falling, low, low]),
+        np.choose(sector, [low, low, rising, high, high, falling]),
+    ], axis=-1)
+    palette = np.empty((size, 4), dtype=np.uint8)
+    palette[:, :3] = rgb * 255
+    palette[:, 3] = 255
+    palette[0] = 0
+    palette.flags.writeable = False
+    return palette
+
+
+class ControlledViewBox(pg.ViewBox):  # type: ignore[misc]
+    """Allow image navigation only while the Control key is held."""
+
+    def mouseDragEvent(self, ev: Any, axis: int | None = None) -> None:
+        if not ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            ev.ignore()
+            return
+        super().mouseDragEvent(ev, axis=axis)
+
+    def wheelEvent(self, ev: Any, axis: int | None = None) -> None:
+        if not ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            ev.ignore()
+            return
+        super().wheelEvent(ev, axis=axis)
+
+
+class MaskDrawingItem(pg.ImageItem):
+    """Transparent item that reports left-add and right-erase gestures."""
+
+    def __init__(self) -> None:
+        super().__init__(axisOrder="row-major")
+        self.on_started: Callable[[float, float, DrawingOperation], None] | None = None
+        self.on_moved: Callable[[float, float], None] | None = None
+        self.on_finished: Callable[[float, float], None] | None = None
+        self.on_move_started: Callable[[float, float], None] | None = None
+        self.on_move_updated: Callable[[float, float], None] | None = None
+        self.on_move_finished: Callable[[float, float], None] | None = None
+        self.on_can_move: Callable[[float, float], bool] | None = None
+        self._moving_mask = False
+        self.setZValue(100)
+        self.setAcceptedMouseButtons(cast(Any, Qt.MouseButton.NoButton))
+
+    def set_drawing_enabled(self, enabled: bool) -> None:
+        buttons = ((Qt.MouseButton.LeftButton | Qt.MouseButton.RightButton)
+                   if enabled else Qt.MouseButton.NoButton)
+        self.setAcceptedMouseButtons(cast(Any, buttons))
+
+    def mouseDragEvent(self, ev: Any) -> None:
+        if (ev.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton)
+                or ev.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            ev.ignore()
+            return
+        ev.accept()
+        position = ev.buttonDownPos() if ev.isStart() else ev.pos()
+        if ev.isStart():
+            selected = (self.on_can_move is not None
+                        and self.on_can_move(position.x(), position.y()))
+            self._moving_mask = bool(
+                ev.button() == Qt.MouseButton.LeftButton
+                and (ev.modifiers() & Qt.KeyboardModifier.ShiftModifier or selected)
+                and self.on_move_started is not None)
+        if self._moving_mask:
+            callback = (self.on_move_started if ev.isStart() else
+                        self.on_move_finished if ev.isFinish() else self.on_move_updated)
+            if callback is not None:
+                callback(position.x(), position.y())
+            if ev.isFinish():
+                self._moving_mask = False
+            return
+        if ev.isStart() and self.on_started is not None:
+            operation: DrawingOperation = (
+                "erase" if ev.button() == Qt.MouseButton.RightButton else "add")
+            self.on_started(position.x(), position.y(), operation)
+        elif ev.isFinish() and self.on_finished is not None:
+            self.on_finished(position.x(), position.y())
+        elif self.on_moved is not None:
+            self.on_moved(position.x(), position.y())
+
+    def mouseClickEvent(self, ev: Any) -> None:
+        if (ev.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton)
+                or ev.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            ev.ignore()
+            return
+        ev.accept()
+        position = ev.pos()
+        selected = (self.on_can_move is not None
+                    and self.on_can_move(position.x(), position.y()))
+        if (ev.button() == Qt.MouseButton.LeftButton
+                and (ev.modifiers() & Qt.KeyboardModifier.ShiftModifier or selected)
+                and self.on_move_started is not None):
+            self.on_move_started(position.x(), position.y())
+            if self.on_move_finished is not None:
+                self.on_move_finished(position.x(), position.y())
+            return
+        if self.on_started is not None:
+            operation: DrawingOperation = (
+                "erase" if ev.button() == Qt.MouseButton.RightButton else "add")
+            self.on_started(position.x(), position.y(), operation)
+        if self.on_finished is not None:
+            self.on_finished(position.x(), position.y())
+
+
+class FischImageViewer(QWidget):
+    """
+    Display a 2D image with a labelled-mask overlay.
+    """
+
+    drawing_finished = Signal(object)
+    drawing_changed = Signal()
+    drawing_started = Signal()
+    mask_moved = Signal(object, object)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.canvas = pg.GraphicsLayoutWidget()
+        self.view_box = ControlledViewBox()
+        self.canvas.addItem(self.view_box)
+        self.view_box.setAspectLocked(True)
+        self.view_box.invertY(True)
+        self.image_item = pg.ImageItem(axisOrder="row-major")
+        self.pixel_readout = PixelReadout(self.image_item, self.canvas)
+        self.mask_item = pg.ImageItem(axisOrder="row-major")
+        self.drawing_item = MaskDrawingItem()
+        self.view_box.addItem(self.image_item)
+        self.view_box.addItem(self.mask_item)
+        self.view_box.addItem(self.drawing_item)
+        self.move_selection_item = pg.ImageItem(axisOrder="row-major")
+        self.move_selection_item.setZValue(101)
+        self.move_selection_item.setOpacity(0.45)
+        self.move_selection_item.setAcceptedMouseButtons(cast(Any, Qt.MouseButton.NoButton))
+        self.view_box.addItem(self.move_selection_item)
+        self.home_button = QToolButton(cast(QWidget, self.canvas))
+        self.home_button.setIcon(self._home_icon())
+        self.home_button.setToolTip("Fit and center the image in the viewer.")
+        self.home_button.setAutoRaise(True)
+        self.home_button.setFixedSize(30, 30)
+        self.home_button.move(8, 8)
+        self.home_button.setStyleSheet(
+            "QToolButton { background: rgba(35, 35, 35, 190); "
+            "border: 1px solid #777; border-radius: 4px; padding: 3px; } "
+            "QToolButton:hover { background: rgba(70, 70, 70, 220); }")
+        self.home_button.clicked.connect(self.reset_view)
+        self.home_button.raise_()
+        layout.addWidget(cast(QWidget, self.canvas))
+
+        self.loading_overlay = QLabel("Preparing preview…", cast(QWidget, self.canvas))
+        self.loading_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_overlay.setStyleSheet(
+            "background-color: rgba(255, 255, 255, 215); color: #333333; "
+            "font-size: 16px; font-weight: bold;")
+        self._loading_effect = QGraphicsOpacityEffect(self.loading_overlay)
+        self.loading_overlay.setGraphicsEffect(self._loading_effect)
+        self._loading_effect.setOpacity(0.0)
+        self.loading_overlay.hide()
+        self._loading_visible = False
+        self._loading_animation = QPropertyAnimation(self._loading_effect, b"opacity", self)
+        self._loading_animation.setDuration(160)
+        self._loading_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._loading_animation.finished.connect(self._loading_transition_finished)
+        cast(QWidget, self.canvas).installEventFilter(self)
+
+        self.histogram = pg.HistogramLUTWidget(
+            orientation="horizontal",
+            gradientPosition="bottom",)
+        self.histogram.setImageItem(self.image_item)
+        self._has_image = False
+        self._mask_opacity = 0.45
+        self._mask_visible = True
+        self._mask_array: NDArray[Any] | None = None
+        self._mask_color: tuple[int, int, int] | None = None
+        self._drawing_active = False
+        self._lut_color = ""
+        self._channel_label = ""
+        self._source_color: str | None = None
+        self._coloured_lut = True
+        self._connected_gradient_markers: set[object] = set()
+        self._drawing_mask: NDArray[np.uint8] | None = None
+        self._gesture_base: NDArray[np.uint8] | None = None
+        self._drawing_start: tuple[int, int] | None = None
+        self._move_start: tuple[int, int] | None = None
+        self._move_base: NDArray[np.uint8] | None = None
+        self._move_points: tuple[NDArray, NDArray] | None = None
+        self._selected_move_mask: NDArray[np.bool_] | None = None
+        self._move_has_started = False
+        self._drawing_last: tuple[int, int] | None = None
+        self._drawing_points: list[tuple[int, int]] = []
+        self._brush_rendered_points = 0
+        self._last_drawing_render = 0.0
+        self._last_drawing_selection: NDArray[np.bool_] | None = None
+        self._last_drawing_base: NDArray[np.uint8] | None = None
+        self._last_drawing_was_click = False
+        self._drawing_history: list[NDArray[np.uint8]] = []
+        self._drawing_mode: DrawingMode = "replace"
+        self._drawing_tool: DrawingTool = "freehand"
+        self._drawing_operation: DrawingOperation = "add"
+        self._brush_size = 5
+        self._drawing_color = (255, 235, 0)
+        self._drawing_opacity = 0.65
+        self.histogram.item.gradient.sigTicksChanged.connect(
+            self._connect_gradient_markers)
+        self.drawing_item.on_started = self._start_drawing
+        self.drawing_item.on_moved = self._continue_drawing
+        self.drawing_item.on_finished = self._finish_drawing
+        self.set_channel_lut("")
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.canvas and event.type() == QEvent.Type.Resize:
+            self.loading_overlay.setGeometry(cast(QWidget, self.canvas).rect())
+        return super().eventFilter(watched, event)
+
+    def set_preview_loading(self, loading: bool, message: str = "Preparing preview…",
+                            *, animate: bool = True) -> None:
+        """Dim only the image while its requested preview is unavailable."""
+        if loading:
+            self.loading_overlay.setText(message)
+        if loading == self._loading_visible and animate:
+            return
+        self._loading_visible = loading
+        self._loading_animation.stop()
+        if loading:
+            self.loading_overlay.setGeometry(cast(QWidget, self.canvas).rect())
+            self.loading_overlay.show()
+            self.loading_overlay.raise_()
+        else:
+            # Keep a fading overlay from intercepting drawing on a ready plane.
+            self.loading_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        if loading:
+            self.loading_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        if not animate:
+            self._loading_effect.setOpacity(1.0 if loading else 0.0)
+            self._loading_transition_finished()
+            return
+        self._loading_animation.setStartValue(self._loading_effect.opacity())
+        self._loading_animation.setEndValue(1.0 if loading else 0.0)
+        self._loading_animation.start()
+
+    def _loading_transition_finished(self) -> None:
+        if not self._loading_visible:
+            self.loading_overlay.hide()
+
+    @staticmethod
+    def _home_icon() -> QIcon:
+        """Create a small theme-independent home symbol."""
+        pixmap = QPixmap(18, 18)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#e8edf2"))
+        painter.drawPolygon(QPolygonF([
+            QPointF(2, 8), QPointF(9, 2), QPointF(16, 8),
+        ]))
+        painter.drawRect(4, 7, 10, 9)
+        painter.setBrush(QColor("#4b5563"))
+        painter.drawRect(8, 11, 3, 5)
+        painter.end()
+        return QIcon(pixmap)
+
+    @property
+    def lut_color(self) -> str:
+        return self._lut_color
+
+    def set_channel_lut(self, channel_label: str, *, source_color: str | None = None) -> None:
+        """
+        Use an explicit source color when supplied, otherwise resolve the FIScH label.
+        """
+        self._source_color = source_color
+        color = ((source_color or label_display_color(channel_label) or "gray")
+                 if self._coloured_lut
+                 else "gray")
+        if channel_label == self._channel_label and color == self._lut_color:
+            return
+        self._channel_label = channel_label
+        if source_color is not None and color != "gray":
+            selected = QColor(color)
+            rgb = (selected.red(), selected.green(), selected.blue())
+        else:
+            rgb = tuple(component * 255 for component in COLOR_MAP[color])
+        color_map = pg.ColorMap(
+            [0.0, 1.0],
+            [(0, 0, 0, 255),
+             (*rgb, 255)],)
+        self.histogram.item.gradient.setColorMap(color_map)
+        self._lut_color = color
+
+    def set_coloured_lut(self, coloured: bool) -> None:
+        """
+        Toggle grayscale while retaining the current source or label color.
+        """
+        self._coloured_lut = coloured
+        self.set_channel_lut(self._channel_label, source_color=self._source_color)
+
+    def auto_scale(self) -> None:
+        """
+        Set robust display levels from the first and ninety-ninth percentiles.
+        """
+        image = self.image_item.image
+        if image is None:
+            return
+        minimum, maximum = np.nanpercentile(image, (1.0, 99.0))
+        self._set_levels(float(minimum), float(maximum))
+
+    def full_range(self) -> None:
+        """
+        Reset display levels to the complete finite image range.
+        """
+        image = self.image_item.image
+        if image is None:
+            return
+        self._set_levels(float(np.nanmin(image)), float(np.nanmax(image)))
+
+    @property
+    def display_levels(self) -> tuple[float, float]:
+        minimum, maximum = self.histogram.getLevels()
+        return float(minimum), float(maximum)
+
+    def set_display_levels(self, levels: tuple[float, float]) -> None:
+        self._set_levels(*levels)
+
+    def _remove_gradient_marker(self, marker: Any) -> bool:
+        if not marker.removeAllowed:
+            return False
+        self.histogram.item.gradient.removeTick(marker)
+        return True
+
+    def _connect_gradient_markers(self) -> None:
+        gradient = self.histogram.item.gradient
+        for marker in gradient.ticks:
+            if marker in self._connected_gradient_markers:
+                continue
+            marker.sigClicked.disconnect(gradient.tickClicked)
+            marker.sigClicked.connect(self._edit_gradient_marker)
+            self._connected_gradient_markers.add(marker)
+
+    def _edit_gradient_marker(self, marker: Any, event: Any) -> None:
+        gradient = self.histogram.item.gradient
+        if event.button() == Qt.MouseButton.RightButton:
+            gradient.raiseTickContextMenu(marker, event)
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+
+        dialog = QColorDialog(marker.color, self)
+        dialog.setWindowTitle("Edit marker")
+        dialog.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog)
+        if marker.removeAllowed:
+            remove_button = QPushButton("Remove marker")
+            remove_button.clicked.connect(
+                lambda: self._remove_marker_from_dialog(marker, dialog))
+            dialog_layout = dialog.layout()
+            if dialog_layout is not None:
+                dialog_layout.addWidget(remove_button)
+        if dialog.exec() == QDialog.DialogCode.Accepted and marker in gradient.ticks:
+            gradient.setTickColor(marker, dialog.selectedColor())
+
+    def _remove_marker_from_dialog(self, marker: Any, dialog: QColorDialog) -> None:
+        self._remove_gradient_marker(marker)
+        dialog.reject()
+
+    def _set_levels(self, minimum: float, maximum: float) -> None:
+        if not np.isfinite(minimum) or not np.isfinite(maximum):
+            return
+        if minimum == maximum:
+            maximum = minimum + 1.0
+        self.histogram.setLevels(minimum, maximum)
+
+    def set_image(self, image: NDArray[Any]) -> None:
+        """
+        Display a 2D image with negatives shown as zero; preserve source pixels and view.
+        """
+        array = np.asarray(image)
+        if array.ndim != 2:
+            raise ValueError(f"The image viewer requires a 2D array; got shape {array.shape}.")
+        if np.any(array < 0):
+            array = np.maximum(array, 0)
+        fit_new_source = self.image_item.image is None
+        self.image_item.setImage(array, autoLevels=not self._has_image)
+        self.drawing_item.setImage(
+            np.zeros((*array.shape, 4), dtype=np.uint8), autoLevels=False)
+        self._has_image = True
+        if fit_new_source:
+            self.reset_view()
+        self.pixel_readout.set_planes((("", np.asarray(image)),))
+
+    def reset_view(self) -> None:
+        """Fit and center the current image without changing display levels."""
+        if self.image_item.image is not None:
+            self.view_box.autoRange()
+
+    @property
+    def drawing_mask(self) -> NDArray[np.uint8]:
+        """Return a copy of the current drawing canvas."""
+        if self._drawing_mask is None:
+            raise RuntimeError("No drawing mask is loaded.")
+        return self._drawing_mask.copy()
+
+    def set_drawing_enabled(self, enabled: bool) -> None:
+        """Enable or disable drawing gestures over the image."""
+        self.drawing_item.set_drawing_enabled(enabled)
+
+    def set_drawing_style(self, color: QColor, opacity: float = 0.65) -> None:
+        """Set the independent colour and opacity of the working drawing layer."""
+        self._drawing_color = (color.red(), color.green(), color.blue())
+        self._drawing_opacity = min(max(float(opacity), 0.0), 1.0)
+        self.drawing_item.setOpacity(self._drawing_opacity)
+        self._render_drawing_mask()
+
+    def set_drawing_options(self,
+                            mode: DrawingMode,
+                            tool: DrawingTool,
+                            operation: DrawingOperation,
+                            brush_size: int,
+                            ) -> None:
+        """Configure how subsequent mouse gestures modify the working mask."""
+        self._drawing_mode = mode
+        self._drawing_tool = tool
+        self._drawing_operation = operation
+        self._brush_size = max(1, int(brush_size))
+
+    def set_drawing_mask(self, mask: NDArray[Any]) -> None:
+        """Replace the working drawing canvas on its independent overlay layer."""
+        array = np.asarray(mask)
+        if array.ndim != 2:
+            raise ValueError(f"The drawing mask must be 2D; got shape {array.shape}.")
+        drawing_mask = (array != 0).astype(np.uint8)
+        self._drawing_mask = drawing_mask
+        self._clear_move_selection()
+        self._drawing_history.clear()
+        self._render_drawing_mask()
+
+    def clear_drawing_overlay(self) -> None:
+        """Clear the working drawing without changing the normal mask overlay."""
+        self._drawing_mask = None
+        self._clear_move_selection()
+        self._drawing_history.clear()
+        self.drawing_item.clear()
+
+    def _render_drawing_mask(self) -> None:
+        if self._drawing_mask is None:
+            self.drawing_item.clear()
+            return
+        self.drawing_item.setImage(
+            self._colour_mask(self._drawing_mask, self._drawing_color),
+            autoLevels=False)
+        self.drawing_item.setOpacity(self._drawing_opacity)
+
+    @property
+    def can_undo_drawing(self) -> bool:
+        """Return whether a previous drawing canvas is available."""
+        return bool(self._drawing_history)
+
+    @property
+    def last_drawing_selection(self) -> NDArray[np.bool_] | None:
+        """Return the pixels touched by the most recently completed gesture."""
+        return (None if self._last_drawing_selection is None
+                else self._last_drawing_selection.copy())
+
+    @property
+    def last_drawing_operation(self) -> DrawingOperation:
+        return self._drawing_operation
+
+    @property
+    def last_drawing_base(self) -> NDArray[np.uint8] | None:
+        """Return the canvas as it was before the most recent gesture."""
+        return (None if self._last_drawing_base is None
+                else self._last_drawing_base.copy())
+
+    @property
+    def last_drawing_was_click(self) -> bool:
+        """Return whether the last gesture was a stationary mouse click."""
+        return self._last_drawing_was_click
+
+    def undo_drawing(self) -> NDArray[np.uint8] | None:
+        """Restore and return the canvas from before the latest gesture."""
+        if not self._drawing_history:
+            return None
+        self._drawing_mask = self._drawing_history.pop()
+        self._render_drawing_mask()
+        return self.drawing_mask
+
+    def _remember_drawing(self) -> None:
+        if self._drawing_mask is None:
+            return
+        self._drawing_history.append(self._drawing_mask.copy())
+        del self._drawing_history[:-50]
+
+    def clear_drawing_mask(self) -> None:
+        """Clear the working drawing canvas without emitting a commit signal."""
+        if self._drawing_mask is None:
+            return
+        self._remember_drawing()
+        self._drawing_mask.fill(0)
+        self._render_drawing_mask()
+
+    def enable_mask_movement(self) -> None:
+        """Enable Shift-drag in drawing viewers without changing tracking gestures."""
+        self.drawing_item.on_move_started = self._start_mask_move
+        self.drawing_item.on_move_updated = self._continue_mask_move
+        self.drawing_item.on_move_finished = self._finish_mask_move
+        self.drawing_item.on_can_move = self._move_region_hit
+
+    def _clear_move_selection(self) -> None:
+        self._selected_move_mask = None
+        self.move_selection_item.clear()
+
+    def _move_region_hit(self, x: float, y: float) -> bool:
+        return (self._selected_move_mask is not None
+                and bool(self._selected_move_mask[self._drawing_point(x, y)]))
+
+    def _render_move_selection(self) -> None:
+        if self._selected_move_mask is not None:
+            self.move_selection_item.setImage(
+                self._colour_mask(self._selected_move_mask, (255, 255, 255)), autoLevels=False)
+
+    def _start_mask_move(self, x: float, y: float) -> None:
+        from scipy.ndimage import label
+        self._move_start = None
+        if self._drawing_mask is None:
+            return
+        point = self._drawing_point(x, y)
+        if not self._drawing_mask[point]:
+            self._clear_move_selection()
+            return
+        components, _ = cast(tuple[NDArray, int], label(
+            self._drawing_mask != 0, structure=np.ones((3, 3), dtype=np.uint8)))
+        base = self._drawing_mask.copy()
+        selected = np.asarray(components == components[point], dtype=bool)
+        self._selected_move_mask = selected
+        rows, columns = np.nonzero(selected)
+        self._move_points = rows, columns
+        self._move_start, self._move_base = point, base
+        self._move_has_started = False
+        self._drawing_active = True
+        self._render_move_selection()
+
+    def _continue_mask_move(self, x: float, y: float) -> None:
+        if self._move_start is None or self._move_base is None or self._move_points is None:
+            return
+        row, col = self._drawing_point(x, y)
+        rows, cols = self._move_points
+        dy = int(np.clip(row - self._move_start[0], -rows.min(),
+                         self._move_base.shape[0] - 1 - rows.max()))
+        dx = int(np.clip(col - self._move_start[1], -cols.min(),
+                         self._move_base.shape[1] - 1 - cols.max()))
+        if not self._move_has_started and (dy != 0 or dx != 0):
+            # Disabling preview may redraw anchors; preserve the clicked display.
+            self.drawing_started.emit()
+            self._drawing_mask = self._move_base.copy()
+            self._remember_drawing()
+            self._move_has_started = True
+        moved = self._move_base.copy()
+        moved[rows, cols] = 0
+        moved[rows + dy, cols + dx] = 1
+        self._drawing_mask = moved
+        self._selected_move_mask = np.zeros_like(moved, dtype=bool)
+        self._selected_move_mask[rows + dy, cols + dx] = True
+        self._render_drawing_mask()
+        self._render_move_selection()
+
+    def _finish_mask_move(self, x: float, y: float) -> None:
+        if self._move_start is None or self._move_base is None:
+            return
+        self._continue_mask_move(x, y)
+        before = self._move_base
+        self._move_start = self._move_base = self._move_points = None
+        self._drawing_active = False
+        if self._drawing_mask is not None and not np.array_equal(before, self._drawing_mask):
+            self.drawing_changed.emit()
+            self.mask_moved.emit(self.drawing_mask, before)
+
+    def _start_drawing(self, x_position: float, y_position: float,
+                       operation: DrawingOperation = "add") -> None:
+        if self._drawing_mask is None:
+            return
+        self._clear_move_selection()
+        self.drawing_started.emit()
+        self._drawing_operation = operation
+        self._drawing_active = True
+        self._remember_drawing()
+        point = self._drawing_point(x_position, y_position)
+        self._gesture_base = (np.zeros_like(self._drawing_mask)
+                              if self._drawing_mode == "replace"
+                              else self._drawing_mask.copy())
+        self._drawing_mask = self._gesture_base.copy()
+        self._drawing_start = point
+        self._drawing_last = point
+        self._drawing_points = [point]
+        self._brush_rendered_points = 0
+        self._last_drawing_render = monotonic()
+        self._last_drawing_selection = None
+        self._apply_drawing(point)
+
+    def _continue_drawing(self, x_position: float, y_position: float) -> None:
+        if self._drawing_start is None or self._gesture_base is None:
+            return
+        point = self._drawing_point(x_position, y_position)
+        if self._drawing_tool in {"brush", "freehand"}:
+            if point != self._drawing_points[-1]:
+                self._drawing_points.append(point)
+            self._drawing_last = point
+            now = monotonic()
+            if now - self._last_drawing_render < DRAWING_REFRESH_SECONDS:
+                return
+            self._last_drawing_render = now
+        self._apply_drawing(point)
+
+    def _finish_drawing(self, x_position: float, y_position: float) -> None:
+        if self._drawing_start is None or self._gesture_base is None:
+            return
+        point = self._drawing_point(x_position, y_position)
+        self._apply_drawing(point)
+        self._last_drawing_was_click = (
+            len(self._drawing_points) <= 1 and point == self._drawing_start)
+        self._last_drawing_base = self._gesture_base.copy()
+        self._drawing_start = None
+        self._drawing_last = None
+        self._drawing_points = []
+        self._gesture_base = None
+        self._drawing_active = False
+        self.drawing_changed.emit()
+        self.drawing_finished.emit(self.drawing_mask)
+
+    def _apply_drawing(self, point: tuple[int, int]) -> None:
+        if (self._drawing_mask is None
+                or self._gesture_base is None
+                or self._drawing_start is None):
+            return
+        if self._drawing_tool in {"brush", "freehand"}:
+            if point != self._drawing_points[-1]:
+                self._drawing_points.append(point)
+            if self._drawing_tool == "brush":
+                # Include the previous endpoint to join pending segments, including
+                # mouse events deferred by the display refresh throttle.
+                if self._brush_rendered_points == len(self._drawing_points):
+                    return
+                pending = self._drawing_points[max(self._brush_rendered_points - 1, 0):]
+                selected = self._brush_selection(pending)
+                self._brush_rendered_points = len(self._drawing_points)
+                if self._last_drawing_selection is None:
+                    self._last_drawing_selection = selected.copy()
+                else:
+                    self._last_drawing_selection |= selected
+                self._drawing_mask[selected] = (
+                    0 if self._drawing_operation == "erase" else 1)
+                self._drawing_last = point
+                self._render_drawing_mask()
+                return
+            self._drawing_mask = self._gesture_base.copy()
+            selected = self._freehand_polygon_selection(self._drawing_points)
+            self._drawing_last = point
+        elif self._drawing_tool == "line":
+            self._drawing_mask = self._gesture_base.copy()
+            selected = self._line_selection(self._drawing_start, point)
+        else:
+            self._drawing_mask = self._gesture_base.copy()
+            selected = self._shape_selection(self._drawing_start, point)
+        self._last_drawing_selection = selected.copy()
+        self._drawing_mask[selected] = 0 if self._drawing_operation == "erase" else 1
+        self._render_drawing_mask()
+
+    def _drawing_point(self, x_position: float, y_position: float) -> tuple[int, int]:
+        if self._drawing_mask is None:
+            return 0, 0
+        row = min(max(int(round(y_position)), 0), self._drawing_mask.shape[0] - 1)
+        column = min(max(int(round(x_position)), 0), self._drawing_mask.shape[1] - 1)
+        return row, column
+
+    def _freehand_polygon_selection(self,
+                                    points: list[tuple[int, int]],
+                                    ) -> NDArray[np.bool_]:
+        """Fill the polygon enclosed by the live free-hand cursor path."""
+        if self._drawing_mask is None:
+            raise RuntimeError("No drawing mask is loaded.")
+        selected = np.zeros(self._drawing_mask.shape, dtype=bool)
+        vertices = np.asarray(points, dtype=np.int32)
+        if len(vertices) >= 3:
+            rows, columns = raster_polygon(
+                vertices[:, 0], vertices[:, 1], shape=selected.shape)
+            selected[rows, columns] = True
+        for start, end in zip(vertices[:-1], vertices[1:], strict=True):
+            rows, columns = raster_line(*start, *end)
+            selected[rows, columns] = True
+        if len(vertices) >= 3:
+            rows, columns = raster_line(*vertices[-1], *vertices[0])
+            selected[rows, columns] = True
+        elif len(vertices) == 1:
+            selected[tuple(vertices[0])] = True
+        return self._widen_selection(selected)
+
+    def _brush_selection(self, points: list[tuple[int, int]]) -> NDArray[np.bool_]:
+        """Rasterize a literal brush stroke without filling enclosed regions."""
+        if self._drawing_mask is None:
+            raise RuntimeError("No drawing mask is loaded.")
+        selected = np.zeros(self._drawing_mask.shape, dtype=bool)
+        if not points:
+            return selected
+        selected[points[0]] = True
+        for start, end in zip(points[:-1], points[1:], strict=True):
+            rows, columns = raster_line(*start, *end)
+            selected[rows, columns] = True
+        return self._widen_selection(selected)
+
+    def _line_selection(self,
+                        start: tuple[int, int],
+                        end: tuple[int, int],
+                        ) -> NDArray[np.bool_]:
+        if self._drawing_mask is None:
+            raise RuntimeError("No drawing mask is loaded.")
+        selected = np.zeros(self._drawing_mask.shape, dtype=bool)
+        rows, columns = raster_line(*start, *end)
+        selected[rows, columns] = True
+        return self._widen_selection(selected)
+
+    def _widen_selection(self, selected: NDArray[np.bool_]) -> NDArray[np.bool_]:
+        """Dilate with an exact Euclidean disk, only around the affected area.
+
+        Distance transforms avoid scanning a large disk footprint at every
+        image pixel; their cost does not grow with the disk's area.
+        """
+        radius = max((self._brush_size - 1) // 2, 0)
+        if radius == 0:
+            return selected
+        rows, columns = np.nonzero(selected)
+        if not len(rows):
+            return selected
+        top = max(int(rows.min()) - radius, 0)
+        bottom = min(int(rows.max()) + radius + 1, selected.shape[0])
+        left = max(int(columns.min()) - radius, 0)
+        right = min(int(columns.max()) + radius + 1, selected.shape[1])
+        region = selected[top:bottom, left:right]
+        distances = cast(NDArray[np.float64], distance_transform_edt(~region))
+        region[:] = distances <= radius
+        return selected
+
+    def _shape_selection(self,
+                         start: tuple[int, int],
+                         end: tuple[int, int],
+                         ) -> NDArray[np.bool_]:
+        if self._drawing_mask is None:
+            raise RuntimeError("No drawing mask is loaded.")
+        rows, columns = np.ogrid[:self._drawing_mask.shape[0], :self._drawing_mask.shape[1]]
+        if self._drawing_tool == "circle":
+            radius_squared = (end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2
+            return ((rows - start[0]) ** 2 + (columns - start[1]) ** 2
+                    <= radius_squared)
+        if self._drawing_tool == "square":
+            side = max(abs(end[0] - start[0]), abs(end[1] - start[1]))
+            end_row = start[0] + side * (1 if end[0] >= start[0] else -1)
+            end_column = start[1] + side * (1 if end[1] >= start[1] else -1)
+            row_min, row_max = sorted((start[0], end_row))
+            column_min, column_max = sorted((start[1], end_column))
+            return ((rows >= row_min) & (rows <= row_max)
+                    & (columns >= column_min) & (columns <= column_max))
+        return self._triangle_selection(start, end)
+
+    def _triangle_selection(self,
+                            apex: tuple[int, int],
+                            end: tuple[int, int],
+                            ) -> NDArray[np.bool_]:
+        if self._drawing_mask is None:
+            raise RuntimeError("No drawing mask is loaded.")
+        half_width = max(abs(end[1] - apex[1]), 1)
+        first_base = (end[0], apex[1] - half_width)
+        second_base = (end[0], apex[1] + half_width)
+        rows, columns = np.indices(self._drawing_mask.shape)
+        denominator = ((first_base[1] - second_base[1]) * (apex[0] - second_base[0])
+                       + (second_base[0] - first_base[0]) * (apex[1] - second_base[1]))
+        if denominator == 0:
+            selected = np.zeros(self._drawing_mask.shape, dtype=bool)
+            selected[apex] = True
+            return selected
+        first_weight = (((first_base[1] - second_base[1]) * (rows - second_base[0])
+                        + (second_base[0] - first_base[0]) * (columns - second_base[1]))
+                        / denominator)
+        second_weight = (((second_base[1] - apex[1]) * (rows - second_base[0])
+                         + (apex[0] - second_base[0]) * (columns - second_base[1]))
+                         / denominator)
+        third_weight = 1 - first_weight - second_weight
+        return (first_weight >= 0) & (second_weight >= 0) & (third_weight >= 0)
+
+    def set_mask(self, mask: NDArray[Any]) -> None:
+        """
+        Display a labelled 2D mask as a transparent colour overlay.
+        """
+        array = np.asarray(mask)
+        if array.ndim != 2:
+            raise ValueError(f"The mask viewer requires a 2D array; got shape {array.shape}.")
+        self._mask_array = array.copy()
+        self.mask_item.setImage(
+            self._colour_mask(array, self._mask_color), autoLevels=False)
+        opacity = max(self._mask_opacity, 0.8) if self._drawing_active else self._mask_opacity
+        self.mask_item.setOpacity(opacity)
+        self.mask_item.setVisible(self._mask_visible)
+
+    def clear_mask(self) -> None:
+        self._mask_array = None
+        self.mask_item.clear()
+
+    def set_mask_color(self, color: QColor | None) -> None:
+        """Use one solid mask colour, or the label colour map when ``None``."""
+        self._mask_color = ((color.red(), color.green(), color.blue())
+                            if color is not None
+                            else None)
+        if self._mask_array is not None:
+            self.mask_item.setImage(
+                self._colour_mask(self._mask_array, self._mask_color),
+                autoLevels=False)
+
+    def set_mask_visible(self, visible: bool) -> None:
+        self._mask_visible = visible
+        self.mask_item.setVisible(visible)
+
+    def set_mask_opacity(self, opacity: float) -> None:
+        self._mask_opacity = min(max(opacity, 0.0), 1.0)
+        displayed = max(self._mask_opacity, 0.8) if self._drawing_active else self._mask_opacity
+        self.mask_item.setOpacity(displayed)
+
+    @staticmethod
+    def _colour_mask(mask: NDArray[Any],
+                     solid_color: tuple[int, int, int] | None = None,
+                     ) -> NDArray[np.uint8]:
+        labels = np.asarray(mask)
+        if solid_color is not None:
+            rgba = np.zeros((*labels.shape, 4), dtype=np.uint8)
+            selected = labels != 0
+            rgba[selected, :3] = solid_color
+            rgba[selected, 3] = 255
+            return rgba
+        # Ordinary label planes need only a linear lookup, without sorting every
+        # pixel. Bound the table to 4 MiB even for sparse or very large IDs.
+        if labels.size and labels.dtype.kind in "bui" and labels.min() >= 0:
+            largest = int(labels.max())
+            if largest < 1 << 20:
+                size = 1 << max(8, largest.bit_length())
+                indices = labels
+                if labels.dtype.kind == "b" or labels.dtype == np.uint64:
+                    indices = labels.astype(np.intp)
+                # Bounds were checked above. Clip mode lets NumPy gather whole
+                # RGBA entries without advanced-indexing overhead or buffering.
+                return np.take(_label_palette(size), indices, axis=0, mode="clip")
+        # Unusual label types and huge IDs retain the compact palette fallback.
+        present, inverse = np.unique(labels, return_inverse=True)
+        palette = np.asarray(
+            [_label_rgba(int(label)) for label in present], dtype=np.uint8,
+        ).reshape(-1, 4)
+        return palette[inverse.ravel()].reshape((*labels.shape, 4))

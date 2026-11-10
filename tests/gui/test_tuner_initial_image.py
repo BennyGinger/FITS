@@ -8,16 +8,16 @@ import numpy as np
 import pytest
 import tifffile
 from scope_io import ScopeIO
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from fits.gui.main_window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.gui.viewer.registration import RegistrationTunerWindow
-from fits.gui.viewer.segmentation import SegmentationTunerWindow
-from fits.gui.viewer.background import BackgroundTunerWindow
-from fits.gui.viewer.common.base_window import ImageToolWindow
-from fits.gui.viewer.masks import MaskDrawingWindow
-from fits.gui.viewer.tracking import TrackingViewerWindow
+from fisch.gui.main_window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.viewer.registration import RegistrationTunerWindow
+from fisch.gui.viewer.segmentation import SegmentationTunerWindow
+from fisch.gui.viewer.background import BackgroundTunerWindow
+from fisch.gui.viewer.common.base_window import ImageToolWindow
+from fisch.gui.viewer.masks import MaskDrawingWindow
+from fisch.gui.viewer.tracking import TrackingViewerWindow
 
 _APP = None
 
@@ -31,7 +31,9 @@ def application(monkeypatch: pytest.MonkeyPatch) -> None:
     _APP = QApplication.instance() or QApplication([])
     monkeypatch.setattr(SegmentationTunerWindow, "_initialize_selected_model", lambda self: None)
     monkeypatch.setattr(SegmentationTunerWindow, "_run_preview_when_ready", lambda self: None)
-    from fits.gui.segmentation_models.loader import model_options_loader
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.StandardButton.Discard)
+    monkeypatch.setattr('fisch.gui.viewer.registration.window.confirm_discard_tuner_changes', lambda *args: True)
+    from fisch.gui.segmentation_models.loader import model_options_loader
     loader = model_options_loader()
     loader.start()
     loader.wait()
@@ -47,7 +49,7 @@ def images(tmp_path: Path) -> list[Path]:
     for name, intensity in (("a_first", 10), ("b_selected", 20)):
         folder = tmp_path / "condition" / name / f"{name}_s1"
         folder.mkdir(parents=True)
-        path = folder / "fits_array.tif"
+        path = folder / "proc_array.tif"
         array = np.full((3, 2, 16, 16), intensity, dtype=np.uint16)
         input_path = folder / "input.tif"
         tifffile.imwrite(input_path, array,
@@ -68,7 +70,7 @@ def test_tuner_opens_and_reveals_initial_image(tuner_class, selection, images, t
     elif selection == "image":
         initial = selected
     elif selection == "sibling":
-        initial = selected.parent / "fits_track.tif"
+        initial = selected.parent / "proc_masks_track.tif"
         initial.touch()
     tuner = tuner_class(tmp_path, initial_path=initial)
     try:
@@ -97,7 +99,7 @@ def test_choosing_a_directory_opens_first_image(tuner_class, images, tmp_path, m
 
 @pytest.mark.parametrize("tuner_class", [SegmentationTunerWindow, RegistrationTunerWindow])
 def test_image_in_selected_folder_takes_priority_over_subfolders(tuner_class, images, tmp_path):
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
     copyfile(images[1], source)
     tuner = tuner_class(tmp_path)
     try:
@@ -122,7 +124,7 @@ def test_unusable_selection_opens_first_experiment(tuner_class: type[ImageToolWi
     if selection == "missing":
         selected = tmp_path / "old_experiment"
     elif selection == "metadata":
-        selected = tmp_path / ".fits" / "notes.txt"
+        selected = tmp_path / ".pipeline" / "notes.txt"
         selected.parent.mkdir()
         selected.touch()
     tuner = tuner_class(tmp_path)
@@ -144,8 +146,8 @@ def test_all_tools_open_nested_series_and_ignore_backups(tool_class: type[ImageT
     """
     Reveal active scientific data automatically without selecting retained history.
     """
-    for metadata in (tmp_path / ".fits", tmp_path / "a_acquisition" / ".fits_experiment"):
-        backup = metadata / "backup" / "old_series" / "fits_array.tif"
+    for metadata in (tmp_path / ".pipeline", tmp_path / "a_acquisition" / ".acquisition"):
+        backup = metadata / "backup" / "old_series" / "proc_array.tif"
         backup.parent.mkdir(parents=True)
         copyfile(images[1], backup)
     tool = tool_class(tmp_path)
@@ -170,7 +172,7 @@ def test_main_gui_passes_selected_experiment(kind, select_experiment, images, tm
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_segment_channels([{"channel": "GFP"}])
-    main = FitsMainWindow(adapter)
+    main = FischMainWindow(adapter)
     tuner = None
     try:
         if select_experiment:

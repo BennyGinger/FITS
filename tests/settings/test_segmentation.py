@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fits.settings.loader import resolve_step_params
-from fits.settings.models import SegmentChannelSettings, SegmentSettings
+from fisch.settings.loader import resolve_step_params
+from fisch.settings.models import SegmentChannelSettings, SegmentSettings
 
 
 def test_segmentation_has_no_implicit_target_channel() -> None:

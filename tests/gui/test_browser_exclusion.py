@@ -11,9 +11,9 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import QApplication
 
-from fits.gui.main_window.run_browser import OUTDATED_COLOR, RunDirectoryBrowser
-from fits.workflows.checks.models import RunCompatibility
-from fits.workflows.experiments import ExperimentState
+from fisch.gui.main_window.run_browser import OUTDATED_COLOR, RunDirectoryBrowser
+from fisch.workflows.checks.models import RunCompatibility
+from fisch.workflows.experiments import ExperimentState
 
 
 def _application() -> QApplication:
@@ -96,7 +96,7 @@ def test_files_and_migrated_checkpoints_do_not_enable_exclusion(tmp_path: Path) 
     """
     app = _application()
     state = replace(_state(tmp_path, 'input_s1', False), migration_checkpoint='bg_sub')
-    image = state.workdir / 'fits_array.tif'
+    image = state.workdir / 'proc_array.tif'
     image.touch()
     browser = RunDirectoryBrowser()
     browser.set_root(tmp_path)
@@ -120,21 +120,21 @@ def test_main_browser_toggle_and_analysis_rebuild(tmp_path: Path, monkeypatch: p
     import tifffile
     from scope_io import ScopeIO
     from PySide6.QtWidgets import QLabel
-    from fits.environment import constant as cst
-    from fits.gui.file_management.manager import _rebuild_action
-    from fits.gui.main_window.window import FitsMainWindow
-    from fits.gui.settings import SettingsAdapter
-    from fits.settings.models import ConvertSettings
-    from fits.tasks.analysis.aggregate import save_master_analysis_table
-    from fits.tasks.common.table_results import save_parquet
-    from fits.tasks.convert import convert
-    from fits.workflows.artifacts.provenance import read_metadata
-    from fits.workflows.definitions.registry import REGISTRY
-    from fits.workflows.experiments import load_experiment_state, save_experiment_state
-    from fits.workflows.file_management.rebuild import ProcessingPlan
+    from fisch.environment import constant as cst
+    from fisch.gui.file_management.manager import _rebuild_action
+    from fisch.gui.main_window.window import FischMainWindow
+    from fisch.gui.settings import SettingsAdapter
+    from fisch.settings.models import ConvertSettings
+    from fisch.tasks.analysis.aggregate import save_master_analysis_table
+    from fisch.tasks.common.table_results import save_parquet
+    from fisch.tasks.convert import convert
+    from fisch.workflows.artifacts.provenance import read_metadata
+    from fisch.workflows.definitions.registry import REGISTRY
+    from fisch.workflows.experiments import load_experiment_state, save_experiment_state
+    from fisch.workflows.file_management.rebuild import ProcessingPlan
 
     app = _application()
-    monkeypatch.setattr('fits.gui.file_management.manager.run_file_task', lambda task, *args, **kwargs: task())
+    monkeypatch.setattr('fisch.gui.file_management.manager.run_file_task', lambda task, *args, **kwargs: task())
     source = tmp_path / 'input.tif'
     tifffile.imwrite(source, np.ones((8, 8), dtype=np.uint16), metadata={'axes': 'YX'})
     state = convert(ConvertSettings(), ExperimentState.init(tmp_path, source, run_dir=tmp_path),
@@ -142,7 +142,7 @@ def test_main_browser_toggle_and_analysis_rebuild(tmp_path: Path, monkeypatch: p
     raw = state.artifact(cst.ARTI_IMG_RAW)
     assert raw is not None
     payload = read_metadata(raw)
-    table = save_parquet(pd.DataFrame({'distance': [1]}), state.workdir / cst.FITS_DISTANCE_PROFILE_NAME,
+    table = save_parquet(pd.DataFrame({'distance': [1]}), state.workdir / cst.DISTANCE_PROFILE_NAME,
                          payload.with_artifact(artifact_type=cst.ARTI_DIST_PROF).new_revision([
                              {'artifact_path': raw.name, 'created_at': payload.artifact.created_at}]))
     state = state.with_complete_step(step_name=cst.StepName.DISTANCE_PROFILE,
@@ -157,7 +157,7 @@ def test_main_browser_toggle_and_analysis_rebuild(tmp_path: Path, monkeypatch: p
     adapter.user_name = 'Test'
     adapter.set_step_enabled(cst.StepName.CONVERT, False)
     adapter.save_to_run_dir()
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     window.show()
     app.processEvents()
 

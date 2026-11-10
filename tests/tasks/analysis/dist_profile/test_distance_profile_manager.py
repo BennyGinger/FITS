@@ -3,10 +3,10 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from fits.environment.constant import ARTI_IMG
-from fits.workflows.experiments import ExperimentState
-from fits.settings.models import DistanceProfileSettings
-from fits.tasks.analysis.dist_profile.manager import DistanceProfileManager
+from fisch.environment.constant import ARTI_IMG
+from fisch.workflows.experiments import ExperimentState
+from fisch.settings.models import DistanceProfileSettings
+from fisch.tasks.analysis.dist_profile.manager import DistanceProfileManager
 
 
 class FakeScopeIO:
@@ -33,9 +33,9 @@ IMAGE[:, 1, 1, 0] = [150, 250, 350, 450, 550]
 
 def test_manager_projects_z_and_builds_heatmap_ready_table(
         tmp_path: Path, monkeypatch,) -> None:
-    image_path = tmp_path / "fits_array.tif"
-    reference_path = tmp_path / "fits_ref_edge.tif"
-    roi_path = tmp_path / "fits_roi_tailfin.tif"
+    image_path = tmp_path / "proc_array.tif"
+    reference_path = tmp_path / "proc_ref_edge.tif"
+    roi_path = tmp_path / "proc_roi_tailfin.tif"
     for path in (image_path, reference_path, roi_path):
         path.touch()
     reference = np.zeros_like(IMAGE, dtype=np.uint8)
@@ -45,12 +45,12 @@ def test_manager_projects_z_and_builds_heatmap_ready_table(
     roi[:, :, 1, 0, 1:4] = 4
 
     monkeypatch.setattr(
-        "fits.tasks.analysis.manager.ScopeIO", FakeScopeIO)
+        "fisch.tasks.analysis.manager.ScopeIO", FakeScopeIO)
     monkeypatch.setattr(
-        "fits.tasks.analysis.dist_profile.manager.load_reference_artifact",
+        "fisch.tasks.analysis.dist_profile.manager.load_reference_artifact",
         lambda *args, **kwargs: (reference, "edge", ("RFP",)))
     monkeypatch.setattr(
-        "fits.tasks.analysis.dist_profile.manager.load_roi_artifact",
+        "fisch.tasks.analysis.dist_profile.manager.load_roi_artifact",
         lambda *args, **kwargs: (roi, "tailfin", ("RFP",)))
 
     state = ExperimentState(
@@ -90,17 +90,17 @@ def test_manager_projects_z_and_builds_heatmap_ready_table(
 
 def test_manager_profiles_whole_image_when_no_roi_exists(
         tmp_path: Path, monkeypatch,) -> None:
-    image_path = tmp_path / "fits_array.tif"
-    reference_path = tmp_path / "fits_ref_edge.tif"
+    image_path = tmp_path / "proc_array.tif"
+    reference_path = tmp_path / "proc_ref_edge.tif"
     image_path.touch()
     reference_path.touch()
     reference = np.zeros_like(IMAGE, dtype=np.uint8)
     reference[:, 0, 1, 0, 0] = 1
 
     monkeypatch.setattr(
-        "fits.tasks.analysis.manager.ScopeIO", FakeScopeIO)
+        "fisch.tasks.analysis.manager.ScopeIO", FakeScopeIO)
     monkeypatch.setattr(
-        "fits.tasks.analysis.dist_profile.manager.load_reference_artifact",
+        "fisch.tasks.analysis.dist_profile.manager.load_reference_artifact",
         lambda *args, **kwargs: (reference, "edge", ("RFP",)))
 
     state = ExperimentState(
@@ -133,4 +133,4 @@ import pytest
 @pytest.fixture(autouse=True)
 def isolate_geometry_metadata(monkeypatch):
     # Readers in this numerical test are in-memory arrays, not TIFF files.
-    monkeypatch.setattr('fits.tasks.analysis.manager.refresh_branch', lambda *args: None)
+    monkeypatch.setattr('fisch.tasks.analysis.manager.refresh_branch', lambda *args: None)

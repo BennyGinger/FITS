@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from fits.settings.models import DistanceProfileSettings, ExtractSettings
+from fisch.settings.models import DistanceProfileSettings, ExtractSettings
 
 
 def test_mask_request_defaults():

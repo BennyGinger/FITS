@@ -2,14 +2,14 @@
 
 [Developer documentation](README.md) · [Project README](../../README.md#citations-and-acknowledgments)
 
-FITS combines independently maintained scientific libraries with its own workflow
+FIScH combines independently maintained scientific libraries with its own workflow
 and companion packages. Credit the upstream methods actually used in your
-analysis, including the relevant model/version. Record your FITS version and
+analysis, including the relevant model/version. Record your FIScH version and
 settings alongside those citations.
 
 ## Scientific methods, readers, and models
 
-| Software | Role in FITS | Citation or upstream guidance |
+| Software | Role in FIScH | Citation or upstream guidance |
 | --- | --- | --- |
 | [Cellpose](https://github.com/MouseLand/cellpose) | Segmentation and model-dependent restoration through Cellpose Kit. | [Model-specific citation instructions](https://github.com/MouseLand/cellpose#citation). Cellpose 1–3, restoration, and Cellpose-SAM have different relevant papers. |
 | [nd2](https://github.com/tlambert03/nd2) | Nikon ND2 image and metadata reading through scope_io. | Acknowledge the nd2 project and the version used; consult its repository for current software citation metadata. |
@@ -21,13 +21,13 @@ settings alongside those citations.
 | [OpenCV](https://opencv.org/) | Registration and geometric image transforms through stackalign. | Follow the project's software citation guidance. |
 | [scikit-image](https://scikit-image.org/) | Image processing, registration, and object measurements. | See [scikit-image citation guidance](https://scikit-image.org/docs/stable/about.html#citing-scikit-image). |
 | [Trackastra](https://github.com/weigertlab/trackastra) | Linking cells across frames through tracklink. | Gallusser and Weigert, [*Trackastra: Transformer-based cell tracking for live-cell microscopy*](https://arxiv.org/abs/2405.15700) (2024). |
-| [µSAM](https://github.com/computational-cell-analytics/micro-sam) | Prompt-based Add/Edit prediction through the FITS headless integration. | [*Segment Anything for Microscopy*](https://doi.org/10.1038/s41592-024-02580-4) (2025) and the upstream [citation instructions](https://github.com/computational-cell-analytics/micro-sam#citation). |
+| [µSAM](https://github.com/computational-cell-analytics/micro-sam) | Prompt-based Add/Edit prediction through the FIScH headless integration. | [*Segment Anything for Microscopy*](https://doi.org/10.1038/s41592-024-02580-4) (2025) and the upstream [citation instructions](https://github.com/computational-cell-analytics/micro-sam#citation). |
 | [Segment Anything](https://github.com/facebookresearch/segment-anything) | Foundation model used by the µSAM integration. | [*Segment Anything*](https://arxiv.org/abs/2304.02643) (2023); follow µSAM's guidance for the model used. |
 | [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) | Lightweight SAM model option. | [MobileSAM paper](https://arxiv.org/abs/2306.14289) when using the corresponding model. |
 
 ## Numerical, table, and application foundations
 
-These projects support FITS directly or through its companion libraries. Their
+These projects support FIScH directly or through its companion libraries. Their
 names are acknowledgments, not a claim that every package needs a separate
 method citation for every analysis. Follow applicable upstream citation requests.
 
@@ -44,7 +44,7 @@ method citation for every analysis. Follow applicable upstream citation requests
 | [bioimage-cpp](https://pypi.org/project/bioimage-cpp/), [pooch](https://www.fatiando.org/pooch/), [xxhash](https://github.com/ifduyue/python-xxhash), [Zarr](https://zarr.dev/) | Additional declared dependencies of the headless µSAM integration. |
 
 Exact dependency versions and further transitive dependencies are recorded in
-[`uv.lock`](../../uv.lock). This page highlights the libraries declared by FITS,
+[`uv.lock`](../../uv.lock). This page highlights the libraries declared by FIScH,
 its companion packages, and the headless µSAM integration; it is not an inventory
 of every transitive package.
 
@@ -55,9 +55,9 @@ of every transitive package.
 - [Tad](https://www.tadviewer.com/): optional independent Parquet table viewer.
 - [Data Wrangler for Visual Studio Code](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.datawrangler): separately installed table-viewing alternative.
 
-## FITS companion repositories
+## FIScH companion repositories
 
-These libraries provide the FITS-facing integration or numerical responsibilities
+These libraries provide the FIScH-facing integration or numerical responsibilities
 and are maintained as separate repositories:
 
 - [scope_io](https://github.com/BennyGinger/scope_io): microscopy I/O and metadata.
@@ -68,4 +68,4 @@ and are maintained as separate repositories:
 - [mask_interpolation](https://github.com/BennyGinger/mask_interpolation): sparse-mask interpolation.
 - [bioimagequant](https://github.com/BennyGinger/bioimagequant): quantitative analysis.
 - [progress_bar](https://github.com/BennyGinger/Progress_bar): workflow progress reporting.
-- [micro-sam-headless](https://github.com/BennyGinger/micro-sam-headless): the FITS headless fork of upstream µSAM.
+- [micro-sam-headless](https://github.com/BennyGinger/micro-sam-headless): the FIScH headless fork of upstream µSAM.

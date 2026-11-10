@@ -16,7 +16,7 @@ class UpdateDialog(QDialog):
         """
         super().__init__()
         self.action = "current" if request["kind"] == "update" else "cancel"
-        self.setWindowTitle(request.get("title", "FITS"))
+        self.setWindowTitle(request.get("title", "FIScH"))
         self.setMinimumWidth(480)
         layout = QVBoxLayout(self)
         if request["kind"] == "update":
@@ -52,7 +52,7 @@ class UpdateDialog(QDialog):
         """
         Emphasize version numbers and align the update question above the buttons.
         """
-        self.version_message = QLabel(f"A newer version of FITS is available: <b>{escape(request['release'])}</b>.<br>"
+        self.version_message = QLabel(f"A newer version of FIScH is available: <b>{escape(request['release'])}</b>.<br>"
                                       f"The current version installed is <b>{escape(request['current_version'])}</b>.")
         self.version_message.setTextFormat(Qt.TextFormat.RichText)
         self.version_message.setWordWrap(True)
@@ -127,7 +127,7 @@ def main() -> None:
     parser.add_argument("response", type=Path)
     arguments = parser.parse_args()
     app = QApplication([])
-    app.setApplicationName("FITS")
+    app.setApplicationName("FIScH")
     request = json.loads(arguments.request.read_text(encoding="utf-8"))
     dialog = UpdateDialog(request)
     dialog.exec()

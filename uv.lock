@@ -15,7 +15,7 @@ members = [
     "bg-sub",
     "bioimagequant",
     "cellpose-kit",
-    "fits",
+    "fisch",
     "mask-interpolation",
     "progress-bar",
     "scope-io",
@@ -464,8 +464,8 @@ wheels = [
 ]
 
 [[package]]
-name = "fits"
-version = "4.1.0"
+name = "fisch"
+version = "5.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "bg-sub" },
@@ -530,8 +530,8 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 cuda129 = [
-    { name = "torch", marker = "platform_machine == 'AMD64' and sys_platform == 'win32'", specifier = "==2.8.0+cu129", index = "https://download.pytorch.org/whl/cu129/", conflict = { package = "fits", group = "cuda129" } },
-    { name = "torchvision", marker = "platform_machine == 'AMD64' and sys_platform == 'win32'", specifier = "==0.23.0+cu129", index = "https://download.pytorch.org/whl/cu129/", conflict = { package = "fits", group = "cuda129" } },
+    { name = "torch", marker = "platform_machine == 'AMD64' and sys_platform == 'win32'", specifier = "==2.8.0+cu129", index = "https://download.pytorch.org/whl/cu129/", conflict = { package = "fisch", group = "cuda129" } },
+    { name = "torchvision", marker = "platform_machine == 'AMD64' and sys_platform == 'win32'", specifier = "==0.23.0+cu129", index = "https://download.pytorch.org/whl/cu129/", conflict = { package = "fisch", group = "cuda129" } },
 ]
 dev = [
     { name = "ipykernel", specifier = ">=7.2.0" },

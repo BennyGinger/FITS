@@ -2,8 +2,8 @@ from pathlib import Path
 
 import tomllib
 
-from fits.environment.constant import StepName
-from fits.gui.settings import SAVED_SETTINGS_NAME, STEP_LAYOUTS, SettingsAdapter
+from fisch.environment.constant import StepName
+from fisch.gui.settings import SAVED_SETTINGS_NAME, STEP_LAYOUTS, SettingsAdapter
 
 
 def test_adapter_updates_and_saves_comment_preserving_copy(tmp_path: Path) -> None:
@@ -15,9 +15,9 @@ def test_adapter_updates_and_saves_comment_preserving_copy(tmp_path: Path) -> No
 
     destination = adapter.save_to_run_dir()
 
-    assert destination == tmp_path / ".fits" / SAVED_SETTINGS_NAME
+    assert destination == tmp_path / ".pipeline" / SAVED_SETTINGS_NAME
     saved_text = destination.read_text(encoding="utf-8")
-    assert "# FITS settings template." in saved_text
+    assert "# FIScH settings template." in saved_text
     assert "# Internal ordering control; not exposed in the GUI." in saved_text
     assert "# Enter a target channel before enabling segmentation." in saved_text
 
@@ -123,7 +123,7 @@ def test_mask_request_settings_round_trip(tmp_path: Path) -> None:
     reloaded.load(path)
     assert reloaded.field_value(StepName.EXTRACT, "draw_ref_mask") is True
     assert reloaded.field_value(StepName.EXTRACT, "expected_ref_masks") == 3
-    from fits.settings.models import DistanceProfileSettings
+    from fisch.settings.models import DistanceProfileSettings
     params = reloaded.document[StepName.DISTANCE_PROFILE]["params"].unwrap()
     assert "draw_ref_mask" not in params
     assert DistanceProfileSettings.model_validate(params).draw_ref_mask is True

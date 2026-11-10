@@ -6,9 +6,9 @@ from typing import Any
 import numpy as np
 import pytest
 
-from fits.environment.constant import ARTI_ROI, DIST_FITS
-from fits.tasks.roi_mask import RoiSession
-from fits.tasks.roi_mask.artifact import (
+from fisch.environment.constant import ARTI_ROI, DIST_PIPELINE
+from fisch.tasks.roi_mask import RoiSession
+from fisch.tasks.roi_mask.artifact import (
     ROI_MASK_ENCODING, ROI_MASK_VALUE_TABLE, _normalize_roi_encoding,
     merge_roi_channels,
 )
@@ -19,7 +19,7 @@ class FakeScopeIO:
         self._array = array
         self._axes = axes
         self.axes = axes
-        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"), metadata=ImageMetadata().with_custom_metadata({"pipeline_meta": {"version": "4.0.0"}}).new_revision())
+        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"), metadata=ImageMetadata().with_custom_metadata({"pipeline_meta": {"version": "5.0.0"}}).new_revision())
         self.channel_labels = labels
         self.saved: dict[str, Any] | None = None
 
@@ -39,10 +39,10 @@ class FakeScopeIO:
 def create_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                    image: np.ndarray, axes: str = "TYX",
                    labels: list[str] | None = None) -> tuple[RoiSession, FakeScopeIO]:
-    source = tmp_path / "fits_array.tif"
+    source = tmp_path / "proc_array.tif"
     source.touch()
     reader = FakeScopeIO(image, axes, labels or ["GFP"])
-    monkeypatch.setattr("fits.interaction.image.ScopeIO.from_path", lambda _: reader)
+    monkeypatch.setattr("fisch.interaction.image.ScopeIO.from_path", lambda _: reader)
     return RoiSession(source), reader
 
 
@@ -286,10 +286,10 @@ def test_save_uses_roi_name_artifact_and_selected_channel(
 
     output = session.save("tail", channel="RFP")
 
-    assert output == tmp_path / "fits_roi_tail.tif"
+    assert output == tmp_path / "proc_roi_tail.tif"
     assert reader.saved is not None
     assert reader.saved["artifact_kind"] == ARTI_ROI
-    assert reader.saved["created_by"] == DIST_FITS
+    assert reader.saved["created_by"] == DIST_PIPELINE
     assert reader.saved["export_channels"] == ["RFP"]
     assert reader.saved["array"].dtype == np.uint16
     assert reader.saved["custom_metadata"] == {
@@ -316,11 +316,11 @@ def test_roi_without_current_encoding_is_rejected() -> None:
 def test_saving_replaces_an_artifact_without_current_encoding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    output = tmp_path / "fits_roi_tail.tif"
+    output = tmp_path / "proc_roi_tail.tif"
     output.touch()
     old_reader = SimpleNamespace(metadata=SimpleNamespace(custom_metadata={}))
     monkeypatch.setattr(
-        "fits.tasks.roi_mask.artifact.ScopeIO.from_path", lambda _: old_reader)
+        "fisch.tasks.roi_mask.artifact.ScopeIO.from_path", lambda _: old_reader)
     current = np.full((2, 3, 3), 4, dtype=np.uint8)
 
     merged, labels = merge_roi_channels(
@@ -335,7 +335,7 @@ def test_roi_tiff_round_trip_reads_encoding_from_image_metadata(tmp_path: Path) 
     import tifffile
     from scope_io import ScopeIO
 
-    source = tmp_path / 'fits_array.tif'
+    source = tmp_path / 'proc_array.tif'
     image = np.arange(2 * 8 * 8, dtype=np.uint16).reshape(2, 8, 8)
     tifffile.imwrite(source, image, imagej=True, metadata={'axes': 'TYX'})
     session = RoiSession(source)

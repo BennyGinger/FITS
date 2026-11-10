@@ -6,10 +6,10 @@ import pytest
 import tifffile
 from PySide6.QtWidgets import QApplication
 from scope_io import ScopeIO
-from fits.environment import constant as cst
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.workflows.experiments import ExperimentState, save_experiment_state, discover_saved_states
+from fisch.environment import constant as cst
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.workflows.experiments import ExperimentState, save_experiment_state, discover_saved_states
 
 _APP = None
 
@@ -26,8 +26,8 @@ def current_window(tmp_path):
     series.mkdir()
     reader = ScopeIO.from_path(source)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
-        channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
-    image = reader.save_array(np.ones((8, 8), dtype=np.uint16), metadata=payload, output_path=series / cst.FITS_ARRAY_RAW)
+        channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '5.0.0'}}).new_revision()
+    image = reader.save_array(np.ones((8, 8), dtype=np.uint16), metadata=payload, output_path=series / cst.ARRAY_RAW)
     save_experiment_state(ExperimentState.init(series, source, run_dir=tmp_path).with_complete_step(
         step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=image))
     adapter = SettingsAdapter()
@@ -35,7 +35,7 @@ def current_window(tmp_path):
     adapter.user_name = 'Test'
     adapter.set_field_value(cst.StepName.CONVERT, 'channel_labels', ['Red'])
     adapter.save_to_run_dir()
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     window.show()
     _APP.processEvents()
     yield window, series
@@ -52,7 +52,7 @@ def test_summary_and_mixed_run_block_all_processing(current_window, tmp_path):
     assert 'incompatible' not in window._file_guidance().details
     old = tmp_path / 'old'
     old.mkdir()
-    tifffile.imwrite(old / cst.FITS_ARRAY_NAME, np.ones((8, 8), dtype=np.uint16))
+    tifffile.imwrite(old / cst.ARRAY_NAME, np.ones((8, 8), dtype=np.uint16))
     window._refresh_run_inventory()
     window._refresh_phase_access()
     assert window.file_status_label.text() == 'Run blocked - read-only'
@@ -71,14 +71,14 @@ def test_summary_and_mixed_run_block_all_processing(current_window, tmp_path):
 def test_folder_status_and_combined_management_popup(current_window, tmp_path):
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtWidgets import QDialog, QLabel, QPlainTextEdit, QToolButton
-    from fits.gui.main_window.run_browser import COMPATIBLE_COLOR, OUTDATED_COLOR
+    from fisch.gui.main_window.run_browser import COMPATIBLE_COLOR, OUTDATED_COLOR
     window, series = current_window
     model = window.run_browser.model
     index = model.index(str(series))
     assert model.data(index, Qt.ItemDataRole.ForegroundRole).name() == COMPATIBLE_COLOR
     old = tmp_path / 'old'
     old.mkdir()
-    tifffile.imwrite(old / cst.FITS_ARRAY_NAME, np.ones((8, 8), dtype=np.uint16))
+    tifffile.imwrite(old / cst.ARRAY_NAME, np.ones((8, 8), dtype=np.uint16))
     window._refresh_run_inventory()
     _APP.processEvents()
     old_index = model.index(str(old))
@@ -124,21 +124,21 @@ def test_manage_refresh_runs_after_review_and_cancel_preserves_files(current_win
     import shutil
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QDialog, QPushButton
-    from fits.gui.file_management.manager import manage_files
-    from fits.workflows.artifacts.provenance import read_metadata
+    from fisch.gui.file_management.manager import manage_files
+    from fisch.workflows.artifacts.provenance import read_metadata
     window, series = current_window
-    source = series / cst.FITS_ARRAY_RAW
+    source = series / cst.ARRAY_RAW
     stamp = read_metadata(source).artifact.created_at
     before = source.read_bytes()
     # Selecting one series must still review/update the other series in the run.
     other = series.parent / 'image_s2'
     other.mkdir()
-    other_image = other / cst.FITS_ARRAY_RAW
+    other_image = other / cst.ARRAY_RAW
     shutil.copy2(source, other_image)
     save_experiment_state(ExperimentState.init(other, series.parent / 'image.tif', run_dir=tmp_path).with_complete_step(
         step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=other_image))
     import json
-    state_path = next((series.parent / '.fits_experiment/experiment_state').glob('*/experiment_state.json'))
+    state_path = next((series.parent / '.acquisition/experiment_state').glob('*/experiment_state.json'))
     payload = json.loads(state_path.read_text())
     payload['artifacts'][cst.ARTI_RAW] = str(series.parent / 'image.tif')
     state_path.write_text(json.dumps(payload))
@@ -153,7 +153,7 @@ def test_manage_refresh_runs_after_review_and_cancel_preserves_files(current_win
              if button.text() == 'Update paths and condition tags…').click()
         if dialog.isVisible():
             dialog.reject()
-    monkeypatch.setattr('fits.gui.file_management.manager.confirm_files', confirm)
+    monkeypatch.setattr('fisch.gui.file_management.manager.confirm_files', confirm)
     QTimer.singleShot(0, choose)
     assert not manage_files(tmp_path, series, window)
     assert source.read_bytes() == before
@@ -165,16 +165,16 @@ def test_manage_refresh_runs_after_review_and_cancel_preserves_files(current_win
     assert other_image.read_bytes() == before
 
 
-def test_manage_actions_disable_unavailable_work(current_window: tuple[FitsMainWindow, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_manage_actions_disable_unavailable_work(current_window: tuple[FischMainWindow, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Keep useful actions enabled and place guidance to their left.
     """
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QDialog, QLabel, QPushButton
-    from fits.gui.file_management.manager import manage_files
+    from fisch.gui.file_management.manager import manage_files
     window, series = current_window
     previews = []
-    monkeypatch.setattr('fits.gui.file_management.manager.confirm_files', lambda *args, **kwargs: previews.append(args[1]) or False)
+    monkeypatch.setattr('fisch.gui.file_management.manager.confirm_files', lambda *args, **kwargs: previews.append(args[1]) or False)
     def inspect() -> None:
         """
         Check current-run action states and the two-column file layout.
@@ -188,7 +188,7 @@ def test_manage_actions_disable_unavailable_work(current_window: tuple[FitsMainW
             assert buttons['Compact experiment…'].isEnabled()
             for title in ('Restore selected backup…', 'Delete selected backups…'):
                 assert not buttons[title].isEnabled()
-            assert 'Migrate to FITS 4…' not in buttons
+            assert 'Migrate to FIScH 5…' not in buttons
             notice = dialog.findChild(QLabel, 'file_status_summary')
             assert notice is not None
             rebuild = buttons['Rebuild results…']
@@ -207,17 +207,17 @@ def test_manage_actions_disable_unavailable_work(current_window: tuple[FitsMainW
 
 def test_loading_stale_results_warns_without_locking_current_format(current_window, tmp_path):
     from PySide6.QtCore import Qt
-    from fits.workflows.artifacts.provenance import read_metadata
+    from fisch.workflows.artifacts.provenance import read_metadata
     from scope_io.writers.metadata_update import rewrite_metadata
-    from fits.workflows.experiments import discover_saved_states
-    from fits.gui.main_window.run_browser import OUTDATED_COLOR
+    from fisch.workflows.experiments import discover_saved_states
+    from fisch.gui.main_window.run_browser import OUTDATED_COLOR
     window, series = current_window
     state = discover_saved_states(tmp_path)[0]
     raw = state.artifact(cst.ARTI_IMG_RAW)
     reader = ScopeIO.from_path(raw)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
         {'artifact_path': raw.name, 'created_at': read_metadata(raw).artifact.created_at}])
-    bg = reader.save_array(reader.get_array().array, metadata=payload, output_path=series / cst.FITS_ARRAY_BGSUB)
+    bg = reader.save_array(reader.get_array().array, metadata=payload, output_path=series / cst.ARRAY_BGSUB)
     save_experiment_state(state.with_complete_step(step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG_BGSUB, artifact_path=bg))
     rewrite_metadata(raw, read_metadata(raw).new_revision())
     window._refresh_run_inventory()
@@ -233,10 +233,10 @@ def test_loading_stale_results_warns_without_locking_current_format(current_wind
 
 @pytest.mark.parametrize('rebuild', [False, True])
 def test_migration_dialog_defaults_to_metadata_only(tmp_path, rebuild):
-    from fits.workflows.file_management.relocation import PortablePlan
+    from fisch.workflows.file_management.relocation import PortablePlan
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QCheckBox, QDialog
-    from fits.gui.file_management.manager import confirm_migration
+    from fisch.gui.file_management.manager import confirm_migration
     global _APP
     _APP = QApplication.instance() or QApplication([])
     def inspect():
@@ -253,21 +253,21 @@ def test_manager_migrates_real_legacy_run_without_launching_processing(tmp_path:
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QDialog, QLabel, QListWidget, QPushButton
     from test_file_management import legacy_run
-    from fits.gui.file_management.manager import manage_files
-    from fits.workflows.checks.compatibility import inspect_run_compatibility
+    from fisch.gui.file_management.manager import manage_files
+    from fisch.workflows.checks.compatibility import inspect_run_compatibility
     global _APP
     _APP = QApplication.instance() or QApplication([])
     adapter, old, pixels = legacy_run(tmp_path)
     calls = []
-    monkeypatch.setattr('fits.gui.file_management.manager.confirm_migration', lambda *args: False)
+    monkeypatch.setattr('fisch.gui.file_management.manager.confirm_migration', lambda *args: False)
     def choose():
         dialog = _APP.activeModalWidget()
         assert isinstance(dialog, QDialog)
         buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
         for title in ('Update paths and condition tags…', 'Compact experiment…'):
             assert not buttons[title].isEnabled()
-        assert buttons['Migrate to FITS 4…'].isEnabled()
-        buttons['Migrate to FITS 4…'].click()
+        assert buttons['Migrate to FIScH 5…'].isEnabled()
+        buttons['Migrate to FIScH 5…'].click()
     QTimer.singleShot(0, choose)
     assert manage_files(tmp_path, old.workdir, run_processing=lambda plan: calls.append(plan))
     assert not calls
@@ -312,9 +312,9 @@ def test_manage_files_preserves_legacy_settings_before_migration(tmp_path: Path,
     global _APP
     _APP = QApplication.instance() or QApplication([])
     adapter, _, _ = legacy_run(tmp_path)
-    settings = tmp_path / '.fits/fits_settings.toml'
+    settings = tmp_path / '.pipeline/settings.toml'
     before = settings.read_bytes()
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     calls: list[Path] = []
 
     def reject_settings_write() -> None:
@@ -332,7 +332,7 @@ def test_manage_files_preserves_legacy_settings_before_migration(tmp_path: Path,
         return False
 
     monkeypatch.setattr(window, '_save_settings', reject_settings_write)
-    monkeypatch.setattr('fits.gui.main_window.window.manage_files', inspect_manager)
+    monkeypatch.setattr('fisch.gui.main_window.window.manage_files', inspect_manager)
     try:
         window._manage_files()
         assert calls == [tmp_path] and settings.read_bytes() == before
@@ -347,19 +347,19 @@ def test_optional_migration_rebuild_runs_the_complete_workflow(tmp_path: Path, m
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QDialog, QPushButton
     from test_file_management import legacy_run, mock_rebuild_processing
-    from fits.gui.file_management.manager import manage_files
-    from fits.workflows.file_management.rebuild import ProcessingPlan
-    from fits.workflows.file_management.history import snapshots
-    from fits.workflows.checks.artifacts import inspect_run
-    from fits.settings.loader import load_settings, run_settings_path
-    from fits.pipeline import start_pipeline
+    from fisch.gui.file_management.manager import manage_files
+    from fisch.workflows.file_management.rebuild import ProcessingPlan
+    from fisch.workflows.file_management.history import snapshots
+    from fisch.workflows.checks.artifacts import inspect_run
+    from fisch.settings.loader import load_settings, run_settings_path
+    from fisch.pipeline import start_pipeline
     global _APP
     _APP = QApplication.instance() or QApplication([])
     adapter, _, pixels = legacy_run(tmp_path)
     mock_rebuild_processing(monkeypatch, adapter)
     adapter.save_to_run_dir()
     processing: list[ProcessingPlan] = []
-    monkeypatch.setattr('fits.gui.file_management.manager.confirm_migration', lambda *args: True)
+    monkeypatch.setattr('fisch.gui.file_management.manager.confirm_migration', lambda *args: True)
 
     def confirm(*args: object, **kwargs: object) -> bool:
         """
@@ -380,9 +380,9 @@ def test_optional_migration_rebuild_runs_the_complete_workflow(tmp_path: Path, m
         """
         dialog = _APP.activeModalWidget()
         assert isinstance(dialog, QDialog)
-        next(button for button in dialog.findChildren(QPushButton) if button.text() == 'Migrate to FITS 4…').click()
+        next(button for button in dialog.findChildren(QPushButton) if button.text() == 'Migrate to FIScH 5…').click()
 
-    monkeypatch.setattr('fits.gui.file_management.manager.confirm_files', confirm)
+    monkeypatch.setattr('fisch.gui.file_management.manager.confirm_files', confirm)
     QTimer.singleShot(0, choose)
     assert manage_files(tmp_path, run_processing=run)
     state = discover_saved_states(tmp_path)[0]
@@ -394,13 +394,13 @@ def test_optional_migration_rebuild_runs_the_complete_workflow(tmp_path: Path, m
     assert len(snapshots(tmp_path)) == 2
 
 
-def test_empty_run_disables_file_actions(current_window: tuple[FitsMainWindow, Path], tmp_path: Path) -> None:
+def test_empty_run_disables_file_actions(current_window: tuple[FischMainWindow, Path], tmp_path: Path) -> None:
     """
     Keep every data action unavailable until an experiment has been converted.
     """
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QDialog, QLabel, QPushButton
-    from fits.gui.file_management.manager import manage_files
+    from fisch.gui.file_management.manager import manage_files
 
     empty = tmp_path / 'empty'
     empty.mkdir()
@@ -423,14 +423,14 @@ def test_empty_run_disables_file_actions(current_window: tuple[FitsMainWindow, P
     assert not manage_files(empty)
 
 
-def test_backup_buttons_follow_selection_count(current_window: tuple[FitsMainWindow, Path], tmp_path: Path) -> None:
+def test_backup_buttons_follow_selection_count(current_window: tuple[FischMainWindow, Path], tmp_path: Path) -> None:
     """
     Offer restoring exactly one snapshot and deleting one or multiple snapshots.
     """
     from PySide6.QtCore import QItemSelectionModel
     from PySide6.QtWidgets import QPushButton
-    from fits.gui.file_management.manager import _history_panel
-    from fits.workflows.file_management.history import Snapshot
+    from fisch.gui.file_management.manager import _history_panel
+    from fisch.workflows.file_management.history import Snapshot
 
     entries = tuple(Snapshot(tmp_path / str(index), tmp_path, (), ()) for index in range(2))
     group, history, _ = _history_panel(entries, tmp_path, lambda action: None)
@@ -450,7 +450,7 @@ def test_backup_buttons_follow_selection_count(current_window: tuple[FitsMainWin
         group.deleteLater()
 
 
-def test_moved_master_tags_warn_and_enable_only_location_update(current_window: tuple[FitsMainWindow, Path],
+def test_moved_master_tags_warn_and_enable_only_location_update(current_window: tuple[FischMainWindow, Path],
                                                                  tmp_path: Path,
                                                                  monkeypatch: pytest.MonkeyPatch,
                                                                  ) -> None:
@@ -461,16 +461,16 @@ def test_moved_master_tags_warn_and_enable_only_location_update(current_window: 
     import pandas as pd
     from PySide6.QtCore import QTimer, Qt
     from PySide6.QtWidgets import QDialog, QGroupBox, QPushButton
-    from fits.gui.file_management.manager import manage_files
-    from fits.gui.main_window.run_browser import OUTDATED_COLOR
-    from fits.tasks.analysis.aggregate import save_master_analysis_table
-    from fits.tasks.common.table_results import save_parquet
-    from fits.workflows.artifacts.provenance import read_metadata
+    from fisch.gui.file_management.manager import manage_files
+    from fisch.gui.main_window.run_browser import OUTDATED_COLOR
+    from fisch.tasks.analysis.aggregate import save_master_analysis_table
+    from fisch.tasks.common.table_results import save_parquet
+    from fisch.workflows.artifacts.provenance import read_metadata
 
     window, series = current_window
     state = discover_saved_states(tmp_path)[0]
-    raw = series / cst.FITS_ARRAY_RAW
-    segmentation = series / cst.FITS_MASK_SEG
+    raw = series / cst.ARRAY_RAW
+    segmentation = series / cst.MASK_SEG
     mask_payload = read_metadata(raw).with_artifact(artifact_type=cst.ARTI_SEG).new_revision([
         {'artifact_path': raw.name, 'created_at': read_metadata(raw).artifact.created_at}])
     ScopeIO.from_path(raw).save_array(np.ones((8, 8), dtype=np.uint16), output_path=segmentation, metadata=mask_payload)
@@ -478,7 +478,7 @@ def test_moved_master_tags_warn_and_enable_only_location_update(current_window: 
     payload = read_metadata(raw).with_artifact(artifact_type=cst.ARTI_QUANTI).new_revision([
         {'artifact_path': raw.name, 'created_at': read_metadata(raw).artifact.created_at},
         {'artifact_path': segmentation.name, 'created_at': mask_payload.artifact.created_at}])
-    table = series / cst.FITS_QUANTI_NAME
+    table = series / cst.QUANTI_NAME
     save_parquet(pd.DataFrame({'object_name': ['segmentation'], 'object_channel': ['Red'],
                                'label': [1], 'frame': [0], 'intensity_mean': [5.0]}), table, payload)
     state = state.with_complete_step(step_name=cst.StepName.EXTRACT, artifact_kind=cst.ARTI_QUANTI, artifact_path=table)
@@ -496,7 +496,7 @@ def test_moved_master_tags_warn_and_enable_only_location_update(current_window: 
     assert 'Update paths and condition tags' in window._file_guidance().next_steps
     index = window.run_browser.model.index(str(moved / series.name))
     assert window.run_browser.model.data(index, Qt.ItemDataRole.ForegroundRole).name() == OUTDATED_COLOR
-    monkeypatch.setattr('fits.gui.file_management.manager.confirm_files', lambda *args, **kwargs: True)
+    monkeypatch.setattr('fisch.gui.file_management.manager.confirm_files', lambda *args, **kwargs: True)
 
     def choose() -> None:
         """
@@ -523,20 +523,20 @@ def test_moved_master_tags_warn_and_enable_only_location_update(current_window: 
     assert (moved / series.name / table.name).read_bytes() == before
 
 
-def test_outdated_run_offers_one_targeted_rebuild(current_window: tuple[FitsMainWindow, Path], tmp_path: Path) -> None:
+def test_outdated_run_offers_one_targeted_rebuild(current_window: tuple[FischMainWindow, Path], tmp_path: Path) -> None:
     """
     Offer only targeted rebuilding after overwriting one stage without downstream work.
     """
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QDialog, QGroupBox, QPushButton
-    from fits.gui.file_management.manager import manage_files
-    from fits.workflows.artifacts.provenance import read_metadata
+    from fisch.gui.file_management.manager import manage_files
+    from fisch.workflows.artifacts.provenance import read_metadata
     from scope_io.writers.metadata_update import rewrite_metadata
 
     window, series = current_window
     state = discover_saved_states(tmp_path)[0]
-    raw = series / cst.FITS_ARRAY_RAW
-    bg = series / cst.FITS_ARRAY_BGSUB
+    raw = series / cst.ARRAY_RAW
+    bg = series / cst.ARRAY_BGSUB
     reader = ScopeIO.from_path(raw)
     payload = read_metadata(raw).with_artifact(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
         {'artifact_path': raw.name, 'created_at': read_metadata(raw).artifact.created_at}])
@@ -561,3 +561,34 @@ def test_outdated_run_offers_one_targeted_rebuild(current_window: tuple[FitsMain
 
     QTimer.singleShot(0, inspect)
     assert not manage_files(tmp_path, parent=window)
+
+
+@pytest.mark.parametrize('blocker', ['username', 'single_frame'])
+def test_maintenance_failure_reports_the_actual_console_reason(current_window: tuple[FischMainWindow, Path],
+                                                               monkeypatch: pytest.MonkeyPatch,
+                                                               blocker: str,
+                                                               ) -> None:
+    """
+    Show the actual launch validation error rather than a generic file-review instruction.
+    """
+    from fisch.workflows.file_management.rebuild import ProcessingPlan
+
+    window, series = current_window
+    steps = (str(cst.StepName.CONVERT),)
+    if blocker == 'username':
+        window.user_name_edit.clear()
+        expected = 'user name'
+    else:
+        window.adapter.set_step_enabled(cst.StepName.TRACK, True)
+        window.adapter.set_field_value(cst.StepName.TRACK, 'channel_to_track', ['Red'])
+        window.adapter.set_segment_channels([{'channel': 'Red'}])
+        window._populate_from_adapter()
+        steps += (str(cst.StepName.TRACK),)
+        expected = 'requires at least 2 frames'
+    plan = ProcessingPlan(Path(window.adapter.run_dir), 'required', {series: steps}, ())
+    monkeypatch.setattr(window, '_save_settings', lambda: pytest.fail('Blocked maintenance must not save settings.'))
+    with pytest.raises(ValueError, match=expected):
+        window._run_maintenance_plan(plan)
+    assert expected in window.console.toPlainText()
+    assert window._maintenance_plan is None
+    assert window._thread is None

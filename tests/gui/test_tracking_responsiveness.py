@@ -1,5 +1,6 @@
 """Background trajectories, incremental edits, and initial mask channel selection."""
 from pathlib import Path
+from fisch.environment.paths import experiment_cache
 from threading import Event
 from time import monotonic
 from typing import cast
@@ -14,13 +15,13 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox, QStyleOptionGraphicsItem
 from roifile import ImagejRoi
 
-from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK
-from fits.gui.viewer.masks.window import MaskDrawingWindow
-from fits.gui.viewer.tracking.centroids import CentroidCache
-from fits.gui.viewer.tracking.path_item import TrackPathsItem
-from fits.gui.viewer.tracking.session import TrackingViewerSession
-from fits.gui.viewer.tracking.window import TrackingViewerWindow
-from fits.tasks.roi_mask.artifact import ROI_MASK_ENCODING
+from fisch.environment.constant import ARRAY_NAME, MASK_TRACK
+from fisch.gui.viewer.masks.window import MaskDrawingWindow
+from fisch.gui.viewer.tracking.centroids import CentroidCache
+from fisch.gui.viewer.tracking.path_item import TrackPathsItem
+from fisch.gui.viewer.tracking.session import TrackingViewerSession
+from fisch.gui.viewer.tracking.window import TrackingViewerWindow
+from fisch.tasks.roi_mask.artifact import ROI_MASK_ENCODING
 
 
 _APP: QApplication | None = None
@@ -48,7 +49,8 @@ def experiment(tmp_path: Path, channels: tuple[str, ...] = ("GFP", "DAPI", "iRed
         image[:, channel] *= channel + 1
     tifffile.imwrite(raw, image, photometric="minisblack", metadata={"axes": "TCYX"})
     return ScopeIO.from_path(raw).save_array(image, channel_labels=channels,
-                                           output_path=tmp_path / FITS_ARRAY_NAME)
+                                           output_path=tmp_path / ARRAY_NAME,
+                                           custom_metadata={'pipeline_meta': {'version': '5.0.0'}})
 
 
 def mask(source: Path, name: str, channels: tuple[str, ...], value: int = 7) -> Path:
@@ -63,7 +65,7 @@ def mask(source: Path, name: str, channels: tuple[str, ...], value: int = 7) -> 
 
 @pytest.mark.parametrize("editing_enabled", [False, True])
 @pytest.mark.parametrize("tracking_name", [
-    FITS_MASK_TRACK, "fits_track_edited.tif", "fits_track_edited_filtered.tif"])
+    MASK_TRACK, "proc_track_edited.tif", "proc_track_edited_filtered.tif"])
 def test_tracking_browser_reveals_loaded_file(
         tmp_path: Path, editing_enabled: bool, tracking_name: str) -> None:
     app()
@@ -101,7 +103,7 @@ def test_selected_path_display_updates_without_rebuilding_trajectories(
         labels[frame, 14:17, 15 + frame:18 + frame] = 11
     tracking = ScopeIO.from_path(source).save_array(
         labels, channel_labels=("GFP", "DAPI", "iRed"), export_channels=("iRed",),
-        output_path=source.with_name(FITS_MASK_TRACK))
+        output_path=source.with_name(MASK_TRACK))
     window = TrackingViewerWindow(
         tracking_path=tracking, editing_enabled=editing_enabled, selection_enabled=True)
     try:
@@ -140,7 +142,7 @@ def test_save_current_display_button_exports_raw_channels_and_overlay(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     errors = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: errors.append(args[-1]))
     window = TrackingViewerWindow(tracking_path=tracking, editing_enabled=False)
@@ -158,12 +160,12 @@ def test_save_current_display_button_exports_raw_channels_and_overlay(
             assert monotonic() < deadline
         assert errors == []
         assert window.save_display_button.isEnabled()
-        output = tmp_path / "fits_track_overlay_review.tif"
+        output = tmp_path / "proc_track_overlay_review.tif"
         np.testing.assert_array_equal(tifffile.imread(output), tifffile.imread(source))
         with tifffile.TiffFile(output) as tif:
             rois = [ImagejRoi.frombytes(data) for data in tif.imagej_metadata["Overlays"]]
         assert {roi.name for roi in rois} == {"Mask 7", "Path 7", "Centroids 7", "ID 7"}
-        assert not (tmp_path / "fits_track_review.tif").exists()
+        assert not (tmp_path / "proc_track_review.tif").exists()
         saved_bytes = output.read_bytes()
         monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
         window.save_display_button.click()
@@ -177,7 +179,7 @@ def test_save_current_display_button_exports_raw_channels_and_overlay(
 def test_tracking_opens_first_mask_channel_in_raw_image(tmp_path: Path, channels: tuple[str, ...]) -> None:
     app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, channels)
+    tracking = mask(source, MASK_TRACK, channels)
     window = TrackingViewerWindow(tracking_path=tracking)
     try:
         assert window.mask_channel_combo.currentText() == "iRed"
@@ -196,7 +198,7 @@ def test_binary_viewer_opens_first_available_mask_channel(
         tmp_path: Path, kind: str, channels: tuple[str, ...]) -> None:
     app()
     source = experiment(tmp_path)
-    mask(source, f"fits_{kind}_test.tif", channels, 1 if kind == "ref" else 4)
+    mask(source, f"proc_{kind}_test.tif", channels, 1 if kind == "ref" else 4)
     window = MaskDrawingWindow()
     try:
         window._open_source(source)
@@ -212,7 +214,7 @@ def test_image_navigation_and_progress_while_centroids_are_busy(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     application = app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     started, release = Event(), Event()
     read = TrackingViewerSession.centroid_frame
     def slow_read(self: TrackingViewerSession, frame_index: int = 0,
@@ -267,7 +269,7 @@ def test_image_navigation_and_progress_while_centroids_are_busy(
 def test_failed_loading_restores_display(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     application = app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     def fail_read(*_args, **_kwargs):
         raise RuntimeError("centroid read failed")
     monkeypatch.setattr(TrackingViewerSession, "centroid_frame", fail_read)
@@ -295,7 +297,7 @@ def test_failed_loading_restores_display(tmp_path: Path, monkeypatch: pytest.Mon
 def test_centroid_cache_recomputes_only_edited_frame_and_undo(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     session = TrackingViewerSession(tracking)
     read = session.centroid_frame
     calls: list[int] = []
@@ -320,11 +322,11 @@ def test_centroid_cache_recomputes_only_edited_frame_and_undo(
 
 def test_disk_centroids_reused_but_rejected_after_source_changes(tmp_path: Path) -> None:
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     session = TrackingViewerSession(tracking)
     expected = session.track_centroids()
     session.close()
-    target = tracking.parent / ".fits" / "viewer_cache" / f"{tracking.name}.centroids-c0-z0.npz"
+    target = experiment_cache(tracking.parent) / f"{tracking.name}.centroids-c0-z0.npz"
     assert target.exists()
     with np.load(target, allow_pickle=False) as saved:
         assert saved["track_ids"].tolist() == [7]
@@ -346,9 +348,9 @@ def test_disk_centroids_reused_but_rejected_after_source_changes(tmp_path: Path)
 
 
 def test_legacy_centroid_cache_migrates_without_rescanning(tmp_path: Path) -> None:
-    from fits.gui.viewer.tracking.centroids import _cache_path, _signature
+    from fisch.gui.viewer.tracking.centroids import _cache_path, _signature
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     legacy = tracking.with_name(f".{tracking.name}.centroids-c0-z0.npz")
     # Old caches contain only observations; a missing middle frame counts in length.
     points = np.asarray([[0, 6, 5], [3, 6, 5]], dtype=np.float64)
@@ -387,9 +389,9 @@ def test_length_filters_reuse_results_and_invalidate_after_edits() -> None:
 
 def test_unwritable_centroid_cache_keeps_memory_filters_working(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import fits.gui.viewer.tracking.centroids as centroids
+    import fisch.gui.viewer.tracking.centroids as centroids
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     def denied(*_args, **_kwargs):
         raise PermissionError("read-only experiment")
     monkeypatch.setattr(centroids, "NamedTemporaryFile", denied)
@@ -397,21 +399,21 @@ def test_unwritable_centroid_cache_keeps_memory_filters_working(
     assert cache.calculate(lambda *_: np.ones((3, 4), dtype=np.uint16),
                            count=4, channel=0, z=0, source=tracking) is not None
     assert cache.matching(0, 0, "eq", 4) == {1}
-    assert not list((tmp_path / ".fits" / "viewer_cache").glob("*.tmp"))
+    assert not list(experiment_cache(tracking.parent).glob("*.tmp"))
 
 
 @pytest.mark.parametrize("editing", [True, False])
 def test_numeric_selection_and_reopening_reuse_preparation(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, editing: bool) -> None:
-    import fits.gui.viewer.tracking.window as tracking_window
+    import fisch.gui.viewer.tracking.window as tracking_window
 
     app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     window = TrackingViewerWindow(tracking_path=tracking, editing_enabled=editing)
     try:
         wait_ready(window)
-        assert list((tmp_path / ".fits/viewer_cache/tracking_paths").glob("*.json"))
+        assert list((experiment_cache(tracking.parent) / 'tracking_paths').glob("*.json"))
         if isinstance(window.track_id_input, QLineEdit):
             window.track_id_input.setText("7")
         else:
@@ -461,11 +463,11 @@ def test_numeric_selection_and_reopening_reuse_preparation(
 @pytest.mark.parametrize("editing", [True, False])
 def test_selection_reuses_paths_and_shows_id_without_loading(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, editing: bool) -> None:
-    import fits.gui.viewer.tracking.window as tracking_window
+    import fisch.gui.viewer.tracking.window as tracking_window
 
     app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     window = TrackingViewerWindow(tracking_path=tracking, editing_enabled=editing,
                                   selection_enabled=True)
     try:
@@ -510,7 +512,7 @@ def test_selection_reuses_paths_and_shows_id_without_loading(
 def test_filter_controls_apply_only_on_button_click(tmp_path: Path) -> None:
     app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     window = TrackingViewerWindow(tracking_path=tracking)
     try:
         wait_ready(window)
@@ -558,7 +560,7 @@ def test_filter_controls_apply_only_on_button_click(tmp_path: Path) -> None:
 
 def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import fits.gui.viewer.tracking.window as tracking_window
+    import fisch.gui.viewer.tracking.window as tracking_window
     app()
     source = experiment(tmp_path)
     labels = np.zeros((4, 24, 25), dtype=np.uint16)
@@ -566,7 +568,7 @@ def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
     labels[1:3, 14:17, 15:18] = 8
     tracking = ScopeIO.from_path(source).save_array(
         labels, channel_labels=("GFP", "DAPI", "iRed"), export_channels=("iRed",),
-        output_path=source.with_name(FITS_MASK_TRACK))
+        output_path=source.with_name(MASK_TRACK))
     window = TrackingViewerWindow(tracking_path=tracking)
     try:
         wait_ready(window)
@@ -629,10 +631,10 @@ def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
 
 def test_large_drawings_are_displayed_without_retaining_over_budget_cache(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import fits.gui.viewer.tracking.window as tracking_window
+    import fisch.gui.viewer.tracking.window as tracking_window
     app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     monkeypatch.setattr(tracking_window, "TRAJECTORY_CACHE_BYTES", 1)
     window = TrackingViewerWindow(tracking_path=tracking)
     try:
@@ -678,14 +680,14 @@ def test_incremental_paths_match_rebuilt_drawing_when_seeking_backwards() -> Non
 def test_switching_experiment_cancels_old_drawing_worker(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from time import sleep
-    import fits.gui.viewer.tracking.window as tracking_window
+    import fisch.gui.viewer.tracking.window as tracking_window
     app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     second = tmp_path / "second"
     second.mkdir()
     second_source = experiment(second)
-    second_tracking = mask(second_source, FITS_MASK_TRACK, ("GFP",))
+    second_tracking = mask(second_source, MASK_TRACK, ("GFP",))
     started = Event()
     prepare = tracking_window.prepare_paths
     calls = 0
@@ -727,10 +729,10 @@ def test_cancelled_centroids_resume_without_reading_completed_frames() -> None:
 
 def test_frame_jumps_use_prepared_overlays_without_redrawing_or_starting_workers(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import fits.gui.viewer.tracking.path_item as path_item
+    import fisch.gui.viewer.tracking.path_item as path_item
     app()
     source = experiment(tmp_path)
-    tracking = mask(source, FITS_MASK_TRACK, ("iRed",))
+    tracking = mask(source, MASK_TRACK, ("iRed",))
     window = TrackingViewerWindow(tracking_path=tracking)
     try:
         wait_ready(window)
@@ -771,7 +773,7 @@ def test_prepared_overlays_cover_empty_frames_gaps_and_frames_after_last_observa
 def test_overlay_image_keeps_mapped_storage_alive_until_released() -> None:
     import gc
     import weakref
-    from fits.gui.viewer.tracking.path_item import prepare_paths
+    from fisch.gui.viewer.tracking.path_item import prepare_paths
     prepared = prepare_paths(
         {7: np.asarray([[0, 4, 4], [1, 8, 8]], dtype=float)},
         color_for=lambda _: QColor("red"), thickness=2, show_markers=True, marker_size=3)

@@ -1,4 +1,4 @@
-"""Shared test fixtures and utilities for FITS tests."""
+"""Shared test fixtures and utilities for FIScH tests."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -34,7 +34,7 @@ class DummyScopeIO:
     """Mock ScopeIO object for testing without actual file I/O."""
     
     def __init__(self, metadata: dict[str, Any] | None = None):
-        self.fits_metadata = metadata or {}
+        self.pipeline_metadata = metadata or {}
 
 
 @dataclass
@@ -83,7 +83,7 @@ def DummyCtx_class():
 
 @pytest.fixture
 def current_format_tiffs(monkeypatch):
-    """Write fixtures with the FITS 4 metadata contract, retaining lazy test reads."""
+    """Write fixtures with the FIScH 4 metadata contract, retaining lazy test reads."""
     import json
     import tifffile
     from scope_io.metadata.models import ImageMetadata
@@ -92,7 +92,7 @@ def current_format_tiffs(monkeypatch):
     def write(path, *args, **kwargs):
         kind = 'tracking' if 'track' in Path(path).name else 'image_raw'
         payload = ImageMetadata().with_artifact(artifact_type=kind).with_custom_metadata(
-            {'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+            {'pipeline_meta': {'version': '5.0.0'}}).new_revision()
         tags = list(kwargs.get('extratags') or [])
         if not any(tag[0] == ARTIFACT_METADATA_TAG for tag in tags):
             data = json.dumps(payload.dump()).encode()

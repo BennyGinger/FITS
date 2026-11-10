@@ -8,9 +8,9 @@ from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import QApplication, QGraphicsRectItem, QGraphicsTextItem
 from scope_io.metadata.models import ImageMetadata
 
-from fits.environment import constant as cst
-from fits.gui.artifact_lineage import ArtifactLineageWidget, file_lineage
-from fits.workflows.checks.models import ArtifactRecord, PreflightReport
+from fisch.environment import constant as cst
+from fisch.gui.artifact_lineage import ArtifactLineageWidget, file_lineage
+from fisch.workflows.checks.models import ArtifactRecord, PreflightReport
 
 
 _APP: QApplication | None = None
@@ -63,7 +63,7 @@ def test_preserved_legacy_and_planned_outputs_have_no_invented_edges(tmp_path: P
     """
     Show older results as preserved and new rebuild files without guessed lineage.
     """
-    old, new = tmp_path / "fits_array.tif", tmp_path / cst.FITS_ARRAY_RAW
+    old, new = tmp_path / "proc_array.tif", tmp_path / cst.ARRAY_RAW
     metadata = ImageMetadata.from_dict({"artifact": {"derived_from": "old source"}})
     report = PreflightReport((ArtifactRecord(old, cst.StepName.CONVERT, metadata, "Old format", True),),
                              (cst.StepName.CONVERT,), (), (), ((cst.StepName.CONVERT, new),))
@@ -153,7 +153,7 @@ def test_manual_masks_branch_from_geometry_not_intensity(tmp_path: Path, rerun: 
     """
     _application()
     raw, registered, background = (tmp_path / name for name in ("raw.tif", "registered.tif", "background.tif"))
-    ref, roi = tmp_path / "fits_ref_edge.tif", tmp_path / "fits_roi_area.tif"
+    ref, roi = tmp_path / "proc_ref_edge.tif", tmp_path / "proc_roi_area.tif"
     metadata = ImageMetadata().with_custom_metadata({"registration_revisions": ["saved registration"]})
     # Inherited intensity provenance must not turn manual drawings into intensity dependents.
     drawing = metadata.new_revision([{"artifact_path": background.name}])
@@ -213,12 +213,12 @@ def test_overwrite_affected_created_and_kept_have_distinct_colors(tmp_path: Path
     """
     Distinguish selected overwrites from downstream effects, new outputs and kept originals.
     """
-    from fits.gui.file_preview.models import COLORS
+    from fisch.gui.file_preview.models import COLORS
 
     _application()
-    raw = tmp_path / cst.FITS_ARRAY_RAW
-    bg = tmp_path / cst.FITS_ARRAY_BGSUB
-    masks = tmp_path / cst.FITS_MASK_SEG
+    raw = tmp_path / cst.ARRAY_RAW
+    bg = tmp_path / cst.ARRAY_BGSUB
+    masks = tmp_path / cst.MASK_SEG
     report = PreflightReport((_record(raw, cst.StepName.CONVERT, '../source.nd2'),
                               _record(bg, cst.StepName.BG_SUB, raw.name)),
                              (cst.StepName.CONVERT,), (cst.StepName.BG_SUB, cst.StepName.SEGMENT), (),

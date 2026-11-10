@@ -3,15 +3,15 @@ from pathlib import Path
 
 import pytest
 
-from fits.environment.constant import WORKFLOW_ORDER
-from fits.settings.loader import load_settings
-from fits.workflows.definitions.registry import REGISTRY
+from fisch.environment.constant import WORKFLOW_ORDER
+from fisch.settings.loader import load_settings
+from fisch.workflows.definitions.registry import REGISTRY
 
 
 TEMPLATE_PATH = (
     Path(__file__).parents[2]
     / "src"
-    / "fits"
+    / "fisch"
     / "settings"
     / "template_settings.toml"
 )

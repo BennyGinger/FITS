@@ -1,19 +1,23 @@
 import os
+from pathlib import Path
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import numpy as np
 import pytest
 import tifffile
+from scope_io import ScopeIO
+from fisch.environment import constant as cst
+from fisch.workflows.experiments import ExperimentState, save_experiment_state
 from PySide6.QtTest import QTest
 from PySide6.QtCore import QEvent, QPoint, QPointF, QTimer, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QWidget
 from typing import Any, cast
 
-from fits.gui.viewer.registration import RegistrationTunerWindow
-from fits.settings.loader import load_settings, run_settings_path
-from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
-from fits.tasks.registration.tuned import load_tuning
+from fisch.gui.viewer.registration import RegistrationTunerWindow
+from fisch.settings.loader import load_settings, run_settings_path
+from fisch.settings.models import RegisterChannelSettings, RegisterTimeSettings
+from fisch.tasks.registration.tuned import load_tuning
 
 _APP = None
 
@@ -21,7 +25,7 @@ _APP = None
 @pytest.fixture(autouse=True)
 def discard_unsaved_tuning(monkeypatch):
     """Allow unrelated tests to clean up windows without a modal prompt."""
-    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+    monkeypatch.setattr('fisch.gui.viewer.registration.window.confirm_discard_tuner_changes',
                         lambda parent, tabs: True)
 
 
@@ -75,14 +79,25 @@ def test_registration_crop_is_opt_in_per_tab_and_disabling_restores_full_view(wi
 
 
 @pytest.fixture
-def source(tmp_path):
-    """Write a small microscopy fixture with known channel and time shifts."""
-    path = tmp_path / 'fits_array.tif'
+def source(tmp_path: Path) -> Path:
+    """
+    Write a current portable microscopy fixture with known channel and time shifts.
+    """
+    directory = tmp_path / 'acquisition' / 'series'
+    directory.mkdir(parents=True)
+    path = directory / cst.ARRAY_RAW
     image = np.zeros((32, 32), dtype=np.uint16)
     image[8:14, 9:13] = 1000
     array = np.stack([np.stack([np.roll(image, t + c, axis=0) for c in range(2)])
                       for t in range(3)])
     tifffile.imwrite(path, array, imagej=True, metadata={'axes': 'TCYX'})
+    raw = directory.parent / 'input.tif'
+    raw.write_bytes(path.read_bytes())
+    ScopeIO.from_path(raw).save_array(array, output_path=path,
+                                     custom_metadata={'pipeline_meta': {'version': '5.0.0'}})
+    state = ExperimentState.init(directory, raw, run_dir=tmp_path).with_complete_step(
+        step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=path)
+    save_experiment_state(state)
     return path
 
 
@@ -177,7 +192,7 @@ def test_close_unchanged_session_does_not_save(window, source, monkeypatch):
     """Close a freshly opened tuner without saving either tab or showing a warning."""
     accepted = []
     warnings = []
-    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+    monkeypatch.setattr('fisch.gui.viewer.registration.window.confirm_discard_tuner_changes',
                         lambda parent, tabs: warnings.append(tabs) or False)
     window.settings_applied.connect(lambda mode, settings: accepted.append(mode))
     assert window.close_button.isEnabled()
@@ -376,7 +391,10 @@ def test_unset_reference_defaults_to_first_channel_and_saved_reference_is_preser
     assert panel.channel.currentText() == expected
     assert window.channel_combo.currentText() == expected
     window.save_button.click()
-    assert load_tuning(source, 'channel').settings.reference_channel == expected
+    saved = load_tuning(source, 'channel')
+    assert saved is not None
+    assert isinstance(saved.settings, RegisterChannelSettings)
+    assert saved.settings.reference_channel == expected
 
 
 @pytest.mark.parametrize('channels', [1, 3])
@@ -384,7 +402,7 @@ def test_channel_alignment_cycles_included_comparisons_and_handles_no_pair(windo
     """Cycle comparisons around a fixed reference and retain manual access to excluded channels."""
     folder = tmp_path / 'additional'
     folder.mkdir()
-    path = folder / 'fits_array.tif'
+    path = folder / 'proc_array.tif'
     pixels = np.zeros((3, channels, 32, 32), dtype=np.uint16)
     pixels[..., 8:14, 9:13] = 1000
     tifffile.imwrite(path, pixels, imagej=True, metadata={'axes': 'TCYX'})
@@ -394,8 +412,11 @@ def test_channel_alignment_cycles_included_comparisons_and_handles_no_pair(windo
     monkeypatch.setattr(tuner, 'isActiveWindow', lambda: True)
     tuner.image_viewer.setFocus()
     try:
+        assert tuner._session is not None
         labels = tuner._session.channel_labels
-        assert tuner.current_settings().reference_channel == labels[0]
+        settings = tuner.current_settings()
+        assert isinstance(settings, RegisterChannelSettings)
+        assert settings.reference_channel == labels[0]
         if channels == 3:
             assert f'comparison: {labels[1]}' in tuner.comparison.toolTip()
             QTest.keyClick(tuner.image_viewer, Qt.Key.Key_C)
@@ -405,7 +426,9 @@ def test_channel_alignment_cycles_included_comparisons_and_handles_no_pair(windo
             assert tuner.channel_combo.currentIndex() == 1
             assert f'comparison: {labels[1]}' in tuner.comparison.toolTip()
             tuner.channel_combo.setCurrentIndex(2)
-            assert tuner.current_settings().reference_channel == labels[0]
+            settings = tuner.current_settings()
+            assert isinstance(settings, RegisterChannelSettings)
+            assert settings.reference_channel == labels[0]
             assert f'comparison: {labels[2]}' in tuner.comparison.toolTip()
             tuner.panels['channel'].excluded.item(1).setCheckState(Qt.CheckState.Checked)
             QTest.keyClick(tuner.image_viewer, Qt.Key.Key_C)
@@ -425,7 +448,9 @@ def test_channel_alignment_cycles_included_comparisons_and_handles_no_pair(windo
         assert not tuner._composite_item.isVisible()
         assert tuner.image_viewer.image_item.isVisible()
         assert 'No other included channel' in tuner.comparison.toolTip()
-        np.testing.assert_array_equal(tuner.image_viewer.image_item.image, pixels[0, 0])
+        displayed = tuner.image_viewer.image_item.image
+        assert displayed is not None
+        np.testing.assert_array_equal(displayed, pixels[0, 0])
     finally:
         tuner.close()
 
@@ -576,13 +601,13 @@ def test_close_during_preview_cancels_before_closing(window, monkeypatch):
             break
     assert entered
     assert window.close_button.isEnabled()
-    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+    monkeypatch.setattr('fisch.gui.viewer.registration.window.confirm_discard_tuner_changes',
                         lambda parent, tabs: False)
     window.close_button.click()
     assert window.isVisible()
     assert window._thread is not None
     assert not window._thread.isInterruptionRequested()
-    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+    monkeypatch.setattr('fisch.gui.viewer.registration.window.confirm_discard_tuner_changes',
                         lambda parent, tabs: True)
     window.close_button.click()
     wait_for_preview(window)
@@ -602,7 +627,7 @@ def test_close_warns_for_both_tabs_and_discard_does_not_save(window, source, mon
     def keep_editing(parent, tabs):
         warnings.append(tabs)
         return False
-    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes', keep_editing)
+    monkeypatch.setattr('fisch.gui.viewer.registration.window.confirm_discard_tuner_changes', keep_editing)
     close = window.close if use_title_bar else window.close_button.click
     close()
     assert window.isVisible()
@@ -614,7 +639,7 @@ def test_close_warns_for_both_tabs_and_discard_does_not_save(window, source, mon
     assert load_tuning(source, 'channel') is None
     accepted.clear()
     assert window._unsaved_tabs() == ['Channel registration']
-    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes',
+    monkeypatch.setattr('fisch.gui.viewer.registration.window.confirm_discard_tuner_changes',
                         lambda parent, tabs: True)
     close()
     assert not window.isVisible()
@@ -681,7 +706,7 @@ def test_invalid_unsaved_settings_still_warn(window):
 @pytest.mark.parametrize('discard', [False, True])
 def test_shared_unsaved_dialog_defaults_to_keep_editing(window, discard):
     """Exercise the actual dialog choices with a safe default and Escape action."""
-    from fits.gui.viewer.common.tuner_actions import confirm_discard_tuner_changes
+    from fisch.gui.viewer.common.tuner_actions import confirm_discard_tuner_changes
     def choose():
         message = QApplication.activeModalWidget()
         assert isinstance(message, QMessageBox)
@@ -697,11 +722,11 @@ def test_shared_unsaved_dialog_defaults_to_keep_editing(window, discard):
 
 def test_main_gui_opens_requested_tab_and_accepts_general_settings(source):
     """Verify main gui opens requested tab and accepts general settings."""
-    from fits.environment.constant import StepName
-    from fits.gui.main_window.window import FitsMainWindow
+    from fisch.environment.constant import StepName
+    from fisch.gui.main_window.window import FischMainWindow
     global _APP
     _APP = QApplication.instance() or QApplication([])
-    main = FitsMainWindow()
+    main = FischMainWindow()
     main.run_dir_edit.setText(str(source.parent))
     main._open_registration_tuner('channel')
     tuner = main._registration_tuner
@@ -724,7 +749,7 @@ def test_main_gui_opens_requested_tab_and_accepts_general_settings(source):
     assert main._registration_tuner is tuner
     assert tuner.mode() == 'time'
     context_widget = editor.widgets['context']
-    from fits.gui.settings.field_widgets import ChoiceWidget
+    from fisch.gui.settings.field_widgets import ChoiceWidget
     assert isinstance(context_widget, ChoiceWidget)
     context_widget.setCurrentText('channel_shift_complex')
     assert main.adapter.field_value(StepName.REGISTER_CHANNEL, 'algorithm') == 'cv2'

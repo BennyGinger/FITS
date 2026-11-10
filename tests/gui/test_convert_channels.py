@@ -9,13 +9,13 @@ from PySide6.QtWidgets import QApplication
 from tifffile import imwrite
 
 from scope_io import ScopeIO
-from fits.environment.constant import StepName
-from fits.gui.settings.field_widgets import ExportChannelsWidget
-from fits.gui.settings import SettingsAdapter, StepSettingsEditor
-from fits.settings.models import ConvertSettings
-from fits.tasks.convert import convert
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.experiments import ExperimentState
+from fisch.environment.constant import StepName
+from fisch.gui.settings.field_widgets import ExportChannelsWidget
+from fisch.gui.settings import SettingsAdapter, StepSettingsEditor
+from fisch.settings.models import ConvertSettings
+from fisch.tasks.convert import convert
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.experiments import ExperimentState
 
 
 @pytest.mark.parametrize("initial", ["all", ["GFP", "BFP"]])

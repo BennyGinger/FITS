@@ -9,10 +9,10 @@ from types import SimpleNamespace
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import QApplication, QPlainTextEdit, QTabWidget, QWidget
 
-from fits.gui.run_result.report import ReportDialog
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.workflows.runtime.progress.outcome import RunResult
+from fisch.gui.run_result.report import ReportDialog
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.workflows.runtime.progress.outcome import RunResult
 
 _APP = None
 
@@ -23,16 +23,16 @@ def application():
     return _APP
 
 
-def test_long_report_fits_small_screen_and_can_resize_and_scroll(monkeypatch):
+def test_long_report_proc_small_screen_and_can_resize_and_scroll(monkeypatch):
     app = application()
     screen = SimpleNamespace(availableGeometry=lambda: QRect(0, 0, 800, 600))
     monkeypatch.setattr(ReportDialog, 'screen', lambda self: screen)
-    lines = ['FITS pipeline report', 'Created: today',
+    lines = ['FIScH pipeline report', 'Created: today',
              'Experiments: 100 completed / 0 partial / 0 skipped / 0 failed',
              'Experiment details', '------------------']
     lines += [f'Experiment {index}: ' + 'long diagnostic message ' * 30 for index in range(300)]
     content = '\n'.join(lines)
-    dialog = ReportDialog(Path('fits_report_' + 'x' * 200 + '.txt'), content)
+    dialog = ReportDialog(Path('report_' + 'x' * 200 + '.txt'), content)
     try:
         dialog.show()
         app.processEvents()
@@ -58,14 +58,14 @@ def test_long_report_fits_small_screen_and_can_resize_and_scroll(monkeypatch):
 
 def test_pipeline_error_uses_scrollable_report_instead_of_message_box(monkeypatch: pytest.MonkeyPatch) -> None:
     application()
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     captured = {}
     def completion(result: RunResult, root: Path, parent: QWidget, **kwargs: object) -> None:
         """
         Capture the shared failure report after worker cleanup.
         """
         captured['result'] = result
-    monkeypatch.setattr('fits.gui.main_window.window.show_run_result', completion)
+    monkeypatch.setattr('fisch.gui.main_window.window.show_run_result', completion)
     try:
         message = 'Rebuild conflicts\n' + 'file.tif\n' * 1000
         window._pipeline_failed(message, 'Full traceback')

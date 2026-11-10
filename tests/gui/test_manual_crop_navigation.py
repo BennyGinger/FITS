@@ -12,8 +12,8 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
-from fits.gui.viewer.common.crop import CropPanel
-from fits.gui.viewer.common.image_viewer import FitsImageViewer
+from fisch.gui.viewer.common.crop import CropPanel
+from fisch.gui.viewer.common.image_viewer import FischImageViewer
 
 _APP = None
 
@@ -25,7 +25,7 @@ def test_ctrl_drag_pans_without_drawing_or_changing_manual_rectangle(bounds):
     _APP = QApplication.instance() or QApplication([])
     window = QWidget()
     layout = QVBoxLayout(window)
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     panel = CropPanel(automatic=False)
     panel.bind(viewer)
     layout.addWidget(viewer)

@@ -1,6 +1,6 @@
 # Portable acquisitions, file management and run status
 
-Status: all six phases implemented and verified locally. Existing FITS 4 work preserved; no commits or publication.
+Status: all six phases implemented and verified locally. Existing FIScH 4 work preserved; no commits or publication.
 
 The migration/rebuild boundary and Manage files presentation were revised in
 [file management actions](file_management_actions_plan.md): migration preserves
@@ -9,9 +9,9 @@ rerun only explicitly reviewed affected work.
 
 ## Agreed behavior
 
-- A run root contains `.fits/fits_settings.toml` or `.fits/logs/`. The opened root overrides saved run_dir values. Selecting a processed acquisition/series automatically opens its nearest containing run and preserves the browser selection. Processed orphan folders are reported; fresh raw-only folders remain valid inputs.
-- Convert groups each original acquisition and all series under `<stem>/`: `<stem>/<original filename>` and `<stem>/<stem>_sN/`. Recognize existing groups; reject ambiguous/colliding destinations. FITS owns these paths, not scope_io.
-- Acquisition-local `.fits_experiment/` contains `experiment_state/<series>/experiment_state.json`, `tuning/<series>/`, `cache/<series>/`, and `legacy/<series>/<revision>/`. A legacy revision keeps its state directly beside its retained outputs. Hide this metadata directory on Windows; do not rename or individually hide state JSON files. Run `.fits` keeps run settings/logs/reports.
+- A run root contains `.pipeline/settings.toml` or `.pipeline/logs/`. The opened root overrides saved run_dir values. Selecting a processed acquisition/series automatically opens its nearest containing run and preserves the browser selection. Processed orphan folders are reported; fresh raw-only folders remain valid inputs.
+- Convert groups each original acquisition and all series under `<stem>/`: `<stem>/<original filename>` and `<stem>/<stem>_sN/`. Recognize existing groups; reject ambiguous/colliding destinations. FIScH owns these paths, not scope_io.
+- Acquisition-local `.acquisition/` contains `experiment_state/<series>/experiment_state.json`, `tuning/<series>/`, `cache/<series>/`, and `legacy/<series>/<revision>/`. A legacy revision keeps its state directly beside its retained outputs. Hide this metadata directory on Windows; do not rename or individually hide state JSON files. Run `.pipeline` keeps run settings/logs/reports.
 - Stored paths resolve relative to acquisition/series anchors, independently of state JSON location. Moving a complete acquisition carries original data, series, settings, cache and history. Moving a whole run preserves run-relative identity.
 - Quantification experiment_id/cell_id use the full series path relative to the run root, excluding the run folder name. Condition tags exclude the structural acquisition wrapper. Refresh paths/tags using existing tables; preserve measurements and data revision timestamps. Regenerate destination master tables without rerunning measurements. Actual image/mask rebuilds rerun affected quantification.
 - Detect old layout or incompatible metadata before execution. If any active experiment is outdated, mark the entire run outdated/read-only; viewers/settings remain available, processing and compact are blocked until explicit upgrade. Preserved history never makes an active run outdated. Dedicated inventory/updater code handles old structures; normal execution uses the new layout.
@@ -38,7 +38,7 @@ rerun only explicitly reviewed affected work.
 
 ## Progress
 
-- Plan recorded before implementation. Existing uncommitted FITS 4 changes inspected and retained.
+- Plan recorded before implementation. Existing uncommitted FIScH 4 changes inspected and retained.
 
 - Phase 1: real TIFF conversion/grouping and moved-run state/input resolution pass (2 focused tests). Source collision/idempotency tests preserve both originals.
 
@@ -52,7 +52,7 @@ rerun only explicitly reviewed affected work.
 
 - Phase 6: core, workflow and scope_io suites pass: **562 tests**. Focused offscreen GUI suites pass: **85 tests**, including portable file management, Runtime/step Advanced behavior, navigation, CLI interaction, resizable reports and artifact decisions. Python compilation and both repository/submodule diff whitespace checks pass.
 
-- Integration covers actual TIFF conversion, multiple series sharing one original, moved run/acquisition paths, condition/identifier refresh preserving measurements, mixed-run gating, numerical upgrade cancellation/resumption, rollback, snapshot exchange/deletion and compact history hints. An upgrade rebuilds only incompatible acquisitions, preserving healthy FITS 4 output bytes/revisions. Affected series retain a coherent snapshot of outputs/state and copies of manual REF/ROI drawings; compatible retained tables can be refreshed without measurements being rerun.
+- Integration covers actual TIFF conversion, multiple series sharing one original, moved run/acquisition paths, condition/identifier refresh preserving measurements, mixed-run gating, numerical upgrade cancellation/resumption, rollback, snapshot exchange/deletion and compact history hints. An upgrade rebuilds only incompatible acquisitions, preserving healthy FIScH 4 output bytes/revisions. Affected series retain a coherent snapshot of outputs/state and copies of manual REF/ROI drawings; compatible retained tables can be refreshed without measurements being rerun.
 
 - Registration changes require explicit REF/ROI review. Manage files offers acceptance only for a pending upgrade after the user has inspected alignment; it validates axes/shape/channels, preserves drawing pixels and records the reviewed geometry. It does not silently adopt new registration dependencies.
 

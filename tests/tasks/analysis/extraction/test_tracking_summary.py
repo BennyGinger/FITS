@@ -3,8 +3,8 @@
 import pandas as pd
 import pytest
 
-from fits.tasks.analysis.identity import add_quantification_ids
-from fits.tasks.analysis.tracking_summary import add_track_statistics
+from fisch.tasks.analysis.identity import add_quantification_ids
+from fisch.tasks.analysis.tracking_summary import add_track_statistics
 
 
 def measurements() -> pd.DataFrame:

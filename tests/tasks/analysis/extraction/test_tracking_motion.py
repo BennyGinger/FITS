@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fits.tasks.analysis.tracking_motion import MOTION_COLUMNS, PIXEL_COLUMNS, add_track_motion
+from fisch.tasks.analysis.tracking_motion import MOTION_COLUMNS, PIXEL_COLUMNS, add_track_motion
 
 
 def measurements() -> pd.DataFrame:

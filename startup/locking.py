@@ -1,4 +1,4 @@
-"""Small OS-backed leases, independent of FITS's installed dependencies."""
+"""Small OS-backed leases, independent of FIScH's installed dependencies."""
 
 from pathlib import Path
 import os
@@ -29,7 +29,7 @@ class Lease:
                 fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
             file.close()
-            raise BusyError("FITS or its updater is already using this checkout.") from error
+            raise BusyError("FIScH or its updater is already using this checkout.") from error
         self.file = file
         return self
 

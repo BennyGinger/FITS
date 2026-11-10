@@ -8,20 +8,20 @@ from PySide6.QtCore import QPointF, QTimer, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QCheckBox, QDialog, QGraphicsPathItem, QGraphicsRectItem, QGraphicsTextItem, QTreeWidget, QTreeWidgetItem
 
-from fits.environment import constant as cst
-from fits.gui.file_preview.compaction import compaction_groups
-from fits.gui.file_preview.changes import FileChangesWidget
-from fits.gui.file_preview.migration import MigrationPreviewWidget
-from fits.gui.file_management.manager import confirm_files, confirm_migration
-from fits.gui.file_preview.graphics import wrapped_filename
-from fits.gui.file_preview.models import PreviewFile, PreviewGroup
-from fits.gui.file_preview.overview import run_overview
-from fits.gui.file_preview.portable import portable_changes, portable_groups
-from fits.gui.file_preview.processing import processing_groups
-from fits.gui.file_preview.widget import FilePreviewWidget
-from fits.workflows.file_management import api
-from fits.workflows.file_management.compaction import plan_compaction
-from fits.workflows.artifacts.provenance import read_metadata
+from fisch.environment import constant as cst
+from fisch.gui.file_preview.compaction import compaction_groups
+from fisch.gui.file_preview.changes import FileChangesWidget
+from fisch.gui.file_preview.migration import MigrationPreviewWidget
+from fisch.gui.file_management.manager import confirm_files, confirm_migration
+from fisch.gui.file_preview.graphics import wrapped_filename
+from fisch.gui.file_preview.models import PreviewFile, PreviewGroup
+from fisch.gui.file_preview.overview import run_overview
+from fisch.gui.file_preview.portable import portable_changes, portable_groups
+from fisch.gui.file_preview.processing import processing_groups
+from fisch.gui.file_preview.widget import FilePreviewWidget
+from fisch.workflows.file_management import api
+from fisch.workflows.file_management.compaction import plan_compaction
+from fisch.workflows.artifacts.provenance import read_metadata
 from scope_io import ScopeIO
 from test_file_management import legacy_run
 
@@ -60,9 +60,9 @@ def test_migration_preview_matches_published_names(tmp_path: Path) -> None:
     assert plan is not None
     groups = portable_groups(plan)
     files = groups[0].files
-    renamed = next(item for item in files if item.path.name == cst.FITS_ARRAY_BGSUB)
+    renamed = next(item for item in files if item.path.name == cst.ARRAY_BGSUB)
     assert renamed.action == 'rename'
-    assert renamed.source == old.workdir / cst.FITS_ARRAY_NAME
+    assert renamed.source == old.workdir / cst.ARRAY_NAME
     assert not renamed.path.exists()
     original = next(item for item in files if item.title == 'Original')
     assert original.stage < renamed.stage
@@ -88,13 +88,13 @@ def test_rebuild_preview_uses_profile_inputs_and_disabled_stage_bypass(tmp_path:
     before = {path: path.read_bytes() for path in tmp_path.rglob('*.tif')}
     group = processing_groups(plan)[0]
     files = {item.path.name: item for item in group.files}
-    assert files[cst.FITS_ARRAY_RAW].action == 'create'
-    assert files[cst.FITS_ARRAY_REG_CHANNEL].action == 'create'
-    assert files[cst.FITS_ARRAY_BGSUB].action == 'rebuild'
-    assert cst.FITS_ARRAY_REG_TIME not in files
+    assert files[cst.ARRAY_RAW].action == 'create'
+    assert files[cst.ARRAY_REG_CHANNEL].action == 'create'
+    assert files[cst.ARRAY_BGSUB].action == 'rebuild'
+    assert cst.ARRAY_REG_TIME not in files
     folder = group.directory
-    assert (folder / cst.FITS_ARRAY_RAW, folder / cst.FITS_ARRAY_REG_CHANNEL) in group.edges
-    assert (folder / cst.FITS_ARRAY_REG_CHANNEL, folder / cst.FITS_ARRAY_BGSUB) in group.edges
+    assert (folder / cst.ARRAY_RAW, folder / cst.ARRAY_REG_CHANNEL) in group.edges
+    assert (folder / cst.ARRAY_REG_CHANNEL, folder / cst.ARRAY_BGSUB) in group.edges
     assert group.planned_edges
     assert all(path.read_bytes() == content for path, content in before.items())
 
@@ -118,7 +118,7 @@ def test_path_update_lists_tables_and_expected_ids(tmp_path: Path) -> None:
     table = next(item for item in changes if item.path.name == cst.MASTER_QUANTI_NAME)
     assert table.action == 'Update paths and tags'
     assert 'condition tags' in table.detail
-    assert not any(item.path.name == cst.FITS_QUANTI_NAME for item in changes)
+    assert not any(item.path.name == cst.QUANTI_NAME for item in changes)
     _application()
     widget = FileChangesWidget(changes)
     try:
@@ -137,7 +137,7 @@ def test_compaction_preview_keeps_final_and_marks_only_superseded_files(tmp_path
     api.migrate(migration)
     plan = plan_compaction(tmp_path)
     groups = compaction_groups(plan)
-    final = next(item for item in groups[0].files if item.path.name == cst.FITS_ARRAY_NAME)
+    final = next(item for item in groups[0].files if item.path.name == cst.ARRAY_NAME)
     assert final.action == 'rename' and final.source == plan.selections[0].image
     assert all(item.path in plan.remove for item in groups[0].files if item.action == 'remove')
     assert not any(item.path == final.source for item in groups[0].files if item.action == 'remove')
@@ -149,9 +149,9 @@ def test_document_rendering_wraps_names_and_marks_creation_and_rename(tmp_path: 
     Render true rename text and dashed prospective files with selectable path details.
     """
     _application()
-    old = tmp_path / cst.FITS_ARRAY_NAME
-    renamed = tmp_path / cst.FITS_ARRAY_BGSUB
-    created = tmp_path / cst.FITS_ARRAY_REG_CHANNEL
+    old = tmp_path / cst.ARRAY_NAME
+    renamed = tmp_path / cst.ARRAY_BGSUB
+    created = tmp_path / cst.ARRAY_REG_CHANNEL
     files = (PreviewFile(renamed, 'Background-subtracted', 'rename', source=old),
              PreviewFile(created, 'Channel-shifted', 'create', stage=1))
     widget = FilePreviewWidget((PreviewGroup(tmp_path, files),))
@@ -166,10 +166,10 @@ def test_document_rendering_wraps_names_and_marks_creation_and_rename(tmp_path: 
         assert widget.details.stage is not None
         assert widget.details.stage.files[0].source == old
         assert _row(widget.details.tree, 0, 0, 0).text(0) == f'{old.name} → {renamed.name}'
-        wrapped = wrapped_filename(cst.FITS_ARRAY_REG_CHANNEL, width=12)
-        assert wrapped.replace('\n', '') == cst.FITS_ARRAY_REG_CHANNEL
+        wrapped = wrapped_filename(cst.ARRAY_REG_CHANNEL, width=12)
+        assert wrapped.replace('\n', '') == cst.ARRAY_REG_CHANNEL
         assert '\n' in wrapped
-        assert wrapped_filename(cst.FITS_QUANTI_NAME).splitlines()[-1].endswith('.parquet')
+        assert wrapped_filename(cst.QUANTI_NAME).splitlines()[-1].endswith('.parquet')
     finally:
         widget.close()
 
@@ -183,9 +183,9 @@ def test_compartment_and_manual_mask_preview_keeps_branch_roles(tmp_path: Path) 
     assert migration is not None
     states = api.migrate(migration)
     state = states[0]
-    ref = state.workdir / cst.FITS_REFERENCE_TEMPLATE.format(label='edge')
-    roi = state.workdir / cst.FITS_ROI_TEMPLATE.format(label='area')
-    image = state.workdir / cst.FITS_ARRAY_BGSUB
+    ref = state.workdir / cst.REFERENCE_TEMPLATE.format(label='edge')
+    roi = state.workdir / cst.ROI_TEMPLATE.format(label='area')
+    image = state.workdir / cst.ARRAY_BGSUB
     reader = ScopeIO.from_path(image)
     metadata = read_metadata(image)
     for path, kind in ((ref, cst.ARTI_REF), (roi, cst.ARTI_ROI)):
@@ -199,15 +199,15 @@ def test_compartment_and_manual_mask_preview_keeps_branch_roles(tmp_path: Path) 
     assert plan is not None
     group = processing_groups(plan)[0]
     files = {item.path: item for item in group.files}
-    source = state.workdir / cst.FITS_MASK_SEG
+    source = state.workdir / cst.MASK_SEG
     for suffix, title in (('mb', 'Membrane'), ('cyto', 'Cytoplasm')):
         output = source.with_name(f'{source.stem}_{suffix}.tif')
         assert files[output].action == 'create'
         assert files[output].title.startswith(title)
         assert (source, output) in group.edges
     assert files[ref].action == files[roi].action == 'keep'
-    assert (ref, state.workdir / cst.FITS_QUANTI_NAME) in group.edges
-    assert (roi, state.workdir / cst.FITS_QUANTI_NAME) not in group.edges
+    assert (ref, state.workdir / cst.QUANTI_NAME) in group.edges
+    assert (roi, state.workdir / cst.QUANTI_NAME) not in group.edges
 
 
 def test_opening_scale_sequence_arrows_and_background_selection(tmp_path: Path) -> None:
@@ -274,7 +274,7 @@ def test_migration_checkbox_projects_the_actual_full_rebuild(tmp_path: Path) -> 
             checkbox.setChecked(True)
             assert 'rebuild the full workflow' in preview.diagram.guidance.text()
             projected.extend(preview.diagram._groups)
-            assert any(item.path.name == cst.FITS_ARRAY_RAW and item.action == 'create' for item in projected[0].files)
+            assert any(item.path.name == cst.ARRAY_RAW and item.action == 'create' for item in projected[0].files)
             checkbox.setChecked(False)
             assert preview.diagram._groups == moves
         finally:
@@ -307,11 +307,11 @@ def test_run_overview_counts_shared_originals_and_mixed_stage_renames(tmp_path: 
         original = PreviewFile(folder / f'image_{acquisition}.nd2', 'Original', stage=0)
         for series in range(2):
             directory = folder / f'image_{acquisition}_s{series}'
-            raw = PreviewFile(directory / cst.FITS_ARRAY_RAW, 'Converted', 'create', stage=1)
+            raw = PreviewFile(directory / cst.ARRAY_RAW, 'Converted', 'create', stage=1)
             changed = acquisition < 3
-            background = PreviewFile(directory / cst.FITS_ARRAY_BGSUB, 'BgSubtracted',
+            background = PreviewFile(directory / cst.ARRAY_BGSUB, 'BgSubtracted',
                                      'rename' if changed else 'keep', stage=2,
-                                     source=directory / cst.FITS_ARRAY_NAME if changed else None)
+                                     source=directory / cst.ARRAY_NAME if changed else None)
             groups.append(PreviewGroup(directory, (original, raw, background)))
     widget = FilePreviewWidget(tuple(groups))
     try:
@@ -324,7 +324,7 @@ def test_run_overview_counts_shared_originals_and_mixed_stage_renames(tmp_path: 
         background = stages['BgSubtracted']
         assert background.action == 'update'
         assert background.count_summary == '4 kept · 6 renamed'
-        assert background.renames == ((cst.FITS_ARRAY_NAME, cst.FITS_ARRAY_BGSUB, 6),)
+        assert background.renames == ((cst.ARRAY_NAME, cst.ARRAY_BGSUB, 6),)
         card = next(item for item in widget.scene.items()
                     if isinstance(item, QGraphicsRectItem) and item.data(1).title == 'Original')
         labels = ' '.join(item.toPlainText() for item in card.childItems() if isinstance(item, QGraphicsTextItem))

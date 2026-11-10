@@ -3,7 +3,7 @@
 [User guide](README.md) · [Previous: Your first analysis](first_analysis.md) ·
 [Next: Preprocessing](preprocessing.md)
 
-A run is the project folder you open in FITS. It contains original acquisitions, their series, saved settings, and results. Choose or reopen the run first, then configure the steps you want to run.
+A run is the project folder you open in FIScH. It contains original acquisitions, their series, saved settings, and results. Choose or reopen the run first, then configure the steps you want to run.
 
 ## Open a run
 
@@ -16,7 +16,7 @@ changes are blocked while the pipeline runs.
 
 The main interface has two pages. An unconverted run opens on **Convert**;
 **Next** performs conversion only and moves to the processing page after it
-finishes successfully. Reopening a run containing converted FITS images opens the
+finishes successfully. Reopening a run containing converted FIScH images opens the
 processing page directly, with **Preprocess** selected. **Back** returns to
 Convert. An unchanged **Next** returns to processing without another conversion;
 changed conversion settings, including overwrite, request a fresh conversion.
@@ -56,13 +56,13 @@ invalid channel names and other data-dependent validation.
 ## Saving settings and protocols
 
 Every launch saves the input configuration, including its comments, as
-`.fits/fits_settings.toml` in the run directory before processing starts. This also
+`.pipeline/settings.toml` in the run directory before processing starts. This also
 applies when running `pipeline.py` with the packaged `user_settings.toml`,
 so the GUI can later load the run's settings. The saved copy reflects the
 latest launch and remains available if processing fails.
 
 In the GUI, **Save settings** saves the current draft into the selected run without
-starting processing. Changed snapshots are retained in `.fits/settings_history/`
+starting processing. Changed snapshots are retained in `.pipeline/settings_history/`
 before replacement. **Save protocol** exports a reusable TOML file, and **Load
 protocol** validates it and asks before replacing the current GUI settings.
 Both protocol actions require a selected run and are disabled during processing.
@@ -76,19 +76,19 @@ Changed processing parameters can flag existing results and their dependents for
 
 Each series has an `experiment_state.json` file containing its artifacts,
 completed steps, metadata, and provenance, stored inside its acquisition's
-`.fits_experiment/experiment_state/<series>/` directory. Artifact paths, rather than a second
+`.acquisition/experiment_state/<series>/` directory. Artifact paths, rather than a second
 workflow manifest, are the durable evidence used to resume work. Conversion can
 split a raw file into several experiment branches. Re-running an unchanged step
-reuses completed output. FITS 4 keeps each preprocessing result independently:
+reuses completed output. FIScH 4 keeps each preprocessing result independently:
 
 | Step | Output |
 | --- | --- |
-| Convert | `fits_array_raw.tif` |
-| Channel-shift | `fits_array_reg_channel.tif` |
-| Frame-shift | `fits_array_reg.tif` |
-| Background subtraction | `fits_array_bgsub.tif` |
-| Segmentation | `fits_masks_seg.tif` |
-| Tracking | `fits_masks_track.tif` |
+| Convert | `proc_array_raw.tif` |
+| Channel-shift | `proc_array_reg_channel.tif` |
+| Frame-shift | `proc_array_reg.tif` |
+| Background subtraction | `proc_array_bgsub.tif` |
+| Segmentation | `proc_masks_seg.tif` |
+| Tracking | `proc_masks_track.tif` |
 
 For folder movement and hidden metadata, see [Portable projects](portable_projects.md).
 
@@ -117,7 +117,7 @@ rebuild migrated checkpoints before changing their inclusion.
 
 Changing inclusion makes existing combined analysis outdated. Use **Manage
 files → Rebuild analysis…** (or the required-results rebuild when individual
-outputs also need work). FITS regenerates master tables from valid active-series
+outputs also need work). FIScH regenerates master tables from valid active-series
 results and schedules missing or outdated measurements first. Individual results
 are preserved. With no active results, rebuilding removes the old master tables.
 Outdated files appear amber in the browser, including master Parquets and
@@ -129,9 +129,9 @@ appearance returns after rebuilding or updating resolves the checker warning.
 Use [Edit Channel Labels](channels_and_labels.md#rename-channels-in-an-existing-run) to rename saved channel references consistently. The same operation can be inspected or previewed from the command line; `--apply` is required to write:
 
 ```bash
-uv run fits channel-labels /path/to/run
-uv run fits channel-labels /path/to/run --set 0=Green --set 1=Red
-uv run fits channel-labels /path/to/run --set 0=Green --set 1=Red --apply
+uv run fisch channel-labels /path/to/run
+uv run fisch channel-labels /path/to/run --set 0=Green --set 1=Red
+uv run fisch channel-labels /path/to/run --set 0=Green --set 1=Red --apply
 ```
 
 ## Activity display
@@ -152,7 +152,7 @@ disabled when no run is active. A confirmation explains that restarting may
 require enabling **Overwrite** for affected steps. The GUI remains available
 for adjusting settings and starting another run.
 
-**Quit** closes FITS normally when idle. During a run, Quit and the window's
+**Quit** closes FIScH normally when idle. During a run, Quit and the window's
 **X** ask before terminating processing and closing the application. **No** is
 green and selected by default; **Yes** is red. Unsaved GUI edits are lost on
 force quit. An intentional quit does not trigger installation repair or a
@@ -160,22 +160,22 @@ second relaunch dialog. Real installation/update problems still use startup repa
 
 ## Launching individual image tools
 
-Launch the main settings interface with `uv run fits-gui`, or open the image
+Launch the main settings interface with `uv run fisch-gui`, or open the image
 tools directly:
 
 ```bash
-uv run fits-segtune
-uv run fits-drawmask
-uv run fits-regtune
-uv run fits-trackviewer --experiments-dir /path/to/run
-uv run fits-trackedit /path/to/experiment/fits_masks_track.tif
-uv run fits-channel-labels /path/to/run
+uv run fisch-segtune
+uv run fisch-drawmask
+uv run fisch-regtune
+uv run fisch-trackviewer --experiments-dir /path/to/run
+uv run fisch-trackedit /path/to/experiment/proc_masks_track.tif
+uv run fisch-channel-labels /path/to/run
 ```
 
 ## Command-line processing
 
-The command-line interface is available through `uv run fits --help`. Running
-`uv run fits run path/to/settings.toml` launches the same Ref/ROI collection
+The command-line interface is available through `uv run fisch --help`. Running
+`uv run fisch run path/to/settings.toml` launches the same Ref/ROI collection
 window when the configured analyses request interactive masks. Calling
 `start_pipeline()` directly stays noninteractive unless a mask interaction
 bridge is supplied.

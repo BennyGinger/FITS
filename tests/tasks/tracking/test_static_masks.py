@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fits.tasks.tracking.static_masks import process_static_masks
+from fisch.tasks.tracking.static_masks import process_static_masks
 
 
 def _square(top: int, left: int, *, size: int = 3, label: int = 1) -> np.ndarray:

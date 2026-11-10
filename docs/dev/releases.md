@@ -1,4 +1,4 @@
-# Releasing FITS
+# Releasing FIScH
 
 The package version, Git tag, and version recorded in new pipeline artifacts
 use the same number, for example `4.2.0`. Release tags have no `v` prefix.
@@ -7,12 +7,12 @@ use the same number, for example `4.2.0`. Release tags have no `v` prefix.
 
 1. Finish the changes and run the processing/GUI tests appropriate to them.
 2. Set `[project].version` in `pyproject.toml` to the next stable `X.Y.Z` version.
-3. Run `uv lock` so FITS's entry in `uv.lock` has the same version.
+3. Run `uv lock` so FIScH's entry in `uv.lock` has the same version.
 4. Commit both version files with the code you want to release, then push to `main`.
 
 The **Release version bumps** GitHub Action tests the release automation, creates
 an annotated tag on the exact commit introducing that version to `main`, and
-publishes a GitHub Release titled **FITS X.Y.Z**. Later commits in the same push
+publishes a GitHub Release titled **FIScH X.Y.Z**. Later commits in the same push
 are not included in that release. A merged branch is released at the merge
 commit where the new version first appears on `main`.
 
@@ -22,7 +22,7 @@ not AI-written feature summaries. You can edit the release notes on GitHub;
 rerunning the workflow preserves those edits. No additional API key is required:
 the job uses its built-in `GITHUB_TOKEN` with `contents: write` permission.
 
-The workflow does **not** run the full scientific/GUI test suite or install FITS's
+The workflow does **not** run the full scientific/GUI test suite or install FIScH's
 large model dependencies. It runs the release-automation tests and checks the
 version files. Validate the application before committing a release bump.
 
@@ -41,7 +41,7 @@ same stable tag requires manual review rather than being published silently.
 Every run checks version changes after the existing `4.1.0` tag. This catches
 multiple bumps in one push and missing releases from earlier interrupted or
 superseded runs, while leaving the three historical releases untouched.
-The workflow runs only for `BennyGinger/FITS` on `main`.
+The workflow runs only for `BennyGinger/fisch` on `main`.
 
 Preview the release plan locally without creating tags or accessing GitHub:
 
@@ -49,7 +49,7 @@ Preview the release plan locally without creating tags or accessing GitHub:
 .venv/bin/python .github/scripts/release.py
 ```
 
-Run the standalone automation tests without installing FITS or its submodules:
+Run the standalone automation tests without installing FIScH or its submodules:
 
 ```bash
 python -m unittest discover -s tests/releases -v

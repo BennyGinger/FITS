@@ -207,7 +207,7 @@ Open the **Reference** tab in the drawing tool, or the pipeline's REF drawing mo
   and choose **Extend to first plane** and/or **Extend to last plane**.
 - Toggle **Live preview** to inspect propagation without replacing the drawings.
 - Show/hide the mask, adjust opacity, and change its display colour.
-- Enter a **File label** and **Save mask** as `fits_ref_<label>.tif`.
+- Enter a **File label** and **Save mask** as `proc_ref_<label>.tif`.
   Open saved masks from the browser/tree to inspect or continue editing them.
 
 | Shortcut / gesture | Action | Scope |
@@ -239,7 +239,7 @@ Open the **ROI** tab in the drawing tool, or the pipeline's ROI drawing mode.
   area and **Remove small objects**. Hole filling preserves manually erased pixels.
 - Propagate drawings along Time/Z where available, extend to either endpoint,
   and toggle **Live preview**. Adjust mask colour, visibility, and opacity.
-- Set a **File label** and **Save mask** as `fits_roi_<label>.tif`.
+- Set a **File label** and **Save mask** as `proc_roi_<label>.tif`.
 
 The [reference-mask shortcut table](#reference-mask-gui) also applies to ROI
 drawing. ROI uses Edit mode for manual drawing.
@@ -282,7 +282,7 @@ More: [Viewer selection and exports](viewers.md#drawing-selection-and-keyboard-s
 
 ## Tracking editor GUI
 
-Enable **Edit tracking** in the pipeline, or open `fits-trackedit` independently.
+Enable **Edit tracking** in the pipeline, or open `fisch-trackedit` independently.
 
 - Navigate image/mask channels, frames, and Z; use the tracking display and
   length-filter controls to inspect the result. Select up to two tracks for

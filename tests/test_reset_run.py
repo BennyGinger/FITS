@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
-from fits.environment import constant as cst
-from fits.workflows.experiments import ExperimentState, save_experiment_state
-from fits.workflows.file_management.reset import plan_reset, reset_run
-from fits.channel_labels.lock import run_write_guard
+from fisch.environment import constant as cst
+from fisch.workflows.experiments import ExperimentState, save_experiment_state
+from fisch.workflows.file_management.reset import plan_reset, reset_run
+from fisch.channel_labels.lock import run_write_guard
 
 
 def _portable_run(root: Path) -> Path:
@@ -21,17 +21,17 @@ def _portable_run(root: Path) -> Path:
     for name in ('sample_s1', 'sample_s2'):
         series = acquisition / name
         series.mkdir()
-        image = series / cst.FITS_ARRAY_RAW
+        image = series / cst.ARRAY_RAW
         image.write_bytes(b'generated pixels')
         state = ExperimentState.init(series, original).with_complete_step(
             step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=image)
         save_experiment_state(state)
-        for output in ('fits_masks_track.tif', 'fits_ref_Cell.tif', 'fits_roi_Cell.tif',
-                       'fits_masks_track_cyto.tif', 'fits_quantification.parquet', 'fits_track_overlay.png',
+        for output in ('proc_masks_track.tif', 'proc_ref_Cell.tif', 'proc_roi_Cell.tif',
+                       'proc_masks_track_cyto.tif', 'proc_quantification.parquet', 'proc_track_overlay.png',
                        '.fits_masks_track.tif.centroids-c0-z0.npz'):
             (series / output).write_bytes(b'output')
-    for relative in ('.fits/backup/history/original.nd2', '.fits/logs/fits.log', '.fits/fits_settings.toml',
-                     'control/sample/.fits_experiment/cache/preview.npy'):
+    for relative in ('.pipeline/backup/history/original.nd2', '.pipeline/logs/fisch.log', '.pipeline/settings.toml',
+                     'control/sample/.acquisition/cache/preview.npy'):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'internal data')
@@ -85,7 +85,7 @@ def test_reset_rejects_ambiguous_raw_destinations(tmp_path: Path) -> None:
     """
     _portable_run(tmp_path)
     other = tmp_path / 'control/other'
-    (other / '.fits_experiment').mkdir(parents=True)
+    (other / '.acquisition').mkdir(parents=True)
     (other / 'sample.nd2').write_bytes(b'other acquisition')
     with pytest.raises(ValueError, match='ambiguous'):
         plan_reset(tmp_path)
@@ -97,12 +97,12 @@ def test_reset_handles_interrupted_grouping_and_acquisition_as_run(tmp_path: Pat
     Portable groups without state restore safely, and a run-root raw stays inside the run.
     """
     acquisition = tmp_path / 'sample'
-    (acquisition / '.fits_experiment').mkdir(parents=True)
+    (acquisition / '.acquisition').mkdir(parents=True)
     (acquisition / 'sample.nd2').write_bytes(b'raw')
     reset_run(acquisition)
     assert (acquisition / 'sample.nd2').read_bytes() == b'raw'
-    assert not (acquisition / '.fits_experiment').exists()
-    (acquisition / '.fits_experiment').mkdir()
+    assert not (acquisition / '.acquisition').exists()
+    (acquisition / '.acquisition').mkdir()
     reset_run(tmp_path)
     assert (tmp_path / 'sample.nd2').read_bytes() == b'raw'
     assert not acquisition.exists()
@@ -117,7 +117,7 @@ def test_reset_legacy_state_keeps_ungrouped_original(tmp_path: Path) -> None:
     series = tmp_path / 'sample_s1'
     series.mkdir()
     (series / 'experiment_state.json').write_text(json.dumps({'artifacts': {'raw_image': '../sample.nd2'}}))
-    (series / cst.FITS_ARRAY_NAME).write_bytes(b'old pixels')
+    (series / cst.ARRAY_NAME).write_bytes(b'old pixels')
     reset_run(tmp_path)
     assert list(tmp_path.iterdir()) == [original]
     assert original.read_bytes() == b'raw'
@@ -147,12 +147,12 @@ def test_reset_reports_partial_failure_and_preserves_raw(tmp_path: Path, monkeyp
         """
         Simulate an output that cannot be removed after the raw was restored.
         """
-        if path.name == cst.FITS_MASK_TRACK:
+        if path.name == cst.MASK_TRACK:
             raise PermissionError(f'File is in use: {path}')
         unlink(path, missing_ok=missing_ok)
 
     monkeypatch.setattr(Path, 'unlink', fail_removal)
-    with pytest.raises(RuntimeError, match='Some FITS files may already have been removed'):
+    with pytest.raises(RuntimeError, match='Some FIScH files may already have been removed'):
         reset_run(tmp_path)
     assert (tmp_path / 'control/sample.nd2').read_bytes() == before
     assert not original.exists()

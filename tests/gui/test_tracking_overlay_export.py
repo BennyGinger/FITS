@@ -9,15 +9,15 @@ import tifffile
 from scope_io import ScopeIO
 from roifile import ImagejRoi, ROI_SUBTYPE, ROI_TYPE
 
-from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK
-from fits.gui.viewer.tracking.colors import track_rgb
-from fits.gui.viewer.tracking.session import TrackingViewerSession
+from fisch.environment.constant import ARRAY_NAME, MASK_TRACK
+from fisch.gui.viewer.tracking.colors import track_rgb
+from fisch.gui.viewer.tracking.session import TrackingViewerSession
 
 
 def make_experiment(directory: Path, dtype=np.uint16):
     directory.mkdir(parents=True, exist_ok=True)
     raw = np.arange(3 * 2 * 2 * 24 * 25, dtype=dtype).reshape(3, 2, 2, 24, 25)
-    source = directory / FITS_ARRAY_NAME
+    source = directory / ARRAY_NAME
     input_path = directory / "input.tif"
     tifffile.imwrite(input_path, raw, imagej=True, resolution=(2, 4),
                      metadata={"axes": "TZCYX", "unit": "micron", "finterval": 2.5,
@@ -33,7 +33,7 @@ def make_experiment(directory: Path, dtype=np.uint16):
     labels[:, 0, 2:4, 2:4] = 99  # Another Z plane must not enter the overlay.
     tracking = ScopeIO.from_path(source).save_array(
         labels, channel_labels=("GFP", "RFP"), export_channels=("GFP",),
-        output_path=directory / FITS_MASK_TRACK)
+        output_path=directory / MASK_TRACK)
     return source, tracking, raw, labels
 
 
@@ -66,7 +66,7 @@ def test_overlay_export_retains_raw_hyperstack_and_source_files(tmp_path, dtype)
     tracking_hash = sha256(tracking.read_bytes()).digest()
     session = TrackingViewerSession(tracking)
     output = session.save_overlay_display(**display_options())
-    assert output.name == "fits_track_overlay_review.tif"
+    assert output.name == "proc_track_overlay_review.tif"
     assert sha256(source.read_bytes()).digest() == source_hash
     assert sha256(tracking.read_bytes()).digest() == tracking_hash
     with tifffile.TiffFile(output) as tif:
@@ -110,7 +110,7 @@ def test_filters_and_full_paths_only_affect_annotations(tmp_path):
     _, tracking, raw, _ = make_experiment(tmp_path)
     output = TrackingViewerSession(tracking).save_overlay_display(**display_options(
         track_ids=frozenset({7}), filtered=True, path_extent="full", track_id_mode="all"))
-    assert output.name == "fits_track_overlay_filtered_review.tif"
+    assert output.name == "proc_track_overlay_filtered_review.tif"
     np.testing.assert_array_equal(tifffile.imread(output), raw)
     rois = read_rois(output)
     assert all(roi.name.endswith(" 7") for roi in rois)
@@ -140,9 +140,9 @@ def test_hidden_paths_and_masks_still_allow_ids(tmp_path):
 def test_overlay_export_requires_raw_image(tmp_path):
     source, tracking, _, _ = make_experiment(tmp_path)
     source.unlink()
-    with pytest.raises(ValueError, match="requires the sibling fits_array.tif"):
+    with pytest.raises(ValueError, match="requires the sibling proc_array.tif"):
         TrackingViewerSession(tracking).save_overlay_display(**display_options())
-    assert not (tmp_path / "fits_track_overlay_review.tif").exists()
+    assert not (tmp_path / "proc_track_overlay_review.tif").exists()
 
 
 def test_crop_preserves_all_raw_dimensions_and_aligns_masks_and_paths(tmp_path):
@@ -152,7 +152,7 @@ def test_crop_preserves_all_raw_dimensions_and_aligns_masks_and_paths(tmp_path):
     before = {track: points.copy() for track, points in session.track_centroids(0, 1).items()}
     bounds = (6, 5, 20, 18)
     output = session.save_overlay_display(**display_options(crop_xy=bounds, track_id_mode="all"))
-    assert output.name == "fits_track_overlay_review_cropped.tif"
+    assert output.name == "proc_track_overlay_review_cropped.tif"
     np.testing.assert_array_equal(tifffile.imread(output), raw[..., 5:18, 6:20])
     assert source.read_bytes() == original
     metadata = ScopeIO.from_path(output).metadata.custom_metadata
@@ -200,11 +200,11 @@ def test_overlay_export_luts_for_single_and_mixed_channels(tmp_path, dtype, labe
     input_path = tmp_path / "input.tif"
     tifffile.imwrite(input_path, raw, imagej=True, metadata={"axes": axes})
     source = ScopeIO.from_path(input_path).save_array(
-        raw, channel_labels=labels, output_path=tmp_path / FITS_ARRAY_NAME)
+        raw, channel_labels=labels, output_path=tmp_path / ARRAY_NAME)
     masks = np.zeros((2, 8, 9), dtype=np.uint16)
     masks[:, 2:5, 2:5] = 7
     tracking = ScopeIO.from_path(source).save_array(
-        masks, export_channels=(labels[0],), output_path=tmp_path / FITS_MASK_TRACK)
+        masks, export_channels=(labels[0],), output_path=tmp_path / MASK_TRACK)
     session = TrackingViewerSession(tracking)
     for bounds in (None, (1, 1, 8, 7)):
         output = session.save_overlay_display(**display_options(

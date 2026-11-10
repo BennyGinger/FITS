@@ -23,7 +23,7 @@ def hide_checkout_internal_entries(root: Path) -> None:
     """Hide only direct dot-prefixed entries on Windows; keep config visible."""
     if sys.platform != "win32":
         return
-    from fits.environment.hidden import hide_on_windows
+    from fisch.environment.hidden import hide_on_windows
 
     show_project_files(root)
     try:
@@ -39,7 +39,7 @@ def hide_checkout_internal_entries(root: Path) -> None:
 
 def main() -> None:
     for module in (
-        "scope_io", "fits.gui.main", "cellpose.models", "tracklink.backends.trackastra.base",
+        "scope_io", "fisch.gui.main", "cellpose.models", "tracklink.backends.trackastra.base",
         "micro_sam.util", "micro_sam.prompt_based_segmentation", "mobile_sam",
     ):
         import_module(module)

@@ -10,8 +10,8 @@ from PySide6.QtGui import QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from fits.gui.settings.wheel_widgets import FocusWheelComboBox, FocusWheelDoubleSpinBox
-from fits.gui.settings.wheel_widgets import FocusWheelSlider, FocusWheelSpinBox
+from fisch.gui.settings.wheel_widgets import FocusWheelComboBox, FocusWheelDoubleSpinBox
+from fisch.gui.settings.wheel_widgets import FocusWheelSlider, FocusWheelSpinBox
 
 _APP = None
 

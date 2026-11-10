@@ -7,7 +7,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
-from fits.gui.main_window.run_browser import DirectoryBrowser, RunDirectoryBrowser
+from fisch.gui.main_window.run_browser import DirectoryBrowser, RunDirectoryBrowser
 
 
 def _application() -> QApplication:
@@ -97,7 +97,7 @@ def test_browser_can_promote_a_folder_selection_to_its_artifact(tmp_path: Path) 
     app = _application()
     experiment = tmp_path / "experiment"
     experiment.mkdir()
-    artifact = experiment / "fits_array.tif"
+    artifact = experiment / "proc_array.tif"
     artifact.touch()
     browser = RunDirectoryBrowser()
     browser.set_root(tmp_path)
@@ -105,7 +105,7 @@ def test_browser_can_promote_a_folder_selection_to_its_artifact(tmp_path: Path) 
 
     assert browser.select_path(artifact) is True
     assert browser.selected_path == artifact.resolve()
-    assert browser.selection_label.text() == "Selected: experiment/fits_array.tif"
+    assert browser.selection_label.text() == "Selected: experiment/proc_array.tif"
 
 
 def test_viewer_browser_reveals_and_highlights_ancestors_without_selecting_them(tmp_path: Path) -> None:
@@ -115,7 +115,7 @@ def test_viewer_browser_reveals_and_highlights_ancestors_without_selecting_them(
     app = _application()
     experiment = tmp_path / "condition" / "acquisition" / "series_1"
     experiment.mkdir(parents=True)
-    artifact = experiment / "fits_array.tif"
+    artifact = experiment / "proc_array.tif"
     artifact.touch()
     browser = DirectoryBrowser(highlight_selection_path=True)
     browser.set_root(tmp_path)
@@ -148,7 +148,7 @@ def test_viewer_browser_uses_reclaimed_path_label_height_for_the_tree(tmp_path: 
     app = _application()
     experiment = tmp_path / ("long_condition_" * 4) / ("long_acquisition_" * 3) / "series_1"
     experiment.mkdir(parents=True)
-    artifact = experiment / "fits_array.tif"
+    artifact = experiment / "proc_array.tif"
     artifact.touch()
     default = DirectoryBrowser()
     viewer = DirectoryBrowser(highlight_selection_path=True)
@@ -165,7 +165,7 @@ def test_viewer_browser_uses_reclaimed_path_label_height_for_the_tree(tmp_path: 
 
 def test_double_click_activates_file_path(tmp_path: Path) -> None:
     app = _application()
-    report = tmp_path / "fits_report_20260911_090000.txt"
+    report = tmp_path / "report_20260911_090000.txt"
     report.touch()
     browser = RunDirectoryBrowser()
     activated = []

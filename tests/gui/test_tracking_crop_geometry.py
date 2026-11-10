@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from fits.gui.viewer.tracking.crop_geometry import clip_polyline, fit_track_bounds
+from fisch.gui.viewer.tracking.crop_geometry import clip_polyline, fit_track_bounds
 
 
 def test_automatic_bounds_cover_complete_masks_for_multiple_moving_cells():

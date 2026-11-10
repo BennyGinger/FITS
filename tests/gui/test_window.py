@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import shutil
+from typing import cast
 
 import pytest
 
@@ -8,20 +9,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QFormLayout, QMessageBox, QWidget
 
-from fits.environment.constant import StepName, WORKFLOW_ORDER
-from fits.workflows.runtime.progress import (
+from fisch.environment.constant import StepName, WORKFLOW_ORDER
+from fisch.workflows.runtime.progress import (
     RunProgress, StageStatus, WorkflowStage, format_run_report)
-from fits.gui.main_window.pipeline_worker import user_error_message
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter, StepSettingsEditor
-from fits.gui.settings.field_widgets import ChannelSelectionWidget, FloatWidget
-from fits.workflows.runtime.errors import StepExecutionError
+from fisch.gui.main_window.pipeline_worker import user_error_message
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter, StepSettingsEditor
+from fisch.gui.settings.conversion_channels import ConversionChannelsWidget
+from fisch.gui.settings.field_widgets import ChannelSelectionWidget, FloatWidget
+from fisch.workflows.runtime.errors import StepExecutionError
 
 
 def _application() -> QApplication:
-    return QApplication.instance() or QApplication([])
+    return cast(QApplication, QApplication.instance() or QApplication([]))
 
 
 @pytest.fixture(autouse=True)
@@ -38,14 +40,14 @@ def test_main_window_builds_all_steps_and_dynamic_editors(tmp_path) -> None:
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
-    (tmp_path / "fits_array.tif").touch()
-    window = FitsMainWindow(adapter)
+    (tmp_path / "proc_array.tif").touch()
+    window = FischMainWindow(adapter)
 
     assert window.convert_tabs.count() == 1
     assert window.phase_tabs.count() == 3
     assert window._step_tabs[3].widget(0) is window._editors[StepName.EXTRACT]
     assert not hasattr(window, "step_tree")
-    assert set(window._editors) == set(StepName)
+    assert set(window._editors) == set(StepName) - {StepName.EDIT_TRACK}
     assert window.runtime_editor is not None
     assert window.runtime_editor.widgets["execution"].isEnabled() is False
     assert window.runtime_editor.widgets["log_dir"].value() == ""
@@ -85,7 +87,7 @@ def test_tracking_channels_follow_segmentation_multi_selection(tmp_path) -> None
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["BFP", "GFP", "RFP"])
     adapter.set_segment_channels([{"channel": "BFP"}, {"channel": "GFP"}])
     adapter.set_field_value(StepName.TRACK, "channel_to_track", [])
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     segment_editor = window._editors[StepName.SEGMENT]
     tracking_editor = window._editors[StepName.TRACK]
     selector = tracking_editor.widgets["channel_to_track"]
@@ -109,7 +111,7 @@ def test_conversion_and_processing_are_distinct_pages(tmp_path) -> None:
     app = _application()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     assert window.workflow_pages.currentIndex() == 0
     assert window.run_button.text() == "Next"
@@ -125,10 +127,10 @@ def test_conversion_and_processing_are_distinct_pages(tmp_path) -> None:
 
 def test_reopening_converted_experiment_starts_on_preprocess(tmp_path) -> None:
     _application()
-    (tmp_path / "fits_array.tif").touch()
+    (tmp_path / "proc_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     assert window.workflow_pages.currentIndex() == 1
     assert window.phase_tabs.currentIndex() == 0
     assert window._current_step == StepName.REGISTER_TIME
@@ -145,11 +147,11 @@ def test_reopening_converted_experiment_starts_on_preprocess(tmp_path) -> None:
 
 def test_settings_remain_editable_during_run(tmp_path) -> None:
     app = _application()
-    (tmp_path / "fits_array.tif").touch()
+    (tmp_path / "proc_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "test"
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     saved_path = adapter.save_to_run_dir()
     saved_settings = saved_path.read_bytes()
@@ -183,7 +185,7 @@ def test_runtime_override_unlocks_settings_but_not_viewers(tmp_path) -> None:
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_runtime_value("unlock_all_tabs", True)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     assert window._editors[StepName.BG_SUB].isEnabled()
     assert not window.segtune_button.isEnabled()
     # Debug settings access does not bypass the user-facing Convert page.
@@ -196,7 +198,7 @@ def test_runtime_unlock_control_updates_phase_access_immediately(tmp_path) -> No
     _application()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     assert not window._editors[StepName.BG_SUB].isEnabled()
     window.runtime_editor.widgets["unlock_all_tabs"].setChecked(True)
     assert window._editors[StepName.BG_SUB].isEnabled()
@@ -206,10 +208,10 @@ def test_runtime_unlock_control_updates_phase_access_immediately(tmp_path) -> No
 
 def test_refresh_keeps_selected_page_when_arrays_already_exist(tmp_path) -> None:
     _application()
-    (tmp_path / "fits_array.tif").touch()
+    (tmp_path / "proc_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     window._back_to_convert()
     window._refresh_phase_access()
     assert window.workflow_pages.currentIndex() == 0
@@ -222,7 +224,7 @@ def test_custom_runtime_settings_start_collapsed() -> None:
     adapter = SettingsAdapter()
     adapter.set_runtime_value("execution", "batch")
 
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
 
     assert window.runtime_editor is not None
     assert not window.runtime_editor._advanced_group.isChecked()
@@ -268,7 +270,7 @@ def test_custom_log_directory_in_advanced_runtime_settings(tmp_path: Path) -> No
     _application()
     adapter = SettingsAdapter()
     adapter.set_runtime_value("log_dir", str(tmp_path))
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     editor = window.runtime_editor
     assert editor is not None
     assert not editor._advanced_group.isChecked()
@@ -293,13 +295,13 @@ def test_browsing_run_directory_loads_existing_settings(
     saved_adapter.set_step_enabled(StepName.TRACK, True)
     saved_adapter.save_to_run_dir()
     copied_dir = tmp_path / "local_copy"
-    (copied_dir / ".fits").mkdir(parents=True)
+    (copied_dir / ".pipeline").mkdir(parents=True)
     shutil.copy2(
-        tmp_path / ".fits" / "fits_settings.toml",
-        copied_dir / ".fits" / "fits_settings.toml",
+        tmp_path / ".pipeline" / "settings.toml",
+        copied_dir / ".pipeline" / "settings.toml",
     )
 
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     monkeypatch.setattr(
         QFileDialog,
         "getExistingDirectory",
@@ -342,7 +344,7 @@ def test_folder_drop_rejects_invalid_payloads_and_active_run(tmp_path, payload) 
     app = _application()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     folder = tmp_path / "new folder"
     folder.mkdir()
     file = tmp_path / "image.tif"
@@ -378,7 +380,7 @@ def test_run_directory_text_switches_on_enter_and_clears_when_empty(
     tmp_path: Path,
 ) -> None:
     app = _application()
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
 
     window.run_dir_edit.setText(str(tmp_path))
     window.run_dir_edit.returnPressed.emit()
@@ -405,7 +407,7 @@ def test_loading_run_directory_settings_does_not_emit_navigation_warnings(
     saved.set_field_value(StepName.CONVERT, "channel_labels", ["GFP", "RFP"])
     saved.save_to_run_dir()
 
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     app.processEvents()
     warnings: list[str] = []
     monkeypatch.setattr(
@@ -441,7 +443,7 @@ def test_switching_folders_loads_own_settings_or_fresh_template(tmp_path) -> Non
         saved.run_dir = "/some/old/folder"
         path.write_text(saved.document.as_string(), encoding="utf-8")
 
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     for folder, labels, sigma in ((first, ["GFP"], 3.0),
                                   (second, ["RFP", "BFP"], 7.0)):
         window._switch_run_dir(str(folder))
@@ -454,7 +456,7 @@ def test_switching_folders_loads_own_settings_or_fresh_template(tmp_path) -> Non
 
     window._switch_run_dir(str(empty))
     app.processEvents()
-    fresh = FitsMainWindow(SettingsAdapter())
+    fresh = FischMainWindow(SettingsAdapter())
     expected = fresh.adapter
     expected.run_dir = str(empty)
     assert window.adapter.document == expected.document
@@ -477,14 +479,14 @@ def test_switching_folders_loads_own_settings_or_fresh_template(tmp_path) -> Non
 def test_advanced_fields_start_collapsed_even_when_customized() -> None:
     _application()
 
-    default_window = FitsMainWindow(SettingsAdapter())
+    default_window = FischMainWindow(SettingsAdapter())
     default_convert = default_window._editors[StepName.CONVERT]
     assert default_convert.widgets["compression"].isEnabled() is False
     default_window.close()
 
     customized = SettingsAdapter()
     customized.set_field_value(StepName.CONVERT, "compression", "lzma")
-    custom_window = FitsMainWindow(customized)
+    custom_window = FischMainWindow(customized)
     custom_convert = custom_window._editors[StepName.CONVERT]
     assert not custom_convert._advanced_group.isChecked()
     custom_convert._advanced_group.setChecked(True)
@@ -509,23 +511,24 @@ def test_all_workflow_steps_have_descriptive_tooltips_for_every_field(
     step: StepName,
 ) -> None:
     _application()
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     editor = window._editors[step]
 
     for path, widget in editor.widgets.items():
         assert widget.toolTip()
         assert widget.toolTip() != path
         form = widget.parentWidget().layout()
-        label = form.labelForField(widget)
-        assert label.toolTip()
-        assert label.toolTip() != path
+        if isinstance(form, QFormLayout):
+            label = form.labelForField(widget)
+            assert label is not None and label.toolTip()
+            assert label.toolTip() != path
 
     window.close()
 
 
 def test_distance_profile_mask_tooltips_explain_their_roles() -> None:
     _application()
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     editor = window._editors[StepName.DISTANCE_PROFILE]
 
     assert "distances are measured" in editor.widgets["expected_ref_masks"].toolTip()
@@ -576,7 +579,7 @@ def test_missing_results_buttons_explain_what_to_do_next(
     adapter = SettingsAdapter()
     if selected_folder:
         adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     messages = []
     monkeypatch.setattr(
         QMessageBox, "information",
@@ -591,7 +594,7 @@ def test_missing_results_buttons_explain_what_to_do_next(
         title, message = messages[0]
         if selected_folder:
             assert title == ("No image or mask found" if tool == "tracking_viewer_button" else "No report found")
-            assert ("Next" if tool == "tracking_viewer_button" else "Run pipeline") in message
+            assert ("ND2/TIFF" if tool == "tracking_viewer_button" else "Run pipeline") in message
         else:
             assert title == "Choose a run folder"
             assert "Browse" in message
@@ -602,17 +605,17 @@ def test_missing_results_buttons_explain_what_to_do_next(
 
 def test_main_action_buttons_describe_their_behavior(tmp_path) -> None:
     _application()
-    (tmp_path / "fits_array.tif").touch()
+    (tmp_path / "proc_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     try:
         assert window.channel_labels_button.text() == "Edit Channel Labels"
         assert "rename channel labels" in window.channel_labels_button.toolTip()
         assert "trajectories" in window.tracking_viewer_button.toolTip()
         assert "latest run report" in window.report_button.toolTip()
         assert "without running" in window.back_button.toolTip()
-        assert "all enabled steps" in window.run_button.toolTip()
+        assert "all included steps" in window.run_button.toolTip()
         window._back_to_convert()
         assert window.run_button.text() == "Next"
         assert "unchanged" in window.run_button.toolTip()
@@ -623,15 +626,15 @@ def test_main_action_buttons_describe_their_behavior(tmp_path) -> None:
 
 
 def test_full_report_button_uses_latest_report_and_browser_activation(tmp_path, monkeypatch) -> None:
-    reports = tmp_path / ".fits" / "reports"
+    reports = tmp_path / ".pipeline" / "reports"
     reports.mkdir(parents=True)
-    older = reports / "fits_report_20260911_080000.txt"
-    latest = reports / "fits_report_20260911_090000.txt"
+    older = reports / "report_20260911_080000.txt"
+    latest = reports / "report_20260911_090000.txt"
     older.write_text("older", encoding="utf-8")
     latest.write_text("latest", encoding="utf-8")
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     opened = []
     monkeypatch.setattr(window, "_show_report", opened.append)
 
@@ -653,13 +656,13 @@ def test_full_report_button_uses_latest_report_and_browser_activation(tmp_path, 
 def test_completion_opens_report_only_for_run_errors(
         tmp_path, monkeypatch, status, error, opens_report) -> None:
     app = _application()
-    reports = tmp_path / ".fits" / "reports"
+    reports = tmp_path / ".pipeline" / "reports"
     reports.mkdir(parents=True)
-    report = reports / "fits_report_20261008_120000.txt"
+    report = reports / "report_20261008_120000.txt"
     report.write_text("run report", encoding="utf-8")
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     progress = RunProgress()
     progress.add("experiment", [WorkflowStage.PROCESS, WorkflowStage.ANALYSIS])
     progress.update("experiment", WorkflowStage.PROCESS, status, error=error)
@@ -668,7 +671,7 @@ def test_completion_opens_report_only_for_run_errors(
     opened = []
     monkeypatch.setattr(window, "_show_report", opened.append)
     outcomes = []
-    monkeypatch.setattr("fits.gui.main_window.window.show_run_result", lambda result, *args, **kwargs: outcomes.append(result))
+    monkeypatch.setattr("fisch.gui.main_window.window.show_run_result", lambda result, *args, **kwargs: outcomes.append(result))
 
     window._pipeline_finished()
     window._thread_finished()
@@ -685,13 +688,13 @@ def test_completion_opens_report_only_for_run_errors(
 
 def test_pipeline_failure_opens_available_run_report(tmp_path, monkeypatch) -> None:
     app = _application()
-    reports = tmp_path / ".fits" / "reports"
+    reports = tmp_path / ".pipeline" / "reports"
     reports.mkdir(parents=True)
-    report = reports / "fits_report_20261008_120000.txt"
+    report = reports / "report_20261008_120000.txt"
     report.write_text("failed run report", encoding="utf-8")
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     window._run_progress = RunProgress()
     window._run_progress.add("experiment", [WorkflowStage.PROCESS])
     window._run_progress.update(
@@ -699,7 +702,7 @@ def test_pipeline_failure_opens_available_run_report(tmp_path, monkeypatch) -> N
     opened = []
     monkeypatch.setattr(window, "_show_report", opened.append)
     outcomes = []
-    monkeypatch.setattr("fits.gui.main_window.window.show_run_result", lambda result, *args, **kwargs: outcomes.append(result))
+    monkeypatch.setattr("fisch.gui.main_window.window.show_run_result", lambda result, *args, **kwargs: outcomes.append(result))
 
     window._pipeline_failed("Failed", "Failure traceback")
 
@@ -712,7 +715,7 @@ def test_pipeline_failure_opens_available_run_report(tmp_path, monkeypatch) -> N
 
 def test_advanced_settings_collapse_their_space_and_conveyor_is_default():
     app = _application()
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     assert window.adapter.runtime_value("execution") == "conveyor"
     window.show()
     app.processEvents()
@@ -753,7 +756,7 @@ def test_advanced_fields_expand_the_tab_scroll_range() -> None:
 def test_convert_projection_none_can_be_selected() -> None:
     _application()
     adapter = SettingsAdapter()
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     combo = window._editors[StepName.CONVERT].widgets["z_projection"]
     combo.setCurrentText("None")
     assert adapter.field_value(StepName.CONVERT, "z_projection") == "None"
@@ -773,7 +776,7 @@ def test_leaving_enabled_step_warns_when_user_input_is_missing(
     if step == StepName.SEGMENT:
         adapter.set_field_value(StepName.CONVERT, "channel_labels", ["RFP"])
         adapter.set_step_enabled(step, True)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     window._select_step(step)
     warnings: list[tuple[str, str]] = []
@@ -790,10 +793,8 @@ def test_leaving_enabled_step_warns_when_user_input_is_missing(
         window.phase_tabs.setCurrentIndex(2) if step == StepName.SEGMENT else window._select_step(StepName.REGISTER_TIME)
 
     message = "Segmentation: Choose a target channel for every section."
-    assert warnings == [(
-        "Missing required setting",
-        message,
-    )]
+    assert not warnings
+    assert message in window.console.toPlainText()
     assert window._current_step == step
     app.processEvents()
     assert window._current_step == step
@@ -807,7 +808,7 @@ def test_leaving_disabled_step_does_not_warn(tmp_path: Path, monkeypatch) -> Non
     adapter.run_dir = str(tmp_path)
     adapter.set_runtime_value("unlock_all_tabs", True)
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     window._select_step(StepName.SEGMENT)
     warnings: list[str] = []
@@ -829,7 +830,7 @@ def test_leaving_phase_checks_other_enabled_steps_in_that_phase(
     adapter.set_runtime_value("unlock_all_tabs", True)
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     adapter.set_step_enabled(StepName.REGISTER_CHANNEL, True)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     window._select_step(StepName.REGISTER_TIME)
     warnings: list[str] = []
@@ -838,9 +839,8 @@ def test_leaving_phase_checks_other_enabled_steps_in_that_phase(
 
     window.phase_tabs.setCurrentIndex(1)
 
-    assert warnings == [
-        "Channel-shift: Choose a reference channel (reference_channel)."
-    ]
+    assert not warnings
+    assert "Channel-shift: Choose a reference channel (reference_channel)." in window.console.toPlainText()
     assert window._current_step == StepName.REGISTER_TIME
     assert window.phase_tabs.currentIndex() == 0
     window.close()
@@ -855,7 +855,7 @@ def test_run_warns_for_all_missing_enabled_step_inputs(
     adapter.user_name = "User"
     for step in (StepName.REGISTER_CHANNEL, StepName.SEGMENT, StepName.TRACK):
         adapter.set_step_enabled(step, True)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     warnings: list[tuple[str, str]] = []
     monkeypatch.setattr(
         QMessageBox,
@@ -870,9 +870,8 @@ def test_run_warns_for_all_missing_enabled_step_inputs(
 
     window._run_pipeline()
 
-    assert len(warnings) == 1
-    title, message = warnings[0]
-    assert title == "Cannot run FITS"
+    assert not warnings
+    message = window.console.toPlainText()
     assert "Channel-shift: Choose a reference channel (reference_channel)." in message
     assert "Segmentation: Choose a target channel for every section." in message
     assert "Tracking: Choose at least one channel to track (channel_to_track)." in message
@@ -887,7 +886,7 @@ def test_save_and_reload_settings_with_unassigned_segmentation_channel(
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_step_enabled(StepName.SEGMENT, enabled)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     monkeypatch.setattr(
         QMessageBox, "critical", lambda *args: pytest.fail(str(args[2])))
@@ -909,7 +908,7 @@ def test_blank_default_segmentation_channel_blocks_run_until_selected(tmp_path) 
     adapter.run_dir = str(tmp_path)
     adapter.set_runtime_value("unlock_all_tabs", True)
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["RFP"])
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     field = window._editors[StepName.SEGMENT].channel_widgets[0]["channel"]
     assert field.currentText() == ""
@@ -935,15 +934,16 @@ def test_run_button_tracks_missing_enabled_inputs(tmp_path: Path) -> None:
     app = _application()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
 
     assert window.run_button.isEnabled()
     assert "Before continuing:" not in window.run_button.toolTip()
 
     channel_labels = window._editors[StepName.CONVERT].widgets["channel_labels"]
-    channel_labels.setText("GFP")
-    channel_labels.editingFinished.emit()
+    assert isinstance(channel_labels, ConversionChannelsWidget)
+    channel_labels.set_labels(["GFP"])
+    channel_labels.value_changed.emit(["GFP"])
     assert window.run_button.isEnabled()
     assert "Before continuing:" not in window.run_button.toolTip()
 
@@ -965,7 +965,7 @@ def test_run_button_tracks_missing_enabled_inputs(tmp_path: Path) -> None:
 def test_segmentation_tuner_does_not_warn_about_missing_target_channel(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    import fits.gui.viewer.segmentation as segmentation_viewer
+    import fisch.gui.viewer.segmentation as segmentation_viewer
 
     class DummySignal:
         def connect(self, callback) -> None:
@@ -976,14 +976,15 @@ def test_segmentation_tuner_does_not_warn_about_missing_target_channel(
             del kwargs
             super().__init__()
             self.settings_applied = DummySignal()
+            self.compartment_settings_applied = DummySignal()
 
     app = _application()
-    (tmp_path / "fits_array.tif").touch()
+    (tmp_path / "proc_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     adapter.set_step_enabled(StepName.SEGMENT, True)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     window._select_step(StepName.SEGMENT)
     warnings: list[str] = []
@@ -1004,6 +1005,6 @@ def isolate_settings_navigation_inventory(monkeypatch: pytest.MonkeyPatch) -> No
     """
     Isolate navigation/settings tests from metadata checks on empty image fixtures.
     """
-    from fits.workflows.checks.models import RunCompatibility
-    monkeypatch.setattr('fits.gui.main_window.window.inspect_run_compatibility',
+    from fisch.workflows.checks.models import RunCompatibility
+    monkeypatch.setattr('fisch.gui.main_window.window.inspect_run_compatibility',
         lambda root: RunCompatibility(Path(root).resolve(), (), (), (), ()))

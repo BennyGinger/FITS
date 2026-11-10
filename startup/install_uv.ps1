@@ -1,6 +1,6 @@
 # Bootstrap uv as an independent user tool; never update an existing installation.
 $ErrorActionPreference = 'Stop'
-$installer = Join-Path ([IO.Path]::GetTempPath()) ('fits-uv-' + [Guid]::NewGuid() + '.ps1')
+$installer = Join-Path ([IO.Path]::GetTempPath()) ('fisch-uv-' + [Guid]::NewGuid() + '.ps1')
 try {
     Write-Host 'Downloading uv from its official installer...'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

@@ -3,13 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from fits.environment.constant import StepName
-from fits.workflows.experiments import (
+from fisch.environment.constant import StepName
+from fisch.workflows.experiments import (
     ExperimentState, load_experiment_state, save_experiment_state)
 
 
 def test_save_and_load_state_roundtrip(tmp_path: Path) -> None:
-    image = tmp_path / "fits_array.tif"
+    image = tmp_path / "proc_array.tif"
     image.touch()
     state = ExperimentState.init(tmp_path, tmp_path / "a.nd2").with_complete_step(
         step_name=StepName.CONVERT,
@@ -26,7 +26,7 @@ def test_save_and_load_state_roundtrip(tmp_path: Path) -> None:
 
 
 def test_load_state_raises_on_invalid_artifact_path_type(tmp_path: Path) -> None:
-    from fits.environment.paths import experiment_state_path
+    from fisch.environment.paths import experiment_state_path
     path = experiment_state_path(tmp_path, acquisition=tmp_path)
     path.parent.mkdir(parents=True)
     path.write_text(
@@ -51,7 +51,7 @@ def test_save_state_cleans_temporary_file_when_replace_fails(
         raise OSError("replace failed")
 
     monkeypatch.setattr(
-        "fits.workflows.experiments.persistence.os.replace", fail_replace)
+        "fisch.workflows.experiments.persistence.os.replace", fail_replace)
 
     with pytest.raises(OSError, match="replace failed"):
         save_experiment_state(state)

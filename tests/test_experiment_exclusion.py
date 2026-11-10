@@ -11,27 +11,27 @@ import pytest
 import tifffile
 from scope_io import ScopeIO
 
-from fits.environment import constant as cst
-from fits.environment.paths import experiment_state_path
-from fits.settings.models import ConvertSettings, SettingsModel
-from fits.tasks.analysis.aggregate import save_master_analysis_table
-from fits.tasks.convert import convert
-from fits.workflows.checks.analysis import outdated_master_tables
-from fits.workflows.checks.artifacts import inspect_run
-from fits.workflows.checks.compatibility import inspect_run_compatibility
-from fits.workflows.checks.decisions import apply_decision
-from fits.workflows.definitions.models import StepProfile
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.experiments import ExperimentState, discover_saved_states, load_experiment_state, save_experiment_state
-from fits.workflows.experiments.assembly import assemble_experiment_states
-from fits.workflows.experiments.exclusion import active_raw_files, selected_experiments, set_excluded
-from fits.workflows.experiments.serialization import deserialize_experiment_state, serialize_experiment_state
-from fits.workflows.file_management.rebuild import full_rebuild_scope
-from fits.workflows.runtime.batch import run_batch_workflow
-from fits.workflows.runtime.interactive.execution import PhaseExecutor
-from fits.workflows.runtime.interactive.interaction import PipelineInteraction
-from fits.workflows.runtime.progress import RunProgress, WorkflowStage
-from fits.workflows.runtime.scheduler import run_workflow_scheduler
+from fisch.environment import constant as cst
+from fisch.environment.paths import experiment_state_path
+from fisch.settings.models import ConvertSettings, SettingsModel
+from fisch.tasks.analysis.aggregate import save_master_analysis_table
+from fisch.tasks.convert import convert
+from fisch.workflows.checks.analysis import outdated_master_tables
+from fisch.workflows.checks.artifacts import inspect_run
+from fisch.workflows.checks.compatibility import inspect_run_compatibility
+from fisch.workflows.checks.decisions import apply_decision
+from fisch.workflows.definitions.models import StepProfile
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.experiments import ExperimentState, discover_saved_states, load_experiment_state, save_experiment_state
+from fisch.workflows.experiments.assembly import assemble_experiment_states
+from fisch.workflows.experiments.exclusion import active_raw_files, selected_experiments, set_excluded
+from fisch.workflows.experiments.serialization import deserialize_experiment_state, serialize_experiment_state
+from fisch.workflows.file_management.rebuild import full_rebuild_scope
+from fisch.workflows.runtime.batch import run_batch_workflow
+from fisch.workflows.runtime.interactive.execution import PhaseExecutor
+from fisch.workflows.runtime.interactive.interaction import PipelineInteraction
+from fisch.workflows.runtime.progress import RunProgress, WorkflowStage
+from fisch.workflows.runtime.scheduler import run_workflow_scheduler
 
 
 def _series(root: Path) -> list[ExperimentState]:
@@ -129,7 +129,7 @@ def test_engines_filter_initial_states_and_produced_branches(tmp_path: Path, mon
     elif mode == 'conveyor':
         result = run_workflow_scheduler(config, [source, excluded], terminal_progress=False)
     else:
-        from fits.workflows.runtime.scheduler import resolve_runtime_steps
+        from fisch.workflows.runtime.scheduler import resolve_runtime_steps
         progress = RunProgress()
         progress.add(source.experiment_id, {WorkflowStage.CONVERT})
         executor = PhaseExecutor(PipelineInteraction(lambda request: None, lambda: None), progress, Event())
@@ -165,7 +165,7 @@ def test_membership_changes_flag_masters_without_forcing_rebuild(tmp_path: Path)
     for index in (1, 2):
         folder = tmp_path / 'acquisition' / f'input_s{index}'
         folder.mkdir(parents=True)
-        table = folder / cst.FITS_DISTANCE_PROFILE_NAME
+        table = folder / cst.DISTANCE_PROFILE_NAME
         pd.DataFrame({'distance': [index]}).to_parquet(table, index=False)
         state = ExperimentState.init(folder, folder.parent / 'input.nd2', run_dir=tmp_path)
         states.append(state.with_complete_step(step_name=cst.StepName.DISTANCE_PROFILE,
@@ -178,7 +178,7 @@ def test_membership_changes_flag_masters_without_forcing_rebuild(tmp_path: Path)
     before = [path.read_bytes() for path in original if path is not None]
     changed = [states[0], replace(states[1], excluded=True)]
     assert outdated_master_tables(tmp_path, changed) == (master,)
-    from fits.workflows.checks.models import PreflightReport
+    from fisch.workflows.checks.models import PreflightReport
     report = PreflightReport((), (), (), (), outdated_masters=(master,))
     assert apply_decision({}, report, 'continue') == {}
     assert apply_decision({}, report, 'selected') == {}
@@ -209,10 +209,10 @@ def test_disabled_analysis_is_preserved_until_explicit_rebuild(tmp_path: Path, m
     """
     Preserve bypassed combined analysis during normal runs, then rebuild it explicitly.
     """
-    from fits.pipeline import start_pipeline
-    from fits.tasks.common.table_results import save_parquet
-    from fits.workflows.artifacts.provenance import read_metadata
-    from fits.workflows.file_management.rebuild import plan_required_rebuild, rebuild_analysis_tables
+    from fisch.pipeline import start_pipeline
+    from fisch.tasks.common.table_results import save_parquet
+    from fisch.workflows.artifacts.provenance import read_metadata
+    from fisch.workflows.file_management.rebuild import plan_required_rebuild, rebuild_analysis_tables
 
     def split(source: ScopeIO) -> list[ScopeIO]:
         """
@@ -228,11 +228,11 @@ def test_disabled_analysis_is_preserved_until_explicit_rebuild(tmp_path: Path, m
         metadata = read_metadata(raw)
         payload = metadata.with_artifact(artifact_type=cst.ARTI_DIST_PROF).new_revision([
             {'artifact_path': raw.name, 'created_at': metadata.artifact.created_at}])
-        table = save_parquet(pd.DataFrame({'distance': [index]}), state.workdir / cst.FITS_DISTANCE_PROFILE_NAME, payload)
+        table = save_parquet(pd.DataFrame({'distance': [index]}), state.workdir / cst.DISTANCE_PROFILE_NAME, payload)
         states[index] = state.with_complete_step(step_name=cst.StepName.DISTANCE_PROFILE,
                                                  artifact_kind=cst.ARTI_DIST_PROF, artifact_path=table)
         save_experiment_state(states[index])
-    settings = tmp_path / '.fits/fits_settings.toml'
+    settings = tmp_path / '.pipeline/settings.toml'
     settings.parent.mkdir(exist_ok=True)
     settings.write_text(f'run_dir = "{tmp_path}"\nuser_name = "Test"\n[runtime]\nexecution = "{method if method != "file_action" else "batch"}"\n'
                         '[convert]\nenabled = false\n[distance_profile]\nenabled = false\n')

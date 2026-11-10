@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from fits.environment.constant import StepName
-from fits.workflows.experiments import ExperimentState
+from fisch.environment.constant import StepName
+from fisch.workflows.experiments import ExperimentState
 
 
 def test_init_stores_raw_artifact_relative_to_workdir(tmp_path: Path) -> None:
@@ -24,7 +24,7 @@ def test_init_allows_original_outside_workdir(tmp_path: Path) -> None:
 
 def test_with_complete_step_sets_artifact_and_is_immutable(tmp_path: Path) -> None:
     state = ExperimentState.init(tmp_path, tmp_path / "a.nd2")
-    output = tmp_path / "nested" / "fits_array.tif"
+    output = tmp_path / "nested" / "proc_array.tif"
 
     updated = state.with_complete_step(
         step_name=StepName.CONVERT,
@@ -34,7 +34,7 @@ def test_with_complete_step_sets_artifact_and_is_immutable(tmp_path: Path) -> No
 
     assert updated is not state
     assert "image" not in state.artifacts
-    assert updated.artifacts["image"] == Path("nested/fits_array.tif")
+    assert updated.artifacts["image"] == Path("nested/proc_array.tif")
     assert updated.artifact("image") == output.resolve()
     assert updated.completed_steps == (StepName.CONVERT,)
     assert updated.last_step == StepName.CONVERT
@@ -60,7 +60,7 @@ def test_with_complete_step_is_idempotent_for_completion_name(tmp_path: Path) ->
 def test_with_complete_step_can_move_branch_workdir(tmp_path: Path) -> None:
     state = ExperimentState.init(tmp_path, tmp_path / "a.nd2")
     branch = tmp_path / "a_s1"
-    output = branch / "fits_array.tif"
+    output = branch / "proc_array.tif"
 
     updated = state.with_complete_step(
         step_name=StepName.CONVERT,
@@ -71,7 +71,7 @@ def test_with_complete_step_can_move_branch_workdir(tmp_path: Path) -> None:
 
     assert updated.workdir == branch
     assert updated.original_image == (tmp_path / "a.nd2").resolve()
-    assert updated.artifacts["image"] == Path("fits_array.tif")
+    assert updated.artifacts["image"] == Path("proc_array.tif")
 
 
 def test_workdir_relative_returns_relative_when_possible(tmp_path: Path) -> None:

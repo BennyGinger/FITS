@@ -4,11 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from fits.workflows.experiments import ExperimentState
-from fits.workflows.runtime.batch import run_batch_workflow
-from fits.workflows.runtime.progress import RunProgress
-from fits.workflows.runtime.progress.display import DisplayProgress
-from fits.workflows.runtime.scheduler import run_workflow_scheduler
+from fisch.workflows.experiments import ExperimentState
+from fisch.workflows.runtime.batch import run_batch_workflow
+from fisch.workflows.runtime.progress import RunProgress
+from fisch.workflows.runtime.progress.display import DisplayProgress
+from fisch.workflows.runtime.scheduler import run_workflow_scheduler
 
 
 class TerminalBar:
@@ -31,7 +31,7 @@ class TerminalBar:
 
 def test_elapsed_resets_per_step_and_freezes_on_failure(monkeypatch):
     clock = [10.0]
-    monkeypatch.setattr('fits.workflows.runtime.progress.display.monotonic', lambda: clock[0])
+    monkeypatch.setattr('fisch.workflows.runtime.progress.display.monotonic', lambda: clock[0])
     display = DisplayProgress()
     assert display.snapshot() is None
     with display.task('Convert', 2):
@@ -68,7 +68,7 @@ def test_workflow_display_matches_rich_counters_with_output_branches(monkeypatch
         observations.append(snapshot.name)
         output = state.with_complete_step(
             step_name=profile.step_name, artifact_kind='image',
-            artifact_path=state.workdir / 'fits_array.tif')
+            artifact_path=state.workdir / 'proc_array.tif')
         return [output, output] if profile.step_name == 'convert' else [output]
 
     registry = {}
@@ -81,16 +81,16 @@ def test_workflow_display_matches_rich_counters_with_output_branches(monkeypatch
     config = {name: {'enabled': True, 'params': {}} for name in registry}
     states = [ExperimentState.init(Path('/tmp'), Path('/tmp/display.nd2'))]
     if mode == 'batch':
-        monkeypatch.setattr('fits.workflows.runtime.batch.api.WORKFLOW_ORDER', list(registry))
-        monkeypatch.setattr('fits.workflows.runtime.batch.api.REGISTRY', registry)
-        monkeypatch.setattr('fits.workflows.runtime.batch.execution.pbar', bar)
+        monkeypatch.setattr('fisch.workflows.runtime.batch.api.WORKFLOW_ORDER', list(registry))
+        monkeypatch.setattr('fisch.workflows.runtime.batch.api.REGISTRY', registry)
+        monkeypatch.setattr('fisch.workflows.runtime.batch.execution.pbar', bar)
         result = run_batch_workflow(config, states, run_progress=progress)
         assert observations == ['Convert', 'Segment', 'Segment']
         assert [(item.completed, item.total) for item in bars] == [(1, 1), (2, 2)]
     else:
-        monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.WORKFLOW_ORDER', list(registry))
-        monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.REGISTRY', registry)
-        monkeypatch.setattr('fits.workflows.runtime.scheduler.api.pbar', bar)
+        monkeypatch.setattr('fisch.workflows.runtime.scheduler.planning.WORKFLOW_ORDER', list(registry))
+        monkeypatch.setattr('fisch.workflows.runtime.scheduler.planning.REGISTRY', registry)
+        monkeypatch.setattr('fisch.workflows.runtime.scheduler.api.pbar', bar)
         result = run_workflow_scheduler(config, states, run_progress=progress)
         assert observations == ['Pipeline'] * 3
         assert (bars[0].completed, bars[0].total) == (3, 3)
@@ -104,5 +104,5 @@ def test_workflow_display_matches_rich_counters_with_output_branches(monkeypatch
 def isolate_profile_configuration(monkeypatch):
     # These orchestration tests supply fake profiles; real input resolution is
     # exercised by test_fits4_execution with actual TIFF artifacts.
-    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.replace', lambda spec, **kwargs: spec)
-    monkeypatch.setattr('fits.workflows.runtime.scheduler.planning.configured_profile', lambda profile, config: profile)
+    monkeypatch.setattr('fisch.workflows.runtime.scheduler.planning.replace', lambda spec, **kwargs: spec)
+    monkeypatch.setattr('fisch.workflows.runtime.scheduler.planning.configured_profile', lambda profile, config: profile)

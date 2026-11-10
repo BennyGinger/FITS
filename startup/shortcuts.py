@@ -22,11 +22,11 @@ def desktop_entry(root: Path, *, icon_path: Path | None = None) -> str:
         command = command.replace(character, "\\" + character)
     quoted_command = f'"{command}"'
     return (
-        "[Desktop Entry]\nType=Application\nName=FITS\n"
-        "Comment=Fluorescent Image Tracking Software\n"
+        "[Desktop Entry]\nType=Application\nName=FIScH\n"
+        "Comment=Fluorescent Imaging and Single-cell Histories\n"
         f"Exec={desktop_value(quoted_command)}\n"
         f"Path={desktop_value(str(root))}\n"
-        f"Icon={desktop_value(str(icon_path or root / 'assets' / 'fits_icon.png'))}\n"
+        f"Icon={desktop_value(str(icon_path or root / 'assets' / 'fisch_icon.png'))}\n"
         "Terminal=false\nStartupNotify=true\nCategories=Science;\n"
         "Keywords=microscopy;fluorescence;tracking;images;\n"
     )
@@ -35,17 +35,19 @@ def desktop_entry(root: Path, *, icon_path: Path | None = None) -> str:
 def install_macos_shortcut(root: Path, output_dir: Path | None, refresh_only: bool,
                            report: Callable[[str], None]) -> None:
     """A Terminal launcher keeps install/update progress available on macOS."""
-    destination = (output_dir or Path.home() / "Applications") / "FITS.command"
+    destination = (output_dir or Path.home() / "Applications") / "FIScH.command"
     launcher = root / "startup" / "launch_macos.sh"
     contents = "#!/bin/bash\nexec /bin/bash " + shlex.quote(str(launcher)) + ' "$@"\n'
-    if refresh_only and not destination.exists():
+    legacy = destination.with_name("FITS.command")
+    owns_legacy = legacy.is_file() and legacy.read_text(encoding="utf-8") == contents
+    if refresh_only and not destination.exists() and not owns_legacy:
         return
     if destination.exists() and destination.read_text(encoding="utf-8") != contents:
         if refresh_only:
             return
-        report(f"Existing FITS launcher: {destination}\nNew checkout: {root}")
+        report(f"Existing FIScH launcher: {destination}\nNew checkout: {root}")
         try:
-            answer = input("Point the FITS launcher to this checkout? [y/N] ")
+            answer = input("Point the FIScH launcher to this checkout? [y/N] ")
         except EOFError:
             answer = ""
         if answer.strip().lower() not in ("y", "yes"):
@@ -54,15 +56,17 @@ def install_macos_shortcut(root: Path, output_dir: Path | None, refresh_only: bo
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(contents, encoding="utf-8")
     destination.chmod(0o755)
-    report(f"Installed {destination}. Double-click it in Finder to launch FITS.")
+    if owns_legacy:
+        legacy.unlink(missing_ok=True)
+    report(f"Installed {destination}. Double-click it in Finder to launch FIScH.")
 
 
 def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only: bool = False,
                      report: Callable[[str], None] = print) -> None:
     if sys.platform == "win32":
         environment = os.environ.copy()
-        environment["FITS_INSTALL_ROOT"] = str(root)
-        environment["FITS_REFRESH_SHORTCUTS"] = "1" if refresh_only else "0"
+        environment["FISCH_INSTALL_ROOT"] = str(root)
+        environment["FISCH_REFRESH_SHORTCUTS"] = "1" if refresh_only else "0"
         subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
              str(root / "startup" / "windows_shortcut.ps1")],
@@ -73,30 +77,33 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
         install_macos_shortcut(root, output_dir, refresh_only, report)
         return
     if not (root / ".venv" / "bin" / "python").is_file():
-        raise RuntimeError("Create the FITS environment before installing a shortcut.")
-    if not (root / "assets" / "fits_icon.png").is_file():
-        raise RuntimeError("Missing FITS icon.")
+        raise RuntimeError("Create the FIScH environment before installing a shortcut.")
+    if not (root / "assets" / "fisch_icon.png").is_file():
+        raise RuntimeError("Missing FIScH icon.")
     data_home = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
     destination_dir = output_dir or data_home / "applications"
-    destination = destination_dir / "fits.desktop"
-    if refresh_only and not destination.exists():
+    destination = destination_dir / "fisch.desktop"
+    legacy = destination.with_name("fits.desktop")
+    expected_path = f"Path={desktop_value(str(root))}"
+    legacy_lines = legacy.read_text(encoding="utf-8").splitlines() if legacy.is_file() else []
+    owns_legacy = "Name=FITS" in legacy_lines and expected_path in legacy_lines
+    if refresh_only and not destination.exists() and not owns_legacy:
         return
-    icon_source = root / "assets" / "fits_icon.png"
+    icon_source = root / "assets" / "fisch_icon.png"
     icon_bytes = icon_source.read_bytes()
     # GNOME can retain an old icon when a different image reuses the same path.
     icon_dir = output_dir / "icons" if output_dir is not None else data_home / "icons"
-    icon_path = icon_dir / f"fits-{sha256(icon_bytes).hexdigest()[:16]}.png"
+    icon_path = icon_dir / f"fisch-{sha256(icon_bytes).hexdigest()[:16]}.png"
     contents = desktop_entry(root, icon_path=icon_path)
     if destination.exists():
         old = destination.read_text(encoding="utf-8")
-        expected_path = f"Path={desktop_value(str(root))}"
         if expected_path not in old.splitlines():
             if refresh_only:
                 return  # Do not repoint another checkout's shortcut during updates.
             old_path = next((line[5:] for line in old.splitlines() if line.startswith("Path=")), "unknown")
-            report(f"Existing FITS shortcut: {old_path}\nNew checkout: {root}")
+            report(f"Existing FIScH shortcut: {old_path}\nNew checkout: {root}")
             try:
-                answer = input("Point the FITS shortcut to this checkout? [y/N] ")
+                answer = input("Point the FIScH shortcut to this checkout? [y/N] ")
             except EOFError:
                 answer = ""
             if answer.strip().lower() not in ("y", "yes"):
@@ -109,9 +116,11 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
     launcher = root / "startup" / "launch_linux.sh"
     launcher.chmod(launcher.stat().st_mode | 0o100)
     destination.write_text(contents, encoding="utf-8")
+    if owns_legacy:
+        legacy.unlink(missing_ok=True)
     if shutil.which("update-desktop-database"):
         subprocess.run(["update-desktop-database", str(destination_dir)], check=True)
-    report(f"Installed {destination}. Search for FITS in Applications.")
+    report(f"Installed {destination}. Search for FIScH in Applications.")
 
 
 if __name__ == "__main__":

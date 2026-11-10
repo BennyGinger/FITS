@@ -9,14 +9,16 @@ import pandas as pd
 import pytest
 from scope_io import ScopeIO
 
-from fits.pipeline import start_pipeline
-from fits.environment import constant as cst
-from fits.environment.paths import experiment_state_path
-from fits.workflows.checks.artifacts import inspect_run
-from fits.workflows.checks.locations import inspect_locations
-from fits.workflows.experiments import ExperimentState, discover_saved_states, save_experiment_state
-from fits.workflows.file_management import api
-from fits.workflows.artifacts.provenance import read_metadata
+from fisch.pipeline import start_pipeline
+from fisch.environment import constant as cst
+from fisch.environment.paths import experiment_state_path
+from fisch.workflows.checks.artifacts import inspect_run
+from fisch.workflows.checks.locations import inspect_locations
+from fisch.workflows.experiments import ExperimentState, discover_saved_states, save_experiment_state
+from fisch.workflows.file_management import api
+from fisch.workflows.file_management.rebuild import rebuild_analysis_tables
+from fisch.workflows.checks.analysis import outdated_master_tables
+from fisch.workflows.artifacts.provenance import read_metadata
 from scope_io.writers.metadata_update import rewrite_metadata
 from test_file_management import legacy_run, mock_rebuild_processing
 
@@ -31,7 +33,7 @@ def test_moved_acquisition_updates_only_master_tags(tmp_path: Path) -> None:
     state = api.migrate(migration)[0]
     assert not inspect_locations(tmp_path).needs_update
     assert api.plan_update(tmp_path) is None
-    table = state.workdir / cst.FITS_QUANTI_NAME
+    table = state.workdir / cst.QUANTI_NAME
     original = table.read_bytes()
     assert not any(name.startswith('condition_level_') for name in pd.read_parquet(table))
     moved = tmp_path / 'treated' / state.original_image.parent.name
@@ -98,13 +100,13 @@ def _current_series(template: ExperimentState, name: str, root: Path) -> Experim
     original = group / f'{name}.tif'
     shutil.copy2(template.original_image, original)
     reader = ScopeIO.from_path(original)
-    raw = folder / cst.FITS_ARRAY_RAW
+    raw = folder / cst.ARRAY_RAW
     metadata = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
-                                    channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+                                    channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '5.0.0'}}).new_revision()
     reader.save_array(np.ones((8, 8), dtype=np.float32), metadata=metadata, output_path=raw)
     state = ExperimentState.init(folder, original, run_dir=root).with_complete_step(
         step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=raw)
-    bg = folder / cst.FITS_ARRAY_BGSUB
+    bg = folder / cst.ARRAY_BGSUB
     reader.save_array(np.ones((8, 8), dtype=np.float32), output_path=bg,
                       metadata=metadata.with_artifact(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
                           {'artifact_path': raw.name, 'created_at': metadata.artifact.created_at}]))
@@ -116,13 +118,13 @@ def test_required_rebuild_combines_scopes_and_leaves_healthy_series(tmp_path: Pa
     """
     Fully reconstruct migrated results, update stale downstream work, and preserve healthy experiments.
     """
-    adapter, _, _ = legacy_run(tmp_path, masks=True)
+    adapter, _, _ = legacy_run(tmp_path)
     migration = api.plan_migration(tmp_path)
     assert migration is not None
     migrated = api.migrate(migration)[0]
     stale = _current_series(migrated, 'image_s2', tmp_path)
     healthy = _current_series(migrated, 'image_s3', tmp_path)
-    raw = stale.workdir / cst.FITS_ARRAY_RAW
+    raw = stale.workdir / cst.ARRAY_RAW
     rewrite_metadata(raw, read_metadata(raw).new_revision())
     before = {path: path.read_bytes() for path in healthy.workdir.iterdir() if path.is_file()}
     mock_rebuild_processing(monkeypatch, adapter)
@@ -165,8 +167,8 @@ def test_compacted_experiment_requires_full_rebuild(tmp_path: Path, monkeypatch:
     api.apply_compaction(api.plan_compaction(tmp_path))
     state = discover_saved_states(tmp_path)[0]
     assert state.compacted
-    assert not (state.workdir / cst.FITS_ARRAY_RAW).exists()
-    assert (state.workdir / cst.FITS_ARRAY_NAME).is_file()
+    assert not (state.workdir / cst.ARRAY_RAW).exists()
+    assert (state.workdir / cst.ARRAY_NAME).is_file()
     plan = api.plan_required_rebuild(tmp_path)
     assert plan is not None
     assert plan.fully_rebuilds(state.workdir)
@@ -174,9 +176,9 @@ def test_compacted_experiment_requires_full_rebuild(tmp_path: Path, monkeypatch:
     api.update_downstream(plan, run)
     current = discover_saved_states(tmp_path)[0]
     assert not current.compacted
-    assert (current.workdir / cst.FITS_ARRAY_RAW).is_file()
-    assert (current.workdir / cst.FITS_ARRAY_BGSUB).is_file()
-    assert not (current.workdir / cst.FITS_ARRAY_NAME).exists()
+    assert (current.workdir / cst.ARRAY_RAW).is_file()
+    assert (current.workdir / cst.ARRAY_BGSUB).is_file()
+    assert not (current.workdir / cst.ARRAY_NAME).exists()
     assert api.plan_required_rebuild(tmp_path) is None
 
 
@@ -192,9 +194,8 @@ def test_removed_experiments_can_refresh_an_orphan_master(tmp_path: Path) -> Non
     assert master.is_file()
     shutil.rmtree(state.original_image.parent)
     assert not discover_saved_states(tmp_path)
-    assert inspect_locations(tmp_path).needs_update
-    plan = api.plan_update(tmp_path)
-    assert plan is not None
-    api.update(plan)
+    assert not inspect_locations(tmp_path).needs_update
+    assert master in outdated_master_tables(tmp_path, [])
+    rebuild_analysis_tables(tmp_path)
     assert not master.exists()
     assert not inspect_locations(tmp_path).needs_update

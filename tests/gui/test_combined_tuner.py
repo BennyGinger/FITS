@@ -11,12 +11,13 @@ from scope_io import ScopeIO
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
-from fits.environment import constant as cst
-from fits.gui.viewer.segmentation.window import SegmentationTunerWindow
-from fits.settings.models import ExtractSettings, SegmentChannelSettings, SegmentSettings
-from fits.tasks.segmentation.preview_cache import SegmentationPreview
-from fits.tasks.segmentation.tuning import SegmentationTuningSession
-from fits.gui.viewer.segmentation.worker import PreviewOutcome, PreviewRequest
+from fisch.environment import constant as cst
+from fisch.workflows.experiments import ExperimentState, save_experiment_state
+from fisch.gui.viewer.segmentation.window import SegmentationTunerWindow
+from fisch.settings.models import ExtractSettings, SegmentChannelSettings, SegmentSettings
+from fisch.tasks.segmentation.preview_cache import SegmentationPreview
+from fisch.tasks.segmentation.tuning import SegmentationTuningSession
+from fisch.gui.viewer.segmentation.worker import PreviewOutcome, PreviewRequest
 
 
 @pytest.fixture
@@ -24,20 +25,30 @@ def image_masks(tmp_path: Path) -> tuple[Path, np.ndarray, np.ndarray]:
     """
     Prepare two image/mask channels with distinct segmentation and edited tracking.
     """
-    raw = tmp_path / "input.tif"
+    directory = tmp_path / 'acquisition' / 'series'
+    directory.mkdir(parents=True)
+    raw = directory.parent / 'input.tif'
     image = np.stack([np.full((16, 16), 100, dtype=np.uint16), np.full((16, 16), 200, dtype=np.uint16)])
     tifffile.imwrite(raw, image, photometric="minisblack", metadata={"axes": "CYX"})
     reader = ScopeIO.from_path(raw)
-    reader.save_array(image, channel_labels=["Red", "Green"], output_path=tmp_path / cst.FITS_ARRAY_NAME)
-    reader = ScopeIO.from_path(tmp_path / cst.FITS_ARRAY_NAME)
+    reader.save_array(image, channel_labels=["Red", "Green"], output_path=directory / cst.ARRAY_RAW,
+                      custom_metadata={"pipeline_meta": {"version": "5.0.0"}})
+    reader = ScopeIO.from_path(directory / cst.ARRAY_RAW)
     segmentation = np.zeros_like(image)
     segmentation[0, 2:9, 2:9] = 3
     segmentation[1, 7:14, 7:14] = 4
     tracking = np.zeros_like(image)
     tracking[0, 1:8, 6:13] = 31
     tracking[1, 8:15, 1:8] = 42
-    reader.save_array(segmentation, output_path=tmp_path / cst.FITS_MASK_SEG, artifact_kind=cst.ARTI_SEG)
-    reader.save_array(tracking, output_path=tmp_path / cst.FITS_MASK_TRACK_EDITED, artifact_kind=cst.ARTI_TRACK)
+    reader.save_array(segmentation, output_path=directory / cst.MASK_SEG, artifact_kind=cst.ARTI_SEG)
+    reader.save_array(tracking, output_path=directory / cst.MASK_TRACK_EDITED, artifact_kind=cst.ARTI_TRACK)
+    state = ExperimentState.init(directory, raw, run_dir=tmp_path).with_complete_step(
+        step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=directory / cst.ARRAY_RAW)
+    state = state.with_complete_step(step_name=cst.StepName.SEGMENT, artifact_kind=cst.ARTI_SEG,
+                                     artifact_path=directory / cst.MASK_SEG)
+    state = state.with_complete_step(step_name=cst.StepName.TRACK, artifact_kind=cst.ARTI_TRACK,
+                                     artifact_path=directory / cst.MASK_TRACK_EDITED)
+    save_experiment_state(state)
     return tmp_path, segmentation, tracking
 
 
@@ -97,7 +108,7 @@ def test_compartment_preview_bypasses_tracking(tuner: SegmentationTunerWindow,
     tuner._display_selection()
     expected = compartment_masks(image_masks[1][0], CompartmentSettings(1))["mb"]
     np.testing.assert_array_equal(np.asarray(tuner.image_viewer._mask_array), expected)
-    assert cst.FITS_MASK_SEG in tuner.compartment_panel.source_label.text()
+    assert cst.MASK_SEG in tuner.compartment_panel.source_label.text()
 
 
 def test_thickness_reuses_geometry_and_dilation_rebuilds_it(tuner: SegmentationTunerWindow) -> None:
@@ -138,7 +149,7 @@ def test_new_segmentation_result_invalidates_geometry_and_marks_changed_settings
     tuner.settings_panel.diameter.setValue(37)
     assert "out of date" in tuner.status_label.text()
     # Previewing never writes over the existing saved segmentation or tracking masks.
-    assert ScopeIO.from_path(tmp_path / cst.FITS_MASK_SEG).get_array().array.max() == 4
+    assert ScopeIO.from_path(next(tmp_path.rglob(cst.MASK_SEG))).get_array().array.max() == 4
 
 
 def test_save_tabs_and_close_warning_preserve_unsaved_other_tab(
@@ -213,7 +224,7 @@ def test_saved_mask_revision_rebuilds_geometry(tuner: SegmentationTunerWindow, t
     Detect a newly published artifact revision even when mask pixels are unchanged.
     """
     from scope_io.writers.metadata_update import rewrite_metadata
-    source = tmp_path / cst.FITS_MASK_TRACK_EDITED
+    source = next(tmp_path.rglob(cst.MASK_TRACK_EDITED))
     old_geometry = tuner._mask_previews._geometry
     metadata = ScopeIO.from_path(source).reader.metadata.new_revision()
     rewrite_metadata(source, metadata)
@@ -269,9 +280,9 @@ def test_main_gui_receives_targeted_channel_deletion_and_compartment_settings(
     """
     Apply each tab to its main-GUI destination without saving unrelated pending edits.
     """
-    from fits.gui.main_window import FitsMainWindow
-    from fits.gui.settings import SettingsAdapter
-    from fits.gui.segmentation_models.loader import model_options_loader
+    from fisch.gui.main_window import FischMainWindow
+    from fisch.gui.settings import SettingsAdapter
+    from fisch.gui.segmentation_models.loader import model_options_loader
     loader = model_options_loader()
     loader.start()
     loader.wait()
@@ -283,7 +294,7 @@ def test_main_gui_receives_targeted_channel_deletion_and_compartment_settings(
     adapter.set_field_value(cst.StepName.CONVERT, 'channel_labels', ['Red', 'Green'])
     adapter.set_segment_channels([{"channel": "Red"}, {"channel": "Green", "user_settings": {"diameter": 14}}])
     adapter.set_field_value(cst.StepName.EXTRACT, "additional_properties", ["eccentricity"])
-    main = FitsMainWindow(adapter)
+    main = FischMainWindow(adapter)
     main._open_segmentation_tuner("compartment")
     active = main._segmentation_tuner
     assert isinstance(active, SegmentationTunerWindow)
@@ -317,8 +328,8 @@ def test_standalone_saves_both_tabs_to_run_settings(
     """
     Persist standalone changes through the ordinary run-settings path.
     """
-    from fits.gui.settings import SettingsAdapter
-    from fits.settings.loader import run_settings_path
+    from fisch.gui.settings import SettingsAdapter
+    from fisch.settings.loader import run_settings_path
     root = image_masks[0]
     standalone = SegmentationTunerWindow(root, initial_tab="compartment",
                                          segment_settings=SegmentSettings(channels=[SegmentChannelSettings(channel="Red")]))

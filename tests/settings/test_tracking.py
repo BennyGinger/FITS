@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fits.settings.models import TrackSettings
+from fisch.settings.models import TrackSettings
 
 
 def test_tracking_postprocess_defaults_to_disabled() -> None:

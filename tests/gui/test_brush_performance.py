@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication
 from scipy.ndimage import binary_dilation
 from skimage.morphology import disk
 
-from fits.gui.viewer.common.image_viewer import FitsImageViewer
+from fisch.gui.viewer.common.image_viewer import FischImageViewer
 
 
 @pytest.fixture(scope="module")
@@ -22,7 +22,7 @@ def app():
 
 @pytest.mark.parametrize("size", [1, 3, 50, 101])
 def test_wide_brush_matches_disk_at_edges_and_on_empty_mask(app, size):
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.set_drawing_options("edit", "brush", "add", size)
     selected = np.zeros((128, 160), dtype=bool)
     selected[0, 0] = selected[64, 75] = selected[-1, -1] = True
@@ -34,7 +34,7 @@ def test_wide_brush_matches_disk_at_edges_and_on_empty_mask(app, size):
 
 @pytest.mark.parametrize("operation", ["add", "erase"])
 def test_brush_only_rasterizes_new_segments_and_commits_pending_points(app, monkeypatch, operation):
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     initial = np.full((160, 160), operation == "erase", dtype=np.uint8)
     viewer.set_drawing_mask(initial)
     viewer.set_drawing_options("edit", "brush", operation, 50)
@@ -50,7 +50,7 @@ def test_brush_only_rasterizes_new_segments_and_commits_pending_points(app, monk
     viewer._last_drawing_render = 0
     viewer._continue_drawing(70, 30)
     # Hold the next events until release to exercise throttled input.
-    monkeypatch.setattr("fits.gui.viewer.common.image_viewer.DRAWING_REFRESH_SECONDS", float("inf"))
+    monkeypatch.setattr("fisch.gui.viewer.common.image_viewer.DRAWING_REFRESH_SECONDS", float("inf"))
     viewer._continue_drawing(70, 70)
     viewer._finish_drawing(30, 70)
     assert calls == [[(30, 30)], [(30, 30), (30, 70)],

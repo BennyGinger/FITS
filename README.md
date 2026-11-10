@@ -69,7 +69,8 @@ Open **FIScH** from the Start menu or desktop shortcut.
 Follow the [macOS installation instructions](docs/user_guide/installation.md#macos-experimental).
 Mac dependency compatibility and processing still require validation on real hardware.
 
-For an existing clone, pull FIScH updates and rerun its installer from the main
+For a FITS 4 installation, follow the [one-time upgrade to FIScH 5](docs/user_guide/installation.md#upgrade-an-existing-fits-4-installation-to-fisch-5).
+For an existing FIScH clone, pull updates and rerun its installer from the main
 repository folder. Setup updates clean, older submodules to the versions required
 by that checkout before installing dependencies. Interactive installers wait for
 **Enter** before finishing; `--pause` is unnecessary.

@@ -38,7 +38,9 @@ def install_macos_shortcut(root: Path, output_dir: Path | None, refresh_only: bo
     destination = (output_dir or Path.home() / "Applications") / "FIScH.command"
     launcher = root / "startup" / "launch_macos.sh"
     contents = "#!/bin/bash\nexec /bin/bash " + shlex.quote(str(launcher)) + ' "$@"\n'
-    if refresh_only and not destination.exists():
+    legacy = destination.with_name("FITS.command")
+    owns_legacy = legacy.is_file() and legacy.read_text(encoding="utf-8") == contents
+    if refresh_only and not destination.exists() and not owns_legacy:
         return
     if destination.exists() and destination.read_text(encoding="utf-8") != contents:
         if refresh_only:
@@ -54,6 +56,8 @@ def install_macos_shortcut(root: Path, output_dir: Path | None, refresh_only: bo
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(contents, encoding="utf-8")
     destination.chmod(0o755)
+    if owns_legacy:
+        legacy.unlink(missing_ok=True)
     report(f"Installed {destination}. Double-click it in Finder to launch FIScH.")
 
 
@@ -79,7 +83,11 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
     data_home = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
     destination_dir = output_dir or data_home / "applications"
     destination = destination_dir / "fisch.desktop"
-    if refresh_only and not destination.exists():
+    legacy = destination.with_name("fits.desktop")
+    expected_path = f"Path={desktop_value(str(root))}"
+    legacy_lines = legacy.read_text(encoding="utf-8").splitlines() if legacy.is_file() else []
+    owns_legacy = "Name=FITS" in legacy_lines and expected_path in legacy_lines
+    if refresh_only and not destination.exists() and not owns_legacy:
         return
     icon_source = root / "assets" / "fisch_icon.png"
     icon_bytes = icon_source.read_bytes()
@@ -89,7 +97,6 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
     contents = desktop_entry(root, icon_path=icon_path)
     if destination.exists():
         old = destination.read_text(encoding="utf-8")
-        expected_path = f"Path={desktop_value(str(root))}"
         if expected_path not in old.splitlines():
             if refresh_only:
                 return  # Do not repoint another checkout's shortcut during updates.
@@ -109,6 +116,8 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
     launcher = root / "startup" / "launch_linux.sh"
     launcher.chmod(launcher.stat().st_mode | 0o100)
     destination.write_text(contents, encoding="utf-8")
+    if owns_legacy:
+        legacy.unlink(missing_ok=True)
     if shutil.which("update-desktop-database"):
         subprocess.run(["update-desktop-database", str(destination_dir)], check=True)
     report(f"Installed {destination}. Search for FIScH in Applications.")

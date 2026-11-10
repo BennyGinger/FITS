@@ -216,6 +216,40 @@ def test_linux_shortcut_changes_icon_path_when_image_changes(shortcuts, tmp_path
     assert f'Icon={second}' in entry.read_text()
 
 
+@pytest.mark.parametrize('platform', ['linux', 'darwin'])
+@pytest.mark.parametrize('same_checkout', [True, False])
+def test_refresh_migrates_only_owned_fits_shortcuts(shortcuts: ModuleType, tmp_path: Path,
+                                                   monkeypatch: pytest.MonkeyPatch, platform: str,
+                                                   same_checkout: bool,
+                                                   ) -> None:
+    """
+    Replace a legacy shortcut only when it points to the checkout being upgraded.
+    """
+    import shlex
+
+    root = tmp_path / 'checkout'
+    make_install(root)
+    owner = root if same_checkout else tmp_path / 'other'
+    menu = tmp_path / 'menu'
+    menu.mkdir()
+    monkeypatch.setattr(shortcuts.sys, 'platform', platform)
+    if platform == 'darwin':
+        legacy = menu / 'FITS.command'
+        current = menu / 'FIScH.command'
+        contents = '#!/bin/bash\nexec /bin/bash ' + shlex.quote(str(owner / 'startup/launch_macos.sh')) + ' "$@"\n'
+    else:
+        legacy = menu / 'fits.desktop'
+        current = menu / 'fisch.desktop'
+        contents = f'[Desktop Entry]\nName=FITS\nPath={owner}\n'
+    legacy.write_text(contents, encoding='utf-8')
+    shortcuts.install_shortcut(root, output_dir=menu, refresh_only=True)
+    assert current.is_file() == same_checkout
+    if same_checkout:
+        assert not legacy.exists()
+    else:
+        assert legacy.read_text(encoding='utf-8') == contents
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux entry-file integration")
 def test_linux_entry_runs_installation_from_another_directory(checkout: Path, tmp_path: Path) -> None:
     """

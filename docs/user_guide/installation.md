@@ -195,6 +195,26 @@ and the shortcut remain. A fresh clone and installation recreate the environment
 and can repoint the shortcut. If moving a checkout, recreate its `.venv` at the
 new location and rerun the installer; virtual environments are not portable.
 
+## Upgrade an existing FITS 4 installation to FIScH 5
+
+Close FITS and open a terminal in its existing checkout. Save any local work,
+including work inside submodules. If `.gitmodules` still lists `fits_io`, run
+`git submodule deinit -- fits_io` before pulling. This retires that checkout so
+the installer can initialize `scope_io` at the new path.
+
+```bash
+git remote set-url origin https://github.com/BennyGinger/fisch.git
+git pull --ff-only
+```
+
+Run the installer for your platform from the updated checkout
+(`bash install_linux.sh`, `bash install_macos.sh`, or `install_win.bat` on
+Windows). This one-time installer step updates the environment and replaces the
+old shortcut for this checkout. Then open FIScH from the new shortcut. The
+FITS 4 launcher in memory still expects the old package name, so use these
+steps for the transition to 5.0.0. Later FIScH versions use the startup update
+prompt described below.
+
 ## Startup updates and repair
 
 Menu/desktop shortcuts and the launchers check the configured upstream GitHub

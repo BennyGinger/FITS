@@ -16,7 +16,14 @@ $folders = @(
 foreach ($folder in $folders) {
     if (-not $folder) { throw 'Windows did not provide a shortcut folder for this user.' }
     $destination = Join-Path $folder 'FIScH.lnk'
-    if ($refreshOnly -and -not (Test-Path -LiteralPath $destination)) { continue }
+    $legacy = Join-Path $folder 'FITS.lnk'
+    $ownsLegacy = $false
+    if (Test-Path -LiteralPath $legacy -PathType Leaf) {
+        $previous = $shell.CreateShortcut($legacy)
+        $ownsLegacy = ($previous.WorkingDirectory.TrimEnd('\') -eq $root.TrimEnd('\')) -and
+            ($previous.Arguments -eq ('"' + $launcher + '"'))
+    }
+    if ($refreshOnly -and -not $ownsLegacy -and -not (Test-Path -LiteralPath $destination)) { continue }
     if (Test-Path -LiteralPath $destination) {
         $existing = $shell.CreateShortcut($destination)
         if ($existing.WorkingDirectory.TrimEnd('\') -ne $root.TrimEnd('\')) {
@@ -39,6 +46,7 @@ foreach ($folder in $folders) {
     $shortcut.Description = 'Fluorescent Imaging and Single-cell Histories'
     $shortcut.IconLocation = "$icon,0"
     $shortcut.Save()
+    if ($ownsLegacy) { Remove-Item -LiteralPath $legacy }
     Write-Host "Installed $destination."
 }
 Write-Host 'Open FIScH from the Start menu or your desktop.'

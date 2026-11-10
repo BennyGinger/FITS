@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK
 from fits.gui.viewer.tracking.session import TrackingViewerSession
@@ -22,12 +22,12 @@ def test_image_session_reads_and_caches_only_requested_planes(tmp_path, monkeypa
     tifffile.imwrite(source, array, photometric="minisblack", compression="zlib",
                      metadata={"axes": "TCYX"})
     calls = []
-    original = FitsIO.get_plane
+    original = ScopeIO.get_plane
     def read(self, frame_index=0, channel=0, z_index=0):
         calls.append((frame_index, channel, z_index))
         return original(self, frame_index, channel, z_index)
-    monkeypatch.setattr(FitsIO, "get_plane", read)
-    monkeypatch.setattr(FitsIO, "get_array",
+    monkeypatch.setattr(ScopeIO, "get_plane", read)
+    monkeypatch.setattr(ScopeIO, "get_array",
                         lambda *args, **kwargs: pytest.fail("Eager movie read"))
     session = FitsImageSession(source)
     assert calls == []
@@ -45,7 +45,7 @@ def test_disk_edits_survive_eviction_and_do_not_change_source(tmp_path):
     original = np.zeros((4, 8, 9), dtype=np.uint16)
     original[:, 2:4, 3:5] = 10
     tifffile.imwrite(source, original, photometric="minisblack", metadata={"axes": "TYX"})
-    reader = FitsIO.from_path(source)
+    reader = ScopeIO.from_path(source)
     store = PlaneStore("TYX", original.shape, reader=reader, dtype=np.uint16,
                        cache_bytes=8 * 9 * 2, cache_planes=1)
     store.writable_plane(1)[2:4, 3:5] = 20
@@ -68,7 +68,7 @@ def test_read_snapshot_preserves_source_edits_and_deferred_operations(tmp_path):
     source = tmp_path / 'masks.tif'
     original = np.full((2, 8, 9), 10, dtype=np.uint16)
     tifffile.imwrite(source, original, photometric='minisblack', metadata={'axes': 'TYX'})
-    store = PlaneStore('TYX', original.shape, reader=FitsIO.from_path(source), dtype=np.uint16)
+    store = PlaneStore('TYX', original.shape, reader=ScopeIO.from_path(source), dtype=np.uint16)
     key = (0, 0, 0)
     source_state = store.snapshot_plane(key)
     store.writable_plane()[2, 3] = 20
@@ -95,15 +95,15 @@ def test_loaded_mask_navigation_is_lazy_and_save_keeps_session_anchors(
     source = tmp_path / FITS_ARRAY_NAME
     image = np.ones((4, 8, 9), dtype=np.uint16)
     tifffile.imwrite(source, image, photometric="minisblack", metadata={"axes": "TYX"})
-    labels = FitsIO.from_path(source).channel_labels
+    labels = ScopeIO.from_path(source).channel_labels
     artifact = tmp_path / f"fits_{'ref' if kind == 'reference' else 'roi'}_test.tif"
     masks = np.zeros_like(image)
     masks[1, 2:4, 3:5] = 1 if kind == "reference" else 3
-    FitsIO.from_path(source).save_array(
+    ScopeIO.from_path(source).save_array(
         masks, output_path=artifact, channel_labels=labels, export_channels=labels,
         custom_metadata={"roi_mask_encoding": ROI_MASK_ENCODING} if kind == "roi" else {})
-    original_get_array = FitsIO.get_array
-    monkeypatch.setattr(FitsIO, "get_array",
+    original_get_array = ScopeIO.get_array
+    monkeypatch.setattr(ScopeIO, "get_array",
                         lambda *args, **kwargs: pytest.fail("Eager mask read"))
     session = (ReferenceMaskSession(source, reference_path=artifact)
                if kind == "reference" else RoiSession(source, roi_path=artifact))
@@ -113,11 +113,11 @@ def test_loaded_mask_navigation_is_lazy_and_save_keeps_session_anchors(
     session.set_mask_plane(changed, frame_index=1)
     np.testing.assert_array_equal(session.mask_plane(1), changed)
     # Existing channel merging currently uses the full-artifact save API.
-    monkeypatch.setattr(FitsIO, "get_array", original_get_array)
+    monkeypatch.setattr(ScopeIO, "get_array", original_get_array)
     session.save("test", interpolation_axis="T", overwrite=True)
     assert session.mask_plane(0).sum() == 0
     np.testing.assert_array_equal(session.mask_plane(1), changed)
-    saved = FitsIO.from_path(artifact).get_array().array
+    saved = ScopeIO.from_path(artifact).get_array().array
     assert saved[0].sum() > 0
     session.close()
 
@@ -131,7 +131,7 @@ def test_tracking_real_disk_edit_save_and_undo(tmp_path, monkeypatch):
     for path, array in ((source, image), (tracking, masks)):
         tifffile.imwrite(path, array, photometric="minisblack", compression="zlib",
                          metadata={"axes": "TYX"})
-    monkeypatch.setattr(FitsIO, "get_array",
+    monkeypatch.setattr(ScopeIO, "get_array",
                         lambda *args, **kwargs: pytest.fail("Eager tracking read"))
     session = TrackingViewerSession(tracking)
     assert isinstance(session._tracks, PlaneStore)
@@ -141,8 +141,8 @@ def test_tracking_real_disk_edit_save_and_undo(tmp_path, monkeypatch):
         session.tracked_frame(frame)
     assert session.tracked_frame(1).sum() == 0
     output, _ = session.save_edited_tracking(selected_mask_channel=0)
-    np.testing.assert_array_equal(FitsIO.from_path(output).get_plane(1).array, 0)
-    np.testing.assert_array_equal(FitsIO.from_path(tracking).get_plane(1).array, masks[1])
+    np.testing.assert_array_equal(ScopeIO.from_path(output).get_plane(1).array, 0)
+    np.testing.assert_array_equal(ScopeIO.from_path(tracking).get_plane(1).array, masks[1])
     session.undo_last_edit()
     np.testing.assert_array_equal(session.tracked_frame(1), masks[1])
     session.close()
@@ -186,15 +186,15 @@ def test_clear_current_and_stack_do_not_read_or_write_pixels(tmp_path, monkeypat
     image = np.ones((12, 2, 8, 9), dtype=np.uint16)
     tifffile.imwrite(source, image, photometric="minisblack", metadata={"axes": "TCYX"})
     artifact = tmp_path / f"fits_{'ref' if kind == 'reference' else 'roi'}_test.tif"
-    labels = FitsIO.from_path(source).channel_labels
+    labels = ScopeIO.from_path(source).channel_labels
     masks = np.ones_like(image) * (1 if kind == "reference" else 3)
-    FitsIO.from_path(source).save_array(
+    ScopeIO.from_path(source).save_array(
         masks, output_path=artifact, channel_labels=labels, export_channels=labels,
         custom_metadata={"roi_mask_encoding": ROI_MASK_ENCODING} if kind == "roi" else {})
     session = (ReferenceMaskSession(source, reference_path=artifact)
                if kind == "reference" else RoiSession(source, roi_path=artifact))
     with monkeypatch.context() as patch:
-        patch.setattr(FitsIO, "get_plane", lambda *a, **k: pytest.fail("Clear read source pixels"))
+        patch.setattr(ScopeIO, "get_plane", lambda *a, **k: pytest.fail("Clear read source pixels"))
         patch.setattr(np, "save", lambda *a, **k: pytest.fail("Clear wrote pixel data"))
         session.clear_mask_plane(frame_index=3, channel=0)
         session.clear_stack(channel=0)
@@ -209,7 +209,7 @@ def test_clear_current_and_stack_do_not_read_or_write_pixels(tmp_path, monkeypat
     session.set_mask_plane(edited, frame_index=3, channel=0)
     np.testing.assert_array_equal(session.mask_plane(3, 0), edited)
     assert not session.mask_plane(2, 0).any()
-    np.testing.assert_array_equal(FitsIO.from_path(artifact).get_plane(3, 0).array, masks[3, 0])
+    np.testing.assert_array_equal(ScopeIO.from_path(artifact).get_plane(3, 0).array, masks[3, 0])
     session.close()
 
 
@@ -222,7 +222,7 @@ def test_lazy_tracking_deletion_reuses_centroids_and_undo(tmp_path, monkeypatch)
     session = TrackingViewerSession(tracking)
     session.track_centroids()
     with monkeypatch.context() as patch:
-        patch.setattr(FitsIO, "get_plane", lambda *a, **k: pytest.fail("Deletion rescanned source"))
+        patch.setattr(ScopeIO, "get_plane", lambda *a, **k: pytest.fail("Deletion rescanned source"))
         patch.setattr(np, "save", lambda *a, **k: pytest.fail("Deletion wrote plane data"))
         session.delete_track(10, 0, 0)
         assert set(session.track_centroids()) == {20}

@@ -22,7 +22,7 @@ from fits.gui.file_preview.widget import FilePreviewWidget
 from fits.workflows.file_management import api
 from fits.workflows.file_management.compaction import plan_compaction
 from fits.workflows.artifacts.provenance import read_metadata
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from test_file_management import legacy_run
 
 
@@ -186,11 +186,11 @@ def test_compartment_and_manual_mask_preview_keeps_branch_roles(tmp_path: Path) 
     ref = state.workdir / cst.FITS_REFERENCE_TEMPLATE.format(label='edge')
     roi = state.workdir / cst.FITS_ROI_TEMPLATE.format(label='area')
     image = state.workdir / cst.FITS_ARRAY_BGSUB
-    reader = FitsIO.from_path(image)
+    reader = ScopeIO.from_path(image)
     metadata = read_metadata(image)
     for path, kind in ((ref, cst.ARTI_REF), (roi, cst.ARTI_ROI)):
         reader.save_array(np.ones((8, 8), dtype=np.uint16), output_path=path,
-                          metadata=metadata.with_fitsio(artifact_type=kind).new_revision())
+                          metadata=metadata.with_artifact(artifact_type=kind).new_revision())
     adapter.set_step_enabled(cst.StepName.EXTRACT, True)
     adapter.set_field_value(cst.StepName.EXTRACT, 'compartments', True)
     adapter.set_field_value(cst.StepName.EXTRACT, 'save_compartment_masks', True)

@@ -32,7 +32,7 @@ from fits.settings.loader import run_settings_path
 from fits.workflows.artifacts.branch_masks import geometry, refresh_branch
 from fits.tasks.reference_mask.artifact import load_reference_artifact
 from fits.tasks.roi_mask.artifact import load_roi_artifact
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.tasks.analysis.extraction.compartment_export import compartment_export_paths
 from fits.tasks.analysis.extraction.manager import resolve_extraction_labels
 
@@ -461,7 +461,7 @@ def accept_reviewed_geometry(root: Path, reviews: Sequence[tuple[Path, Path]]) -
         require_free_space(root, 2 * file_bytes(path for path, _ in reviews), action='update REF/ROI alignment metadata')
         with FileUpdate(root) as transaction:
             for path, image in reviews:
-                reader = FitsIO.from_path(image)
+                reader = ScopeIO.from_path(image)
                 loader = load_roi_artifact if path.match(cst.FITS_ROI_TEMPLATE.format(label='*')) else load_reference_artifact
                 loader(path,
                        source_path=image,

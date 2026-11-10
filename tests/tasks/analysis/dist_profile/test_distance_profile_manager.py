@@ -9,7 +9,7 @@ from fits.settings.models import DistanceProfileSettings
 from fits.tasks.analysis.dist_profile.manager import DistanceProfileManager
 
 
-class FakeFitsIO:
+class FakeScopeIO:
     def __init__(self, array: np.ndarray, axes: str) -> None:
         self._loaded = SimpleNamespace(array=array, axes=axes)
         self.channel_labels = ("GFP", "RFP")
@@ -17,7 +17,7 @@ class FakeFitsIO:
         self.resolution = (0.5, 0.5)
 
     @classmethod
-    def from_path(cls, path: Path) -> "FakeFitsIO":
+    def from_path(cls, path: Path) -> "FakeScopeIO":
         return cls(IMAGE, "TZCYX")
 
     def get_array(self) -> SimpleNamespace:
@@ -45,7 +45,7 @@ def test_manager_projects_z_and_builds_heatmap_ready_table(
     roi[:, :, 1, 0, 1:4] = 4
 
     monkeypatch.setattr(
-        "fits.tasks.analysis.manager.FitsIO", FakeFitsIO)
+        "fits.tasks.analysis.manager.ScopeIO", FakeScopeIO)
     monkeypatch.setattr(
         "fits.tasks.analysis.dist_profile.manager.load_reference_artifact",
         lambda *args, **kwargs: (reference, "edge", ("RFP",)))
@@ -98,7 +98,7 @@ def test_manager_profiles_whole_image_when_no_roi_exists(
     reference[:, 0, 1, 0, 0] = 1
 
     monkeypatch.setattr(
-        "fits.tasks.analysis.manager.FitsIO", FakeFitsIO)
+        "fits.tasks.analysis.manager.ScopeIO", FakeScopeIO)
     monkeypatch.setattr(
         "fits.tasks.analysis.dist_profile.manager.load_reference_artifact",
         lambda *args, **kwargs: (reference, "edge", ("RFP",)))

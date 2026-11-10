@@ -8,7 +8,7 @@ from pathlib import Path
 from fits.environment import constant as cst
 import numpy as np
 import pyqtgraph as pg
-from fits_io.metadata.imageJ_meta import COLOR_MAP, label_display_color
+from scope_io.metadata.imageJ_meta import COLOR_MAP, label_display_color
 from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget

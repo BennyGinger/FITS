@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 from scipy.ndimage import label
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.environment import constant as cst
 from fits.workflows.artifacts.paths import image_for
 from fits.workflows.artifacts.provenance import compatible, require_writable, produced_metadata, input_references
@@ -172,7 +172,7 @@ class TrackingViewerSession:
             self._channel_labels = self.image_session.channel_labels
             self._started_from_image = True
         else:
-            self._reader = FitsIO.from_path(self.source_path)
+            self._reader = ScopeIO.from_path(self.source_path)
             self._axes = self._reader.axes
             self._tracks = PlaneStore(self._axes,
                                       tuple(self._reader.reader.shape),
@@ -187,7 +187,7 @@ class TrackingViewerSession:
                                   if associated_image is not None and associated_image.is_file() else None)
             self._started_from_image = False
         self.read_only = not compatible(self._reader.reader.metadata)
-        kind = self._reader.reader.metadata.fits_io.artifact_type
+        kind = self._reader.reader.metadata.artifact.artifact_type
         self.is_tracking = (kind == cst.ARTI_TRACK or self.source_path.name in cst.TRACKING_NAMES)
         self.is_branch = is_branch
         self._centroid_state = CentroidCache()
@@ -1169,7 +1169,7 @@ class TrackingViewerSession:
                                              artifact_type="tracking",
                                              created_by=DIST_FITS,
                                              custom_metadata=produced_metadata(custom_metadata),
-                                             ).with_fitsio(axes=self._axes)
+                                             ).with_artifact(axes=self._axes)
         inputs = [self.source_path]
         if self.image_session is not None and self.image_session.source_path not in inputs:
             inputs.append(self.image_session.source_path)
@@ -1177,7 +1177,7 @@ class TrackingViewerSession:
         # Re-saving the same edited artifact must not depend on its own old revision.
         if self.source_path == output_path:
             refs = [ref for ref in refs if (output_path.parent / ref["artifact_path"]).resolve() != output_path]
-            parents = self._reader.reader.metadata.fits_io.derived_from
+            parents = self._reader.reader.metadata.artifact.derived_from
             if isinstance(parents, list):
                 refs.extend(parents)
         payload = payload.new_revision(refs)

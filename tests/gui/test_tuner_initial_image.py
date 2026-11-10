@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from fits.gui.main_window import FitsMainWindow
@@ -52,7 +52,7 @@ def images(tmp_path: Path) -> list[Path]:
         input_path = folder / "input.tif"
         tifffile.imwrite(input_path, array,
                          imagej=True, metadata={"axes": "TCYX", "Labels": ["GFP", "RFP"]})
-        FitsIO.from_path(input_path).save_array(
+        ScopeIO.from_path(input_path).save_array(
             array, channel_labels=("GFP", "RFP"), output_path=path)
         paths.append(path)
     return paths

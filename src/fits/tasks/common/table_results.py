@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 import logging
 import os
 import pandas as pd
@@ -12,7 +12,7 @@ from fits.workflows.artifacts.provenance import PARQUET_PROVENANCE_KEY
 logger = logging.getLogger(__name__)
 
 
-def save_parquet(dataframe: pd.DataFrame, output_path: Path, metadata: FitsIOMeta | None = None) -> Path:
+def save_parquet(dataframe: pd.DataFrame, output_path: Path, metadata: ImageMetadata | None = None) -> Path:
     """
     Atomically save a DataFrame as a Parquet artifact.
     """

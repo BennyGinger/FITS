@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import tifffile
 from numpy.typing import NDArray
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.environment import constant as cst
 from fits.gui.settings import SettingsAdapter
 from fits.workflows.experiments import ExperimentState, discover_saved_states
@@ -30,7 +30,7 @@ def legacy_run(root: Path, *, masks: bool = False, frames: int = 1, channels: in
     tifffile.imwrite(original, pixels, photometric='minisblack', metadata={'axes': axes})
     series = folder / 'image_s1'
     series.mkdir()
-    reader = FitsIO.from_path(original)
+    reader = ScopeIO.from_path(original)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG,
         channel_labels=labels, custom_metadata={'pipeline_meta': {'version': '3.3.0'},
         'steps': {}})
@@ -39,7 +39,7 @@ def legacy_run(root: Path, *, masks: bool = False, frames: int = 1, channels: in
         step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG, artifact_path=image)
     state = replace(state, completed_steps=('convert', 'bg_sub'))
     if masks:
-        seg = reader.save_array(np.ones_like(pixels), metadata=payload.with_fitsio(artifact_type=cst.ARTI_SEG),
+        seg = reader.save_array(np.ones_like(pixels), metadata=payload.with_artifact(artifact_type=cst.ARTI_SEG),
             output_path=series / 'fits_mask.tif')
         state = state.with_complete_step(step_name=cst.StepName.SEGMENT, artifact_kind=cst.ARTI_SEG, artifact_path=seg)
         table = series / cst.FITS_QUANTI_NAME
@@ -114,7 +114,7 @@ def test_migrate_preserves_legacy_pixels_measurements_and_producer_history(tmp_p
     assert state.migration_checkpoint == 'bg_sub'
     assert state.artifact(cst.ARTI_IMG_BGSUB).name == cst.FITS_ARRAY_BGSUB
     assert state.artifact(cst.ARTI_IMG_RAW) is None
-    np.testing.assert_array_equal(FitsIO.from_path(state.artifact(cst.ARTI_IMG)).get_array().array, pixels)
+    np.testing.assert_array_equal(ScopeIO.from_path(state.artifact(cst.ARTI_IMG)).get_array().array, pixels)
     for kind in (cst.ARTI_IMG, cst.ARTI_SEG, cst.ARTI_QUANTI):
         payload = read_metadata(state.artifact(kind))
         assert compatible(payload)
@@ -181,7 +181,7 @@ def test_optional_full_rebuild_replaces_final_results_with_consistent_provenance
     from fits.workflows.definitions.registry import REGISTRY
     for step in plan.scope[state.workdir]:
         assert (current.workdir / REGISTRY[step].profile.output_name).is_file()
-    np.testing.assert_array_equal(FitsIO.from_path(current.artifact(cst.ARTI_IMG)).get_array().array, pixels + 3)
+    np.testing.assert_array_equal(ScopeIO.from_path(current.artifact(cst.ARTI_IMG)).get_array().array, pixels + 3)
     assert pd.read_parquet(current.artifact(cst.ARTI_QUANTI))['intensity_mean'][0] != 123.25
     assert not (current.workdir / 'fits_mask.tif').exists()
     assert not read_metadata(current.artifact(cst.ARTI_IMG)).custom_metadata.get('migration')
@@ -198,15 +198,15 @@ def test_downstream_update_preserves_upstream_and_other_series(tmp_path, monkeyp
     from fits.workflows.file_management.api import plan_downstream_update, update_downstream
     from fits.workflows.checks.artifacts import inspect_run
     from fits.pipeline import start_pipeline
-    from fits_io.writers.metadata_update import rewrite_metadata
+    from scope_io.writers.metadata_update import rewrite_metadata
     adapter, old, pixels = legacy_run(tmp_path)
     state = migrate(plan_migration(tmp_path))[0]
-    reader = FitsIO.from_path(state.original_image)
+    reader = ScopeIO.from_path(state.original_image)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
         channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
     raw = reader.save_array(pixels, metadata=payload, output_path=state.workdir / cst.FITS_ARRAY_RAW)
-    bg = reader.save_array(pixels.astype(np.float32), metadata=payload.with_fitsio(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
-        {'artifact_path': raw.name, 'created_at': payload.fits_io.created_at}]), output_path=state.workdir / cst.FITS_ARRAY_BGSUB)
+    bg = reader.save_array(pixels.astype(np.float32), metadata=payload.with_artifact(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
+        {'artifact_path': raw.name, 'created_at': payload.artifact.created_at}]), output_path=state.workdir / cst.FITS_ARRAY_BGSUB)
     state = state.with_complete_step(step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=raw)
     state = state.with_complete_step(step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG_BGSUB, artifact_path=bg)
     save_experiment_state(state)
@@ -250,7 +250,7 @@ def test_migrated_masks_notice_new_processing_inputs(tmp_path):
     adapter, old, pixels = legacy_run(tmp_path, masks=True)
     state = migrate(plan_migration(tmp_path))[0]
     old_image = state.artifact(cst.ARTI_IMG)
-    reader = FitsIO.from_path(old_image)
+    reader = ScopeIO.from_path(old_image)
     # New processing writes a distinct artifact; the accepted old mask still
     # references the old canonical image and must become stale.
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_BGSUB).new_revision()
@@ -266,12 +266,12 @@ def test_migrated_final_can_be_compacted_without_reprocessing(tmp_path):
     from fits.workflows.file_management.compaction import compact_run
     adapter, old, pixels = legacy_run(tmp_path, masks=True)
     state = migrate(plan_migration(tmp_path))[0]
-    stamp = read_metadata(state.artifact(cst.ARTI_IMG)).fits_io.created_at
+    stamp = read_metadata(state.artifact(cst.ARTI_IMG)).artifact.created_at
     compact_run(tmp_path, choose=lambda report: 'continue', confirm=lambda plan: True)
     compacted = discover_saved_states(tmp_path)[0]
     assert compacted.compacted
-    assert read_metadata(compacted.artifact(cst.ARTI_IMG)).fits_io.created_at == stamp
-    np.testing.assert_array_equal(FitsIO.from_path(compacted.artifact(cst.ARTI_IMG)).get_array().array, pixels)
+    assert read_metadata(compacted.artifact(cst.ARTI_IMG)).artifact.created_at == stamp
+    np.testing.assert_array_equal(ScopeIO.from_path(compacted.artifact(cst.ARTI_IMG)).get_array().array, pixels)
     assert compacted.artifact(cst.ARTI_SEG).name == cst.FITS_MASKS_COMPACTED
 
 
@@ -286,7 +286,7 @@ def test_full_rebuild_merges_all_series_from_one_original(tmp_path: Path, monkey
     first = migrate(plan_migration(tmp_path))[0]
     other = first.workdir.parent / 'image_s2'
     other.mkdir()
-    reader = FitsIO.from_path(first.original_image)
+    reader = ScopeIO.from_path(first.original_image)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
         channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
     raw = reader.save_array(np.full((8, 8), 9, dtype=np.uint16), metadata=payload,
@@ -295,7 +295,7 @@ def test_full_rebuild_merges_all_series_from_one_original(tmp_path: Path, monkey
         step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=raw)
     save_experiment_state(sibling)
     before = raw.read_bytes()
-    from_path = FitsIO.from_path
+    from_path = ScopeIO.from_path
     source = first.original_image
     class TwoSeries:
         def __init__(self, path: Path) -> None:
@@ -308,7 +308,7 @@ def test_full_rebuild_merges_all_series_from_one_original(tmp_path: Path, monkey
             return self.first.resolve_channel_selection(**kwargs)
         def split_series(self):
             return [self.first, from_path(source)]
-    monkeypatch.setattr(importlib.import_module('fits.tasks.convert').FitsIO, 'from_path',
+    monkeypatch.setattr(importlib.import_module('fits.tasks.convert').ScopeIO, 'from_path',
         lambda path: TwoSeries(path) if Path(path) == source else from_path(path))
     plan = plan_full_rebuild(tmp_path)
     assert set(plan.scope) == {first.workdir, other}
@@ -351,9 +351,9 @@ def test_full_rebuild_recreates_segmentation_and_tracking(tmp_path: Path, monkey
     from fits.pipeline import start_pipeline
     adapter, state, pixels = legacy_run(tmp_path, frames=2)
     image = state.artifact(cst.ARTI_IMG)
-    reader = FitsIO.from_path(image)
+    reader = ScopeIO.from_path(image)
     tracking = reader.save_array(np.ones_like(pixels),
-        metadata=read_metadata(image).with_fitsio(artifact_type=cst.ARTI_TRACK),
+        metadata=read_metadata(image).with_artifact(artifact_type=cst.ARTI_TRACK),
         output_path=state.workdir / 'fits_track.tif')
     state = state.with_complete_step(step_name=cst.StepName.TRACK, artifact_kind=cst.ARTI_TRACK, artifact_path=tracking)
     (state.workdir / 'experiment_state.json').write_text(json.dumps(serialize_experiment_state(state)))

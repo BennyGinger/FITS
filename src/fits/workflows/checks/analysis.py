@@ -65,7 +65,7 @@ def analysis_membership(states: Sequence[ExperimentState], artifact_kind: Artifa
         for kind in (artifact_kind, ARTI_IMG_RAW):
             source = state.artifact(kind)
             if source is not None and source.is_file():
-                revision = read_metadata(source).fits_io.created_at
+                revision = read_metadata(source).artifact.created_at
                 if revision:
                     break
         # Revision stamps distinguish identically named acquisitions in different

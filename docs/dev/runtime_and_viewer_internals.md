@@ -20,7 +20,7 @@ pipeline stops with an error.
 ### Plane storage and propagation previews
 
 Segmentation tuning, Reference/ROI, and tracking viewers read image and mask
-planes on demand through `fits_io`, as does registration tuning. Each plane cache holds at most eight planes
+planes on demand through `scope_io`, as does registration tuning. Each plane cache holds at most eight planes
 and 64 MiB. Edited mask planes are stored separately in a private temporary
 directory and remain available when you move between frames. Save writes the
 usual mask artifacts; closing the session removes its temporary edits. Tracking

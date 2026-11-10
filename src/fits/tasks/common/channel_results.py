@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import numpy as np
-from fits_io.client import FitsIO
-from fits_io.writers.apis import merge_channel_arrays
-from fits_io.writers.models import ChannelMergeResult
+from scope_io.client import ScopeIO
+from scope_io.writers.apis import merge_channel_arrays
+from scope_io.writers.models import ChannelMergeResult
 
 
 def append_channel_result(results: ChannelMergeResult | None,
@@ -28,7 +28,7 @@ def append_channel_result(results: ChannelMergeResult | None,
                                 reference_axes=reference_axes,)
 
 
-def merge_channel_results(reader: FitsIO,
+def merge_channel_results(reader: ScopeIO,
                         new_results: ChannelMergeResult | None,
                         output_path: Path | None,
                         overwrite: bool,) -> ChannelMergeResult:
@@ -40,7 +40,7 @@ def merge_channel_results(reader: FitsIO,
 
     existing_reader = None
     if output_path is not None and not overwrite:
-        existing_reader = FitsIO.from_path(output_path)
+        existing_reader = ScopeIO.from_path(output_path)
 
     return reader.merge_channels(existing=existing_reader,
                                 new_array=new_results.array,

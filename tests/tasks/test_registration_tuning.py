@@ -4,7 +4,7 @@ from contextlib import closing
 from pathlib import Path
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from stackalign import RegisterModel
 
 from fits.environment.constant import StepName
@@ -90,7 +90,7 @@ def test_legacy_tuning_keeps_its_transforms(source: Path, monkeypatch: pytest.Mo
 def test_preview_is_virtual_cached_and_does_not_modify_source(source, monkeypatch):
     """Fit without eager input/output stacks and apply only requested planes."""
     original = source.read_bytes()
-    monkeypatch.setattr(FitsIO, 'get_array', lambda *a, **kw: pytest.fail('Eager input stack load'))
+    monkeypatch.setattr(ScopeIO, 'get_array', lambda *a, **kw: pytest.fail('Eager input stack load'))
     session = RegistrationTuningSession(source)
     assert not session._planes._cache
     preview = session.run_preview('time', time_settings())
@@ -224,7 +224,7 @@ def test_settings_only_save_is_fitted_by_pipeline(source: Path, tmp_path: Path, 
         register_channel(channel_settings(), state,
                          configured_profile(REGISTRY[StepName.REGISTER_CHANNEL].profile, {"convert": {"enabled": True}}))
     output_name = 'fits_array_reg.tif' if mode == 'time' else 'fits_array_reg_channel.tif'
-    np.testing.assert_array_equal(FitsIO.from_path(source.with_name(output_name)).get_array().array, expected)
+    np.testing.assert_array_equal(ScopeIO.from_path(source.with_name(output_name)).get_array().array, expected)
 
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])
@@ -259,7 +259,7 @@ def test_pipeline_settings_override_older_tuner_cache(source: Path,
         result = register_channel(current, state, profile)[0]
     output = result.artifact(profile.output_artifact)
     assert output is not None
-    reader = FitsIO.from_path(output)
+    reader = ScopeIO.from_path(output)
     np.testing.assert_array_equal(reader.get_array().array, expected)
     params = reader.metadata.custom_metadata['steps'][step]['params']
     assert params['fit_channel' if mode == 'time' else 'reference_channel'] == 1
@@ -318,7 +318,7 @@ def test_pipeline_reuses_both_modes_with_matching_settings(source: Path,
     assert state.last_step == StepName.REGISTER_CHANNEL
     output = state.artifact('image_channel_registered')
     assert output is not None
-    np.testing.assert_array_equal(FitsIO.from_path(output).get_array().array, expected)
+    np.testing.assert_array_equal(ScopeIO.from_path(output).get_array().array, expected)
 
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])
@@ -332,7 +332,7 @@ def test_saved_crop_refits_only_its_pixels_when_pipeline_input_changes(source, m
     session.close()
     saved = load_tuning(source, mode)
     assert saved is not None
-    reader = FitsIO.from_path(source)
+    reader = ScopeIO.from_path(source)
     array = reader.get_array().array.copy()
     array[..., 0, 0] = 777
     def reuse():
@@ -363,7 +363,7 @@ def test_changed_fitting_pixels_recompute_and_corrupt_cache_is_ignored(source, m
     preview = session.run_preview('time', time_settings())
     session.save_preview(preview)
     session.close()
-    array = FitsIO.from_path(source).get_array().array
+    array = ScopeIO.from_path(source).get_array().array
     array[1, :, 0, 3, 4] = 777
     tifffile.imwrite(source, array, imagej=True, metadata={'axes': 'TZCYX'})
     from fits.tasks.registration import tuning
@@ -423,5 +423,5 @@ def test_excluded_channel_is_not_fitted_or_changed(source, monkeypatch):
     settings = RegisterChannelSettings(algorithm='scikit', reference_channel=labels[0],
                                        exclude_channel=[labels[1]])
     preview = session.run_preview('channel', settings)
-    np.testing.assert_array_equal(materialize_preview(session, preview), FitsIO.from_path(source).get_array().array)
+    np.testing.assert_array_equal(materialize_preview(session, preview), ScopeIO.from_path(source).get_array().array)
     session.close()

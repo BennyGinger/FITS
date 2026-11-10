@@ -5,7 +5,7 @@ from typing import Any
 from numpy.typing import NDArray
 from fits.workflows.artifacts.paths import image_for, first_image
 from fits.environment.constant import IMAGE_NAMES, FITS_ARRAY_NAME
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.interaction.planes import PlaneStore
 
 
@@ -29,8 +29,8 @@ class FitsImageSession:
             raise ValueError("FITS image sessions only accept the normalized image artifact "
                             f"named {FITS_ARRAY_NAME!r}; got {self.source_path.name!r}.")
 
-        self._reader = (FitsIO.from_path(self.source_path, series_idx=series_idx)
-                        if allow_raw else FitsIO.from_path(self.source_path))
+        self._reader = (ScopeIO.from_path(self.source_path, series_idx=series_idx)
+                        if allow_raw else ScopeIO.from_path(self.source_path))
         self.series_count = self._reader.reader.series_count if allow_raw else 1
         if not 0 <= series_idx < self.series_count:
             raise IndexError(f"Series index {series_idx} is outside 0..{self.series_count - 1}.")
@@ -39,8 +39,8 @@ class FitsImageSession:
         self._planes = PlaneStore(self._axes, self._shape, reader=self._reader)
         self._channel_labels = tuple(self._reader.channel_labels)
         self.source_colors = self._reader.channel_colors if allow_raw else None
-        self.use_source_colors = allow_raw and self._reader.metadata.fits_io.channel_labels is None
-        if allow_raw and self._reader.metadata.fits_io.channel_labels is None:
+        self.use_source_colors = allow_raw and self._reader.metadata.artifact.channel_labels is None
+        if allow_raw and self._reader.metadata.artifact.channel_labels is None:
             self._channel_labels = tuple(f"C{index + 1}" for index in range(self._reader.reader.channel_count))
 
         if len(self._axes) != len(self._shape):

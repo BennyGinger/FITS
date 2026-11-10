@@ -85,7 +85,7 @@ series/step scope is temporary runtime context and is not saved as a validity li
 
 ## Validation
 
-- **572 core/workflow/fits_io tests passed**, plus **98 focused offscreen GUI
+- **572 core/workflow/scope_io tests passed**, plus **98 focused offscreen GUI
   tests**. After the final conversion-metadata refinement, **20 focused migration,
   conversion and FITS 4 execution tests passed**.
 - Real-file cases cover legacy TIFF/mask/Parquet migration preserving pixels and

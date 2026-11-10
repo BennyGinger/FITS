@@ -16,9 +16,9 @@ members = [
     "bioimagequant",
     "cellpose-kit",
     "fits",
-    "fits-io",
     "mask-interpolation",
     "progress-bar",
+    "scope-io",
     "stackalign",
     "tracklink",
 ]
@@ -473,7 +473,6 @@ dependencies = [
     { name = "cellpose", extra = ["gui"] },
     { name = "cellpose-kit" },
     { name = "filelock" },
-    { name = "fits-io" },
     { name = "ipython" },
     { name = "mask-interpolation" },
     { name = "micro-sam" },
@@ -485,6 +484,7 @@ dependencies = [
     { name = "pyqtgraph" },
     { name = "pyside6" },
     { name = "roifile" },
+    { name = "scope-io" },
     { name = "stackalign" },
     { name = "tomlkit" },
     { name = "tracklink" },
@@ -510,7 +510,6 @@ requires-dist = [
     { name = "cellpose", extras = ["gui"], specifier = "<=4" },
     { name = "cellpose-kit", editable = "cellpose_kit" },
     { name = "filelock", specifier = ">=3.20" },
-    { name = "fits-io", editable = "fits_io" },
     { name = "ipython", specifier = ">=9.10.0" },
     { name = "mask-interpolation", editable = "mask_interpolation" },
     { name = "micro-sam", editable = "micro-sam-headless" },
@@ -522,6 +521,7 @@ requires-dist = [
     { name = "pyqtgraph", specifier = ">=0.14.0" },
     { name = "pyside6", specifier = ">=6.10.2" },
     { name = "roifile", specifier = ">=2026.2.10" },
+    { name = "scope-io", editable = "scope_io" },
     { name = "stackalign", editable = "stackalign" },
     { name = "tomlkit", specifier = ">=0.15.1" },
     { name = "tracklink", editable = "tracklink" },
@@ -539,31 +539,6 @@ dev = [
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.0.2" },
 ]
-
-[[package]]
-name = "fits-io"
-version = "2.2.0"
-source = { editable = "fits_io" }
-dependencies = [
-    { name = "imagecodecs" },
-    { name = "nd2" },
-    { name = "tifffile" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "imagecodecs", specifier = ">=2026.1.14" },
-    { name = "nd2", specifier = ">=0.11.2" },
-    { name = "tifffile", specifier = ">=2026.1.14" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "fsspec"
@@ -2132,6 +2107,35 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/81/61/0470810c8a093cdacd4ba7504b8a218fd49ca070d79eca23a615f5d9a0b0/scipy-1.17.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:0cf46c8013fec9d3694dc572f0b54100c28405d55d3e2cb15e2895b25057996e", size = 37405953, upload-time = "2026-01-10T21:26:07.75Z" },
     { url = "https://files.pythonhosted.org/packages/92/ce/672ed546f96d5d41ae78c4b9b02006cedd0b3d6f2bf5bb76ea455c320c28/scipy-1.17.0-cp312-cp312-win_amd64.whl", hash = "sha256:0937a0b0d8d593a198cededd4c439a0ea216a3f36653901ea1f3e4be949056f8", size = 36328121, upload-time = "2026-01-10T21:26:16.509Z" },
     { url = "https://files.pythonhosted.org/packages/9d/21/38165845392cae67b61843a52c6455d47d0cc2a40dd495c89f4362944654/scipy-1.17.0-cp312-cp312-win_arm64.whl", hash = "sha256:f603d8a5518c7426414d1d8f82e253e454471de682ce5e39c29adb0df1efb86b", size = 24314368, upload-time = "2026-01-10T21:26:23.087Z" },
+]
+
+[[package]]
+name = "scope-io"
+version = "3.0.0"
+source = { editable = "scope_io" }
+dependencies = [
+    { name = "imagecodecs" },
+    { name = "nd2" },
+    { name = "tifffile" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pyright" },
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "imagecodecs", specifier = ">=2026.1.14" },
+    { name = "nd2", specifier = ">=0.11.2" },
+    { name = "tifffile", specifier = ">=2026.1.14" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.414" },
+    { name = "pytest", specifier = ">=9.0.2" },
 ]
 
 [[package]]

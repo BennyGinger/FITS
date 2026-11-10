@@ -11,7 +11,7 @@ from threading import RLock
 from typing import Any
 
 import numpy as np
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from numpy.typing import NDArray
 
 
@@ -29,7 +29,7 @@ def disk_copy(array: NDArray, dtype: Any = None) -> NDArray:
     return output
 
 
-def aligned_mask_store(reader: FitsIO, *, source_axes: str,
+def aligned_mask_store(reader: ScopeIO, *, source_axes: str,
                        source_shape: tuple[int, ...],
                        source_channels: tuple[str, ...],
                        transform: Callable[[NDArray], NDArray]) -> "PlaneStore":
@@ -66,7 +66,7 @@ class PlaneStore:
     """Read immutable source planes on demand; keep edited planes on disk."""
 
     def __init__(self, axes: str, shape: tuple[int, ...], *,
-                 reader: FitsIO | None = None, dtype: Any = None,
+                 reader: ScopeIO | None = None, dtype: Any = None,
                  channel_map: tuple[int | None, ...] | None = None,
                  transform: Callable[[NDArray], NDArray] | None = None,
                  cache_bytes: int = 64 * 1024 * 1024,
@@ -256,7 +256,7 @@ class PlaneStore:
         with self._lock:
             snapshot = self._temporary_path("source.tif")
             copy2(output_path, snapshot)
-            self.reader = FitsIO.from_path(snapshot)
+            self.reader = ScopeIO.from_path(snapshot)
 
     def close(self) -> None:
         with self._lock:

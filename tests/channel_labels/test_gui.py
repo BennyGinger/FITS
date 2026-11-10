@@ -14,7 +14,7 @@ from fits.gui.channel_labels import ChannelLabelsWindow
 from fits.gui.main_window.window import FitsMainWindow
 from fits.settings.loader import run_settings_path
 from fits.gui.settings import SettingsAdapter
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 
 def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> None:
@@ -24,7 +24,7 @@ def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> N
     source = experiment / "input.tif"
     pixels = np.zeros((2, 8, 9), dtype=np.uint8)
     tifffile.imwrite(source, pixels, imagej=True, metadata={"axes": "TYX"})
-    FitsIO.from_path(source).save_array(
+    ScopeIO.from_path(source).save_array(
         pixels, channel_labels="GFP", custom_metadata={"pipeline_meta": {"version": "4.0.0"}}, output_path=experiment / "fits_array.tif")
     settings = run_settings_path(tmp_path)
     settings.parent.mkdir()
@@ -80,7 +80,7 @@ def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> N
             if window.adapter.document["convert"]["params"]["channel_labels"] == ["Green"]:
                 break
             QTest.qWait(10)
-        assert FitsIO.from_path(experiment / "fits_array.tif").channel_labels == ["Green"]
+        assert ScopeIO.from_path(experiment / "fits_array.tif").channel_labels == ["Green"]
         assert window.adapter.document["convert"]["params"]["channel_labels"] == ["Green"]
         assert editor.rename_progress.maximum() == file_count
         assert editor.rename_progress.value() == file_count
@@ -107,10 +107,10 @@ def test_editor_previews_only_files_with_changed_channel(tmp_path: Path) -> None
     source = experiment / "input.tif"
     raw = np.zeros((2, 2, 8, 9), dtype=np.uint8)
     tifffile.imwrite(source, raw, imagej=True, metadata={"axes": "TCYX"})
-    array_path = FitsIO.from_path(source).save_array(
+    array_path = ScopeIO.from_path(source).save_array(
         raw, channel_labels=["BFP", "RFP"],
         output_path=experiment / "fits_array.tif")
-    FitsIO.from_path(array_path).save_array(
+    ScopeIO.from_path(array_path).save_array(
         raw[:, 1], export_channels=["RFP"],
         output_path=experiment / "fits_mask.tif")
     settings = run_settings_path(tmp_path)

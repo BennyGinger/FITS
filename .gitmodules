@@ -1,6 +1,6 @@
-[submodule "fits_io"]
-	path = fits_io
-	url = https://github.com/BennyGinger/fits_io.git
+[submodule "scope_io"]
+	path = scope_io
+	url = https://github.com/BennyGinger/scope_io.git
 	branch = main
 [submodule "cellpose_kit"]
 	path = cellpose_kit

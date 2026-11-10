@@ -8,7 +8,7 @@ import pytest
 import tifffile
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.workflows.file_management.compaction import plan_compaction
 from fits.environment import constant as cst
@@ -61,7 +61,7 @@ def test_gui_compact_worker_publishes_and_updates_state(tmp_path):
     original = tmp_path / 'source.tif'
     pixels = np.ones((8, 8), dtype=np.uint16)
     tifffile.imwrite(original, pixels, photometric='minisblack')
-    reader = FitsIO.from_path(original)
+    reader = ScopeIO.from_path(original)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
         custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
     raw = reader.save_array(pixels, metadata=payload, output_path=tmp_path / cst.FITS_ARRAY_RAW)

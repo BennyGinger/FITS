@@ -3,6 +3,7 @@
 from importlib import import_module
 from pathlib import Path
 from tempfile import TemporaryFile
+from typing import cast
 import sys
 
 from state import show_project_files
@@ -38,7 +39,7 @@ def hide_checkout_internal_entries(root: Path) -> None:
 
 def main() -> None:
     for module in (
-        "fits.gui.main", "cellpose.models", "tracklink.backends.trackastra.base",
+        "scope_io", "fits.gui.main", "cellpose.models", "tracklink.backends.trackastra.base",
         "micro_sam.util", "micro_sam.prompt_based_segmentation", "mobile_sam",
     ):
         import_module(module)
@@ -49,8 +50,10 @@ def main() -> None:
     from platformdirs import user_data_dir
     import torch
 
+    # The upstream annotation says None, but this function returns a Path.
+    microsam_cache = cast(Path, get_cache_directory())
     for directory in (
-        Path(MODEL_DIR), Path(get_cache_directory()) / "models",
+        Path(MODEL_DIR), microsam_cache / "models",
         Path(user_data_dir("trackastra")) / "models",
     ):
         check_writable(directory)

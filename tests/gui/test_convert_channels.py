@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 from tifffile import imwrite
 
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.environment.constant import StepName
 from fits.gui.settings.field_widgets import ExportChannelsWidget
 from fits.gui.settings import SettingsAdapter, StepSettingsEditor
@@ -49,7 +49,7 @@ def test_gui_channel_selection_round_trip_and_conversion(tmp_path: Path, initial
     results = convert(settings, ExperimentState.init(tmp_path, raw), REGISTRY[StepName.CONVERT].profile)
     output_path = results[0].artifact("image")
     assert output_path is not None
-    output = FitsIO.from_path(output_path)
+    output = ScopeIO.from_path(output_path)
     assert output.channel_labels == [labels[i] for i in indices]
     actual = output.get_array().array
     expected_array = array[:, indices] if len(indices) > 1 else array[:, indices[0]]

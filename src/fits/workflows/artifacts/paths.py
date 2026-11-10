@@ -23,7 +23,7 @@ def image_for(path: str | Path) -> Path | None:
     directory = source if source.is_dir() else source.parent
     if source.is_file() and source.suffix.lower() in (".tif", ".tiff"):
         try:
-            refs = read_metadata(source).fits_io.derived_from
+            refs = read_metadata(source).artifact.derived_from
             if isinstance(refs, list):
                 for ref in refs:
                     candidate = (directory / ref["artifact_path"]).resolve()

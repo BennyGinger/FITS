@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import tifffile
 from bioimagequant import CompartmentSettings, compartment_masks
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
@@ -27,9 +27,9 @@ def image_masks(tmp_path: Path) -> tuple[Path, np.ndarray, np.ndarray]:
     raw = tmp_path / "input.tif"
     image = np.stack([np.full((16, 16), 100, dtype=np.uint16), np.full((16, 16), 200, dtype=np.uint16)])
     tifffile.imwrite(raw, image, photometric="minisblack", metadata={"axes": "CYX"})
-    reader = FitsIO.from_path(raw)
+    reader = ScopeIO.from_path(raw)
     reader.save_array(image, channel_labels=["Red", "Green"], output_path=tmp_path / cst.FITS_ARRAY_NAME)
-    reader = FitsIO.from_path(tmp_path / cst.FITS_ARRAY_NAME)
+    reader = ScopeIO.from_path(tmp_path / cst.FITS_ARRAY_NAME)
     segmentation = np.zeros_like(image)
     segmentation[0, 2:9, 2:9] = 3
     segmentation[1, 7:14, 7:14] = 4
@@ -137,7 +137,7 @@ def test_new_segmentation_result_invalidates_geometry_and_marks_changed_settings
     tuner.settings_panel.diameter.setValue(37)
     assert "out of date" in tuner.status_label.text()
     # Previewing never writes over the existing saved segmentation or tracking masks.
-    assert FitsIO.from_path(tmp_path / cst.FITS_MASK_SEG).get_array().array.max() == 4
+    assert ScopeIO.from_path(tmp_path / cst.FITS_MASK_SEG).get_array().array.max() == 4
 
 
 def test_save_tabs_and_close_warning_preserve_unsaved_other_tab(
@@ -211,10 +211,10 @@ def test_saved_mask_revision_rebuilds_geometry(tuner: SegmentationTunerWindow, t
     """
     Detect a newly published artifact revision even when mask pixels are unchanged.
     """
-    from fits_io.writers.metadata_update import rewrite_metadata
+    from scope_io.writers.metadata_update import rewrite_metadata
     source = tmp_path / cst.FITS_MASK_TRACK_EDITED
     old_geometry = tuner._mask_previews._geometry
-    metadata = FitsIO.from_path(source).reader.metadata.new_revision()
+    metadata = ScopeIO.from_path(source).reader.metadata.new_revision()
     rewrite_metadata(source, metadata)
     tuner._display_selection()
     assert tuner._mask_previews._geometry is not old_geometry

@@ -130,7 +130,7 @@ def file_lineage(report: PreflightReport, directory: Path) -> FileLineage:
                     nodes[source] = _record_node(records[source], report, planned)
                     pending.append(records[source])
             continue
-        refs = record.metadata.fits_io.derived_from if record.metadata is not None else None
+        refs = record.metadata.artifact.derived_from if record.metadata is not None else None
         if not isinstance(refs, list):
             continue
         for ref in refs:

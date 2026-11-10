@@ -20,7 +20,7 @@ from fits.workflows.definitions.inputs import configured_profile, resolve_inputs
 from fits.workflows.definitions.registry import REGISTRY
 from fits.workflows.experiments import ExperimentState, active_states, discover_saved_states
 from fits.workflows.file_management.migration import checkpoint_complete
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 
 
 def inspect_run(root: Path, config: Mapping[str, Any], *, for_execution: bool = True, check_analysis: bool = True) -> PreflightReport:
@@ -275,7 +275,7 @@ def _reference_problem(record: ArtifactRecord,
         if not parent.is_file():
             return f"Required input is missing: {parent.name}"
         try:
-            stamp = read_metadata(parent).fits_io.created_at
+            stamp = read_metadata(parent).artifact.created_at
             if not stamp or stamp != ref.get("created_at"):
                 return f"Input revision differs: {parent.name}"
         except Exception as error:
@@ -283,11 +283,11 @@ def _reference_problem(record: ArtifactRecord,
     return ""
 
 
-def _recorded_inputs(metadata: FitsIOMeta) -> list[dict[str, Any]]:
+def _recorded_inputs(metadata: ImageMetadata) -> list[dict[str, Any]]:
     """
     Return structured input references; older string or absent forms have none.
     """
-    refs = metadata.fits_io.derived_from
+    refs = metadata.artifact.derived_from
     return refs if isinstance(refs, list) else []
 
 

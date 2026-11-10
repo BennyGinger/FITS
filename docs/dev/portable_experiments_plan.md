@@ -10,7 +10,7 @@ rerun only explicitly reviewed affected work.
 ## Agreed behavior
 
 - A run root contains `.fits/fits_settings.toml` or `.fits/logs/`. The opened root overrides saved run_dir values. Selecting a processed acquisition/series automatically opens its nearest containing run and preserves the browser selection. Processed orphan folders are reported; fresh raw-only folders remain valid inputs.
-- Convert groups each original acquisition and all series under `<stem>/`: `<stem>/<original filename>` and `<stem>/<stem>_sN/`. Recognize existing groups; reject ambiguous/colliding destinations. FITS owns these paths, not fits_io.
+- Convert groups each original acquisition and all series under `<stem>/`: `<stem>/<original filename>` and `<stem>/<stem>_sN/`. Recognize existing groups; reject ambiguous/colliding destinations. FITS owns these paths, not scope_io.
 - Acquisition-local `.fits_experiment/` contains `experiment_state/<series>/experiment_state.json`, `tuning/<series>/`, `cache/<series>/`, and `legacy/<series>/<revision>/`. A legacy revision keeps its state directly beside its retained outputs. Hide this metadata directory on Windows; do not rename or individually hide state JSON files. Run `.fits` keeps run settings/logs/reports.
 - Stored paths resolve relative to acquisition/series anchors, independently of state JSON location. Moving a complete acquisition carries original data, series, settings, cache and history. Moving a whole run preserves run-relative identity.
 - Quantification experiment_id/cell_id use the full series path relative to the run root, excluding the run folder name. Condition tags exclude the structural acquisition wrapper. Refresh paths/tags using existing tables; preserve measurements and data revision timestamps. Regenerate destination master tables without rerunning measurements. Actual image/mask rebuilds rerun affected quantification.
@@ -50,7 +50,7 @@ rerun only explicitly reviewed affected work.
 
 - Phase 5: offscreen GUI checks pass for contextual channels/status, mixed-run blocking with viewer access retained, root promotion preserving selection, and unchanged Runtime height on expansion while step Advanced remains collapsible (2 GUI tests).
 
-- Phase 6: core, workflow and fits_io suites pass: **562 tests**. Focused offscreen GUI suites pass: **85 tests**, including portable file management, Runtime/step Advanced behavior, navigation, CLI interaction, resizable reports and artifact decisions. Python compilation and both repository/submodule diff whitespace checks pass.
+- Phase 6: core, workflow and scope_io suites pass: **562 tests**. Focused offscreen GUI suites pass: **85 tests**, including portable file management, Runtime/step Advanced behavior, navigation, CLI interaction, resizable reports and artifact decisions. Python compilation and both repository/submodule diff whitespace checks pass.
 
 - Integration covers actual TIFF conversion, multiple series sharing one original, moved run/acquisition paths, condition/identifier refresh preserving measurements, mixed-run gating, numerical upgrade cancellation/resumption, rollback, snapshot exchange/deletion and compact history hints. An upgrade rebuilds only incompatible acquisitions, preserving healthy FITS 4 output bytes/revisions. Affected series retain a coherent snapshot of outputs/state and copies of manual REF/ROI drawings; compatible retained tables can be refreshed without measurements being rerun.
 

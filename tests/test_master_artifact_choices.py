@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.environment import constant as cst
 from fits.gui.settings import SettingsAdapter
@@ -45,7 +45,7 @@ def _run_with_stale_table(root: Path) -> tuple[SettingsAdapter, ExperimentState,
     state = _series(root)[0]
     source = state.artifact(cst.ARTI_IMG_RAW)
     assert source is not None
-    reader = FitsIO.from_path(source)
+    reader = ScopeIO.from_path(source)
     label = reader.channel_labels[0]
     adapter = SettingsAdapter()
     adapter.run_dir = str(root)
@@ -63,14 +63,14 @@ def _run_with_stale_table(root: Path) -> tuple[SettingsAdapter, ExperimentState,
     state = save_step_result(reader, reader.get_array().array.astype(np.float32), reader.channel_labels, state, profile)
     image = state.artifact(cst.ARTI_IMG_BGSUB)
     assert image is not None
-    reader = FitsIO.from_path(image)
+    reader = ScopeIO.from_path(image)
     profile = configured_profile(REGISTRY[cst.StepName.SEGMENT].profile, config)
     state = save_step_result(reader, np.ones_like(reader.get_array().array, dtype=np.uint16), reader.channel_labels, state, profile)
     mask = state.artifact(cst.ARTI_SEG)
     assert mask is not None
-    payload = reader.metadata.with_fitsio(artifact_type=cst.ARTI_QUANTI).new_revision([
+    payload = reader.metadata.with_artifact(artifact_type=cst.ARTI_QUANTI).new_revision([
         {'artifact_path': image.name, 'created_at': 'older image revision'},
-        {'artifact_path': mask.name, 'created_at': read_metadata(mask).fits_io.created_at}])
+        {'artifact_path': mask.name, 'created_at': read_metadata(mask).artifact.created_at}])
     table = save_parquet(_measurements(label), state.workdir / cst.FITS_QUANTI_NAME, payload)
     state = state.with_complete_step(step_name=cst.StepName.EXTRACT, artifact_kind=cst.ARTI_QUANTI, artifact_path=table)
     save_experiment_state(state)

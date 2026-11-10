@@ -118,7 +118,7 @@ def test_main_browser_toggle_and_analysis_rebuild(tmp_path: Path, monkeypatch: p
     import numpy as np
     import pandas as pd
     import tifffile
-    from fits_io import FitsIO
+    from scope_io import ScopeIO
     from PySide6.QtWidgets import QLabel
     from fits.environment import constant as cst
     from fits.gui.file_management.manager import _rebuild_action
@@ -143,8 +143,8 @@ def test_main_browser_toggle_and_analysis_rebuild(tmp_path: Path, monkeypatch: p
     assert raw is not None
     payload = read_metadata(raw)
     table = save_parquet(pd.DataFrame({'distance': [1]}), state.workdir / cst.FITS_DISTANCE_PROFILE_NAME,
-                         payload.with_fitsio(artifact_type=cst.ARTI_DIST_PROF).new_revision([
-                             {'artifact_path': raw.name, 'created_at': payload.fits_io.created_at}]))
+                         payload.with_artifact(artifact_type=cst.ARTI_DIST_PROF).new_revision([
+                             {'artifact_path': raw.name, 'created_at': payload.artifact.created_at}]))
     state = state.with_complete_step(step_name=cst.StepName.DISTANCE_PROFILE,
                                      artifact_kind=cst.ARTI_DIST_PROF, artifact_path=table)
     save_experiment_state(state)
@@ -197,9 +197,9 @@ def test_main_browser_toggle_and_analysis_rebuild(tmp_path: Path, monkeypatch: p
         assert window.run_browser.model.data(window.run_browser.model.index(str(master)),
                                              Qt.ItemDataRole.ForegroundRole) != QColor(OUTDATED_COLOR)
         # A real upstream revision invalidates both the saved analysis and its master.
-        from fits_io.writers.metadata_update import rewrite_metadata
+        from scope_io.writers.metadata_update import rewrite_metadata
         previous = read_metadata(raw)
-        inputs = previous.fits_io.derived_from
+        inputs = previous.artifact.derived_from
         assert isinstance(inputs, list)
         rewrite_metadata(raw, previous.new_revision(inputs))
         window._refresh_run_inventory()
@@ -208,8 +208,8 @@ def test_main_browser_toggle_and_analysis_rebuild(tmp_path: Path, monkeypatch: p
             assert window.run_browser.model.data(index, Qt.ItemDataRole.ForegroundRole) == QColor(OUTDATED_COLOR)
         current = read_metadata(raw)
         save_parquet(pd.DataFrame({'distance': [1]}), table,
-                     current.with_fitsio(artifact_type=cst.ARTI_DIST_PROF).new_revision([
-                         {'artifact_path': raw.name, 'created_at': current.fits_io.created_at}]))
+                     current.with_artifact(artifact_type=cst.ARTI_DIST_PROF).new_revision([
+                         {'artifact_path': raw.name, 'created_at': current.artifact.created_at}]))
         save_master_analysis_table([state], tmp_path, artifact_kind=cst.ARTI_DIST_PROF,
                                     output_name=cst.MASTER_DISTANCE_PROFILE_NAME)
         window._refresh_run_inventory()

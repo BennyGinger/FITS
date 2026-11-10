@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from typing import Any
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 from fits.workflows.experiments import ExperimentState
 from fits.workflows.metadata._values import utc_now
 from dataclasses import replace
 from pathlib import Path
 from fits.workflows.artifacts.provenance import compatible, produced_metadata, read_metadata
 from fits.environment import constant as cst
-from fits_io.writers.metadata_update import rewrite_metadata
+from scope_io.writers.metadata_update import rewrite_metadata
 
 
 def is_branch(path: Path) -> bool:
@@ -20,7 +20,7 @@ def is_branch(path: Path) -> bool:
     return path.match(cst.FITS_REFERENCE_TEMPLATE.format(label="*")) or path.match(cst.FITS_ROI_TEMPLATE.format(label="*"))
 
 
-def geometry(metadata: FitsIOMeta) -> Any:
+def geometry(metadata: ImageMetadata) -> Any:
     """
     Return registration geometry independently of intensity-only revisions.
     """
@@ -52,14 +52,14 @@ def refresh_branch(path: Path, image: Path, *, accept_geometry: bool = False) ->
         return
     # Keep existing revisions; upgrading an older branch's metadata is an explicit
     # exception authorized for retained manual drawings, never a pixel rebuild.
-    revision = old if old.fits_io.created_at else old.new_revision()
+    revision = old if old.artifact.created_at else old.new_revision()
     payload = revision.with_custom_metadata(produced_metadata(dict(old.custom_metadata)))
     payload = payload.with_custom_metadata({"geometry_dependency": geometry(source)})
     if changed:
         payload = payload.with_custom_metadata({'geometry_review': {
             'accepted_at': utc_now(), 'previous_geometry': geometry(old),
             'accepted_geometry': geometry(source)}})
-    payload = replace(payload, fits_io=replace(payload.fits_io, derived_from=[]))
+    payload = replace(payload, artifact=replace(payload.artifact, derived_from=[]))
     rewrite_metadata(path, payload)
 
 

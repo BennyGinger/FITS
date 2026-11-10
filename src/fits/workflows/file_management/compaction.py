@@ -18,7 +18,7 @@ from fits.workflows.checks.artifacts import inspect_run
 from fits.workflows.checks.models import PreflightReport, PreflightRequired
 from fits.workflows.checks.planning import downstream_steps
 from fits.workflows.experiments import active_states, discover_saved_states, save_experiment_state, ExperimentState
-from fits_io.writers.metadata_update import rewrite_metadata
+from scope_io.writers.metadata_update import rewrite_metadata
 from fits.workflows.file_management.history import snapshots
 from fits.workflows.checks.space import file_bytes, require_free_space
 from fits.workflows.runtime.errors import PipelineCancelled
@@ -220,14 +220,14 @@ def _apply_compaction(plan: CompactionPlan) -> tuple[Path, ...]:
                     created.append(target)
                 rewrite_metadata(source, payload, output_path=target)
                 verified = read_metadata(target)
-                if verified.fits_io.created_at != metadata.fits_io.created_at:
+                if verified.artifact.created_at != metadata.artifact.created_at:
                     raise ValueError(f"Compact verification failed: {target}")
                 published.append(target)
                 if role == cst.ARTI_IMG:
                     artifacts[cst.ARTI_IMG] = Path(target.name)
                     artifacts[cst.ARTI_IMG_COMPACTED] = Path(target.name)
                 else:
-                    kind = cst.ARTI_TRACK if metadata.fits_io.artifact_type == cst.ARTI_TRACK else cst.ARTI_SEG
+                    kind = cst.ARTI_TRACK if metadata.artifact.artifact_type == cst.ARTI_TRACK else cst.ARTI_SEG
                     artifacts[kind] = Path(target.name)
                     artifacts[cst.ARTI_MASK_COMPACTED] = Path(target.name)
             compacted = replace(state,

@@ -214,7 +214,7 @@ Channel names can also appear in a TIFF's
 
 ## Implementation references
 
-- [Channel selection and fallback names](../../fits_io/src/fits_io/metadata/resolve.py).
+- [Channel selection and fallback names](../../scope_io/src/scope_io/metadata/resolve.py).
 - [Shared raw-input checks](../../src/fits/workflows/checks/raw_inputs.py).
 - [Run inspection and name validation](../../src/fits/channel_labels/discovery.py).
 - [Settings/table channel mappings](../../src/fits/channel_labels/documents.py).

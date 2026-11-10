@@ -5,7 +5,7 @@ import logging
 import numpy as np
 from pathlib import Path
 from typing import Any
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from numpy.typing import NDArray
 from fits.environment import constant as cst
 from fits.workflows.experiments import ExperimentState
@@ -36,7 +36,7 @@ class AnalysisManager:
 
     state: ExperimentState
     profile: Any = field(default=None, kw_only=True)
-    _reader: FitsIO | None = field(init=False, default=None, repr=False)
+    _reader: ScopeIO | None = field(init=False, default=None, repr=False)
 
     @property
     def image_path(self) -> Path:
@@ -50,12 +50,12 @@ class AnalysisManager:
         return path
 
     @property
-    def image_reader(self) -> FitsIO:
+    def image_reader(self) -> ScopeIO:
         """
         Image reader.
         """
         if self._reader is None:
-            self._reader = FitsIO.from_path(self.image_path)
+            self._reader = ScopeIO.from_path(self.image_path)
         return self._reader
 
     def reference_paths(self) -> tuple[Path, ...]:

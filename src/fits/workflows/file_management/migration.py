@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence, Mapping
 from typing import Any
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 from fits.workflows.experiments import ExperimentState
 from fits.workflows.definitions.models import StepProfile
 from copy import deepcopy
@@ -75,7 +75,7 @@ def prepare_state(state: ExperimentState) -> ExperimentState:
                    )
 
 
-def migrate_payload(payload: FitsIOMeta, *, inputs: Sequence[Mapping[str, Any]] = ()) -> FitsIOMeta:
+def migrate_payload(payload: ImageMetadata, *, inputs: Sequence[Mapping[str, Any]] = ()) -> ImageMetadata:
     """
     Record an accepted baseline; preserve original versions and step times.
     """
@@ -85,13 +85,13 @@ def migrate_payload(payload: FitsIOMeta, *, inputs: Sequence[Mapping[str, Any]] 
     custom['migration'] = {
         'adopted_at': utc_now(),
         'original_pipeline_meta': deepcopy(custom.get('pipeline_meta', {})),
-        'original_fits_io': deepcopy(payload.fits_io.to_dict()),
+        'original_scope_io': deepcopy(payload.artifact.to_dict()),
         'historical_lineage': 'unavailable',
-        'revision_origin': 'existing' if payload.fits_io.created_at else 'migration',
+        'revision_origin': 'existing' if payload.artifact.created_at else 'migration',
     }
     custom = produced_metadata(custom)
-    revision = payload if payload.fits_io.created_at else payload.new_revision()
-    return replace(revision.with_custom_metadata(custom), fits_io=replace(revision.fits_io,
+    revision = payload if payload.artifact.created_at else payload.new_revision()
+    return replace(revision.with_custom_metadata(custom), artifact=replace(revision.artifact,
                                                                           derived_from=[dict(item) for item in inputs],
                                                                           ))
 

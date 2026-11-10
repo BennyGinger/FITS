@@ -32,7 +32,7 @@ WORKFLOW_ORDER: tuple[StepName, ...] = (
 
 
 DIST_FITS = "fits"
-DIST_IO = "fits-io"
+DIST_IO = "scope-io"
 DIST_REGISTER = "stackalign"
 DIST_BG_SUB = "bg-sub"
 DIST_SEG = "cellpose-kit"

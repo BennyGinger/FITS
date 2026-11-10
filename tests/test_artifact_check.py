@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from fits_io import FitsIO
+from scope_io import ScopeIO
 import tifffile
 
 from fits.environment import constant as cst
@@ -79,7 +79,7 @@ def test_converted_run_with_unfinished_pipeline_has_no_artifact_conflicts(tmp_pa
     source = tmp_path / "acquisition.tif"
     pixels = np.zeros((8, 8), dtype=np.uint16)
     tifffile.imwrite(source, pixels, photometric="minisblack", metadata={"axes": "YX"})
-    reader = FitsIO.from_path(source)
+    reader = ScopeIO.from_path(source)
     output = tmp_path / cst.FITS_ARRAY_RAW
     payload = reader.build_payload(export_channels="all", artifact_type=cst.ARTI_IMG_RAW,
                                    custom_metadata={"pipeline_meta": {"version": "4.0.0"}}).new_revision(
@@ -110,7 +110,7 @@ def test_checker_detects_input_revisions_and_selected_only_scope(tmp_path):
     source = tmp_path / "acquisition.tif"
     pixels = np.zeros((8, 8), dtype=np.uint16)
     tifffile.imwrite(source, pixels, photometric="minisblack", metadata={"axes": "YX"})
-    reader = FitsIO.from_path(source)
+    reader = ScopeIO.from_path(source)
     state = ExperimentState.init(tmp_path, source)
     parent = None
     for step, role, name in [
@@ -119,7 +119,7 @@ def test_checker_detects_input_revisions_and_selected_only_scope(tmp_path):
         (cst.StepName.REGISTER_TIME, cst.ARTI_IMG_TIME, cst.FITS_ARRAY_REG_TIME),
         (cst.StepName.BG_SUB, cst.ARTI_IMG_BGSUB, cst.FITS_ARRAY_BGSUB),
     ]:
-        refs = [] if parent is None else [{"artifact_path": parent.name, "created_at": reader.reader.metadata.fits_io.created_at}]
+        refs = [] if parent is None else [{"artifact_path": parent.name, "created_at": reader.reader.metadata.artifact.created_at}]
         if parent is None:
             refs = [{"artifact_path": source.name, "external": True, "created_at": None}]
         payload = reader.build_payload(export_channels="all", artifact_type=role,
@@ -128,7 +128,7 @@ def test_checker_detects_input_revisions_and_selected_only_scope(tmp_path):
         reader.save_array(pixels, metadata=payload, output_path=output)
         state = state.with_complete_step(step_name=step, artifact_kind=role, artifact_path=output)
         parent = output
-        reader = FitsIO.from_path(output)
+        reader = ScopeIO.from_path(output)
     save_experiment_state(state)
     adapter = SettingsAdapter()
     for step in (cst.StepName.CONVERT, cst.StepName.REGISTER_CHANNEL, cst.StepName.REGISTER_TIME, cst.StepName.BG_SUB):
@@ -137,8 +137,8 @@ def test_checker_detects_input_revisions_and_selected_only_scope(tmp_path):
     assert not inspect_run(tmp_path, config).conflicts
 
     channel = tmp_path / cst.FITS_ARRAY_REG_CHANNEL
-    old = FitsIO.from_path(channel)
-    changed = old.reader.metadata.new_revision(old.reader.metadata.fits_io.derived_from)
+    old = ScopeIO.from_path(channel)
+    changed = old.reader.metadata.new_revision(old.reader.metadata.artifact.derived_from)
     old.save_array(pixels + 1, metadata=changed, output_path=channel)
     report = inspect_run(tmp_path, config)
     assert {row.step for row in report.conflicts} == {cst.StepName.REGISTER_TIME, cst.StepName.BG_SUB}

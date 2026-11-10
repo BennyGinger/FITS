@@ -8,8 +8,8 @@ from typing import Any
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
-from fits_io.metadata.models import FitsIOMeta
+from scope_io import ScopeIO
+from scope_io.metadata.models import ImageMetadata
 
 from fits.environment import constant as cst
 from fits.gui.settings import SettingsAdapter
@@ -38,7 +38,7 @@ def test_segmentation_settings_conflict_propagates_and_can_be_reverted(tmp_path:
     adapter.set_field_value(cst.StepName.TRACK, "channel_to_track", ["Green"])
     for step in (cst.StepName.SEGMENT, cst.StepName.TRACK):
         adapter.set_step_enabled(step, True)
-    reader = FitsIO.from_path(source)
+    reader = ScopeIO.from_path(source)
     for step in (cst.StepName.CONVERT, cst.StepName.SEGMENT, cst.StepName.TRACK):
         spec = REGISTRY[step]
         model = spec.model_validate(resolve_step_params(step, adapter.as_mapping()[step]))
@@ -58,7 +58,7 @@ def test_segmentation_settings_conflict_propagates_and_can_be_reverted(tmp_path:
         output = tmp_path / spec.profile.output_name
         reader.save_array(pixels, channel_labels=["Green"], metadata=payload, output_path=output)
         state = state.with_complete_step(step_name=step, artifact_kind=spec.profile.output_artifact, artifact_path=output)
-        reader = FitsIO.from_path(output)
+        reader = ScopeIO.from_path(output)
     save_experiment_state(state)
     assert not inspect_run(tmp_path, adapter.as_mapping(), for_execution=False).conflicts
     adapter.set_field_value(cst.StepName.SEGMENT, "workers", 5)
@@ -95,7 +95,7 @@ def test_registration_backend_alias_does_not_mark_rebuilt_results_outdated(step:
     params = {**settings.to_payload_dict(), 'algorithm': algorithm, 'backend': algorithm, 'method': 'translation'}
     if alias_only:
         params.pop('algorithm')
-    metadata = FitsIOMeta(custom_metadata={'steps': {step: {'params': params}}})
+    metadata = ImageMetadata(custom_metadata={'steps': {step: {'params': params}}})
     record = ArtifactRecord(Path('registration.tif'), step, metadata)
     assert not settings_problem(record, config)
     config[step]['params']['method'] = 'affine'
@@ -112,6 +112,6 @@ def test_conflicting_registration_aliases_remain_a_warning() -> None:
     step = cst.StepName.REGISTER_CHANNEL
     config: dict[str, Any] = {step: {'enabled': True, 'params': {'context': 'channel_shift'}}}
     settings = REGISTRY[step].model_validate(resolve_step_params(step, config[step]))
-    metadata = FitsIOMeta(custom_metadata={'steps': {step: {'params': {
+    metadata = ImageMetadata(custom_metadata={'steps': {step: {'params': {
         **settings.to_payload_dict(), 'algorithm': 'cv2', 'backend': 'scikit', 'method': 'translation'}}}})
     assert 'Processing settings differ' in settings_problem(ArtifactRecord(Path('registration.tif'), step, metadata), config)

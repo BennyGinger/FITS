@@ -5,7 +5,7 @@ user-data processing are part of this pass.
 
 ## Scope and conventions
 
-The pass covers 79 recently changed production Python files in FITS and fits_io,
+The pass covers 79 recently changed production Python files in FITS and scope_io,
 including `workflows/artifacts`, `definitions`, `experiments`, `file_management`,
 their runtime/GUI/CLI callers, and the metadata writer. There is no `agents/`
 package in this repository; the requested artifact area is `artifacts/`.
@@ -38,9 +38,9 @@ package in this repository; the requested artifact area is `artifacts/`.
 - CLI compact/manage reuse the GUI application factory. Master-table filenames
   and artifact roles are centralized in FITS constants.
 
-## fits_io metadata writing
+## scope_io metadata writing
 
-`fits_io/writers/metadata.py` was renamed to `writers/metadata_update.py` and all
+`scope_io/writers/metadata.py` was renamed to `writers/metadata_update.py` and all
 callers were updated. It remains in `writers` because it copies and atomically
 publishes files; `metadata/` owns payload models, codecs and provenance values.
 The writer reuses the existing publish/retry helper. It opens TIFFs in the typed
@@ -51,7 +51,7 @@ frame as a page with tags. Pixel data remains encoded and unchanged.
 
 - Pyright uses the project's virtual environment and the editor's `standard`
   mode. All 79 reviewed production files have zero errors and warnings.
-- The full core/workflow/fits_io suite passes: 572 tests. Targeted GUI/CLI,
+- The full core/workflow/scope_io suite passes: 572 tests. Targeted GUI/CLI,
   navigation, file actions, reports and channel-label tests pass: 101 tests.
 - The annotation/docstring inventory, Python compilation and repository/submodule
   whitespace checks pass.

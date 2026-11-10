@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import tifffile
 from numpy.typing import NDArray
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from PySide6.QtCore import QThread
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -35,7 +35,7 @@ def source_image(tmp_path: Path) -> Path:
     image = np.arange(4 * 2 * 2 * 16 * 17, dtype=np.uint16).reshape(4, 2, 2, 16, 17)
     raw = tmp_path / "raw.tif"
     tifffile.imwrite(raw, image, photometric="minisblack", metadata={"axes": "TZCYX"})
-    return FitsIO.from_path(raw).save_array(
+    return ScopeIO.from_path(raw).save_array(
         image, channel_labels=("GFP", "iRed"), output_path=tmp_path / "fits_array.tif")
 
 
@@ -307,7 +307,7 @@ def test_save_reuses_preview_and_preserves_encoded_states(
     try:
         output = session.save("cached", channel="iRed", interpolation_axis=axis,
                               compression=None)
-        np.testing.assert_array_equal(FitsIO.from_path(output).get_array().array, expected)
+        np.testing.assert_array_equal(ScopeIO.from_path(output).get_array().array, expected)
         # Only an uncached, populated fixed-Z/T sequence requires calculation.
         assert len(calls) == int(uncached)
         np.testing.assert_array_equal(session.mask_array, original)
@@ -382,7 +382,7 @@ def test_progressive_session_matches_full_encoded_interpolation(tmp_path: Path, 
             np.testing.assert_array_equal(cached, target)
         monkey_output = session.save('progressive', channel='iRed', interpolation_axis=axis,
                                      extrapolate_end=False)
-        np.testing.assert_array_equal(FitsIO.from_path(monkey_output).get_array().array, expected)
+        np.testing.assert_array_equal(ScopeIO.from_path(monkey_output).get_array().array, expected)
     finally:
         session.close()
 
@@ -445,7 +445,7 @@ def test_saving_during_partial_preview_writes_complete_mask(tmp_path: Path):
                                 extrapolate_start=True, extrapolate_end=True,
                                 priority=lambda: 0, cancelled=lambda: False,
                                 ready=ready, progress=lambda message: None)
-        np.testing.assert_array_equal(FitsIO.from_path(saved[0]).get_array().array, expected)
+        np.testing.assert_array_equal(ScopeIO.from_path(saved[0]).get_array().array, expected)
     finally:
         session.close()
 

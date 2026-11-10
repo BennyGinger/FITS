@@ -11,8 +11,8 @@ import pytest
 from PySide6.QtWidgets import QApplication
 from tifffile import TiffWriter, imwrite
 
-from fits_io import FitsIO
-from fits_io.metadata.imageJ_meta import make_color_lut
+from scope_io import ScopeIO
+from scope_io.metadata.imageJ_meta import make_color_lut
 from fits.gui.viewer.tracking import TrackingViewerWindow
 from fits.gui.main_window import FitsMainWindow
 from fits.gui.settings import SettingsAdapter
@@ -37,7 +37,7 @@ def test_main_viewer_reads_raw_tiff_planes_and_source_colors(tmp_path: Path, mon
         """
         pytest.fail("Viewer attempted to load the full stack")
 
-    monkeypatch.setattr(FitsIO, "get_array", forbid_stack)
+    monkeypatch.setattr(ScopeIO, "get_array", forbid_stack)
     window = TrackingViewerWindow(tracking_path=source, editing_enabled=False)
     assert window._raw_source
     assert window._tracking_session is None
@@ -57,7 +57,7 @@ def test_main_viewer_reads_raw_tiff_planes_and_source_colors(tmp_path: Path, mon
     assert window.image_viewer.image_item.image is not None
     np.testing.assert_array_equal(window.image_viewer.image_item.image, pixels[1, 2, 1])
     converted = tmp_path / "renamed_converted.tif"
-    FitsIO.from_path(source).save_array(pixels, channel_labels=["GFP", "RFP"], output_path=converted)
+    ScopeIO.from_path(source).save_array(pixels, channel_labels=["GFP", "RFP"], output_path=converted)
     window._open_source(converted)
     assert window.image_viewer.lut_color == "green"
     window.channel_combo.setCurrentIndex(1)

@@ -7,7 +7,7 @@ from typing import cast
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from PySide6.QtCore import QEvent, QPoint, QPointF, QThread, Qt
 from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtTest import QTest
@@ -42,7 +42,7 @@ def tracking(tmp_path):
     raw = np.arange(4 * 2 * 100 * 120, dtype=np.float32).reshape(4, 2, 100, 120)
     input_path = tmp_path / "input.tif"
     tifffile.imwrite(input_path, raw, imagej=True, metadata={"axes": "TCYX"})
-    reader = FitsIO.from_path(input_path)
+    reader = ScopeIO.from_path(input_path)
     source = reader.save_array(raw, channel_labels=("GFP", "RFP"),
                                 output_path=tmp_path / FITS_ARRAY_NAME)
     masks = np.zeros((4, 100, 120), dtype=np.uint16)
@@ -50,7 +50,7 @@ def tracking(tmp_path):
         masks[frame, 20:25, 10 + frame * 10:15 + frame * 10] = 7
         masks[frame, 50:55, 60:65] = 11
         masks[frame, 70:75, 90:95] = 23
-    path = FitsIO.from_path(source).save_array(
+    path = ScopeIO.from_path(source).save_array(
         masks, export_channels=("GFP",), output_path=tmp_path / FITS_MASK_TRACK)
     return path, raw
 
@@ -265,7 +265,7 @@ def test_saving_crops_in_home_and_preview_but_not_when_mode_is_off(window, track
         output = tmp_path / f"fits_track_overlay_{label}{suffix}.tif"
         expected = tracking[1][..., 10:80, 5:85] if enabled else tracking[1]
         np.testing.assert_array_equal(tifffile.imread(output), expected)
-        meta = FitsIO.from_path(output).metadata.custom_metadata
+        meta = ScopeIO.from_path(output).metadata.custom_metadata
         assert ("spatial_crops" in meta) == enabled
 
 

@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.environment.constant import StepName
 from fits.workflows.experiments import ExperimentState
@@ -95,7 +95,7 @@ def test_remove_bg_processes_only_included_channels(monkeypatch, tmp_path: Path)
         seen.update(kwargs)
         return array + 2
 
-    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
     monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
     monkeypatch.setattr("fits.tasks.bg_sub.bg_sub", fake_bg_sub)
 
@@ -123,7 +123,7 @@ def test_remove_bg_saves_signed_float32_and_restores_excluded_channels(monkeypat
     original = np.stack([image, image + 30])
     input_path = tmp_path / "input.tif"
     tifffile.imwrite(input_path, original, imagej=True, metadata={"axes": "CYX"})
-    source = FitsIO.from_path(input_path).save_array(
+    source = ScopeIO.from_path(input_path).save_array(
         original, channel_labels=("GFP", "RFP"), output_path=tmp_path / "fits_array.tif")
     raw = tmp_path / "raw.nd2"
     raw.write_bytes(b"raw")
@@ -136,7 +136,7 @@ def test_remove_bg_saves_signed_float32_and_restores_excluded_channels(monkeypat
 
     monkeypatch.setattr("fits.tasks.bg_sub.bg_sub", subtract)
     remove_bg(BGSubSettings(exclude_channel=exclude), state, configured_profile(REGISTRY[StepName.BG_SUB].profile, {"convert": {"enabled": True}}))
-    saved = FitsIO.from_path(tmp_path / "fits_array_bgsub.tif").get_array().array
+    saved = ScopeIO.from_path(tmp_path / "fits_array_bgsub.tif").get_array().array
     assert saved.dtype == np.float32
     np.testing.assert_array_equal(saved[0], original[0].astype(np.float32) - 106.5)
     expected_second = original[1] if exclude else original[1].astype(np.float32) - 106.5
@@ -147,7 +147,7 @@ def test_remove_bg_saves_signed_float32_and_restores_excluded_channels(monkeypat
 def test_remove_bg_skips_completed_step(monkeypatch, tmp_path: Path) -> None:
     state = _image_state(tmp_path)
     reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), tmp_path / "fits_array.tif")
-    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
     monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=True))
     monkeypatch.setattr(
         "fits.tasks.bg_sub.bg_sub",
@@ -160,7 +160,7 @@ def test_remove_bg_skips_completed_step(monkeypatch, tmp_path: Path) -> None:
 
 def test_remove_bg_wraps_reader_errors(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), tmp_path / "fits_array.tif")
-    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
     monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
 
     with pytest.raises(StepExecutionError, match="Unknown exclude_channel"):
@@ -173,12 +173,12 @@ def test_remove_bg_wraps_reader_errors(monkeypatch, tmp_path: Path) -> None:
 
 @pytest.fixture(autouse=True)
 def isolate_revision_payload_for_fake_readers(monkeypatch):
-    from fits_io.metadata.models import FitsIOMeta
+    from scope_io.metadata.models import ImageMetadata
     from fits.workflows.artifacts.provenance import revision_payload
     def payload(reader, state, profile, *, export_channels):
         if hasattr(reader, 'build_payload'):
             return revision_payload(reader, state, profile, export_channels=export_channels)
-        return FitsIOMeta().with_fitsio(
+        return ImageMetadata().with_artifact(
             artifact_type=profile.output_artifact, channel_labels=list(export_channels)
         ).with_custom_metadata(state.metadata_dump).new_revision()
     monkeypatch.setattr('fits.tasks.common.artifact_results.revision_payload', payload)

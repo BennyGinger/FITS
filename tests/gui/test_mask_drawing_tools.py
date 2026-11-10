@@ -131,14 +131,14 @@ def test_brush_is_a_stroke_and_polygon_fills_the_interior():
 
 @pytest.mark.parametrize('roi', [False, True])
 def test_clear_all_is_session_only_and_keeps_other_channels(tmp_path: Path, roi: bool):
-    from fits_io import FitsIO
+    from scope_io import ScopeIO
     from fits.tasks.reference_mask import ReferenceMaskSession
     from fits.tasks.roi_mask import RoiSession
     app()
     image = np.zeros((3, 2, 2, 20, 22), dtype=np.uint16)
     raw = tmp_path / 'raw.tif'
     tifffile.imwrite(raw, image, photometric='minisblack', metadata={'axes': 'TZCYX'})
-    source = FitsIO.from_path(raw).save_array(
+    source = ScopeIO.from_path(raw).save_array(
         image, channel_labels=('GFP', 'iRed'), output_path=tmp_path / 'fits_array.tif')
     session = RoiSession(source) if roi else ReferenceMaskSession(source)
     mask = np.zeros((20, 22), dtype=np.uint8)

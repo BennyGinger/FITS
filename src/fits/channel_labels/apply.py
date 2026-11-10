@@ -8,7 +8,7 @@ import tempfile
 from copy import deepcopy
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.channel_labels.discovery import _fingerprint, files_to_update, validate_labels
 from fits.channel_labels.documents import rename_workflow_meta, rename_table, render_settings, render_state
 from fits.channel_labels.lock import run_write_guard
@@ -65,7 +65,7 @@ def _apply_unlocked(plan: LabelPlan,
             updated.append(path)
             try:
                 if path in plan.tiffs:
-                    reader = FitsIO.from_path(path)
+                    reader = ScopeIO.from_path(path)
                     new = [labels[index] for index in reader.artifact_channel_indices]
                     custom = deepcopy(dict(reader.metadata.custom_metadata))
                     rename_workflow_meta(custom, mapping)

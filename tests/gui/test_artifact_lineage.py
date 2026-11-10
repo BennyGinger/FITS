@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import QApplication, QGraphicsRectItem, QGraphicsTextItem
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 
 from fits.environment import constant as cst
 from fits.gui.artifact_lineage import ArtifactLineageWidget, file_lineage
@@ -30,7 +30,7 @@ def _record(path: Path, step: str, *inputs: str, problem: str = "") -> ArtifactR
     """
     Build a report record with saved input paths without creating image files.
     """
-    metadata = FitsIOMeta().new_revision([{"artifact_path": source} for source in inputs])
+    metadata = ImageMetadata().new_revision([{"artifact_path": source} for source in inputs])
     return ArtifactRecord(path, step, metadata, problem)
 
 
@@ -64,7 +64,7 @@ def test_preserved_legacy_and_planned_outputs_have_no_invented_edges(tmp_path: P
     Show older results as preserved and new rebuild files without guessed lineage.
     """
     old, new = tmp_path / "fits_array.tif", tmp_path / cst.FITS_ARRAY_RAW
-    metadata = FitsIOMeta.from_dict({"fits_io": {"derived_from": "old source"}})
+    metadata = ImageMetadata.from_dict({"artifact": {"derived_from": "old source"}})
     report = PreflightReport((ArtifactRecord(old, cst.StepName.CONVERT, metadata, "Old format", True),),
                              (cst.StepName.CONVERT,), (), (), ((cst.StepName.CONVERT, new),))
     graph = file_lineage(report, tmp_path)
@@ -154,7 +154,7 @@ def test_manual_masks_branch_from_geometry_not_intensity(tmp_path: Path, rerun: 
     _application()
     raw, registered, background = (tmp_path / name for name in ("raw.tif", "registered.tif", "background.tif"))
     ref, roi = tmp_path / "fits_ref_edge.tif", tmp_path / "fits_roi_area.tif"
-    metadata = FitsIOMeta().with_custom_metadata({"registration_revisions": ["saved registration"]})
+    metadata = ImageMetadata().with_custom_metadata({"registration_revisions": ["saved registration"]})
     # Inherited intensity provenance must not turn manual drawings into intensity dependents.
     drawing = metadata.new_revision([{"artifact_path": background.name}])
     registration = rerun if rerun != cst.StepName.BG_SUB else cst.StepName.REGISTER_TIME

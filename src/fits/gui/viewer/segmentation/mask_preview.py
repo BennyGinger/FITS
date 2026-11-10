@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 import numpy as np
 from bioimagequant import CompartmentGeometry, prepare_compartments
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from numpy.typing import NDArray
 
 from fits.environment import constant as cst
@@ -60,7 +60,7 @@ class MaskPreviewStore:
         Keep preview memory bounded independently of the stack length.
         """
         self.previews: OrderedDict[tuple[int, str, int], tuple[SegmentChannelSettings, SegmentationPreview]] = OrderedDict()
-        self._reader: FitsIO | None = None
+        self._reader: ScopeIO | None = None
         self._planes: PlaneStore | None = None
         self._file_revision: tuple[Path, int, int] | None = None
         self._geometry_key: tuple[Any, ...] | None = None
@@ -105,7 +105,7 @@ class MaskPreviewStore:
         if source is None or self._reader is None or self._planes is None or channel not in self._reader.channel_labels:
             return None
         index = list(self._reader.channel_labels).index(channel)
-        revision = (self._file_revision, self._reader.reader.metadata.fits_io.created_at)
+        revision = (self._file_revision, self._reader.reader.metadata.artifact.created_at)
         identity = (source, channel)
         previous = self._saved_settings.get(identity)
         if previous is None or previous[0] != revision:
@@ -136,7 +136,7 @@ class MaskPreviewStore:
         if self._planes is not None:
             self._planes.close()
         self._file_revision = revision
-        self._reader = FitsIO.from_path(source) if source is not None else None
+        self._reader = ScopeIO.from_path(source) if source is not None else None
         self._planes = (PlaneStore(self._reader.axes, tuple(self._reader.reader.shape), reader=self._reader)
                         if self._reader is not None else None)
 

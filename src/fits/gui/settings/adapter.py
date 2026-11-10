@@ -8,7 +8,7 @@ from typing import Any
 import tomlkit
 from pydantic import ValidationError
 from tomlkit import TOMLDocument
-from fits_io.metadata.channel_colors import conversion_channel_labels
+from scope_io.metadata.channel_colors import conversion_channel_labels
 
 from fits.environment.constant import WORKFLOW_ORDER, StepName
 from fits.workflows.definitions.registry import REGISTRY

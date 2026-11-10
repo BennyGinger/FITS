@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from roifile import ImagejRoi, ROI_SUBTYPE, ROI_TYPE
 
 from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK
@@ -22,7 +22,7 @@ def make_experiment(directory: Path, dtype=np.uint16):
     tifffile.imwrite(input_path, raw, imagej=True, resolution=(2, 4),
                      metadata={"axes": "TZCYX", "unit": "micron", "finterval": 2.5,
                                "Labels": ["GFP", "RFP"]})
-    FitsIO.from_path(input_path).save_array(
+    ScopeIO.from_path(input_path).save_array(
         raw, channel_labels=("GFP", "RFP"), output_path=source)
     labels = np.zeros((3, 2, 24, 25), dtype=np.uint16)
     for frame in range(3):
@@ -31,7 +31,7 @@ def make_experiment(directory: Path, dtype=np.uint16):
         labels[frame, 1, 12, 5 + frame] = 7  # A disconnected island.
         labels[frame, 1, 15:18, 18:21] = 11
     labels[:, 0, 2:4, 2:4] = 99  # Another Z plane must not enter the overlay.
-    tracking = FitsIO.from_path(source).save_array(
+    tracking = ScopeIO.from_path(source).save_array(
         labels, channel_labels=("GFP", "RFP"), export_channels=("GFP",),
         output_path=directory / FITS_MASK_TRACK)
     return source, tracking, raw, labels
@@ -79,7 +79,7 @@ def test_overlay_export_retains_raw_hyperstack_and_source_files(tmp_path, dtype)
         assert tif.imagej_metadata["unit"] == "micron"
         assert tif.pages[0].tags["XResolution"].value == (2, 1)
         assert tif.pages[0].tags["YResolution"].value == (4, 1)
-    metadata = FitsIO.from_path(output).metadata.custom_metadata["tracking_viewer_display"]
+    metadata = ScopeIO.from_path(output).metadata.custom_metadata["tracking_viewer_display"]
     assert metadata["output_mode"] == "imagej_overlay"
     assert metadata["raw_image_exported"] is True
     rois = read_rois(output)
@@ -155,7 +155,7 @@ def test_crop_preserves_all_raw_dimensions_and_aligns_masks_and_paths(tmp_path):
     assert output.name == "fits_track_overlay_review_cropped.tif"
     np.testing.assert_array_equal(tifffile.imread(output), raw[..., 5:18, 6:20])
     assert source.read_bytes() == original
-    metadata = FitsIO.from_path(output).metadata.custom_metadata
+    metadata = ScopeIO.from_path(output).metadata.custom_metadata
     assert metadata["tracking_viewer_display"]["crop_xy"] == list(bounds)
     assert metadata["spatial_crops"][0]["source_shape"] == list(raw.shape)
     for roi in read_rois(output):
@@ -199,11 +199,11 @@ def test_overlay_export_luts_for_single_and_mixed_channels(tmp_path, dtype, labe
     raw = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
     input_path = tmp_path / "input.tif"
     tifffile.imwrite(input_path, raw, imagej=True, metadata={"axes": axes})
-    source = FitsIO.from_path(input_path).save_array(
+    source = ScopeIO.from_path(input_path).save_array(
         raw, channel_labels=labels, output_path=tmp_path / FITS_ARRAY_NAME)
     masks = np.zeros((2, 8, 9), dtype=np.uint16)
     masks[:, 2:5, 2:5] = 7
-    tracking = FitsIO.from_path(source).save_array(
+    tracking = ScopeIO.from_path(source).save_array(
         masks, export_channels=(labels[0],), output_path=tmp_path / FITS_MASK_TRACK)
     session = TrackingViewerSession(tracking)
     for bounds in (None, (1, 1, 8, 7)):

@@ -4,7 +4,7 @@ from PySide6.QtCore import QEvent, QObject, QSignalBlocker, Qt
 from PySide6.QtGui import QColor, QIcon, QKeyEvent, QPainter, QPixmap
 from PySide6.QtWidgets import QHeaderView, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
-from fits_io.metadata.channel_colors import channel_color_name, conversion_channel_labels
+from scope_io.metadata.channel_colors import channel_color_name, conversion_channel_labels
 from fits.gui.settings.field_widgets import ValueWidget
 
 

@@ -9,6 +9,7 @@ from typing import Any
 from fits.environment.constant import ChannelScope, DIST_FITS, StepName
 from fits.workflows.metadata.run import RunMetadata
 from fits.workflows.metadata.step import StepMetadata
+from fits.workflows.metadata._values import same_producer
 
 
 @dataclass(slots=True, frozen=True)
@@ -62,7 +63,7 @@ class FitsMeta:
                                             exported_channel=exported_channel,
                                             params=params,)
         else:
-            if current_step.created_by != created_by:
+            if not same_producer(current_step.created_by, created_by):
                 raise ValueError(f"Step '{step_name}' was previously created by "
                                 f"'{current_step.created_by}', cannot add metadata from "
                                 f"'{created_by}'.")

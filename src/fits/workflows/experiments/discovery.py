@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from fits_io import SUPPORTED_EXTENSIONS
+from scope_io import SUPPORTED_EXTENSIONS
 from fits.environment.constant import EXCLUDED_PREFIXES
 from fits.environment.paths import INTERNAL_DIR_NAMES
 

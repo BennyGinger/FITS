@@ -7,7 +7,7 @@ from typing import cast
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from PySide6.QtCore import QPointF, QThread, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtTest import QTest
@@ -47,14 +47,14 @@ def experiment(tmp_path: Path, channels: tuple[str, ...] = ("GFP", "DAPI", "iRed
     for channel in range(len(channels)):
         image[:, channel] *= channel + 1
     tifffile.imwrite(raw, image, photometric="minisblack", metadata={"axes": "TCYX"})
-    return FitsIO.from_path(raw).save_array(image, channel_labels=channels,
+    return ScopeIO.from_path(raw).save_array(image, channel_labels=channels,
                                            output_path=tmp_path / FITS_ARRAY_NAME)
 
 
 def mask(source: Path, name: str, channels: tuple[str, ...], value: int = 7) -> Path:
     labels = np.zeros((4, len(channels), 24, 25), dtype=np.uint16)
     labels[:, :, 4:7, 5:8] = value
-    return FitsIO.from_path(source).save_array(
+    return ScopeIO.from_path(source).save_array(
         labels[:, 0] if len(channels) == 1 else labels,
         channel_labels=("GFP", "DAPI", "iRed"), export_channels=channels,
         output_path=source.with_name(name),
@@ -99,7 +99,7 @@ def test_selected_path_display_updates_without_rebuilding_trajectories(
     for frame in range(4):
         labels[frame, 4:7, 5 + frame:8 + frame] = 7
         labels[frame, 14:17, 15 + frame:18 + frame] = 11
-    tracking = FitsIO.from_path(source).save_array(
+    tracking = ScopeIO.from_path(source).save_array(
         labels, channel_labels=("GFP", "DAPI", "iRed"), export_channels=("iRed",),
         output_path=source.with_name(FITS_MASK_TRACK))
     window = TrackingViewerWindow(
@@ -564,7 +564,7 @@ def test_filter_changes_reuse_drawings_for_recent_or_equivalent_selections(
     labels = np.zeros((4, 24, 25), dtype=np.uint16)
     labels[:, 4:7, 5:8] = 7
     labels[1:3, 14:17, 15:18] = 8
-    tracking = FitsIO.from_path(source).save_array(
+    tracking = ScopeIO.from_path(source).save_array(
         labels, channel_labels=("GFP", "DAPI", "iRed"), export_channels=("iRed",),
         output_path=source.with_name(FITS_MASK_TRACK))
     window = TrackingViewerWindow(tracking_path=tracking)

@@ -48,7 +48,7 @@ from fits.workflows.experiments import collect_supported_files
 from fits.workflows.experiments.exclusion import active_raw_files, set_excluded
 from fits.gui.artifact_decisions import choose_artifacts
 from fits.workflows.checks.compatibility import inspect_run_compatibility
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.gui.theme import PREVIEW_BUTTON_STYLE
 from fits.gui.parquet import open_parquet
 from fits.gui.segmentation_models.loader import model_options_loader
@@ -1521,7 +1521,7 @@ class FitsMainWindow(QMainWindow):
         for path in images.values():
             try:
                 if path not in self._file_channel_cache:
-                    self._file_channel_cache[path] = tuple(FitsIO.from_path(path).channel_labels)
+                    self._file_channel_cache[path] = tuple(ScopeIO.from_path(path).channel_labels)
                 labels = self._file_channel_cache[path]
                 channels.update(dict.fromkeys(labels))
             except Exception:

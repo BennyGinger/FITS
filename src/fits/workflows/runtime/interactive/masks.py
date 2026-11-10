@@ -34,7 +34,7 @@ def validate_mask_outcome(request: MaskCollectionRequest, outcome: MaskCollectio
     """
     Check the exact mask set before tasks discover and consume those files.
     """
-    from fits_io import FitsIO
+    from scope_io import ScopeIO
     from fits.tasks.reference_mask.artifact import load_reference_artifact
     from fits.tasks.roi_mask.artifact import load_roi_artifact
 
@@ -46,7 +46,7 @@ def validate_mask_outcome(request: MaskCollectionRequest, outcome: MaskCollectio
             or set(existing.roi_paths) != set(outcome.roi_paths)):
         raise ValueError(f'Mask files changed after finalization for {request.image_path}.')
     
-    reader = FitsIO.from_path(request.image_path)
+    reader = ScopeIO.from_path(request.image_path)
     loaded = reader.get_array()
     for paths, loader in ((outcome.reference_paths, load_reference_artifact),
                         (outcome.roi_paths if request.uses_roi else (), load_roi_artifact),):

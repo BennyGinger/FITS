@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import tifffile
 
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.environment.constant import ARTI_IMG, ARTI_TRACK, StepName
 from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
 from fits.workflows.experiments import ExperimentState
@@ -39,7 +39,7 @@ def state(tmp_path, name):
     folder.mkdir()
     image = folder / 'fits_array.tif'
     tifffile.imwrite(image, np.arange(64, dtype=np.uint16).reshape(8, 8), imagej=True, metadata={'axes': 'YX'})
-    reader = FitsIO.from_path(image)
+    reader = ScopeIO.from_path(image)
     payload = reader.build_payload(export_channels='all', custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
     reader.save_array(np.arange(64, dtype=np.uint16).reshape(8, 8), metadata=payload, output_path=image)
     session = ReferenceMaskSession(image)

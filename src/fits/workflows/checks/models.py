@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from fits.workflows.experiments import ExperimentState
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 
 
 @dataclass(frozen=True)
@@ -78,7 +78,7 @@ class ArtifactRecord:
     """
     path: Path
     step: str | None
-    metadata: FitsIOMeta | None
+    metadata: ImageMetadata | None
     problem: str = ""
     legacy: bool = False
 

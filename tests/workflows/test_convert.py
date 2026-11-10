@@ -8,7 +8,7 @@ import importlib
 import numpy as np
 import pytest
 
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 from fits.environment.constant import StepName
 from fits.workflows.experiments import ExperimentState
 from fits.settings.models import ConvertSettings
@@ -23,7 +23,7 @@ convert_module = importlib.import_module("fits.tasks.convert")
 class DummySeriesReader:
     def __init__(self, output_path: Path) -> None:
         self.output_path = output_path
-        self.reader = SimpleNamespace(metadata=FitsIOMeta())
+        self.reader = SimpleNamespace(metadata=ImageMetadata())
         self.prepare_calls: list[dict[str, Any]] = []
         self.save_calls: list[dict[str, Any]] = []
 
@@ -31,7 +31,7 @@ class DummySeriesReader:
         self.prepare_calls.append(kwargs)
         return SimpleNamespace(
             array=np.ones((4, 4), dtype=np.uint16),
-            metadata=FitsIOMeta(),
+            metadata=ImageMetadata(),
             output_path=self.output_path,
         )
 
@@ -67,7 +67,7 @@ def test_convert_builds_each_series_branch(monkeypatch, tmp_path: Path) -> None:
     ]
     source = DummySource(series)
     monkeypatch.setattr(convert_module, "decide_run", lambda *args: SimpleNamespace(is_complete=False))
-    monkeypatch.setattr(convert_module.FitsIO, "from_path", lambda path: source)
+    monkeypatch.setattr(convert_module.ScopeIO, "from_path", lambda path: source)
 
     results = convert(
         ConvertSettings(channel_labels=["GFP", "RFP"], export_channels=["RFP"], z_projection="max"),
@@ -90,7 +90,7 @@ def test_convert_skips_completed_step(monkeypatch, tmp_path: Path) -> None:
     state = ExperimentState.init(tmp_path, raw)
     monkeypatch.setattr(convert_module, "decide_run", lambda *args: SimpleNamespace(is_complete=True))
     monkeypatch.setattr(
-        convert_module.FitsIO,
+        convert_module.ScopeIO,
         "from_path",
         lambda path: (_ for _ in ()).throw(AssertionError("reader should not be opened")),
     )
@@ -104,7 +104,7 @@ def test_convert_wraps_conversion_errors(monkeypatch, tmp_path: Path) -> None:
     state = ExperimentState.init(tmp_path, raw)
     monkeypatch.setattr(convert_module, "decide_run", lambda *args: SimpleNamespace(is_complete=False))
     monkeypatch.setattr(
-        convert_module.FitsIO,
+        convert_module.ScopeIO,
         "from_path",
         lambda path: (_ for _ in ()).throw(ValueError("unsupported image")),
     )
@@ -116,7 +116,7 @@ def test_convert_wraps_conversion_errors(monkeypatch, tmp_path: Path) -> None:
 @pytest.mark.parametrize("projection", ["None", "max", "mean", "sum", "std"])
 def test_convert_real_z_stack(tmp_path: Path, projection: str) -> None:
     from tifffile import imwrite
-    from fits_io import FitsIO
+    from scope_io import ScopeIO
     from fits.gui.settings import SettingsAdapter
 
     raw = tmp_path / "input.tif"
@@ -128,7 +128,7 @@ def test_convert_real_z_stack(tmp_path: Path, projection: str) -> None:
     adapter.load(saved)
     settings = ConvertSettings.model_validate(adapter.as_mapping()["convert"]["params"])
     results = convert(settings, ExperimentState.init(tmp_path, raw), REGISTRY[StepName.CONVERT].profile)
-    output = FitsIO.from_path(results[0].artifact("image"))
+    output = ScopeIO.from_path(results[0].artifact("image"))
     actual = output.get_array().array
     if projection == "None":
         assert settings.z_projection is None
@@ -139,4 +139,4 @@ def test_convert_real_z_stack(tmp_path: Path, projection: str) -> None:
         assert output.reader.axes == "TYX"
         expected = getattr(np, projection)(array, axis=1)
         np.testing.assert_allclose(actual, expected, rtol=1e-6)
-    assert output.reader.metadata.fits_io.z_projection == settings.z_projection
+    assert output.reader.metadata.artifact.z_projection == settings.z_projection

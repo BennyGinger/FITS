@@ -24,9 +24,9 @@ from fits.workflows.checks.locations import LocationReport, inspect_locations
 from fits.tasks.analysis.aggregate import save_master_analysis_table
 from fits.tasks.analysis.identity import add_quantification_ids
 from fits.workflows.artifacts.provenance import compatible, read_metadata
-from fits_io.writers.metadata_update import rewrite_metadata
+from scope_io.writers.metadata_update import rewrite_metadata
 from fits.workflows.file_management.migration import prepare_state, migrate_payload, accepted_inputs
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 
 
 @dataclass(frozen=True)
@@ -335,13 +335,13 @@ def _provenance(payload: dict[str, Any], old_base: Path, new_base: Path, plan: P
     """
     Return the current provenance.
     """
-    metadata = payload.get('fits_io', {})
-    refs = metadata.get('derived_from')
+    metadata = ImageMetadata.from_dict(payload)
+    refs = metadata.artifact.derived_from
     if isinstance(refs, list):
         for ref in refs:
             if isinstance(ref, dict) and 'artifact_path' in ref:
                 ref['artifact_path'] = _relocated(ref['artifact_path'], old_base, new_base, plan)
-    return payload
+    return metadata.dump()
 
 
 def _refresh_table(path: Path, state: ExperimentState, old_base: Path, plan: PortablePlan) -> None:
@@ -374,7 +374,7 @@ def _updated_payload(data: dict[str, Any],
     """
     data = _provenance(data, old_base, state.workdir, plan)
     if plan.migrate:
-        data = migrate_payload(FitsIOMeta.from_dict(data), inputs=accepted_inputs(path, state)).dump()
+        data = migrate_payload(ImageMetadata.from_dict(data), inputs=accepted_inputs(path, state)).dump()
     return data
 
 
@@ -452,7 +452,7 @@ def _apply_state_update(state: ExperimentState, old_base: Path, plan: PortablePl
         after = _updated_payload(json.loads(json.dumps(before)), path, state, old_base, plan)
         if before != after:
             transaction.protect(path)
-            rewrite_metadata(path, FitsIOMeta.from_dict(after))
+            rewrite_metadata(path, ImageMetadata.from_dict(after))
     for name in (cst.FITS_QUANTI_NAME, cst.FITS_DISTANCE_PROFILE_NAME):
         path = state.workdir / name
         if path.is_file() and not needs_rebuild and (plan.migrate or old_base != state.workdir):

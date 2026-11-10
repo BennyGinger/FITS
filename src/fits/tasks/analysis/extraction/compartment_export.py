@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from bioimagequant import CompartmentSettings, compartment_masks
 from bioimagequant.core.arrays import ArrayData
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.environment import constant as cst
 from fits.tasks.analysis.extraction.manager import resolve_extraction_labels
@@ -27,7 +27,7 @@ def export_compartments(state: ExperimentState, settings: CompartmentSettings, *
     Write source-shaped mask channels through the ordinary FITS TIFF protocol.
     """
     _, source = resolve_extraction_labels(state, profile)
-    reader = FitsIO.from_path(source)
+    reader = ScopeIO.from_path(source)
     raw = reader.get_array()
     array, axes = project_z(np.asarray(raw.array), raw.axes, mask=False)
     data = ArrayData(array, axes, channel_labels=reader.channel_labels)

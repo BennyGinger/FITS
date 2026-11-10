@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import logging
-from fits_io.client import FitsIO
+from scope_io.client import ScopeIO
 from fits.workflows.experiments import ExperimentState
 from fits.workflows.definitions.models import StepProfile
 from fits.workflows.definitions.inputs import resolve_inputs
@@ -14,7 +14,7 @@ from fits.workflows.checks.space import require_processing_space
 logger = logging.getLogger(__name__)
 
 
-def load_input_reader(exp_state: ExperimentState, step_profile: StepProfile) -> FitsIO:
+def load_input_reader(exp_state: ExperimentState, step_profile: StepProfile) -> ScopeIO:
     """
     Open the required input artifact for an array-processing step.
     """
@@ -23,7 +23,7 @@ def load_input_reader(exp_state: ExperimentState, step_profile: StepProfile) -> 
         raise StepExecutionError(f"Step {str(step_profile.step_name)!r} failed for "
                                 f"{exp_state.experiment_id}: missing "
                                 f"{step_profile.input_artifact!r} input.")
-    return FitsIO.from_path(input_path)
+    return ScopeIO.from_path(input_path)
 
 
 def resolve_step_run(exp_state: ExperimentState,

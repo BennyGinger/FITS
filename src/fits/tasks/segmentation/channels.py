@@ -3,8 +3,8 @@ from typing import Any
 
 import numpy as np
 from cellpose_kit.client import CellposeWrapper
-from fits_io.client import FitsIO
-from fits_io.writers.models import ChannelMergeResult
+from scope_io.client import ScopeIO
+from scope_io.writers.models import ChannelMergeResult
 
 from fits.settings.models import SegmentChannelSettings, SegmentSettings
 from fits.tasks.common.channel_results import append_channel_result
@@ -28,7 +28,7 @@ def resolve_pending_entries(settings: SegmentSettings,
             if channel_index in pending]
 
 
-def segment_channels(reader: FitsIO,
+def segment_channels(reader: ScopeIO,
                     pending_entries: list[tuple[SegmentChannelSettings, int]],
                     threading: bool,
                     step_profile: StepProfile,
@@ -50,7 +50,7 @@ def segment_channels(reader: FitsIO,
     return results
 
 
-def _segment_channel(reader: FitsIO,
+def _segment_channel(reader: ScopeIO,
                     channel_settings: SegmentChannelSettings,
                     threading: bool,
                     step_profile: StepProfile,

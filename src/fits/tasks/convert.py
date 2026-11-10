@@ -4,7 +4,7 @@ import logging
 import os
 from dataclasses import replace
 from pathlib import Path
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.workflows.experiments import ExperimentState, save_experiment_state, load_experiment_state
 from fits.environment.constant import ARTI_RAW, StepName
 from fits.workflows.definitions.models import StepProfile
@@ -13,7 +13,7 @@ from fits.workflows.runtime.errors import StepExecutionError
 from fits.workflows.checks.space import require_processing_space
 from fits.settings.models import ConvertSettings
 from fits.workflows.artifacts.provenance import produced_metadata
-from fits_io.metadata.provenance import input_reference
+from scope_io.metadata.provenance import input_reference
 from fits.workflows.experiments.acquisitions import group_acquisition
 from fits.environment.paths import experiment_state_path
 
@@ -55,7 +55,7 @@ def convert(settings: ConvertSettings,
         grouped = group_acquisition(exp_state.original_image, exp_state.acquisition_directory)
         exp_state = replace(exp_state, artifacts={**exp_state.artifacts,
             ARTI_RAW: Path(os.path.relpath(grouped, exp_state.workdir))})
-        source = FitsIO.from_path(grouped)
+        source = ScopeIO.from_path(grouped)
 
         color_options = ({"channel_colors": settings.source_channel_colors}
                          if settings.source_channel_colors is not None else {})

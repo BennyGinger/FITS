@@ -102,7 +102,7 @@ def test_segment_requires_a_configured_channel(tmp_path: Path) -> None:
 def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(tmp_path / "fits_mask.tif")
     wrapper = DummyWrapper()
-    monkeypatch.setattr(preparation_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(preparation_module.ScopeIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
         preparation_module,
         "decide_run",
@@ -128,14 +128,14 @@ def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Pat
     assert reader.get_channel_calls == [["RFP", "DAPI"]]
     assert wrapper.setup_called
     assert wrapper.run_calls[0][1] == "CYX"
-    assert reader.save_calls[0]["metadata"].fits_io.channel_labels == ["RFP"]
-    assert reader.save_calls[0]["metadata"].fits_io.artifact_type == "segmentation"
+    assert reader.save_calls[0]["metadata"].artifact.channel_labels == ["RFP"]
+    assert reader.save_calls[0]["metadata"].artifact.artifact_type == "segmentation"
 
 
 def test_segment_skips_when_requested_channels_are_complete(monkeypatch, tmp_path: Path) -> None:
     state = _image_state(tmp_path)
     reader = DummyReader(tmp_path / "fits_mask.tif")
-    monkeypatch.setattr(preparation_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(preparation_module.ScopeIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
         preparation_module,
         "decide_run",
@@ -159,7 +159,7 @@ def test_segment_uses_independent_settings_and_saves_once(monkeypatch, tmp_path:
     reader = DummyReader(tmp_path / "fits_mask.tif")
     wrappers = [DummyWrapper(), DummyWrapper()]
     payloads: list[dict[str, Any]] = []
-    monkeypatch.setattr(preparation_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(preparation_module.ScopeIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
         preparation_module,
         "decide_run",
@@ -188,13 +188,13 @@ def test_segment_uses_independent_settings_and_saves_once(monkeypatch, tmp_path:
     assert payloads[1]["do_denoise"] is False
     assert reader.get_channel_calls == [["GFP"], ["DAPI"]]
     assert len(reader.save_calls) == 1
-    assert reader.save_calls[0]["metadata"].fits_io.channel_labels == ["GFP", "DAPI"]
+    assert reader.save_calls[0]["metadata"].artifact.channel_labels == ["GFP", "DAPI"]
 
 
 def test_segment_failure_does_not_save_partial_output(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(tmp_path / "fits_mask.tif")
     first = DummyWrapper()
-    monkeypatch.setattr(preparation_module.FitsIO, "from_path", lambda path: reader)
+    monkeypatch.setattr(preparation_module.ScopeIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
         preparation_module,
         "decide_run",
@@ -226,12 +226,12 @@ def test_segment_failure_does_not_save_partial_output(monkeypatch, tmp_path: Pat
 
 @pytest.fixture(autouse=True)
 def isolate_revision_payload_for_fake_readers(monkeypatch):
-    from fits_io.metadata.models import FitsIOMeta
+    from scope_io.metadata.models import ImageMetadata
     from fits.workflows.artifacts.provenance import revision_payload
     def payload(reader, state, profile, *, export_channels):
         if hasattr(reader, 'build_payload'):
             return revision_payload(reader, state, profile, export_channels=export_channels)
-        return FitsIOMeta().with_fitsio(
+        return ImageMetadata().with_artifact(
             artifact_type=profile.output_artifact, channel_labels=list(export_channels)
         ).with_custom_metadata(state.metadata_dump).new_revision()
     monkeypatch.setattr('fits.tasks.common.artifact_results.revision_payload', payload)

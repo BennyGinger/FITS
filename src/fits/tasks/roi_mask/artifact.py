@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal, overload
 
 import numpy as np
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from numpy.typing import NDArray
 
 from fits.environment.constant import FITS_ROI_TEMPLATE
@@ -34,7 +34,7 @@ def saved_roi_channels(path: Path) -> tuple[str, ...]:
     """
     Return channel labels stored in an ROI artifact, or none if absent.
     """
-    return tuple(FitsIO.from_path(path).channel_labels) if path.is_file() else ()
+    return tuple(ScopeIO.from_path(path).channel_labels) if path.is_file() else ()
 
 
 @overload
@@ -66,7 +66,7 @@ def load_roi_artifact(roi_path: str | Path, *, source_path: Path,
         raise ValueError(
             f"ROI mask must be an existing {prefix}*{suffix} file beside the source image.")
     label = validate_reference_label(path.name[len(prefix):len(path.name) - len(suffix)])
-    reader = FitsIO.from_path(path)
+    reader = ScopeIO.from_path(path)
     if lazy:
         encoding = reader.metadata.custom_metadata.get("roi_mask_encoding")
         if encoding != ROI_MASK_ENCODING:
@@ -110,12 +110,12 @@ def merge_roi_channels(output_path: Path, channel_mask: NDArray[np.uint8], *,
     Merge current-format channels or replace an incompatible ROI artifact.
     """
     if output_path.is_file():
-        reader = FitsIO.from_path(output_path)
+        reader = ScopeIO.from_path(output_path)
         encoding = reader.metadata.custom_metadata.get("roi_mask_encoding")
         if encoding != ROI_MASK_ENCODING:
             return channel_mask, [channel_label]
 
-    def normalize_existing(array: NDArray[np.generic], reader: FitsIO,
+    def normalize_existing(array: NDArray[np.generic], reader: ScopeIO,
                            ) -> NDArray[np.uint8]:
         """
         Validate and normalize an existing artifact before channel merging.

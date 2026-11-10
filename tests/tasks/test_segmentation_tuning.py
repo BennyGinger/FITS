@@ -8,7 +8,7 @@ from fits.settings.models import SegmentChannelSettings
 from fits.tasks.segmentation.tuning import SegmentationTuningSession
 
 
-class FakeFitsIO:
+class FakeScopeIO:
     def __init__(self, array: np.ndarray, axes: str, labels: list[str]) -> None:
         self._array = array
         self._axes = axes
@@ -54,9 +54,9 @@ def test_session_navigates_noncanonical_time_and_channel_axes(
     source = tmp_path / "fits_array.tif"
     source.touch()
     array = np.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5)
-    reader = FakeFitsIO(array, "CTYX", ["GFP", "RFP"])
+    reader = FakeScopeIO(array, "CTYX", ["GFP", "RFP"])
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path",
+        "fits.interaction.image.ScopeIO.from_path",
         lambda _: reader,
     )
 
@@ -76,11 +76,11 @@ def test_preview_is_cached_by_frame_channels_and_settings_and_cleaned_on_close(
     source = tmp_path / "fits_array.tif"
     source.touch()
     array = np.arange(3 * 2 * 4 * 5).reshape(3, 2, 4, 5)
-    reader = FakeFitsIO(array, "TCYX", ["GFP", "RFP"])
+    reader = FakeScopeIO(array, "TCYX", ["GFP", "RFP"])
     wrapper = FakeWrapper()
     wrapper_settings: list[dict] = []
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path",
+        "fits.interaction.image.ScopeIO.from_path",
         lambda _: reader,
     )
     monkeypatch.setattr(
@@ -131,9 +131,9 @@ def test_session_preserves_z_and_selects_planes_only_for_display(
     source = tmp_path / "fits_array.tif"
     source.touch()
     array = np.arange(2 * 1 * 3 * 4 * 5).reshape(2, 1, 3, 4, 5)
-    reader = FakeFitsIO(array, "TCZYX", ["GFP"])
+    reader = FakeScopeIO(array, "TCZYX", ["GFP"])
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path",
+        "fits.interaction.image.ScopeIO.from_path",
         lambda _: reader,
     )
 
@@ -154,10 +154,10 @@ def test_preview_passes_z_axis_unchanged_to_cellpose(
     source = tmp_path / "fits_array.tif"
     source.touch()
     array = np.arange(2 * 1 * 3 * 4 * 5).reshape(2, 1, 3, 4, 5)
-    reader = FakeFitsIO(array, "TCZYX", ["RFP"])
+    reader = FakeScopeIO(array, "TCZYX", ["RFP"])
     wrapper = FakeWrapper()
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path",
+        "fits.interaction.image.ScopeIO.from_path",
         lambda _: reader,
     )
     monkeypatch.setattr(
@@ -185,10 +185,10 @@ def test_2d_preview_uses_the_displayed_z_plane(tmp_path: Path,
     source = tmp_path / "fits_array.tif"
     source.touch()
     array = np.arange(1 * 3 * 4 * 5).reshape(1, 3, 4, 5)
-    reader = FakeFitsIO(array, "CZYX", ["GFP"])
+    reader = FakeScopeIO(array, "CZYX", ["GFP"])
     wrapper = FakeWrapper()
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path",
+        "fits.interaction.image.ScopeIO.from_path",
         lambda _: reader,)
     monkeypatch.setattr(
         "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",
@@ -208,13 +208,13 @@ def test_preview_selects_display_and_nuclear_channels(
     source = tmp_path / "fits_array.tif"
     source.touch()
     array = np.arange(1 * 2 * 4 * 5).reshape(1, 2, 4, 5)
-    reader = FakeFitsIO(array, "TCYX", ["GFP", "RFP"])
+    reader = FakeScopeIO(array, "TCYX", ["GFP", "RFP"])
     wrapper = FakeWrapper()
     settings = SegmentChannelSettings(channel="RFP",
                                nuclear_channel="GFP",
                                do_denoise=False,)
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path",
+        "fits.interaction.image.ScopeIO.from_path",
         lambda _: reader,)
     monkeypatch.setattr(
         "fits.tasks.segmentation.tuning.CellposeWrapper.from_dict",

@@ -10,8 +10,8 @@ from fits.workflows.experiments import ExperimentState
 from fits.tasks.analysis.extraction.manager import ExtractionManager
 
 
-class FakeFitsIO:
-    readers: dict[str, FakeFitsIO] = {}
+class FakeScopeIO:
+    readers: dict[str, FakeScopeIO] = {}
 
     def __init__(self,
                  array: np.ndarray,
@@ -26,7 +26,7 @@ class FakeFitsIO:
         self.resolution = resolution
 
     @classmethod
-    def from_path(cls, path: Path) -> FakeFitsIO:
+    def from_path(cls, path: Path) -> FakeScopeIO:
         return cls.readers[path.name]
 
     def get_array(self) -> SimpleNamespace:
@@ -50,16 +50,16 @@ def test_manager_automatically_loads_all_reference_artifacts(
     single_reference[:, 1, 1, 1] = 1
     multi_reference = np.zeros((2, 2, 2, 4, 4), dtype=np.uint8)
     multi_reference[:, 1, :, 2, 2] = 1
-    FakeFitsIO.readers = {
-        image_path.name: FakeFitsIO(
+    FakeScopeIO.readers = {
+        image_path.name: FakeScopeIO(
             image, "TZCYX", ("GFP", "RFP"), resolution=(0.5, 0.5)),
-        labels_path.name: FakeFitsIO(labels, "TZYX", ("GFP",)),
-        first_reference.name: FakeFitsIO(
+        labels_path.name: FakeScopeIO(labels, "TZYX", ("GFP",)),
+        first_reference.name: FakeScopeIO(
             single_reference, "TZYX", ("GFP",)),
-        second_reference.name: FakeFitsIO(
+        second_reference.name: FakeScopeIO(
             multi_reference, "TZCYX", ("GFP", "RFP")),}
-    monkeypatch.setattr("fits.tasks.analysis.extraction.manager.FitsIO", FakeFitsIO)
-    monkeypatch.setattr("fits.tasks.analysis.manager.FitsIO", FakeFitsIO)
+    monkeypatch.setattr("fits.tasks.analysis.extraction.manager.ScopeIO", FakeScopeIO)
+    monkeypatch.setattr("fits.tasks.analysis.manager.ScopeIO", FakeScopeIO)
 
     state = ExperimentState(
         workdir=tmp_path,

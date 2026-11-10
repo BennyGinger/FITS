@@ -16,7 +16,7 @@ from fits.workflows.definitions.registry import REGISTRY
 from fits.workflows.experiments import ExperimentState
 from fits.workflows.checks.artifacts import _configured_input_problem
 from fits.workflows.checks.models import ArtifactRecord
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 
 
 @pytest.fixture
@@ -100,7 +100,7 @@ def test_accepted_edits_do_not_treat_themselves_as_new_inputs(mask_state: Experi
     """
     Check saved edit provenance without comparing the accepted output against itself.
     """
-    metadata = FitsIOMeta().new_revision([{"artifact_path": cst.FITS_MASK_TRACK},
+    metadata = ImageMetadata().new_revision([{"artifact_path": cst.FITS_MASK_TRACK},
                                          {"artifact_path": cst.FITS_ARRAY_RAW}])
     record = ArtifactRecord(mask_state.workdir / cst.FITS_MASK_TRACK_EDITED, cst.StepName.EDIT_TRACK, metadata)
     config = {cst.StepName.TRACK: {"enabled": True}, cst.StepName.EDIT_TRACK: {"enabled": True}}

@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.workflows.file_management.compaction import compact_run, plan_compaction, apply_compaction
 from fits.environment.paths import experiment_state_path, experiment_backup
@@ -26,7 +26,7 @@ def prepared(tmp_path):
     start_pipeline(adapter.save_to_run_dir(), terminal_progress=False)
     state = discover_saved_states(tmp_path)[0]
     image = state.artifact(cst.ARTI_IMG_RAW)
-    reader = FitsIO.from_path(image)
+    reader = ScopeIO.from_path(image)
     ref = reader.save_array((pixels > 20).astype(np.uint16), output_path=state.workdir / cst.FITS_REFERENCE_TEMPLATE.format(label="edge"),
                             export_channels="all", artifact_kind=cst.ARTI_REF)
     return state, state.original_image, ref
@@ -40,15 +40,15 @@ def test_compact_retains_pixels_revisions_and_ref_bytes(tmp_path):
     state, source, ref = prepared(tmp_path)
     source_hash, ref_hash = digest(source), digest(ref)
     image = state.artifact(cst.ARTI_IMG_RAW)
-    stamp = FitsIO.from_path(image).reader.metadata.fits_io.created_at
+    stamp = ScopeIO.from_path(image).reader.metadata.artifact.created_at
     previewed = []
     published = compact_run(tmp_path, choose=lambda report: "continue",
                             confirm=lambda plan: previewed.append(plan) or True)
     assert len(published) == 1
     assert image in previewed[0].remove
     assert not image.exists()
-    compacted = FitsIO.from_path(published[0])
-    assert compacted.reader.metadata.fits_io.created_at == stamp
+    compacted = ScopeIO.from_path(published[0])
+    assert compacted.reader.metadata.artifact.created_at == stamp
     np.testing.assert_array_equal(compacted.get_array().array, np.arange(64).reshape(8, 8))
     assert digest(source) == source_hash
     assert digest(ref) == ref_hash
@@ -121,13 +121,13 @@ def test_legacy_rebuild_preserves_original_results_and_ref_pixels(tmp_path):
     from fits.workflows.artifacts.provenance import read_metadata
     from fits.settings.loader import run_settings_path
     from fits.workflows.checks.models import PreflightRequired
-    from fits_io.writers.metadata_update import rewrite_metadata
+    from scope_io.writers.metadata_update import rewrite_metadata
     state, source, ref = prepared(tmp_path)
     image = state.artifact(cst.ARTI_IMG_RAW)
     old = read_metadata(image).with_custom_metadata({'pipeline_meta': {'version': '3.3.0'}})
     rewrite_metadata(image, old)
     old_hash = digest(image)
-    before_ref = FitsIO.from_path(ref).get_array().array.copy()
+    before_ref = ScopeIO.from_path(ref).get_array().array.copy()
     with pytest.raises(ValueError, match="outdated/read-only"):
         start_pipeline(run_settings_path(tmp_path), terminal_progress=False)
     assert digest(image) == old_hash
@@ -136,7 +136,7 @@ def test_legacy_rebuild_preserves_original_results_and_ref_pixels(tmp_path):
     preserved = list((experiment_backup(state.workdir)).rglob(image.name))
     assert len(preserved) == 1 and digest(preserved[0]) == old_hash
     assert read_metadata(image).custom_metadata['pipeline_meta']['version'].startswith('4.')
-    np.testing.assert_array_equal(FitsIO.from_path(ref).get_array().array, before_ref)
+    np.testing.assert_array_equal(ScopeIO.from_path(ref).get_array().array, before_ref)
 
 
 def test_rebuild_restores_missing_raw_before_downstream(tmp_path, monkeypatch):
@@ -145,9 +145,9 @@ def test_rebuild_restores_missing_raw_before_downstream(tmp_path, monkeypatch):
     from fits.workflows.checks.artifacts import inspect_run
     state, source, ref = prepared(tmp_path)
     raw = state.artifact(cst.ARTI_IMG_RAW)
-    reader = FitsIO.from_path(raw)
+    reader = ScopeIO.from_path(raw)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
-        {'artifact_path': raw.name, 'created_at': read_metadata(raw).fits_io.created_at}])
+        {'artifact_path': raw.name, 'created_at': read_metadata(raw).artifact.created_at}])
     bg = reader.save_array(reader.get_array().array, metadata=payload,
                            output_path=state.workdir / cst.FITS_ARRAY_BGSUB)
     state = state.with_complete_step(step_name=cst.StepName.BG_SUB,
@@ -169,7 +169,7 @@ def test_rebuild_restores_missing_raw_before_downstream(tmp_path, monkeypatch):
     start_pipeline(adapter.save_to_run_dir(), terminal_progress=False,
                    artifact_decision=lambda report: 'rebuild')
     assert raw.is_file()
-    assert read_metadata(bg).fits_io.derived_from[0]['created_at'] == read_metadata(raw).fits_io.created_at
+    assert read_metadata(bg).artifact.derived_from[0]['created_at'] == read_metadata(raw).artifact.created_at
     assert not inspect_run(tmp_path, adapter.as_mapping()).conflicts
 
 
@@ -177,7 +177,7 @@ def test_rebuild_restores_missing_raw_before_downstream(tmp_path, monkeypatch):
 def test_legacy_rebuild_continues_to_compact_in_one_flow(tmp_path, accept_preview):
     from fits.workflows.artifacts.provenance import read_metadata
     from fits.settings.loader import run_settings_path
-    from fits_io.writers.metadata_update import rewrite_metadata
+    from scope_io.writers.metadata_update import rewrite_metadata
     state, source, ref = prepared(tmp_path)
     image = state.artifact(cst.ARTI_IMG_RAW)
     old = read_metadata(image).with_custom_metadata({'pipeline_meta': {'version': '3.3.0'}})
@@ -240,7 +240,7 @@ def test_fully_rebuilt_final_is_compacted_without_an_extra_backup(tmp_path: Path
     compact_run(tmp_path, choose=lambda report: 'continue', confirm=lambda plan: True)
     current = discover_saved_states(tmp_path)[0]
     assert current.compacted and current.artifact(cst.ARTI_IMG).name == cst.FITS_ARRAY_NAME
-    np.testing.assert_array_equal(FitsIO.from_path(current.artifact(cst.ARTI_IMG)).get_array().array, pixels + 1)
+    np.testing.assert_array_equal(ScopeIO.from_path(current.artifact(cst.ARTI_IMG)).get_array().array, pixels + 1)
     assert {entry.directory for entry in snapshots(tmp_path)} == {entry.directory for entry in backups}
 
 

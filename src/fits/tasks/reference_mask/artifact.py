@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal, overload
 
 import numpy as np
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from numpy.typing import NDArray
 
 from fits.environment.constant import FITS_REFERENCE_TEMPLATE
@@ -50,7 +50,7 @@ def saved_reference_channels(path: Path) -> tuple[str, ...]:
     """
     if not path.is_file():
         return ()
-    return tuple(FitsIO.from_path(path).channel_labels)
+    return tuple(ScopeIO.from_path(path).channel_labels)
 
 
 @overload
@@ -79,7 +79,7 @@ def load_reference_artifact(reference_path: str | Path,
     Load a compact reference artifact into a source-shaped binary array.
     """
     path, label = _validate_reference_path(reference_path, source_path)
-    reference_reader = FitsIO.from_path(path)
+    reference_reader = ScopeIO.from_path(path)
     if lazy:
         def validate_plane(plane: NDArray) -> NDArray:
             if not np.all((plane == 0) | (plane == 1)):
@@ -137,7 +137,7 @@ def merge_reference_channels(output_path: Path,
     if not output_path.is_file():
         return channel_mask, [channel_label]
 
-    existing_reader = FitsIO.from_path(output_path)
+    existing_reader = ScopeIO.from_path(output_path)
     existing = existing_reader.get_array()
     existing_array = np.asarray(existing.array)
     if existing_array_transform is not None:

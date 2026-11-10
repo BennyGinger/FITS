@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12, <3.13"
 dependencies = [
-    "fits-io",
+    "scope-io>=3.0.0",
     "progress-bar",
     "ipython>=9.10.0",
     "pydantic>=2.12.5",
@@ -68,7 +68,7 @@ constraint-dependencies = [
 
 [tool.uv.workspace]
 members = [
-    "fits_io",
+    "scope_io",
     "progress_bar",
     "cellpose_kit",
     "tracklink",
@@ -85,7 +85,7 @@ torch = [
 torchvision = [
     { index = "pytorch-cu129", group = "cuda129", marker = "sys_platform == 'win32' and platform_machine == 'AMD64'" },
 ]
-fits-io = { workspace = true }
+scope-io = { workspace = true }
 progress-bar = { workspace = true }
 cellpose-kit = { workspace = true }
 tracklink = { workspace = true }
@@ -103,12 +103,12 @@ explicit = true
 
 [tool.pytest.ini_options]
 testpaths = [
-  "fits_io/tests",
+  "scope_io/tests",
   "progress_bar/tests",
   "tests",
 ]
 pythonpath = [
   "src",
-  "fits_io/src",
+  "scope_io/src",
   "progress_bar/src"
 ]

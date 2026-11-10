@@ -12,8 +12,8 @@ settings alongside those citations.
 | Software | Role in FITS | Citation or upstream guidance |
 | --- | --- | --- |
 | [Cellpose](https://github.com/MouseLand/cellpose) | Segmentation and model-dependent restoration through Cellpose Kit. | [Model-specific citation instructions](https://github.com/MouseLand/cellpose#citation). Cellpose 1–3, restoration, and Cellpose-SAM have different relevant papers. |
-| [nd2](https://github.com/tlambert03/nd2) | Nikon ND2 image and metadata reading through fits_io. | Acknowledge the nd2 project and the version used; consult its repository for current software citation metadata. |
-| [tifffile](https://github.com/cgohlke/tifffile) | TIFF image/metadata storage through fits_io. | Use the project's software citation guidance. |
+| [nd2](https://github.com/tlambert03/nd2) | Nikon ND2 image and metadata reading through scope_io. | Acknowledge the nd2 project and the version used; consult its repository for current software citation metadata. |
+| [tifffile](https://github.com/cgohlke/tifffile) | TIFF image/metadata storage through scope_io. | Use the project's software citation guidance. |
 | [imagecodecs](https://github.com/cgohlke/imagecodecs) | Image compression/decompression. | Use the project's software citation guidance. |
 | [roifile](https://github.com/cgohlke/roifile) | ImageJ ROI and overlay serialization. | Use the project's software citation guidance. |
 | [SMO](https://github.com/maurosilber/SMO) | Silver Mountain Operator background estimation through bg_sub. | Cite the [peer-reviewed article](https://doi.org/10.1364/JOSAA.477468), as requested by the [SMO authors](https://github.com/maurosilber/SMO#citation). |
@@ -60,7 +60,7 @@ of every transitive package.
 These libraries provide the FITS-facing integration or numerical responsibilities
 and are maintained as separate repositories:
 
-- [fits_io](https://github.com/BennyGinger/fits_io): microscopy I/O and metadata.
+- [scope_io](https://github.com/BennyGinger/scope_io): microscopy I/O and metadata.
 - [Cellpose Kit](https://github.com/BennyGinger/Cellpose-kit): Cellpose integration.
 - [stackalign](https://github.com/BennyGinger/stackalign): registration interface.
 - [bg_sub](https://github.com/BennyGinger/bg_sub): background-subtraction interface.

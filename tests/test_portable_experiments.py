@@ -3,7 +3,7 @@ import shutil
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.environment import constant as cst
 from fits.environment.paths import experiment_state_path, experiment_cache
 from fits.gui.settings import SettingsAdapter
@@ -102,7 +102,7 @@ def old_layout(root):
     tifffile.imwrite(source, pixels, photometric='minisblack')
     workdir = folder / 'image_s1'
     workdir.mkdir()
-    reader = FitsIO.from_path(source)
+    reader = ScopeIO.from_path(source)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
         custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision([
             {'artifact_path': '../image.tif', 'external': True, 'created_at': None}])
@@ -112,8 +112,8 @@ def old_layout(root):
     table = workdir / cst.FITS_QUANTI_NAME
     save_parquet(pd.DataFrame({'object_name': ['tracking'], 'object_channel': ['Red'],
         'label': [1], 'frame': [1], 'intensity_mean': [123.25]}), table,
-        payload.with_fitsio(artifact_type=cst.ARTI_QUANTI).new_revision([
-            {'artifact_path': raw.name, 'created_at': payload.fits_io.created_at}]))
+        payload.with_artifact(artifact_type=cst.ARTI_QUANTI).new_revision([
+            {'artifact_path': raw.name, 'created_at': payload.artifact.created_at}]))
     state = state.with_complete_step(step_name=cst.StepName.EXTRACT,
         artifact_kind=cst.ARTI_QUANTI, artifact_path=table)
     (workdir / 'experiment_state.json').write_text(json.dumps(serialize_experiment_state(state)))
@@ -170,10 +170,10 @@ def test_history_restore_delete_and_compact_hint(tmp_path):
     from fits.workflows.file_management.compaction import plan_compaction
     adapter, state = prepared(tmp_path)
     image = state.artifact(cst.ARTI_IMG_RAW)
-    old_stamp = read_metadata(image).fits_io.created_at
+    old_stamp = read_metadata(image).artifact.created_at
     report = PreflightReport((ArtifactRecord(image, cst.StepName.CONVERT, read_metadata(image), legacy=True),), (), (), (state,))
     preserve_replaced_results(report)
-    reader = FitsIO.from_path(state.original_image)
+    reader = ScopeIO.from_path(state.original_image)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
         custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
     reader.save_array(np.zeros((8, 8), dtype=np.uint16), metadata=payload, output_path=image)
@@ -182,7 +182,7 @@ def test_history_restore_delete_and_compact_hint(tmp_path):
     assert plan_compaction(tmp_path).backup_bytes > 0
     restored = restore_history(tmp_path, entries[0])
     assert restored is not None
-    assert read_metadata(restored.artifact(cst.ARTI_IMG_RAW)).fits_io.created_at == old_stamp
+    assert read_metadata(restored.artifact(cst.ARTI_IMG_RAW)).artifact.created_at == old_stamp
     entries = snapshots(tmp_path)
     assert entries
     active = image.read_bytes()
@@ -200,7 +200,7 @@ def test_upgrade_rebuild_is_explicit_and_cancellation_stays_read_only(tmp_path):
     from fits.workflows.checks.compatibility import inspect_run_compatibility
     from fits.workflows.experiments.serialization import serialize_experiment_state
     from fits.workflows.runtime.errors import PipelineCancelled
-    from fits_io.writers.metadata_update import rewrite_metadata
+    from scope_io.writers.metadata_update import rewrite_metadata
     old = old_layout(tmp_path)
     old.artifact(cst.ARTI_QUANTI).unlink()
     old = replace(old, artifacts={key: value for key, value in old.artifacts.items() if key != cst.ARTI_QUANTI},
@@ -232,7 +232,7 @@ def test_two_series_share_original_and_metadata_owner(tmp_path: Path, monkeypatc
     """
     import importlib
     module = importlib.import_module('fits.tasks.convert')
-    from_path = FitsIO.from_path
+    from_path = ScopeIO.from_path
     alt = tmp_path / '.fits' / 'second.tif'
     alt.parent.mkdir()
     tifffile.imwrite(alt, np.full((8, 8), 99, dtype=np.uint16), photometric='minisblack')
@@ -251,7 +251,7 @@ def test_two_series_share_original_and_metadata_owner(tmp_path: Path, monkeypatc
         if Path(path).name == 'image.tif':
             return TwoSeries(path)
         return from_path(path)
-    monkeypatch.setattr(module.FitsIO, 'from_path', read)
+    monkeypatch.setattr(module.ScopeIO, 'from_path', read)
     adapter, first = prepared(tmp_path)
     states = discover_saved_states(tmp_path)
     assert {state.workdir.name for state in states} == {'image_s1', 'image_s2'}
@@ -270,10 +270,10 @@ def test_mixed_upgrade_does_not_rebuild_current_acquisition(tmp_path):
     from fits.workflows.file_management.relocation import plan_portable_update, apply_portable_update
     from fits.workflows.file_management.rebuild import finish_upgrade
     from fits.workflows.artifacts.provenance import read_metadata
-    from fits_io.writers.metadata_update import rewrite_metadata
+    from scope_io.writers.metadata_update import rewrite_metadata
     adapter, current = prepared(tmp_path)
     current_image = current.artifact(cst.ARTI_IMG_RAW)
-    stamp = read_metadata(current_image).fits_io.created_at
+    stamp = read_metadata(current_image).artifact.created_at
     before = current_image.read_bytes()
     legacy_root = tmp_path / 'imported'
     legacy_root.mkdir()
@@ -290,27 +290,27 @@ def test_mixed_upgrade_does_not_rebuild_current_acquisition(tmp_path):
     finish_upgrade(plan, lambda: start_pipeline(adapter.save_to_run_dir(), upgrading=True,
                                                artifact_decision=lambda report: 'rebuild', terminal_progress=False))
     assert current_image.read_bytes() == before
-    assert read_metadata(current_image).fits_io.created_at == stamp
+    assert read_metadata(current_image).artifact.created_at == stamp
 
 
 def test_explicit_branch_alignment_review_keeps_drawing_pixels(tmp_path):
     from fits.workflows.file_management.rebuild import geometry_reviews, accept_reviewed_geometry
     from fits.workflows.artifacts.branch_masks import geometry
     from fits.workflows.artifacts.provenance import read_metadata
-    from fits_io.writers.metadata_update import rewrite_metadata
+    from scope_io.writers.metadata_update import rewrite_metadata
     adapter, state = prepared(tmp_path)
     image = state.artifact(cst.ARTI_IMG_RAW)
     rewrite_metadata(image, read_metadata(image).with_custom_metadata({'registration_revisions': {'register_channel': 'old'}}))
-    reader = FitsIO.from_path(image)
+    reader = ScopeIO.from_path(image)
     ref = reader.save_array(np.ones((8, 8), dtype=np.uint16), artifact_kind=cst.ARTI_REF,
                             output_path=state.workdir / 'fits_ref_edge.tif', export_channels='all')
-    pixels = FitsIO.from_path(ref).get_array().array.copy()
-    stamp = read_metadata(ref).fits_io.created_at
+    pixels = ScopeIO.from_path(ref).get_array().array.copy()
+    stamp = read_metadata(ref).artifact.created_at
     rewrite_metadata(image, read_metadata(image).with_custom_metadata({'registration_revisions': {'register_channel': 'new'}}))
     reviews = geometry_reviews(tmp_path)
     assert reviews == ((ref, image),)
     accept_reviewed_geometry(tmp_path, reviews)
     assert not geometry_reviews(tmp_path)
     assert geometry(read_metadata(ref)) == geometry(read_metadata(image))
-    assert read_metadata(ref).fits_io.created_at == stamp
-    np.testing.assert_array_equal(FitsIO.from_path(ref).get_array().array, pixels)
+    assert read_metadata(ref).artifact.created_at == stamp
+    np.testing.assert_array_equal(ScopeIO.from_path(ref).get_array().array, pixels)

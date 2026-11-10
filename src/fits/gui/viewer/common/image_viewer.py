@@ -18,7 +18,7 @@ from scipy.ndimage import distance_transform_edt
 from skimage.draw import line as raster_line, polygon as raster_polygon
 from fits.gui.viewer.common.pixel_readout import PixelReadout
 
-from fits_io.metadata.imageJ_meta import COLOR_MAP, label_display_color
+from scope_io.metadata.imageJ_meta import COLOR_MAP, label_display_color
 
 
 DrawingMode = Literal["replace", "edit"]

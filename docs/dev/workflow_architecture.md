@@ -35,7 +35,7 @@ supporting implementations live in the responsibility packages below it.
 - `checks/space.py`: shared free-space guard and raw/final-array output estimates.
 - `checks/pipeline.py`: count pending enabled outputs before pipeline execution.
 - `artifacts/provenance.py`: metadata reading, compatibility, input references and
-  creation of output revision metadata. FITS-specific logic stays out of fits_io.
+  creation of output revision metadata. FITS-specific logic stays out of scope_io.
 - `artifacts/paths.py`: locate current/compacted images and resolve viewer/tuner
   inputs through the same step contracts used by execution.
 - `artifacts/branch_masks.py`: validate REF/ROI registration dependencies and
@@ -127,7 +127,7 @@ FITS owns experiment discovery, scheduling, state, paths, provenance, and saved
 artifacts. Numerical work is delegated to focused submodules that accept arrays
 and can also be used independently:
 
-- `fits_io` reads microscopy formats and writes metadata-rich FITS TIFFs.
+- `scope_io` reads microscopy formats and writes metadata-rich FITS TIFFs.
 - `stackalign` performs time-wise and cross-channel registration.
 - `bg_sub` removes spatially varying image background.
 - `cellpose_kit` provides a stable Cellpose v3/v4 segmentation interface.

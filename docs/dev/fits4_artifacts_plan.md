@@ -11,7 +11,7 @@ now preserves existing results; processing is a separate, explicitly chosen acti
 
 - FITS owns filenames, artifact roles, workflow order, dependency resolution,
   compatibility policy, user decisions, and compacting. Define names centrally in
-  `fits.environment.constant`; fits_io accepts supplied paths and remains unaware
+  `fits.environment.constant`; scope_io accepts supplied paths and remains unaware
   of FITS filename conventions.
 - Convert -> channel registration -> time registration -> background subtraction
   -> segmentation -> tracking -> optional edited tracking -> analysis. Keep the
@@ -22,7 +22,7 @@ now preserves existing results; processing is a separate, explicitly chosen acti
 - Each step reads its proper predecessor, skipping disabled optional stages.
   StepProfile declares inputs/outputs, including additional image/mask inputs.
   Execution, provenance, and the checker share input resolution.
-- Generic fits_io provenance contains a UTC fractional-second `created_at`
+- Generic scope_io provenance contains a UTC fractional-second `created_at`
   data-revision timestamp and `derived_from` input references with relative paths
   and their actual revision timestamps. Multiple inputs are supported. Processing
   or pixel edits create a revision; metadata-only rewrites, copies, renames and
@@ -63,13 +63,13 @@ now preserves existing results; processing is a separate, explicitly chosen acti
 
 Status: completed.
 
-- Add generic revision/input metadata in fits_io, including preservation rules.
+- Add generic revision/input metadata in scope_io, including preservation rules.
 - Centralize FITS 4 names/roles and compatibility utilities.
 - Validate metadata round trips, distinct revisions and metadata-only preservation.
 - Do not label partially implemented pipeline outputs as FITS 4 prematurely.
 
 Validation: 163 tests passed (`tests/test_artifact_provenance.py` and
-`fits_io/tests`). Generic references preserve metadata-only revisions; FITS owns
+`scope_io/tests`). Generic references preserve metadata-only revisions; FITS owns
 all new names. Existing run/step timestamp format is unchanged.
 
 ## Phase 2 — StepProfile and execution
@@ -135,7 +135,7 @@ Status: completed.
 
 Validation:
 
-- Main/core and fits_io combined suite: 548 tests passed, including the final
+- Main/core and scope_io combined suite: 548 tests passed, including the final
   missing-raw regression; final focused integration: 11 tests passed.
 - Artifact-specific file/session/GUI coverage: 21 tests passed, including every
   supported filename, legacy read-only saves, and registration-vs-intensity

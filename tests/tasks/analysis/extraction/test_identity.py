@@ -278,8 +278,8 @@ def test_compartments_save_shared_identity_and_motion_from_dilated_full_cells(
 
 @pytest.fixture(autouse=True)
 def isolate_table_provenance(monkeypatch):
-    from fits_io.metadata.models import FitsIOMeta
+    from scope_io.metadata.models import ImageMetadata
     import importlib
     monkeypatch.setattr(importlib.import_module('fits.tasks.analysis.extraction.extract'), 'revision_payload',
-        lambda reader, state, profile, **kwargs: FitsIOMeta().with_custom_metadata(state.metadata_dump).new_revision())
+        lambda reader, state, profile, **kwargs: ImageMetadata().with_custom_metadata(state.metadata_dump).new_revision())
     monkeypatch.setattr(ExtractionManager, 'image_reader', property(lambda self: None))

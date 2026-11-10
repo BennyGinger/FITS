@@ -21,7 +21,7 @@ Intermediate artifacts and experiment compacting — FITS 4 implementation
 [x] Independent raw/channel/frame/background image artifacts and segmentation/
     tracking masks, with channel-before-time execution and disabled-stage bypass.
 [x] Shared StepProfile input resolution for execution, provenance and checking.
-[x] Generic created_at / derived_from metadata in fits_io; preserve existing step
+[x] Generic created_at / derived_from metadata in scope_io; preserve existing step
     timestamps and preserve data revisions through metadata-only edits/compact.
 [x] Shared GUI/CLI overwrite/conflict decisions with explicit downstream plans.
 [x] FITS <4 read-only viewing until migration; preserve results during migration,
@@ -375,7 +375,7 @@ large-stack validation remain pending.
 [ ] Estimate decoded memory needs from shape and dtype, including channels,
     Z planes, masks, previews, and processing buffers, rather than frame count
     or compressed file size alone.
-[x] Read viewer image/mask planes on demand through fits_io and PlaneStore,
+[x] Read viewer image/mask planes on demand through scope_io and PlaneStore,
     with caches bounded to eight planes and 64 MiB. Navigation does not load
     the complete movie; registration previews also cache requested planes.
 [x] Use temporary disk-backed storage for reference/ROI propagation previews,
@@ -421,4 +421,4 @@ Goal: ensure that each file is written in a human-readable and understandable ma
 [x] Verify that configuration options in the modified files are well-documented and easy to understand.
 [x] Check that error messages in the modified files are informative and guide the user towards resolving issues.
 [x] Check for pylance warnings and errors in the modified files.
-[x] Example, why 'S' was added to the allowed axis in fits_io
+[x] Example, why 'S' was added to the allowed axis in scope_io

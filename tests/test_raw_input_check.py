@@ -69,7 +69,7 @@ def test_duplicate_stems_only_change_planned_folders_in_same_parent(tmp_path: Pa
     for path in files:
         path.parent.mkdir(exist_ok=True)
         path.touch()
-    monkeypatch.setattr("fits.workflows.checks.raw_inputs.FitsIO.from_path",
+    monkeypatch.setattr("fits.workflows.checks.raw_inputs.ScopeIO.from_path",
                         lambda path: SimpleNamespace(reader=SimpleNamespace(
                             channel_count=2, channel_colors=None, split_series=lambda: [SimpleNamespace(axes="YX", shape=(8, 8))])))
     report = inspect_raw_inputs(tmp_path)
@@ -116,7 +116,7 @@ def test_frame_counts_use_headers_for_every_series(tmp_path: Path, monkeypatch: 
     source.touch()
     series = [SimpleNamespace(axes="CYX", shape=(2, 8, 8)),
               SimpleNamespace(axes="TCYX", shape=(5, 2, 8, 8))]
-    monkeypatch.setattr("fits.workflows.checks.raw_inputs.FitsIO.from_path",
+    monkeypatch.setattr("fits.workflows.checks.raw_inputs.ScopeIO.from_path",
                         lambda path: SimpleNamespace(reader=SimpleNamespace(
                             channel_count=2, channel_colors=None, split_series=lambda: series)))
     report = inspect_raw_inputs(tmp_path)
@@ -159,11 +159,11 @@ def test_pipeline_warns_and_uses_defaults_for_label_count_mismatch(tmp_path: Pat
     run = tmp_path / "run"
     _write_tiff(run / "input.tif", 3)
     settings = _settings(run)
-    from fits_io import FitsIO
+    from scope_io import ScopeIO
 
     start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
     output = next(run.rglob("fits_array_raw.tif"))
-    assert FitsIO.from_path(output).channel_labels == ["C1", "C2", "C3"]
+    assert ScopeIO.from_path(output).channel_labels == ["C1", "C2", "C3"]
     log = next((run / ".fits" / "logs").glob("*.log")).read_text()
     assert "Expected 3 channels, got 2 channel labels" in log
     assert "default names: C1, C2, C3." in log
@@ -173,7 +173,7 @@ def test_pipeline_empty_labels_uses_reader_defaults(tmp_path: Path) -> None:
     """
     Convert unnamed source channels without requiring user-defined labels.
     """
-    from fits_io import FitsIO
+    from scope_io import ScopeIO
 
     run = tmp_path / "run"
     _write_tiff(run / "input.tif", 2)
@@ -183,15 +183,15 @@ def test_pipeline_empty_labels_uses_reader_defaults(tmp_path: Path) -> None:
     settings = adapter.save(tmp_path / "settings.toml")
     start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
     output = next(run.rglob("fits_array_raw.tif"))
-    assert FitsIO.from_path(output).channel_labels == ["C1", "C2"]
+    assert ScopeIO.from_path(output).channel_labels == ["C1", "C2"]
 
 
 def test_pipeline_uses_run_color_consensus_for_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Use the same defaults as the GUI when one source channel has conflicting colors.
     """
-    from fits_io import FitsIO
-    from fits_io.readers.r_tiff import TiffReader
+    from scope_io import ScopeIO
+    from scope_io.readers.r_tiff import TiffReader
 
     run = tmp_path / "run"
     _write_tiff(run / "first.tif", 2)
@@ -205,7 +205,7 @@ def test_pipeline_uses_run_color_consensus_for_defaults(tmp_path: Path, monkeypa
     start_pipeline(settings_path=settings, convert_only=True, terminal_progress=False)
     outputs = list(run.rglob("fits_array_raw.tif"))
     assert len(outputs) == 2
-    assert all(FitsIO.from_path(output).channel_labels == ["green", "C2"] for output in outputs)
+    assert all(ScopeIO.from_path(output).channel_labels == ["green", "C2"] for output in outputs)
 
 
 def test_duplicates_inside_existing_acquisition_require_resolution(tmp_path: Path) -> None:

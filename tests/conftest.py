@@ -30,8 +30,8 @@ def _touch_file(p: Path) -> Path:
 # Mock/Stub classes
 # ============================================================
 
-class DummyFitsIO:
-    """Mock FitsIO object for testing without actual file I/O."""
+class DummyScopeIO:
+    """Mock ScopeIO object for testing without actual file I/O."""
     
     def __init__(self, metadata: dict[str, Any] | None = None):
         self.fits_metadata = metadata or {}
@@ -54,10 +54,10 @@ def touch():
 
 
 @pytest.fixture
-def dummy_fits_io():
-    """Factory fixture for creating DummyFitsIO instances."""
-    def _make(metadata: dict[str, Any] | None = None) -> DummyFitsIO:
-        return DummyFitsIO(metadata)
+def dummy_scope_io():
+    """Factory fixture for creating DummyScopeIO instances."""
+    def _make(metadata: dict[str, Any] | None = None) -> DummyScopeIO:
+        return DummyScopeIO(metadata)
     return _make
 
 
@@ -70,9 +70,9 @@ def dummy_ctx():
 
 
 @pytest.fixture
-def DummyFitsIO_class():
-    """Fixture that provides access to the DummyFitsIO class."""
-    return DummyFitsIO
+def DummyScopeIO_class():
+    """Fixture that provides access to the DummyScopeIO class."""
+    return DummyScopeIO
 
 
 @pytest.fixture
@@ -86,16 +86,16 @@ def current_format_tiffs(monkeypatch):
     """Write fixtures with the FITS 4 metadata contract, retaining lazy test reads."""
     import json
     import tifffile
-    from fits_io.metadata.models import FitsIOMeta
-    from fits_io.metadata.codec import FITS_TAG
+    from scope_io.metadata.models import ImageMetadata
+    from scope_io.metadata.codec import ARTIFACT_METADATA_TAG
     original = tifffile.imwrite
     def write(path, *args, **kwargs):
         kind = 'tracking' if 'track' in Path(path).name else 'image_raw'
-        payload = FitsIOMeta().with_fitsio(artifact_type=kind).with_custom_metadata(
+        payload = ImageMetadata().with_artifact(artifact_type=kind).with_custom_metadata(
             {'pipeline_meta': {'version': '4.0.0'}}).new_revision()
         tags = list(kwargs.get('extratags') or [])
-        if not any(tag[0] == FITS_TAG for tag in tags):
+        if not any(tag[0] == ARTIFACT_METADATA_TAG for tag in tags):
             data = json.dumps(payload.dump()).encode()
-            kwargs['extratags'] = [*tags, (FITS_TAG, 7, len(data), data, False)]
+            kwargs['extratags'] = [*tags, (ARTIFACT_METADATA_TAG, 7, len(data), data, False)]
         return original(path, *args, **kwargs)
     monkeypatch.setattr(tifffile, 'imwrite', write)

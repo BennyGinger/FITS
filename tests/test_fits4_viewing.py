@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.environment import constant as cst
 from fits.workflows.artifacts.provenance import require_writable
 from fits.gui.viewer.tracking.session import TrackingViewerSession
@@ -13,7 +13,7 @@ def write(path, *, kind='image_raw', custom=None):
     original = path.parent / 'acquisition.tif'
     if not original.exists():
         tifffile.imwrite(original, np.ones((8, 8), dtype=np.uint16), photometric='minisblack')
-    reader = FitsIO.from_path(original)
+    reader = ScopeIO.from_path(original)
     payload = reader.build_payload(export_channels='all', artifact_type=kind,
         custom_metadata={'pipeline_meta': {'version': '4.0.0'}, **(custom or {})}).new_revision()
     return reader.save_array(np.ones((8, 8), dtype=np.uint16), metadata=payload, output_path=path)
@@ -44,10 +44,10 @@ def test_branch_metadata_refresh_preserves_pixels_and_geometry_boundary(tmp_path
     custom = {'registration_revisions': {'register_channel': 'registration-1'}}
     image = write(tmp_path / cst.FITS_ARRAY_BGSUB, custom=custom)
     ref = write(tmp_path / 'fits_ref_edge.tif', kind=cst.ARTI_REF, custom=custom)
-    old = FitsIO.from_path(ref).reader.metadata.fits_io.created_at
+    old = ScopeIO.from_path(ref).reader.metadata.artifact.created_at
     refresh_branch(ref, image)
-    assert FitsIO.from_path(ref).reader.metadata.fits_io.created_at == old
-    np.testing.assert_array_equal(FitsIO.from_path(ref).get_array().array, np.ones((8, 8)))
+    assert ScopeIO.from_path(ref).reader.metadata.artifact.created_at == old
+    np.testing.assert_array_equal(ScopeIO.from_path(ref).get_array().array, np.ones((8, 8)))
     # Intensity-only image writes retain registration revisions.
     write(image, custom=custom)
     refresh_branch(ref, image)

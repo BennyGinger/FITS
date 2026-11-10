@@ -831,7 +831,7 @@ def test_mask_window_uses_mask_sessions_for_navigation_threshold_and_save(
             saved[path.name] = array.copy()
             return path
 
-    monkeypatch.setattr("fits.interaction.image.FitsIO.from_path", lambda _: Reader())
+    monkeypatch.setattr("fits.interaction.image.ScopeIO.from_path", lambda _: Reader())
 
     def unexpected_segmentation(*args, **kwargs):
         raise AssertionError("Mask drawing must not create a segmentation session")
@@ -912,7 +912,7 @@ def test_mask_window_loads_sibling_masks_and_honours_selected_file(
             return SimpleNamespace(array=loaded.array[indices], axes="YX")
         reader.get_plane = get_plane
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path",
+        "fits.interaction.image.ScopeIO.from_path",
         lambda path: readers[Path(path)])
     window = MaskDrawingWindow()
     selected = {"array": source, "folder": tmp_path,

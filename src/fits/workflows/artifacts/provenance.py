@@ -12,9 +12,9 @@ from copy import deepcopy
 import json
 import re
 from pathlib import Path
-from fits_io import FitsIO
-from fits_io.metadata.models import FitsIOMeta
-from fits_io.metadata.provenance import input_reference
+from scope_io import ScopeIO
+from scope_io.metadata.models import ImageMetadata
+from scope_io.metadata.provenance import input_reference
 from fits.environment import constant as cst
 from fits.workflows.definitions.inputs import resolve_inputs
 
@@ -22,7 +22,7 @@ from fits.workflows.definitions.inputs import resolve_inputs
 PARQUET_PROVENANCE_KEY = b"fits_artifact"
 
 
-def read_metadata(path: Path) -> FitsIOMeta:
+def read_metadata(path: Path) -> ImageMetadata:
     """
     Read FITS provenance from a TIFF header or Parquet schema.
     """
@@ -30,19 +30,19 @@ def read_metadata(path: Path) -> FitsIOMeta:
         # Image-only inspection does not need to load the Parquet engine.
         import pyarrow.parquet as pq
         data = (pq.read_schema(path).metadata or {}).get(PARQUET_PROVENANCE_KEY)
-        return FitsIOMeta.from_dict(json.loads(data)) if data else FitsIOMeta()
-    return FitsIO.from_path(path).reader.metadata
+        return ImageMetadata.from_dict(json.loads(data)) if data else ImageMetadata()
+    return ScopeIO.from_path(path).reader.metadata
 
 
-def compatible(metadata: FitsIOMeta) -> bool:
+def compatible(metadata: ImageMetadata) -> bool:
     """
     Check format compatibility and the presence of structured revision provenance.
     """
     version = metadata.custom_metadata.get("pipeline_meta", {}).get("version", "")
     match = re.match(r"^(\d+)\.", str(version))
-    refs = metadata.fits_io.derived_from
+    refs = metadata.artifact.derived_from
     minimum_major = int(cst.FITS_COMPATIBLE_VERSION.split(".", 1)[0])
-    return bool(match and int(match[1]) >= minimum_major and metadata.fits_io.created_at
+    return bool(match and int(match[1]) >= minimum_major and metadata.artifact.created_at
                 and isinstance(refs, list) and all(
                     isinstance(ref, dict) and isinstance(ref.get("artifact_path"), str)
                     and (ref.get("external") or ref.get("created_at")) for ref in refs))
@@ -73,12 +73,12 @@ def input_references(paths: Iterable[Path], output_directory: Path) -> list[dict
     return [input_reference(path, read_metadata(path), output_directory) for path in dict.fromkeys(paths)]
 
 
-def revision_payload(reader: FitsIO,
+def revision_payload(reader: ScopeIO,
                      state: ExperimentState,
                      profile: StepProfile,
                      *,
                      export_channels: str | Sequence[str],
-                     ) -> FitsIOMeta:
+                     ) -> ImageMetadata:
     """
     Build output revision metadata from its actual inputs and current step settings.
     """
@@ -101,6 +101,6 @@ def revision_payload(reader: FitsIO,
     payload = payload.new_revision(input_references(paths, state.workdir))
     if profile.step_name in (cst.StepName.REGISTER_CHANNEL, cst.StepName.REGISTER_TIME):
         revisions = dict(custom.get("registration_revisions", {}))
-        revisions[str(profile.step_name)] = payload.fits_io.created_at
+        revisions[str(profile.step_name)] = payload.artifact.created_at
         payload = payload.with_custom_metadata({"registration_revisions": revisions})
     return payload

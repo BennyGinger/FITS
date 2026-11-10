@@ -7,7 +7,7 @@ import shutil
 import numpy as np
 import pandas as pd
 import pytest
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.pipeline import start_pipeline
 from fits.environment import constant as cst
@@ -17,7 +17,7 @@ from fits.workflows.checks.locations import inspect_locations
 from fits.workflows.experiments import ExperimentState, discover_saved_states, save_experiment_state
 from fits.workflows.file_management import api
 from fits.workflows.artifacts.provenance import read_metadata
-from fits_io.writers.metadata_update import rewrite_metadata
+from scope_io.writers.metadata_update import rewrite_metadata
 from test_file_management import legacy_run, mock_rebuild_processing
 
 
@@ -97,7 +97,7 @@ def _current_series(template: ExperimentState, name: str, root: Path) -> Experim
     folder.mkdir(parents=True)
     original = group / f'{name}.tif'
     shutil.copy2(template.original_image, original)
-    reader = FitsIO.from_path(original)
+    reader = ScopeIO.from_path(original)
     raw = folder / cst.FITS_ARRAY_RAW
     metadata = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
                                     channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
@@ -106,8 +106,8 @@ def _current_series(template: ExperimentState, name: str, root: Path) -> Experim
         step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=raw)
     bg = folder / cst.FITS_ARRAY_BGSUB
     reader.save_array(np.ones((8, 8), dtype=np.float32), output_path=bg,
-                      metadata=metadata.with_fitsio(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
-                          {'artifact_path': raw.name, 'created_at': metadata.fits_io.created_at}]))
+                      metadata=metadata.with_artifact(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
+                          {'artifact_path': raw.name, 'created_at': metadata.artifact.created_at}]))
     return save_experiment_state(state.with_complete_step(step_name=cst.StepName.BG_SUB,
                                                          artifact_kind=cst.ARTI_IMG_BGSUB, artifact_path=bg))
 

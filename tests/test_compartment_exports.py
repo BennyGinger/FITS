@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import tifffile
 from bioimagequant import CompartmentSettings, compartment_masks
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.environment import constant as cst
 from fits.gui.settings import SettingsAdapter
@@ -37,7 +37,7 @@ def tracked_experiment(tmp_path: Path) -> ExperimentState:
     state = discover_saved_states(tmp_path)[0]
     image_path = state.artifact(cst.ARTI_IMG)
     assert image_path is not None
-    reader = FitsIO.from_path(image_path)
+    reader = ScopeIO.from_path(image_path)
     labels = np.zeros_like(image)
     labels[:, 0, :4, :4] = 24
     labels[:, 1, 3:7, 3:7] = 91
@@ -62,18 +62,18 @@ def test_exports_preserve_source_channels_labels_and_provenance_then_compact(
                                membrane_thickness=1, dilation_radius=1, frame_workers=1)
     updated = extract(settings, state, REGISTRY[cst.StepName.EXTRACT].profile)[0]
     mb_path, cyto_path = compartment_export_paths(source)
-    raw = FitsIO.from_path(source).get_array()
+    raw = ScopeIO.from_path(source).get_array()
     assert raw.axes == "TCYX"
     for path, name in [(mb_path, "mb"), (cyto_path, "cyto")]:
-        reader = FitsIO.from_path(path)
+        reader = ScopeIO.from_path(path)
         actual = reader.get_array()
         assert actual.axes == raw.axes
         assert reader.channel_labels == ["Red", "Green"]
         metadata = reader.reader.metadata
-        assert metadata.fits_io.artifact_type == f"compartment_{name}"
-        references = metadata.fits_io.derived_from
+        assert metadata.artifact.artifact_type == f"compartment_{name}"
+        references = metadata.artifact.derived_from
         assert isinstance(references, list)
-        assert references[0]["created_at"] == FitsIO.from_path(source).reader.metadata.fits_io.created_at
+        assert references[0]["created_at"] == ScopeIO.from_path(source).reader.metadata.artifact.created_at
         assert metadata.custom_metadata["compartments"]["dilation_radius"] == 1
         for frame in range(2):
             for channel in range(2):

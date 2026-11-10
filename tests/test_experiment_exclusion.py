@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.environment import constant as cst
 from fits.environment.paths import experiment_state_path
@@ -81,13 +81,13 @@ def test_conversion_rebuild_preserves_excluded_sibling(tmp_path: Path, monkeypat
     """
     Rebuild an active sibling without touching the excluded series or its saved flag.
     """
-    def split(source: FitsIO) -> list[FitsIO]:
+    def split(source: ScopeIO) -> list[ScopeIO]:
         """
         Represent a two-series acquisition using the same small source pixels.
         """
         return [source, source]
 
-    monkeypatch.setattr(FitsIO, 'split_series', split)
+    monkeypatch.setattr(ScopeIO, 'split_series', split)
     first, second = _series(tmp_path)
     set_excluded(tmp_path, [second.workdir], True)
     image = second.artifact(cst.ARTI_IMG_RAW)
@@ -214,20 +214,20 @@ def test_disabled_analysis_is_preserved_until_explicit_rebuild(tmp_path: Path, m
     from fits.workflows.artifacts.provenance import read_metadata
     from fits.workflows.file_management.rebuild import plan_required_rebuild, rebuild_analysis_tables
 
-    def split(source: FitsIO) -> list[FitsIO]:
+    def split(source: ScopeIO) -> list[ScopeIO]:
         """
         Provide two series while exercising the real conversion writer.
         """
         return [source, source]
 
-    monkeypatch.setattr(FitsIO, 'split_series', split)
+    monkeypatch.setattr(ScopeIO, 'split_series', split)
     states = _series(tmp_path)
     for index, state in enumerate(states):
         raw = state.artifact(cst.ARTI_IMG_RAW)
         assert raw is not None
         metadata = read_metadata(raw)
-        payload = metadata.with_fitsio(artifact_type=cst.ARTI_DIST_PROF).new_revision([
-            {'artifact_path': raw.name, 'created_at': metadata.fits_io.created_at}])
+        payload = metadata.with_artifact(artifact_type=cst.ARTI_DIST_PROF).new_revision([
+            {'artifact_path': raw.name, 'created_at': metadata.artifact.created_at}])
         table = save_parquet(pd.DataFrame({'distance': [index]}), state.workdir / cst.FITS_DISTANCE_PROFILE_NAME, payload)
         states[index] = state.with_complete_step(step_name=cst.StepName.DISTANCE_PROFILE,
                                                  artifact_kind=cst.ARTI_DIST_PROF, artifact_path=table)

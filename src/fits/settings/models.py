@@ -3,7 +3,7 @@ from typing import Any, Literal, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
-from fits_io.readers._types import Zproj
+from scope_io.readers._types import Zproj
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from fits.environment.constant import ExecMode, TimeRegiContext, ChannelRegiContext, STATISTIC_MAP, SUPPORTED_STATISTICS

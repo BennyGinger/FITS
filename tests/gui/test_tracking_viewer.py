@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtGui import QColor, QImage, QPainter
@@ -172,7 +172,7 @@ def test_edited_tracking_save_filters_each_channel_and_records_compact_metadata(
         def new_revision(self, refs):
             return self
 
-        def with_fitsio(self, *, axes):
+        def with_artifact(self, *, axes):
             self.axes = axes
             return self
 
@@ -466,7 +466,7 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
         def new_revision(self, refs):
             return self
 
-        def with_fitsio(self, *, axes):
+        def with_artifact(self, *, axes):
             self.axes = axes
             return self
     def save_tracking(array, **kwargs):
@@ -487,15 +487,15 @@ def test_tracking_viewer_loads_tracks_and_optional_raw_image(
     for path, array in ((image_path, image), (track_path, tracks)):
         reader = readers[path]
         reader.axes = "TCYX"
-        from fits_io.metadata.models import FitsIOMeta
-        metadata = FitsIOMeta().with_custom_metadata({'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+        from scope_io.metadata.models import ImageMetadata
+        metadata = ImageMetadata().with_custom_metadata({'pipeline_meta': {'version': '4.0.0'}}).new_revision()
         reader.reader = SimpleNamespace(shape=array.shape, dtype=array.dtype, img_path=path, metadata=metadata)
         reader.get_plane = lambda frame_index=0, channel=0, z_index=0, array=array: (
             SimpleNamespace(array=array[frame_index, channel], axes="YX"))
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path", lambda path: readers[Path(path)])
+        "fits.interaction.image.ScopeIO.from_path", lambda path: readers[Path(path)])
     monkeypatch.setattr(
-        "fits.gui.viewer.tracking.session.FitsIO.from_path",
+        "fits.gui.viewer.tracking.session.ScopeIO.from_path",
         lambda path: readers[Path(path)])
 
     empty_session = TrackingViewerSession(image_path)
@@ -875,8 +875,8 @@ def test_main_window_viewer_stays_visible_and_reuses_its_window(tmp_path: Path) 
     masks[:, 8:12, 8:12] = 7
     input_path = tmp_path / "input.tif"
     tifffile.imwrite(input_path, raw, imagej=True, metadata={"axes": "TYX"})
-    source = FitsIO.from_path(input_path).save_array(raw, output_path=tmp_path / FITS_ARRAY_NAME)
-    tracking = FitsIO.from_path(source).save_array(
+    source = ScopeIO.from_path(input_path).save_array(raw, output_path=tmp_path / FITS_ARRAY_NAME)
+    tracking = ScopeIO.from_path(source).save_array(
         masks, output_path=tmp_path / FITS_MASK_TRACK)
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)

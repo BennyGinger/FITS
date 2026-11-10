@@ -40,28 +40,28 @@ workflow filenames and directories are outside this library-only pass.
 - [x] Release the temporary worktree after committing so the user can switch
       the existing submodule checkout to the branch normally.
 
-## Pass 2 — integration, pending user review and authorization
+## Pass 2 — integration authorized 2026-11-10
 
-- [ ] User switches the I/O checkout to `refactor/scope-io` when ready. The
-      existing FITS application needs consumer changes before it can use this
-      breaking Python API; switching only the library is not full integration.
-- [ ] Create integration branches in FITS, `stackalign`, and `tracklink`,
+- [x] Switch the I/O checkout to `refactor/scope-io` after authorization and
+      integrate its breaking Python API with the consumers.
+- [x] Create integration branches in FITS, `stackalign`, and `tracklink`,
       preserving any unrelated local work.
-- [ ] Update their imports, API calls, type annotations, examples and tests.
-- [ ] Update FITS's dependency/version identity, logger names, workspace/test
+- [x] Update their imports, API calls, type annotations, examples and tests.
+- [x] Update FITS's dependency/version identity, logger names, workspace/test
       paths, documentation and generated uv lockfile.
-- [ ] Add FITS producer-name compatibility for `fits-io` and `scope-io` so old
+- [x] Add FITS producer-name compatibility for `fits-io` and `scope-io` so old
       conversion provenance does not prevent continued processing.
-- [ ] Update FITS's direct serialized metadata readers/rewriters, TIFF/Parquet
+- [x] Update FITS's direct serialized metadata readers/rewriters, TIFF/Parquet
       provenance and viewers to accept the historical and neutral keys.
-- [ ] Verify historical files, conversion reruns, processing, quantification,
+- [x] Verify historical files, conversion reruns, processing, quantification,
       viewers and backups; no bulk experiment migration should be necessary.
-- [ ] Rename the existing remote library repository to `scope_io` while keeping
+- [x] Rename the existing remote library repository to `scope_io` while keeping
       its history; rename the local submodule path and update `.gitmodules`
       and remote references. Do not create a replacement Git history.
-- [ ] Commit companion repositories before updating FITS's submodule pins.
-- [ ] Test clean installation, existing-checkout update and rollback; explain
-      separately what Git rollback and data-format backward compatibility cover.
+- [x] Commit companion repositories before updating FITS's submodule pins.
+- [x] Build the integrated distributions, synchronize the shared environment and
+      run startup/update/process checks. Record limits on cold installation,
+      publication and rollback separately below.
 
 ## Starting state
 
@@ -142,3 +142,85 @@ temporary validation outputs are not committed and may disappear on reboot.
 
 Pass 2 remains pending. No consumer repository, submodule pin, remote URL or
 remote repository name was changed in pass 1.
+
+
+## Pass 2 results — 2026-11-10
+
+The active FITS branch is `refactor/scope-io-integration`. The active I/O
+checkout is now `scope_io/` on `refactor/scope-io` at `90a3754` (3.0.0).
+The existing I/O Git database was preserved; its internal administrative path
+may still contain the historical name. The GitHub repository was renamed by
+its owner to <https://github.com/BennyGinger/scope_io>; `.gitmodules` and the
+local remote now use that URL.
+
+Companion integration commits:
+
+- `stackalign`: `a392fec`, branch `refactor/scope-io-integration`.
+- `tracklink`: `b599ddd`, branch `refactor/scope-io-integration`.
+
+FITS now imports ScopeIO, uses `ImageMetadata.artifact` and `with_artifact()`,
+and normalizes historical TIFF/Parquet metadata through ScopeIO before updating
+path references. The serialized Parquet envelope `fits_artifact` remains an
+application-owned format identifier. Historical `fits-io`/`fits_io` producer
+names are equivalent to `scope-io`; unrelated producers still raise an error.
+Existing producer/version history is preserved when appending channel metadata.
+
+The uv workspace, test paths, dependency identity, logger names, documentation
+and lockfile use ScopeIO. `uv sync --offline --frozen` successfully replaced
+`fits-io` 2.2.0 with `scope-io` 3.0.0 in the existing shared environment. Startup
+verification explicitly imports ScopeIO. No new virtual environment was made.
+The main application remains FITS 4.1.0; its own rename/release is separate.
+
+| Check | Result |
+| --- | --- |
+| Integration-only index snapshot, excluding unrelated local edits | 37 conversion/metadata/file-management/compatibility tests passed |
+| New FITS legacy compatibility tests | 5 passed; old-key conversion overwrite and old/new Parquet provenance verified |
+| Broad FITS non-GUI/non-startup suite, excluding location tests | 550 passed; 2 existing failures reproduced before integration |
+| Conversion, metadata, file management, locations, artifact checks, execution and I/O tests | 248 passed; 2 existing failures reproduced before integration |
+| `stackalign` and `tracklink` suites | 222 passed |
+| File-management, lineage and channel-conversion GUI group | 42 passed |
+| Raw viewer, mask preview and tracking overlay GUI group | 42 passed |
+| Information, real pipeline-process and startup group | 110 passed; 2 existing layout failures reproduced before integration |
+| Changed production code and new compatibility tests, Pyright | 0 errors, 0 warnings |
+| Full mechanically changed-file type audit | 468 existing errors versus 472 before integration; no new diagnostic signatures |
+| Existing Run3_test data | 36 existing artifacts read; source sizes/modification times unchanged |
+| Real tuner discovery | 26 passed; 4 pre-existing mocked routing cases deselected |
+| Full startup verifier | Imports, existing model-cache writability and CUDA detection passed |
+| FITS wheel/source archive | Both built successfully |
+| Shared environment installation | Frozen/offline sync succeeded |
+
+Test groups overlap; do not add their counts as unique tests. The type baseline
+was reconstructed from the original application/library plus the pre-integration
+working-tree snapshot. Four old smoke-script type errors were corrected by
+using the current array and save APIs.
+
+Existing failures are outside this rename:
+
+- Required-rebuild planning enables Quantification without an included mask
+  producer in one location-check scenario.
+- Removed-experiment and invalid-master tests still expect the old location-update
+  path, whereas current code routes these through analysis rebuilding.
+- Channel-tools and mask-panel tests expect previous button labels/layouts.
+
+Each reported failure was reproduced with the original library and code before
+the integration edits. The mocked main-GUI tuner-routing tests also block on a
+modal interaction before and after integration; those were stopped with a time
+limit. All 26 real tuner-discovery checks passed. Native
+Windows and a cold machine without the cached dependencies remain unvalidated.
+
+Pre-existing local edits were retained. The integration changes are staged and
+committed separately, using the original tracked-file contents for any files
+that also had unrelated edits. The original working-tree diff and untracked
+snapshot were retained under `/tmp/fits-before-scope-integration*` for this run.
+No real experiments were migrated or rewritten.
+
+The integration branches are local; no branches have been pushed, no default
+branches merged, and no release tags or packages published. A fresh clone from
+GitHub cannot use the new local pins until those commits are published. This is
+separate from renaming the GitHub repository, which is complete.
+
+Rollback now involves both code and environment: use the original branch/pins,
+restore the `fits_io` checkout path and run uv sync with the old lockfile. Old
+application versions do not understand newly written `artifact` metadata; Git
+rollback alone does not convert those files back. Keep their backups if old
+application compatibility is needed. The updated application reads both keys.

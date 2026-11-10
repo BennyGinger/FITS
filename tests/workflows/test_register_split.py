@@ -82,7 +82,7 @@ def test_register_channel_settings_rejects_time_context() -> None:
 def test_register_time_resolves_fit_channel_and_saves(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(np.ones((3, 2, 4, 4), dtype=np.uint16), "TCYX", tmp_path / "fits_array.tif")
     model = DummyRegisterModel("pystackreg")
-    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
     monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
     monkeypatch.setattr("fits.tasks.registration.register_time.RegisterModel", lambda backend: model)
 
@@ -102,7 +102,7 @@ def test_register_time_resolves_fit_channel_and_saves(monkeypatch, tmp_path: Pat
 def test_register_channel_resolves_reference_and_saves(monkeypatch, tmp_path: Path) -> None:
     reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), "CYX", tmp_path / "fits_array.tif")
     model = DummyRegisterModel("cv2")
-    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
     monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
     monkeypatch.setattr("fits.tasks.registration.register_channel.RegisterModel", lambda backend: model)
 
@@ -122,7 +122,7 @@ def test_register_channel_resolves_reference_and_saves(monkeypatch, tmp_path: Pa
 def test_registration_steps_skip_when_complete(monkeypatch, tmp_path: Path) -> None:
     state = _image_state(tmp_path)
     reader = DummyReader(np.ones((4, 4), dtype=np.uint16), "YX", tmp_path / "fits_array.tif")
-    monkeypatch.setattr("fits.tasks.common.preparation.FitsIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fits.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
     monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=True))
 
     assert register_channel(
@@ -143,12 +143,12 @@ def test_registry_exposes_distinct_registration_steps() -> None:
 
 @pytest.fixture(autouse=True)
 def isolate_revision_payload_for_fake_readers(monkeypatch):
-    from fits_io.metadata.models import FitsIOMeta
+    from scope_io.metadata.models import ImageMetadata
     from fits.workflows.artifacts.provenance import revision_payload
     def payload(reader, state, profile, *, export_channels):
         if hasattr(reader, 'build_payload'):
             return revision_payload(reader, state, profile, export_channels=export_channels)
-        return FitsIOMeta().with_fitsio(
+        return ImageMetadata().with_artifact(
             artifact_type=profile.output_artifact, channel_labels=list(export_channels)
         ).with_custom_metadata(state.metadata_dump).new_revision()
     monkeypatch.setattr('fits.tasks.common.artifact_results.revision_payload', payload)

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import tifffile
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from PySide6.QtWidgets import QApplication, QWidget
 
 from fits.environment import constant as cst
@@ -40,7 +40,7 @@ def _write_artifact(root: Path, folder: str, name: str, kind: cst.ArtifactType) 
     raw = directory / "source.tif"
     array = np.ones((4, 4), dtype=np.uint16)
     tifffile.imwrite(raw, array, photometric="minisblack")
-    reader = FitsIO.from_path(raw)
+    reader = ScopeIO.from_path(raw)
     payload = reader.build_payload(export_channels="all", artifact_type=kind,
                                    custom_metadata={"pipeline_meta": {"version": "4.0.0"}}).new_revision([])
     return reader.save_array(array, metadata=payload, output_path=directory / name)

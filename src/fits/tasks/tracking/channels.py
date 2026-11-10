@@ -2,8 +2,8 @@ import logging
 from typing import Any
 
 import numpy as np
-from fits_io.client import FitsIO
-from fits_io.writers.models import ChannelMergeResult
+from scope_io.client import ScopeIO
+from scope_io.writers.models import ChannelMergeResult
 from tracklink.api import TrackModel
 
 from fits.workflows.experiments import ExperimentState
@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 def track_channels(tracker: TrackModel,
                    postprocess_settings: TrackPostprocessSettings,
-                   mask_reader: FitsIO,
-                   image_reader: FitsIO,
+                   mask_reader: ScopeIO,
+                   image_reader: ScopeIO,
                    channel_indices: list[int],
                    channel_labels: list[str],
                    step_profile: StepProfile,
@@ -53,8 +53,8 @@ def track_channels(tracker: TrackModel,
 
 def _track_channel(tracker: TrackModel,
                    postprocess_settings: TrackPostprocessSettings,
-                   mask_reader: FitsIO,
-                   image_reader: FitsIO,
+                   mask_reader: ScopeIO,
+                   image_reader: ScopeIO,
                    channel_label: str,
                    ) -> tuple[np.ndarray, str]:
     """

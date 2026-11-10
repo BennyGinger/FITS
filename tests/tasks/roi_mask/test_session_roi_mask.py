@@ -1,5 +1,5 @@
 from pathlib import Path
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,12 +14,12 @@ from fits.tasks.roi_mask.artifact import (
 )
 
 
-class FakeFitsIO:
+class FakeScopeIO:
     def __init__(self, array: np.ndarray, axes: str, labels: list[str]) -> None:
         self._array = array
         self._axes = axes
         self.axes = axes
-        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"), metadata=FitsIOMeta().with_custom_metadata({"pipeline_meta": {"version": "4.0.0"}}).new_revision())
+        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"), metadata=ImageMetadata().with_custom_metadata({"pipeline_meta": {"version": "4.0.0"}}).new_revision())
         self.channel_labels = labels
         self.saved: dict[str, Any] | None = None
 
@@ -38,11 +38,11 @@ class FakeFitsIO:
 
 def create_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                    image: np.ndarray, axes: str = "TYX",
-                   labels: list[str] | None = None) -> tuple[RoiSession, FakeFitsIO]:
+                   labels: list[str] | None = None) -> tuple[RoiSession, FakeScopeIO]:
     source = tmp_path / "fits_array.tif"
     source.touch()
-    reader = FakeFitsIO(image, axes, labels or ["GFP"])
-    monkeypatch.setattr("fits.interaction.image.FitsIO.from_path", lambda _: reader)
+    reader = FakeScopeIO(image, axes, labels or ["GFP"])
+    monkeypatch.setattr("fits.interaction.image.ScopeIO.from_path", lambda _: reader)
     return RoiSession(source), reader
 
 
@@ -320,7 +320,7 @@ def test_saving_replaces_an_artifact_without_current_encoding(
     output.touch()
     old_reader = SimpleNamespace(metadata=SimpleNamespace(custom_metadata={}))
     monkeypatch.setattr(
-        "fits.tasks.roi_mask.artifact.FitsIO.from_path", lambda _: old_reader)
+        "fits.tasks.roi_mask.artifact.ScopeIO.from_path", lambda _: old_reader)
     current = np.full((2, 3, 3), 4, dtype=np.uint8)
 
     merged, labels = merge_roi_channels(
@@ -331,9 +331,9 @@ def test_saving_replaces_an_artifact_without_current_encoding(
     assert labels == ["GFP"]
 
 
-def test_roi_tiff_round_trip_reads_encoding_from_fitsio_metadata(tmp_path: Path) -> None:
+def test_roi_tiff_round_trip_reads_encoding_from_image_metadata(tmp_path: Path) -> None:
     import tifffile
-    from fits_io import FitsIO
+    from scope_io import ScopeIO
 
     source = tmp_path / 'fits_array.tif'
     image = np.arange(2 * 8 * 8, dtype=np.uint16).reshape(2, 8, 8)
@@ -341,7 +341,7 @@ def test_roi_tiff_round_trip_reads_encoding_from_fitsio_metadata(tmp_path: Path)
     session = RoiSession(source)
     session.threshold_plane(20, 45, frame_index=0)
     path = session.save('region', channel=0)
-    reader = FitsIO.from_path(path)
+    reader = ScopeIO.from_path(path)
     assert reader.metadata.custom_metadata['roi_mask_encoding'] == ROI_MASK_ENCODING
     reloaded = RoiSession(source, roi_path=path)
     np.testing.assert_array_equal(reloaded.mask_array, session.mask_array)

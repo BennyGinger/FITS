@@ -1,5 +1,5 @@
 from pathlib import Path
-from fits_io.metadata.models import FitsIOMeta
+from scope_io.metadata.models import ImageMetadata
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,12 +10,12 @@ from fits.environment.constant import ARTI_REF, DIST_FITS
 from fits.tasks.reference_mask import ReferenceMaskSession
 
 
-class FakeFitsIO:
+class FakeScopeIO:
     def __init__(self, array: np.ndarray, axes: str, labels: list[str]) -> None:
         self._array = array
         self._axes = axes
         self.axes = axes
-        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"), metadata=FitsIOMeta().with_custom_metadata({"pipeline_meta": {"version": "4.0.0"}}).new_revision())
+        self.reader = SimpleNamespace(shape=array.shape, img_path=Path("/fake/source.tif"), metadata=ImageMetadata().with_custom_metadata({"pipeline_meta": {"version": "4.0.0"}}).new_revision())
         self.channel_labels = labels
         self.saved: dict[str, Any] | None = None
 
@@ -37,12 +37,12 @@ def create_session(tmp_path: Path,
                    array: np.ndarray,
                    axes: str,
                    labels: list[str],
-                   ) -> tuple[ReferenceMaskSession, FakeFitsIO]:
+                   ) -> tuple[ReferenceMaskSession, FakeScopeIO]:
     source = tmp_path / "fits_array.tif"
     source.touch()
-    reader = FakeFitsIO(array, axes, labels)
+    reader = FakeScopeIO(array, axes, labels)
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path", lambda _: reader)
+        "fits.interaction.image.ScopeIO.from_path", lambda _: reader)
     return ReferenceMaskSession(source), reader
 
 
@@ -80,13 +80,13 @@ def test_session_loads_a_channel_specific_reference_artifact(
     reference_path = tmp_path / "fits_ref_needle.tif"
     source.touch()
     reference_path.touch()
-    source_reader = FakeFitsIO(
+    source_reader = FakeScopeIO(
         np.zeros((3, 2, 8, 8)), "TCYX", ["RFP", "GFP"])
     reference_mask = np.zeros((3, 8, 8), dtype=np.uint8)
     reference_mask[1] = square(8, 2, 6)
-    reference_reader = FakeFitsIO(reference_mask, "TYX", ["GFP"])
+    reference_reader = FakeScopeIO(reference_mask, "TYX", ["GFP"])
     monkeypatch.setattr(
-        "fits.interaction.image.FitsIO.from_path",
+        "fits.interaction.image.ScopeIO.from_path",
         lambda path: (source_reader
                       if Path(path).name == "fits_array.tif"
                       else reference_reader),)
@@ -179,11 +179,11 @@ def test_save_appends_a_different_channel_to_an_existing_reference(
         "TCYX", ["RFP", "GFP"])
     existing_mask = np.zeros((3, 8, 8), dtype=np.uint8)
     existing_mask[0] = square(8, 1, 4)
-    existing_reader = FakeFitsIO(existing_mask, "TYX", ["GFP"])
+    existing_reader = FakeScopeIO(existing_mask, "TYX", ["GFP"])
     output = tmp_path / "fits_ref_needle.tif"
     output.touch()
     monkeypatch.setattr(
-        "fits.tasks.reference_mask.artifact.FitsIO.from_path",
+        "fits.tasks.reference_mask.artifact.ScopeIO.from_path",
         lambda _: existing_reader,)
     session.set_mask_plane(square(8, 4, 7), frame_index=2, channel="RFP")
 
@@ -204,13 +204,13 @@ def test_save_requires_overwrite_for_an_existing_channel_and_keeps_tyx(
     session, source_reader = create_session(
         tmp_path, monkeypatch, np.zeros((3, 2, 8, 8)),
         "TCYX", ["RFP", "GFP"])
-    existing_reader = FakeFitsIO(
+    existing_reader = FakeScopeIO(
         np.zeros((3, 8, 8), dtype=np.uint8), "TYX", ["GFP"])
     existing_reader._array[0] = square(8, 1, 4)
     output = tmp_path / "fits_ref_needle.tif"
     output.touch()
     monkeypatch.setattr(
-        "fits.tasks.reference_mask.artifact.FitsIO.from_path",
+        "fits.tasks.reference_mask.artifact.ScopeIO.from_path",
         lambda _: existing_reader,)
     replacement = square(8, 4, 7)
     session.set_mask_plane(replacement, frame_index=2, channel="GFP")

@@ -6,8 +6,8 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
-from fits_io import FitsIO
-from fits_io.metadata.resolve import channel_label_warning
+from scope_io import ScopeIO
+from scope_io.metadata.resolve import channel_label_warning
 from fits.environment.paths import EXPERIMENT_DIR_NAME
 from fits.workflows.checks.models import RawInputReport
 from fits.workflows.experiments import collect_supported_files
@@ -83,7 +83,7 @@ def inspect_raw_inputs(root: Path,
     problems: list[str] = []
     for path in sources:
         try:
-            reader = FitsIO.from_path(path).reader
+            reader = ScopeIO.from_path(path).reader
             frame_counts = tuple(series.shape[series.axes.index("T")] if "T" in series.axes else 1
                                  for series in reader.split_series())
             counts[path] = reader.channel_count

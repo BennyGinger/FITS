@@ -4,7 +4,7 @@ import importlib
 import numpy as np
 import pytest
 from tifffile import imwrite
-from fits_io import FitsIO
+from scope_io import ScopeIO
 
 from fits.environment.constant import StepName
 from fits.workflows.experiments import ExperimentState
@@ -30,7 +30,7 @@ def segmented_state(tmp_path: Path) -> ExperimentState:
         ExperimentState.init(tmp_path, raw),
         REGISTRY[StepName.CONVERT].profile,
     )[0]
-    reader = FitsIO.from_path(state.artifact("image"))
+    reader = ScopeIO.from_path(state.artifact("image"))
     # Store a reordered subset to exercise source-channel identity, not merely
     # matching array positions between the image and segmentation artifacts.
     masks = np.empty((3, 2, 4, 5), dtype=np.uint16)
@@ -75,7 +75,7 @@ def test_tracking_channels_are_independent_and_keep_identity(
     )[0]
     expected_indices = [{"GFP": 0, "RFP": 2}[label] for label in channels]
     assert tracker.calls == [index + 1 for index in expected_indices]
-    output = FitsIO.from_path(result.artifact("tracking"))
+    output = ScopeIO.from_path(result.artifact("tracking"))
     assert output.channel_labels == channels
     assert output.artifact_channel_indices == expected_indices
     for label, index in zip(channels, expected_indices):
@@ -91,7 +91,7 @@ def test_tracking_only_adds_missing_channels_and_can_overwrite(monkeypatch, tmp_
     first = track(TrackSettings(channel_to_track=["GFP"]), state, PROFILE)[0]
     result = track(TrackSettings(channel_to_track=["GFP", "RFP"]), first, PROFILE)[0]
     assert tracker.calls == [1, 3]
-    output = FitsIO.from_path(result.artifact("tracking"))
+    output = ScopeIO.from_path(result.artifact("tracking"))
     assert output.channel_labels == ["GFP", "RFP"]
     assert output.artifact_channel_indices == [0, 2]
     assert track(TrackSettings(channel_to_track=["GFP", "RFP"]), result, PROFILE) == [result]

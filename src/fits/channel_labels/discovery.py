@@ -7,7 +7,7 @@ import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 from fits.environment.paths import is_internal_path
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.channel_labels.lock import run_write_guard
 from fits.channel_labels.model import LabelPlan
 from fits.channel_labels.documents import labels_in_settings, labels_in_state, labels_in_table, labels_in_workflow_meta
@@ -66,7 +66,7 @@ def _inspect_unlocked(root: Path) -> LabelPlan:
     reverse: dict[str, int] = {}
     file_labels: dict[Path, frozenset[str]] = {}
     for path in tiffs:
-        reader = FitsIO.from_path(path)
+        reader = ScopeIO.from_path(path)
         indices = reader.artifact_channel_indices
         current = reader.channel_labels
         if not indices or len(indices) != len(current):

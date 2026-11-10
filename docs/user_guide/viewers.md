@@ -38,7 +38,7 @@ Viewing this information does not change the saved artifact.
 
 | Section or field | What it describes |
 | --- | --- |
-| `fits_io` | Artifact information recorded by the I/O layer. |
+| `artifact` | Artifact information recorded by the I/O layer. |
 | `artifact_type` | The output's role, such as a raw/processed image or a mask. |
 | `axes`, `channel_labels` | Stored dimensions and image/mask channel names. |
 | `created_by`, `version` | Producer information when supplied. |
@@ -157,5 +157,5 @@ the full image. **Save current display** uses the current rectangle whenever
 crop mode is enabled, in either view, and adds `_cropped` to the filename.
 Turning crop mode off saves the full image. All raw channels, frames, and Z
 planes use the same XY crop, with the embedded overlay clipped and shifted to
-match. `fits_io` preserves metadata/calibration and records the source shape,
+match. `scope_io` preserves metadata/calibration and records the source shape,
 pixel bounds, and offsets in `spatial_crops` metadata.

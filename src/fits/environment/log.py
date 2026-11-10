@@ -76,7 +76,7 @@ def configure_logging(*,
 
     # Reduce verbosity of noisy third-party loggers by default.
     _quiet_logger("cellpose")
-    _quiet_logger("fits_io.readers.r_nd2", logging.ERROR)
+    _quiet_logger("scope_io.readers.r_nd2", logging.ERROR)
     _quiet_logger("numba")
     _quiet_logger("numcodecs")
     _quiet_logger("hydra.core.utils")

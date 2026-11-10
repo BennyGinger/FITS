@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 import numpy as np
 from pathlib import Path
-from fits_io.client import FitsIO
+from scope_io.client import ScopeIO
 from fits.workflows.experiments import ExperimentState, save_experiment_state
 from fits.workflows.definitions.models import StepProfile
 from fits.workflows.artifacts.provenance import revision_payload
@@ -11,7 +11,7 @@ from fits.workflows.artifacts.provenance import revision_payload
 logger = logging.getLogger(__name__)
 
 
-def save_step_result(reader: FitsIO,
+def save_step_result(reader: ScopeIO,
                      array: np.ndarray,
                      export_channels: list[str],
                      updated_state: ExperimentState,

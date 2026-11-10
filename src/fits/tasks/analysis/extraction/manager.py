@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import logging
 from pathlib import Path
 
-from fits_io import FitsIO
+from scope_io import ScopeIO
 import numpy as np
 from bioimagequant import ExtractData
 
@@ -40,7 +40,7 @@ class ExtractionManager(AnalysisManager):
         label_name, label_path = self._resolve_labels()
 
         image_reader = self.image_reader
-        label_reader = FitsIO.from_path(label_path)
+        label_reader = ScopeIO.from_path(label_path)
 
         image = image_reader.get_array()
         labels = label_reader.get_array()
@@ -66,7 +66,7 @@ class ExtractionManager(AnalysisManager):
                             channel_labels=label_reader.channel_labels,)
 
         for reference_path in self.reference_paths():
-            reference_reader = FitsIO.from_path(reference_path)
+            reference_reader = ScopeIO.from_path(reference_path)
             reference = reference_reader.get_array()
             reference_array, reference_axes = project_z(
                 np.asarray(reference.array), reference.axes, mask=True)

@@ -137,7 +137,7 @@ pyqtgraph, Pydantic, Typer, Rich, tqdm**, and the wider Python ecosystem.
 **uv** supports installation and environment management; **Tad** is an optional
 independent table viewer.
 
-FITS's companion libraries—**fits_io, cellpose_kit, stackalign, bg_sub, tracklink,
+FITS's companion libraries—**scope_io, cellpose_kit, stackalign, bg_sub, tracklink,
 mask_interpolation, bioimagequant, and progress_bar**—connect these tools to the
 workflow. See [software credits and citation guidance](docs/dev/software_credits.md)
 for project links, method references, and supporting-library acknowledgments.

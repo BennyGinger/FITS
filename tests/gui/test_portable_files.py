@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import tifffile
 from PySide6.QtWidgets import QApplication
-from fits_io import FitsIO
+from scope_io import ScopeIO
 from fits.environment import constant as cst
 from fits.gui.main_window.window import FitsMainWindow
 from fits.gui.settings import SettingsAdapter
@@ -24,7 +24,7 @@ def current_window(tmp_path):
     tifffile.imwrite(source, np.ones((8, 8), dtype=np.uint16), photometric='minisblack')
     series = group / 'image_s1'
     series.mkdir()
-    reader = FitsIO.from_path(source)
+    reader = ScopeIO.from_path(source)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
         channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
     image = reader.save_array(np.ones((8, 8), dtype=np.uint16), metadata=payload, output_path=series / cst.FITS_ARRAY_RAW)
@@ -128,7 +128,7 @@ def test_manage_refresh_runs_after_review_and_cancel_preserves_files(current_win
     from fits.workflows.artifacts.provenance import read_metadata
     window, series = current_window
     source = series / cst.FITS_ARRAY_RAW
-    stamp = read_metadata(source).fits_io.created_at
+    stamp = read_metadata(source).artifact.created_at
     before = source.read_bytes()
     # Selecting one series must still review/update the other series in the run.
     other = series.parent / 'image_s2'
@@ -160,7 +160,7 @@ def test_manage_refresh_runs_after_review_and_cancel_preserves_files(current_win
     QTimer.singleShot(0, choose)
     assert manage_files(tmp_path, series, window)
     assert source.read_bytes() == before
-    assert read_metadata(source).fits_io.created_at == stamp
+    assert read_metadata(source).artifact.created_at == stamp
     assert len(previews) == 2 and all('Saved artifact paths' in text for text in previews)
     assert other_image.read_bytes() == before
 
@@ -208,15 +208,15 @@ def test_manage_actions_disable_unavailable_work(current_window: tuple[FitsMainW
 def test_loading_stale_results_warns_without_locking_current_format(current_window, tmp_path):
     from PySide6.QtCore import Qt
     from fits.workflows.artifacts.provenance import read_metadata
-    from fits_io.writers.metadata_update import rewrite_metadata
+    from scope_io.writers.metadata_update import rewrite_metadata
     from fits.workflows.experiments import discover_saved_states
     from fits.gui.main_window.run_browser import OUTDATED_COLOR
     window, series = current_window
     state = discover_saved_states(tmp_path)[0]
     raw = state.artifact(cst.ARTI_IMG_RAW)
-    reader = FitsIO.from_path(raw)
+    reader = ScopeIO.from_path(raw)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
-        {'artifact_path': raw.name, 'created_at': read_metadata(raw).fits_io.created_at}])
+        {'artifact_path': raw.name, 'created_at': read_metadata(raw).artifact.created_at}])
     bg = reader.save_array(reader.get_array().array, metadata=payload, output_path=series / cst.FITS_ARRAY_BGSUB)
     save_experiment_state(state.with_complete_step(step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG_BGSUB, artifact_path=bg))
     rewrite_metadata(raw, read_metadata(raw).new_revision())
@@ -389,7 +389,7 @@ def test_optional_migration_rebuild_runs_the_complete_workflow(tmp_path: Path, m
     assert len(processing) == 1
     assert processing[0].action == 'rebuild' and processing[0].scope[state.workdir] == ('convert', 'bg_sub')
     assert state.migration_checkpoint is None
-    np.testing.assert_array_equal(FitsIO.from_path(state.artifact(cst.ARTI_IMG)).get_array().array, pixels + 1)
+    np.testing.assert_array_equal(ScopeIO.from_path(state.artifact(cst.ARTI_IMG)).get_array().array, pixels + 1)
     assert not inspect_run(tmp_path, load_settings(run_settings_path(tmp_path)), for_execution=False).conflicts
     assert len(snapshots(tmp_path)) == 2
 
@@ -471,13 +471,13 @@ def test_moved_master_tags_warn_and_enable_only_location_update(current_window: 
     state = discover_saved_states(tmp_path)[0]
     raw = series / cst.FITS_ARRAY_RAW
     segmentation = series / cst.FITS_MASK_SEG
-    mask_payload = read_metadata(raw).with_fitsio(artifact_type=cst.ARTI_SEG).new_revision([
-        {'artifact_path': raw.name, 'created_at': read_metadata(raw).fits_io.created_at}])
-    FitsIO.from_path(raw).save_array(np.ones((8, 8), dtype=np.uint16), output_path=segmentation, metadata=mask_payload)
+    mask_payload = read_metadata(raw).with_artifact(artifact_type=cst.ARTI_SEG).new_revision([
+        {'artifact_path': raw.name, 'created_at': read_metadata(raw).artifact.created_at}])
+    ScopeIO.from_path(raw).save_array(np.ones((8, 8), dtype=np.uint16), output_path=segmentation, metadata=mask_payload)
     state = state.with_complete_step(step_name=cst.StepName.SEGMENT, artifact_kind=cst.ARTI_SEG, artifact_path=segmentation)
-    payload = read_metadata(raw).with_fitsio(artifact_type=cst.ARTI_QUANTI).new_revision([
-        {'artifact_path': raw.name, 'created_at': read_metadata(raw).fits_io.created_at},
-        {'artifact_path': segmentation.name, 'created_at': mask_payload.fits_io.created_at}])
+    payload = read_metadata(raw).with_artifact(artifact_type=cst.ARTI_QUANTI).new_revision([
+        {'artifact_path': raw.name, 'created_at': read_metadata(raw).artifact.created_at},
+        {'artifact_path': segmentation.name, 'created_at': mask_payload.artifact.created_at}])
     table = series / cst.FITS_QUANTI_NAME
     save_parquet(pd.DataFrame({'object_name': ['segmentation'], 'object_channel': ['Red'],
                                'label': [1], 'frame': [0], 'intensity_mean': [5.0]}), table, payload)
@@ -531,15 +531,15 @@ def test_outdated_run_offers_one_targeted_rebuild(current_window: tuple[FitsMain
     from PySide6.QtWidgets import QDialog, QGroupBox, QPushButton
     from fits.gui.file_management.manager import manage_files
     from fits.workflows.artifacts.provenance import read_metadata
-    from fits_io.writers.metadata_update import rewrite_metadata
+    from scope_io.writers.metadata_update import rewrite_metadata
 
     window, series = current_window
     state = discover_saved_states(tmp_path)[0]
     raw = series / cst.FITS_ARRAY_RAW
     bg = series / cst.FITS_ARRAY_BGSUB
-    reader = FitsIO.from_path(raw)
-    payload = read_metadata(raw).with_fitsio(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
-        {'artifact_path': raw.name, 'created_at': read_metadata(raw).fits_io.created_at}])
+    reader = ScopeIO.from_path(raw)
+    payload = read_metadata(raw).with_artifact(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
+        {'artifact_path': raw.name, 'created_at': read_metadata(raw).artifact.created_at}])
     reader.save_array(reader.get_array().array, metadata=payload, output_path=bg)
     save_experiment_state(state.with_complete_step(step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG_BGSUB, artifact_path=bg))
     rewrite_metadata(raw, read_metadata(raw).new_revision())

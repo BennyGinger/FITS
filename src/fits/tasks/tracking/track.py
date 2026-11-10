@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from fits_io.client import FitsIO
+from scope_io.client import ScopeIO
 from fits.environment.constant import ARTI_IMG
 from fits.workflows.experiments import ExperimentState
 from fits.settings.models import TrackSettings
@@ -51,7 +51,7 @@ def track(settings: TrackSettings,
         if image_path is None:
             raise StepExecutionError(f"Step {str(step_profile.step_name)!r} failed for {exp_state.experiment_id}: "
                                     f"missing {step_profile.input_artifact!r} input.")
-        image_reader = FitsIO.from_path(image_path)
+        image_reader = ScopeIO.from_path(image_path)
 
         tracker = create_tracker(settings)
 

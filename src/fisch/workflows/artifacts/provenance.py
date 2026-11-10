@@ -42,12 +42,18 @@ def compatible(metadata: ImageMetadata) -> bool:
     """
     version = metadata.custom_metadata.get("pipeline_meta", {}).get("version", "")
     match = re.match(r"^(\d+)\.", str(version))
-    refs = metadata.artifact.derived_from
     minimum_major = int(cst.COMPATIBLE_VERSION.split(".", 1)[0])
-    return bool(match and int(match[1]) >= minimum_major and metadata.artifact.created_at
-                and isinstance(refs, list) and all(
-                    isinstance(ref, dict) and isinstance(ref.get("artifact_path"), str)
-                    and (ref.get("external") or ref.get("created_at")) for ref in refs))
+    return bool(match and int(match[1]) >= minimum_major and has_structured_lineage(metadata))
+
+
+def has_structured_lineage(metadata: ImageMetadata) -> bool:
+    """
+    Check revision references independently of the producing application version.
+    """
+    refs = metadata.artifact.derived_from
+    return bool(metadata.artifact.created_at and isinstance(refs, list) and all(
+        isinstance(ref, dict) and isinstance(ref.get('artifact_path'), str)
+        and (ref.get('external') or ref.get('created_at')) for ref in refs))
 
 
 def require_writable(path: Path) -> None:

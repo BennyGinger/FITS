@@ -604,3 +604,65 @@ def test_failed_full_rebuild_retains_a_restorable_original(tmp_path: Path, monke
     assert restored is not None
     restored_image = restored.artifact(cst.ARTI_IMG)
     assert restored_image is not None and restored_image.read_bytes() == before
+
+
+@pytest.mark.parametrize('edit_enabled', [None, False, True])
+def test_pre4_rebuild_does_not_replay_historical_manual_tracking(tmp_path: Path,
+                                                               monkeypatch: pytest.MonkeyPatch,
+                                                               edit_enabled: bool | None,
+                                                               ) -> None:
+    """
+    Rebuild migrated numerical results without reviving the retired manual editing step.
+    """
+    from fisch.pipeline import start_pipeline
+    from fisch.workflows.file_management import api
+    from fisch.workflows.file_management.rebuild import execution_config
+
+    adapter, state, pixels = legacy_run(tmp_path, masks=True, frames=3)
+    image = state.artifact(cst.ARTI_IMG)
+    assert image is not None
+    edited = ScopeIO.from_path(image).save_array(np.ones_like(pixels),
+                                                 artifact_kind=cst.ARTI_TRACK,
+                                                 output_path=state.workdir / cst.MASK_TRACK_EDITED)
+    state = state.with_complete_step(step_name=cst.StepName.TRACK, artifact_kind=cst.ARTI_TRACK, artifact_path=edited)
+    state = state.with_complete_step(step_name=cst.StepName.EDIT_TRACK, artifact_kind=cst.ARTI_TRACK, artifact_path=edited)
+    (state.workdir / 'experiment_state.json').write_text(json.dumps(serialize_experiment_state(state)))
+    calls = mock_rebuild_processing(monkeypatch, adapter)
+    adapter.set_step_enabled(cst.StepName.SEGMENT, True)
+    adapter.set_step_enabled(cst.StepName.TRACK, True)
+    adapter.set_field_value(cst.StepName.TRACK, 'channel_to_track', ['Red'])
+    adapter.set_step_enabled(cst.StepName.EDIT_TRACK, edit_enabled is True)
+    adapter.save_to_run_dir()
+    migration = api.plan_migration(tmp_path)
+    assert migration is not None
+    api.migrate(migration)
+    plan = api.plan_required_rebuild(tmp_path)
+    assert plan is not None
+    assert all(cst.StepName.EDIT_TRACK not in steps for steps in plan.scope.values())
+    config = dict(adapter.as_mapping())
+    if edit_enabled is None:
+        config.pop(cst.StepName.EDIT_TRACK, None)
+    assert not execution_config(config, plan)[cst.StepName.EDIT_TRACK]['enabled']
+    assert 'Manual tracking edits are retained in the backup' in plan.describe()
+    assert str(cst.StepName.EDIT_TRACK) in plan.skipped_steps
+    api.update_downstream(plan, lambda selected: start_pipeline(adapter.save_to_run_dir(),
+                                                               maintenance=selected, terminal_progress=False))
+    assert cst.StepName.TRACK in calls
+    assert cst.StepName.EDIT_TRACK not in calls
+    assert discover_saved_states(tmp_path)[0].migration_checkpoint is None
+
+
+def test_rebuild_blocks_unavailable_numerical_steps_before_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Stop before an unavailable numerical producer instead of jumping over its dependencies.
+    """
+    from fisch.workflows.definitions.registry import REGISTRY
+    from fisch.workflows.file_management.rebuild import full_rebuild_scope
+
+    state = replace(ExperimentState.init(tmp_path / 'series', tmp_path / 'raw.tif', run_dir=tmp_path),
+                    completed_steps=('convert', 'bg_sub', 'removed_step', 'edit_track'))
+    monkeypatch.delitem(REGISTRY, cst.StepName.BG_SUB)
+    config = {str(cst.StepName.BG_SUB): {'enabled': True}, str(cst.StepName.EDIT_TRACK): {'enabled': True}}
+    with pytest.raises(ValueError, match='processing steps are unavailable.*bg_sub.*removed_step'):
+        full_rebuild_scope([state], config)
+    assert not list(tmp_path.iterdir())

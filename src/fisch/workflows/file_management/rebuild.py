@@ -45,6 +45,7 @@ class ProcessingPlan:
     fingerprints: tuple[tuple[Path, int, int], ...]
     explanation: str = ''
     full_rebuild_series: tuple[Path, ...] = ()
+    skipped_steps: tuple[str, ...] = ()
 
     def fully_rebuilds(self, folder: Path) -> bool:
         """
@@ -59,12 +60,15 @@ class ProcessingPlan:
         lines = [self.explanation, 'Rebuilding can take a long time. Final images, masks and measurements may change; '
                  'small numerical differences are possible even with the same settings. '
                  'Different settings or processing versions can also change results.']
+        if self.skipped_steps:
+            lines.append('Unavailable or manual historical steps will be skipped: ' + ', '.join(self.skipped_steps) + '.')
         for series, steps in self.scope.items():
             lines.append(f'{series}\n  ' + ', '.join(steps))
         if self.action == 'rebuild' or self.full_rebuild_series:
             lines.append('The complete processing chain is rebuilt from the original acquisition, including final results. '
                          'Existing results and experiment state are backed up before processing starts. '
-                         'REF/ROI drawings are kept; review their alignment if registration changes.')
+                         'REF/ROI drawings are kept; review their alignment if registration changes. '
+                         'Manual tracking edits are retained in the backup and are not replayed during rebuilding.')
         else:
             lines.append('The listed stale results will be replaced. Earlier-stage and unrelated results are preserved.')
         return '\n\n'.join(lines)
@@ -83,14 +87,17 @@ def _processing_plan(root: Path,
     settings = run_settings_path(root)
     if settings.is_file():
         files.add(settings)
+    skipped: set[str] = set()
+    rebuildable = _rebuildable_steps()
     for state in discover_saved_states(root):
         if state.workdir not in scope:
             continue
+        skipped.update(str(step) for step in state.completed_steps if step not in rebuildable)
         files.add(experiment_state_path(state.workdir))
         files.add(state.original_image)
         files.update(path for path in state.workdir.glob('proc_*') if path.is_file())
     fingerprints = tuple((path, path.stat().st_size, path.stat().st_mtime_ns) for path in sorted(files))
-    plan = ProcessingPlan(Path(root), action, scope, fingerprints, explanation, full_rebuild_series)
+    plan = ProcessingPlan(Path(root), action, scope, fingerprints, explanation, full_rebuild_series, tuple(sorted(skipped)))
     _check_processing_space(plan)
     return plan
 
@@ -142,6 +149,13 @@ def full_rebuild_scope(states: Sequence[ExperimentState],
     return {state.workdir: steps for state in states}
 
 
+def _rebuildable_steps() -> tuple[cst.StepName, ...]:
+    """
+    Limit automatic reconstruction to available numerical steps, preserving workflow order.
+    """
+    return tuple(step for step in cst.WORKFLOW_ORDER if step in REGISTRY and not REGISTRY[step].is_interactive)
+
+
 def _full_rebuild_steps(state: ExperimentState,
                         config: Mapping[str, Any],
                         available: set[Path] | None = None,
@@ -149,19 +163,23 @@ def _full_rebuild_steps(state: ExperimentState,
     """
     Include previous results, enabled work and the producers needed to rebuild them.
     """
+    unavailable = {str(step) for step in state.completed_steps if step not in REGISTRY}
+    unavailable.update(str(step) for step in cst.WORKFLOW_ORDER
+                       if step not in REGISTRY and config.get(step, {}).get('enabled'))
+    if unavailable:
+        raise ValueError('Cannot complete rebuilding: processing steps are unavailable in this version: '
+                         + ', '.join(sorted(unavailable))
+                         + '. Rebuilding must stop before these steps. Existing results have not been changed.')
     steps: set[str] = {cst.StepName.CONVERT}
-    for step in cst.WORKFLOW_ORDER:
+    for step in _rebuildable_steps():
         profile = REGISTRY[step].profile
         output = state.artifact(profile.output_artifact)
         existing = output is not None and (output in available if available is not None else output.is_file())
-        if step == cst.StepName.EDIT_TRACK:
-            existing = existing and output is not None and output.name in (cst.MASK_TRACK_EDITED, cst.MASK_TRACK_EDITED_FILTERED)
         if step in state.completed_steps or config.get(step, {}).get('enabled') or existing:
             steps.add(step)
     if cst.StepName.EXTRACT in steps and not steps.intersection({cst.StepName.SEGMENT, cst.StepName.TRACK}):
         steps.add(cst.StepName.SEGMENT)
-    producers = {spec.profile.output_artifact: name for name, spec in REGISTRY.items()
-                 if name != cst.StepName.EDIT_TRACK}
+    producers = {REGISTRY[name].profile.output_artifact: name for name in _rebuildable_steps()}
     while True:
         enabled = {str(step): {'enabled': step in steps} for step in cst.WORKFLOW_ORDER}
         required = set(steps)
@@ -199,7 +217,8 @@ def _downstream_scope(report: PreflightReport, config: Mapping[str, Any]) -> dic
             baseline.setdefault(step, {'enabled': False, 'params': {}}).setdefault('params', {})['overwrite'] = False
         resolved = apply_decision(baseline, local, 'rebuild')
         steps = tuple(str(step) for step in cst.WORKFLOW_ORDER
-                      if resolved.get(step, {}).get('enabled') and resolved[step].get('params', {}).get('overwrite'))
+                      if step in _rebuildable_steps() and resolved.get(step, {}).get('enabled')
+                      and resolved[step].get('params', {}).get('overwrite'))
         if steps:
             scope[state.workdir] = steps
     return scope
@@ -260,8 +279,12 @@ def execution_config(config: Mapping[str, Any], plan: ProcessingPlan) -> dict[st
     """
     result = deepcopy(dict(config))
     steps = {step for values in plan.scope.values() for step in values}
+    rebuildable = _rebuildable_steps()
     for step in cst.WORKFLOW_ORDER:
         entry = result.setdefault(step, {'enabled': False, 'params': {}})
+        if step not in rebuildable:
+            entry['enabled'] = False
+            continue
         entry.setdefault('params', {})['overwrite'] = step in steps
         if step in steps:
             entry['enabled'] = True
@@ -272,8 +295,14 @@ def execution_config(config: Mapping[str, Any], plan: ProcessingPlan) -> dict[st
         for producer in (cst.StepName.TRACK, cst.StepName.SEGMENT):
             if config.get(producer, {}).get('enabled'):
                 result[producer]['enabled'] = True
-                if producer == cst.StepName.TRACK and config.get(cst.StepName.EDIT_TRACK, {}).get('enabled'):
-                    result[cst.StepName.EDIT_TRACK]['enabled'] = True
+                # Quantification alone may reuse accepted manual masks. A new
+                # Tracking result must never revive the old editing interaction.
+                if (producer == cst.StepName.TRACK and producer not in steps
+                        and cst.StepName.EDIT_TRACK in REGISTRY
+                        and config.get(cst.StepName.EDIT_TRACK, {}).get('enabled')):
+                    entry = result[cst.StepName.EDIT_TRACK]
+                    entry['enabled'] = True
+                    entry.setdefault('params', {})['overwrite'] = False
                 break
     return result
 

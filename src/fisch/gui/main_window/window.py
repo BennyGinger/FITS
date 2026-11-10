@@ -1694,9 +1694,13 @@ class FischMainWindow(QMainWindow):
         self._refresh_phase_access()
         self._maintenance_plan = plan
         try:
+            if plan.skipped_steps:
+                self._append_log('WARNING | Rebuild skips unavailable or manual historical steps: '
+                                 + ', '.join(plan.skipped_steps) + '. Existing results remain in the backup.')
+            self._run_error = ''
             self._run_pipeline()
             if self._thread is None:
-                raise ValueError('Complete the required processing settings, then try this action again through Manage files.')
+                raise ValueError(self._run_error or 'Processing did not start. Check the console, then try this action again through Manage files.')
             loop = QEventLoop(self)
             self._thread.finished.connect(loop.quit)
             loop.exec()
@@ -1940,6 +1944,7 @@ class FischMainWindow(QMainWindow):
         """
         Bring blocking validation errors to the console without a modal dialog.
         """
+        self._run_error = '\n'.join(errors)
         for error in errors:
             self._append_log("ERROR | " + error)
 

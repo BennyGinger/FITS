@@ -10,7 +10,7 @@ from fisch.workflows.definitions.models import StepProfile
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
-from fisch.workflows.artifacts.provenance import compatible, produced_metadata, read_metadata, input_references
+from fisch.workflows.artifacts.provenance import compatible, has_structured_lineage, produced_metadata, read_metadata, input_references
 from fisch.environment import constant as cst
 from fisch.environment import naming
 from fisch.workflows.metadata import PipelineMetadata
@@ -83,7 +83,7 @@ def migrate_payload(payload: ImageMetadata, *, inputs: Sequence[Mapping[str, Any
     if compatible(payload):
         return payload
     custom = deepcopy(dict(payload.custom_metadata))
-    has_lineage = bool(payload.artifact.created_at and isinstance(payload.artifact.derived_from, list))
+    has_lineage = has_structured_lineage(payload)
     custom['migration'] = {
         'adopted_at': utc_now(),
         'original_pipeline_meta': deepcopy(custom.get('pipeline_meta', {})),

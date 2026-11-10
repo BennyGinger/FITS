@@ -561,3 +561,34 @@ def test_outdated_run_offers_one_targeted_rebuild(current_window: tuple[FischMai
 
     QTimer.singleShot(0, inspect)
     assert not manage_files(tmp_path, parent=window)
+
+
+@pytest.mark.parametrize('blocker', ['username', 'single_frame'])
+def test_maintenance_failure_reports_the_actual_console_reason(current_window: tuple[FischMainWindow, Path],
+                                                               monkeypatch: pytest.MonkeyPatch,
+                                                               blocker: str,
+                                                               ) -> None:
+    """
+    Show the actual launch validation error rather than a generic file-review instruction.
+    """
+    from fisch.workflows.file_management.rebuild import ProcessingPlan
+
+    window, series = current_window
+    steps = (str(cst.StepName.CONVERT),)
+    if blocker == 'username':
+        window.user_name_edit.clear()
+        expected = 'user name'
+    else:
+        window.adapter.set_step_enabled(cst.StepName.TRACK, True)
+        window.adapter.set_field_value(cst.StepName.TRACK, 'channel_to_track', ['Red'])
+        window.adapter.set_segment_channels([{'channel': 'Red'}])
+        window._populate_from_adapter()
+        steps += (str(cst.StepName.TRACK),)
+        expected = 'requires at least 2 frames'
+    plan = ProcessingPlan(Path(window.adapter.run_dir), 'required', {series: steps}, ())
+    monkeypatch.setattr(window, '_save_settings', lambda: pytest.fail('Blocked maintenance must not save settings.'))
+    with pytest.raises(ValueError, match=expected):
+        window._run_maintenance_plan(plan)
+    assert expected in window.console.toPlainText()
+    assert window._maintenance_plan is None
+    assert window._thread is None

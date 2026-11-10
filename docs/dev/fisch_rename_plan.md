@@ -393,3 +393,50 @@ working-tree edits inside stackalign/tracklink are left untouched.
    fresh recursive checkout and an existing-install update, then merge/tag/release
    the coordinated ScopeIO/FIScH changes. No push, normal-branch merge or release
    was performed as part of this validation.
+
+## Pre-4 Run2 review follow-up
+
+A migrated pre-4 experiment retained `edit_track` in `completed_steps`.
+Full rebuilding incorrectly treated historical completion as a request to replay
+manual tracking, despite the main GUI disabling it. Automatic rebuild plans now
+exclude manual interactions, list skipped history in their review, and warn in
+the console. Recomputing Tracking cannot re-enable the retired editing stage.
+Quantification-only updates still retain the existing CLI/API selection of
+accepted edited masks when Tracking itself is not being recomputed.
+
+The GUI's generic “File update needs review” error now receives the exact launch
+validation reason (for example missing user name or single-frame Tracking)
+instead of only instructing the user to complete unspecified settings.
+Regression fixtures cover old editing settings enabled, disabled or absent,
+full numerical reconstruction without replaying manual editing, and specific
+GUI launch-error reporting. Migration also uses the shared structured-lineage
+check when adopting older partial references, retaining the original metadata
+without presenting incomplete historical references as valid current lineage.
+
+The copied Run2 was inspected read-only. Its naming/metadata migration had
+completed; its background-subtraction checkpoint still needed reconstruction.
+The corrected preview excludes `edit_track` and its saved settings validate.
+No numerical rebuild or data mutation was performed on that run by the agent.
+
+### Agreed future behavior: rebuild only the common prefix
+
+If a historical numerical step is no longer available (for example old
+Segmentation has been replaced), reconstruct only the continuous common prefix
+before that step. Leave old downstream results intact and visibly outdated;
+explain where rebuilding stopped and require the user to configure the current
+replacement and run the remaining workflow. Do not silently jump from an
+upstream image into Tracking/Quantification across a missing producer.
+
+This partial-prefix execution is **not implemented in this follow-up**. For
+now unavailable numerical steps stop full-rebuild planning with an explicit
+error before mutation. Retired manual interactions can be skipped independently.
+Implementing prefix execution also needs scope-aware cleanup and completion
+handling so a partial rebuild cannot delete downstream results or claim the
+entire experiment is current.
+
+Follow-up validation: 672 backend/startup tests passed; the focused
+migration/workflow/GUI group passed 54 tests and the main-window module passed
+62 tests. Application/new-migration-test Pyright checked 273 files with zero
+errors or warnings. New regression-test code has no introduced diagnostics;
+older annotations in the existing file-management test modules remain outside
+this focused change. Whitespace checks passed.

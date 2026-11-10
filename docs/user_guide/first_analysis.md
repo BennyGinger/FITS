@@ -7,11 +7,11 @@ Use this route for a first pass through the GUI. A named example dataset, its ex
 
 ## Before you start
 
-Install and open FITS, choose a small acquisition, and check its source channel order. Use a time series if you want to try tracking. Keep the FITS version and settings with your results.
+Install and open FIScH, choose a small acquisition, and check its source channel order. Use a time series if you want to try tracking. Keep the FIScH version and settings with your results.
 
 ## Pipeline operation
 
-FITS loads your settings, discovers supported raw images, reuses saved
+FIScH loads your settings, discovers supported raw images, reuses saved
 experiment state where possible, and runs enabled steps in this order:
 
 ```text
@@ -34,4 +34,4 @@ Convert → Preprocess → Process → Analysis
 
 ## Check the outcome
 
-A successful conversion produces a portable acquisition folder with a FITS raw image for each series. Later enabled stages add their outputs; see [saved filenames](runs_and_settings.md#experiment-state-and-saved-outputs). Use the [output-table reference](output_tables.md) to interpret measurements and [Troubleshooting](troubleshooting.md) if the report shows failed or skipped work.
+A successful conversion produces a portable acquisition folder with a FIScH raw image for each series. Later enabled stages add their outputs; see [saved filenames](runs_and_settings.md#experiment-state-and-saved-outputs). Use the [output-table reference](output_tables.md) to interpret measurements and [Troubleshooting](troubleshooting.md) if the report shows failed or skipped work.

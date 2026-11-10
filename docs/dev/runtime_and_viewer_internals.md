@@ -27,7 +27,7 @@ usual mask artifacts; closing the session removes its temporary edits. Tracking
 saves assemble a disk-backed array plane by plane.
 Reference/ROI live propagation previews prepare one selected-channel T or Z
 sequence in a background thread and cache its completed mask states in a private
-temporary directory under the experiment's `.fits/viewer_cache/`. Navigating
+temporary directory under the experiment's `.pipeline/viewer_cache/`. Navigating
 within that sequence reads cached planes without repeating interpolation.
 The current plane and nearby planes are prepared first; moving the slider
 reprioritizes remaining work. Ready planes are immediately usable, while a
@@ -55,7 +55,7 @@ progress and the current stage shown at the bottom right. Frame navigation reuse
 already-drawn, native-resolution trajectory overlays for every frame. These
 are prepared once in disk-backed storage, so forward navigation and arbitrary
 frame jumps need no trajectory redraw. Both the tracking viewer and editor keep
-completed drawings in `.fits/viewer_cache/tracking_paths/` and load them on
+completed drawings in `.pipeline/viewer_cache/tracking_paths/` and load them on
 reopening, without scanning mask pixels or drawing the paths again. Cache keys
 include the source file stamp, channel/Z, actual centroid coordinates (including
 filters and unsaved edits), and drawing style. Changed inputs therefore get a
@@ -73,7 +73,7 @@ Read-only experiments use temporary drawings instead. The first preparation,
 changed settings, and drawings evicted from the cache still require work;
 reopening a matching cached drawing only loads metadata and maps its pixels.
 Edits and undo invalidate only affected centroid frames. Compressed
-`.fits/viewer_cache/<mask filename>.centroids-c*-z*.npz` files inside each
+`.pipeline/viewer_cache/<mask filename>.centroids-c*-z*.npz` files inside each
 experiment store centroid tables and all track lengths. They load automatically;
 changed source files invalidate them. Valid older hidden caches beside masks
 migrate to this folder on use. On read-only folders the viewer keeps its
@@ -96,7 +96,7 @@ Viewers initially select the image channel matching the first loaded mask channe
 To run the connected drawing workflow with slow demonstration steps:
 
 ```bash
-uv run fits-gui --demo-step-delay 5
+uv run fisch-gui --demo-step-delay 5
 ```
 
 Choose your run folder and settings in the main GUI, enable **Distance profile**
@@ -108,7 +108,7 @@ references omit distance profiling for that experiment; no ROI means
 whole-image profiling after confirmation.
 
 The delay is five seconds between steps, including between arrivals when images
-are already prepared. Ordinary `uv run fits-gui` has no artificial delay.
+are already prepared. Ordinary `uv run fisch-gui` has no artificial delay.
 Interactive runs currently use one preparation worker and one downstream worker;
 existing noninteractive batch/conveyor execution remains available. **Quit
 pipeline** stops new work and waits for any already-running step to finish.

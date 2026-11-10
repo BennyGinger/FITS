@@ -11,17 +11,17 @@ import tifffile
 from scope_io import ScopeIO
 from scope_io.metadata.models import ImageMetadata
 
-from fits.environment import constant as cst
-from fits.gui.settings import SettingsAdapter
-from fits.settings.loader import resolve_step_params
-from fits.workflows.artifacts.provenance import revision_payload
-from fits.workflows.checks.artifacts import inspect_run
-from fits.workflows.checks.models import ArtifactRecord
-from fits.workflows.checks.settings import settings_problem
-from fits.workflows.checks.decisions import apply_decision
-from fits.workflows.definitions.inputs import configured_profile
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.experiments import ExperimentState, save_experiment_state
+from fisch.environment import constant as cst
+from fisch.gui.settings import SettingsAdapter
+from fisch.settings.loader import resolve_step_params
+from fisch.workflows.artifacts.provenance import revision_payload
+from fisch.workflows.checks.artifacts import inspect_run
+from fisch.workflows.checks.models import ArtifactRecord
+from fisch.workflows.checks.settings import settings_problem
+from fisch.workflows.checks.decisions import apply_decision
+from fisch.workflows.definitions.inputs import configured_profile
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.experiments import ExperimentState, save_experiment_state
 
 
 def test_segmentation_settings_conflict_propagates_and_can_be_reverted(tmp_path: Path) -> None:

@@ -7,11 +7,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from fits.environment.constant import StepName
-from fits.gui.main_window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.settings.models import BGSubSettings, RegisterChannelSettings, RegisterTimeSettings
-from fits.tasks.registration.registration_resolver import resolve_registration_plan
+from fisch.environment.constant import StepName
+from fisch.gui.main_window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.settings.models import BGSubSettings, RegisterChannelSettings, RegisterTimeSettings
+from fisch.tasks.registration.registration_resolver import resolve_registration_plan
 
 _APP = None
 
@@ -24,7 +24,7 @@ def main(tmp_path):
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_segment_channels([{"channel": "GFP"}])
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     yield window
     window.close()
     window.deleteLater()

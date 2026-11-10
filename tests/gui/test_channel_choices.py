@@ -9,17 +9,18 @@ from PySide6.QtWidgets import QComboBox, QGroupBox, QLineEdit
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-from fits.environment.constant import StepName
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.gui.settings.field_widgets import ChannelSelectionWidget, ExportChannelsWidget, FloatWidget, IntWidget
-from fits.gui.theme import get_application
-from fits.gui.segmentation_models.loader import model_options_loader
-from fits.gui.segmentation_models.options import installed_model_options
+from fisch.environment.constant import StepName
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.settings.conversion_channels import ConversionChannelsWidget
+from fisch.gui.settings.field_widgets import ChannelSelectionWidget, ExportChannelsWidget, FloatWidget, IntWidget
+from fisch.gui.theme import get_application
+from fisch.gui.segmentation_models.loader import model_options_loader
+from fisch.gui.segmentation_models.options import installed_model_options
 
 
 @pytest.fixture
-def channel_window(tmp_path: Path) -> Iterator[FitsMainWindow]:
+def channel_window(tmp_path: Path) -> Iterator[FischMainWindow]:
     """
     Build editable settings with three source channels and no running processing.
     """
@@ -29,7 +30,7 @@ def channel_window(tmp_path: Path) -> Iterator[FitsMainWindow]:
     adapter.user_name = "Test"
     adapter.set_runtime_value("unlock_all_tabs", True)
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP", "RFP", "DAPI"])
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     yield window
     window.close()
@@ -44,7 +45,7 @@ def _choices(widget: QComboBox) -> list[str]:
     return [widget.itemText(index) for index in range(widget.count())]
 
 
-def test_export_selections_limit_downstream_image_choices(channel_window: FitsMainWindow) -> None:
+def test_export_selections_limit_downstream_image_choices(channel_window: FischMainWindow) -> None:
     """
     Export all by default, then offer only retained image channels downstream.
     """
@@ -69,7 +70,7 @@ def test_export_selections_limit_downstream_image_choices(channel_window: FitsMa
     assert _choices(nucleus) == ["None", "GFP", "DAPI"]
 
 
-def test_tracking_choices_follow_only_segmentation_targets(channel_window: FitsMainWindow) -> None:
+def test_tracking_choices_follow_only_segmentation_targets(channel_window: FischMainWindow) -> None:
     """
     Keep exported-but-unsegmented channels out of tracking choices.
     """
@@ -96,7 +97,7 @@ def test_tracking_choices_follow_only_segmentation_targets(channel_window: FitsM
     assert [tracking.itemText(index) for index in range(tracking.count())] == ["GFP", "DAPI"]
 
 
-def test_excluded_channels_offer_exclusive_none(channel_window: FitsMainWindow) -> None:
+def test_excluded_channels_offer_exclusive_none(channel_window: FischMainWindow) -> None:
     """
     Allow multiple excluded channels while keeping None mutually exclusive.
     """
@@ -114,15 +115,17 @@ def test_excluded_channels_offer_exclusive_none(channel_window: FitsMainWindow) 
     assert window.adapter.field_value(StepName.BG_SUB, "exclude_channel") == "None"
 
 
-def test_source_label_changes_refresh_all_channel_choices(channel_window: FitsMainWindow) -> None:
+def test_source_label_changes_refresh_all_channel_choices(channel_window: FischMainWindow) -> None:
     """
     Keep labels arbitrary and ordered when source names are edited.
     """
     window = channel_window
     source = window._editors[StepName.CONVERT].widgets["channel_labels"]
-    assert isinstance(source, QLineEdit)
-    source.setText("First label, second label, third label")
-    source.editingFinished.emit()
+    assert isinstance(source, ConversionChannelsWidget)
+    for row, label in enumerate(["First label", "second label", "third label"]):
+        item = source.table.item(row, 2)
+        assert item is not None
+        item.setText(label)
     exports = window._editors[StepName.CONVERT].widgets["export_channels"]
     assert isinstance(exports, ExportChannelsWidget)
     assert exports.value() == ["First label", "second label", "third label"]
@@ -131,7 +134,7 @@ def test_source_label_changes_refresh_all_channel_choices(channel_window: FitsMa
     assert _choices(fit) == ["None", "First label", "second label", "third label"]
 
 
-def test_saved_export_subset_survives_editor_rebuild(channel_window: FitsMainWindow) -> None:
+def test_saved_export_subset_survives_editor_rebuild(channel_window: FischMainWindow) -> None:
     """
     Preserve a deliberately deselected source channel when settings rebuild.
     """
@@ -145,7 +148,7 @@ def test_saved_export_subset_survives_editor_rebuild(channel_window: FitsMainWin
     assert rebuilt.value() == ["GFP", "DAPI"]
 
 
-def test_empty_export_selection_blocks_conversion(channel_window: FitsMainWindow) -> None:
+def test_empty_export_selection_blocks_conversion(channel_window: FischMainWindow) -> None:
     """
     Require at least one exported channel instead of silently restoring all.
     """
@@ -158,7 +161,7 @@ def test_empty_export_selection_blocks_conversion(channel_window: FitsMainWindow
     assert "Select at least one channel" in window.run_button.toolTip()
 
 
-def test_diameter_is_integer_and_flow_values_above_one_are_allowed(channel_window: FitsMainWindow) -> None:
+def test_diameter_is_integer_and_flow_values_above_one_are_allowed(channel_window: FischMainWindow) -> None:
     """
     Use an integer size while retaining the squared-error nature of flow thresholds.
     """
@@ -173,12 +176,12 @@ def test_diameter_is_integer_and_flow_values_above_one_are_allowed(channel_windo
     assert channel_window.adapter.segment_channels()[0]["user_settings"]["flow_threshold"] == 1.5
 
 
-def test_read_only_next_is_navigation_only(channel_window: FitsMainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_only_next_is_navigation_only(channel_window: FischMainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Inspect both pages without allowing read-only navigation to launch processing.
     """
     window = channel_window
-    monkeypatch.setattr(window, "_run_status", SimpleNamespace(outdated=True))
+    monkeypatch.setattr(window, "_run_status", SimpleNamespace(outdated=True, root=Path(window.adapter.run_dir), files=(), states=()))
 
     def unexpected_launch(**kwargs: object) -> None:
         """
@@ -207,7 +210,7 @@ def test_saved_image_channels_supply_choices_without_source_settings() -> None:
     assert adapter.exported_channel_labels() == ["Existing GFP", "Existing RFP"]
 
 
-def test_segmentation_model_choices_reuse_installed_builtins(channel_window: FitsMainWindow) -> None:
+def test_segmentation_model_choices_reuse_installed_builtins(channel_window: FischMainWindow) -> None:
     """
     Offer the same built-in model list as SegTune without initializing model weights.
     """
@@ -224,7 +227,7 @@ def test_segmentation_model_choices_reuse_installed_builtins(channel_window: Fit
     assert set(options.built_in_models).issubset(_choices(model))
 
 
-def test_channel_dropdowns_cannot_introduce_unavailable_labels(channel_window: FitsMainWindow) -> None:
+def test_channel_dropdowns_cannot_introduce_unavailable_labels(channel_window: FischMainWindow) -> None:
     """
     Keep required choices blank until a listed channel is selected.
     """
@@ -237,7 +240,7 @@ def test_channel_dropdowns_cannot_introduce_unavailable_labels(channel_window: F
     assert reference.currentText() == "RFP"
 
 
-def test_channel_headings_stand_out_without_bolding_parameters(channel_window: FitsMainWindow) -> None:
+def test_channel_headings_stand_out_without_bolding_parameters(channel_window: FischMainWindow) -> None:
     """
     Emphasize channel headings while keeping controls in the normal parameter font.
     """
@@ -248,12 +251,12 @@ def test_channel_headings_stand_out_without_bolding_parameters(channel_window: F
     assert not editor.channel_widgets[0]["user_settings.diameter"].font().bold()
 
 
-def test_channel_selections_keep_the_existing_toml_schema(channel_window: FitsMainWindow) -> None:
+def test_channel_selections_keep_the_existing_toml_schema(channel_window: FischMainWindow) -> None:
     """
     Save channel subsets and optional choices using the same CLI-compatible values.
     """
-    from fits.settings.loader import load_settings, resolve_step_params
-    from fits.settings.models import RegisterTimeSettings, SegmentSettings
+    from fisch.settings.loader import load_settings, resolve_step_params
+    from fisch.settings.models import RegisterTimeSettings, SegmentSettings
 
     window = channel_window
     exports = window._editors[StepName.CONVERT].widgets["export_channels"]
@@ -276,7 +279,7 @@ def test_channel_selections_keep_the_existing_toml_schema(channel_window: FitsMa
     assert segment.channels[0].nuclear_channel is None
 
 
-def test_dropdown_keeps_open_while_export_checks_update(channel_window: FitsMainWindow) -> None:
+def test_dropdown_keeps_open_while_export_checks_update(channel_window: FischMainWindow) -> None:
     """
     Toggle several popup rows through real mouse events without losing the popup.
     """
@@ -305,7 +308,7 @@ def test_dropdown_keeps_open_while_export_checks_update(channel_window: FitsMain
 
 
 @pytest.mark.parametrize("hovered_row", [0, 1])
-def test_opening_click_cannot_toggle_a_hovered_channel(channel_window: FitsMainWindow, hovered_row: int) -> None:
+def test_opening_click_cannot_toggle_a_hovered_channel(channel_window: FischMainWindow, hovered_row: int) -> None:
     """
     Ignore the opening click's release even when it lands on a popup checkbox row.
     """
@@ -331,7 +334,7 @@ def test_opening_click_cannot_toggle_a_hovered_channel(channel_window: FitsMainW
         exports.hidePopup()
 
 
-def test_popup_keyboard_preserves_exclusive_none(channel_window: FitsMainWindow) -> None:
+def test_popup_keyboard_preserves_exclusive_none(channel_window: FischMainWindow) -> None:
     """
     Toggle checked entries with Space while retaining the optional None behavior.
     """
@@ -360,15 +363,17 @@ def test_popup_keyboard_preserves_exclusive_none(channel_window: FitsMainWindow)
         excluded.hidePopup()
 
 
-def test_collapsed_tooltip_retains_full_selection(channel_window: FitsMainWindow) -> None:
+def test_collapsed_tooltip_retains_full_selection(channel_window: FischMainWindow) -> None:
     """
     Keep all names and parameter help available when the control is too narrow.
     """
     source = channel_window._editors[StepName.CONVERT].widgets["channel_labels"]
-    assert isinstance(source, QLineEdit)
+    assert isinstance(source, ConversionChannelsWidget)
     names = ["A very long GFP label", "Another long RFP label", "A third long DAPI label"]
-    source.setText(", ".join(names))
-    source.editingFinished.emit()
+    for row, label in enumerate(names):
+        item = source.table.item(row, 2)
+        assert item is not None
+        item.setText(label)
     exports = channel_window._editors[StepName.CONVERT].widgets["export_channels"]
     assert isinstance(exports, ExportChannelsWidget)
     exports.setFixedWidth(130)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -11,27 +12,46 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from fits.environment.constant import FITS_ARRAY_NAME
-from fits.gui.main_window.run_browser import DirectoryBrowser, RunDirectoryBrowser
-from fits.gui.viewer.common.image_viewer import FitsImageViewer
-from fits.gui.viewer.masks import MaskDrawingWindow
-from fits.gui.viewer.masks.reference_panel import ReferenceMaskPanel
-from fits.gui.viewer.masks.roi_panel import RoiMaskPanel
-from fits.gui.viewer.segmentation import SegmentationTunerWindow
-from fits.gui.viewer.segmentation.settings_panel import CellposeSettingsPanel
-from fits.gui.viewer.segmentation.worker import (
+from fisch.environment.constant import ARRAY_NAME, IMAGE_NAMES
+from scope_io import ImageMetadata, ScopeIO
+import tifffile
+from fisch.gui.main_window.run_browser import DirectoryBrowser, RunDirectoryBrowser
+from fisch.gui.viewer.common.image_viewer import FischImageViewer
+from fisch.gui.viewer.masks import MaskDrawingWindow
+from fisch.gui.viewer.masks.reference_panel import ReferenceMaskPanel
+from fisch.gui.viewer.masks.roi_panel import RoiMaskPanel
+from fisch.gui.viewer.segmentation import SegmentationTunerWindow
+from fisch.gui.viewer.segmentation.settings_panel import CellposeSettingsPanel
+from fisch.gui.viewer.segmentation.worker import (
     ModelInitializationRequest,
     ModelInitializationWorker,
 )
-from fits.settings.models import SegmentChannelSettings
+from fisch.settings.models import SegmentChannelSettings
 
 
 _APPLICATION: QApplication | None = None
 
 
+def _current_metadata() -> ImageMetadata:
+    """
+    Represent a writable current artifact in lightweight reader doubles.
+    """
+    return ImageMetadata().with_custom_metadata({'pipeline_meta': {'version': '5.0.0'}}).new_revision()
+
+
+def _write_current_image(path: Path) -> None:
+    """
+    Give mocked session controls a genuine current TIFF header for save checks.
+    """
+    pixels = np.zeros((8, 8), dtype=np.uint16)
+    tifffile.imwrite(path, pixels, imagej=True, metadata={'axes': 'YX'})
+    ScopeIO.from_path(path).save_array(pixels, output_path=path,
+                                      custom_metadata={'pipeline_meta': {'version': '5.0.0'}})
+
+
 def _app() -> QApplication:
     global _APPLICATION
-    _APPLICATION = QApplication.instance() or QApplication([])
+    _APPLICATION = cast(QApplication, QApplication.instance() or QApplication([]))
     return _APPLICATION
 
 
@@ -91,7 +111,7 @@ def test_model_initialization_worker_sets_up_without_running_inference(
             raise AssertionError("model warm-up must not run inference")
 
     monkeypatch.setattr(
-        "fits.gui.viewer.segmentation.worker.CellposeWrapper", FakeWrapper)
+        "fisch.gui.viewer.segmentation.worker.CellposeWrapper", FakeWrapper)
     request = ModelInitializationRequest(SegmentChannelSettings(
         channel="GFP",
         user_settings={"model_type": "cyto3"},
@@ -165,7 +185,7 @@ def test_cellpose_panel_disables_volume_settings_without_z_stack() -> None:
 
 def test_image_viewer_displays_image_and_mask() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
 
     viewer.set_image(np.arange(16).reshape(4, 4))
     viewer.set_mask(np.asarray([[0, 0, 1, 1]] * 4))
@@ -176,7 +196,7 @@ def test_image_viewer_displays_image_and_mask() -> None:
 
 def test_image_viewer_preserves_navigation_until_home_is_clicked() -> None:
     app = _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.resize(500, 400)
     viewer.show()
     viewer.set_image(np.zeros((200, 300)))
@@ -200,7 +220,7 @@ def test_image_viewer_preserves_navigation_until_home_is_clicked() -> None:
 
 def test_image_viewer_uses_channel_colour_mapping() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
 
     viewer.set_channel_lut("GFP")
     assert viewer.lut_color == "green"
@@ -211,7 +231,7 @@ def test_image_viewer_uses_channel_colour_mapping() -> None:
 
 def test_image_viewer_ignores_navigation_without_control() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
 
     class MouseEvent:
         def __init__(self) -> None:
@@ -264,8 +284,9 @@ def test_reference_panel_exposes_drawing_and_interpolation_controls() -> None:
     assert panel.extrapolate_end.isEnabled() is False
     assert panel.live_preview.isEnabled() is False
     assert panel.interpolation_preview_enabled is False
-    assert panel.save_button.isEnabled() is False
+    assert not panel.require_label()
     panel.label_edit.setText("wound")
+    assert panel.require_label()
     assert panel.save_button.isEnabled() is True
 
 
@@ -306,7 +327,7 @@ def test_roi_cleanup_buttons_apply_to_whole_stack(tmp_path) -> None:
     import tifffile
 
     _app()
-    source = tmp_path / FITS_ARRAY_NAME
+    source = tmp_path / ARRAY_NAME
     tifffile.imwrite(source, np.zeros((3, 10, 10), dtype=np.uint16),
                      imagej=True, metadata={"axes": "TYX"})
     window = MaskDrawingWindow(tmp_path)
@@ -374,7 +395,7 @@ def test_roi_panel_displays_an_editable_threshold_histogram() -> None:
 
 def test_replace_drawing_replaces_canvas_and_commits_on_release() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.set_image(np.zeros((12, 12)))
     previous = np.zeros((12, 12), dtype=np.uint8)
     previous[9:11, 9:11] = 1
@@ -405,7 +426,7 @@ def test_replace_drawing_replaces_canvas_and_commits_on_release() -> None:
 
 def test_edit_drawing_keeps_existing_mask_and_commits_on_release() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.set_image(np.zeros((12, 12)))
     existing = np.zeros((12, 12), dtype=np.uint8)
     existing[1, 1] = 1
@@ -428,7 +449,7 @@ def test_edit_drawing_keeps_existing_mask_and_commits_on_release() -> None:
 
 def test_image_viewer_draws_each_reference_shape() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.set_image(np.zeros((16, 16)))
     for tool in ("freehand", "line", "circle", "square", "triangle"):
         viewer.set_drawing_mask(np.zeros((16, 16), dtype=np.uint8))
@@ -443,7 +464,7 @@ def test_image_viewer_draws_each_reference_shape() -> None:
 
 def test_freehand_drawing_live_fills_its_enclosed_polygon() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.set_image(np.zeros((12, 12)))
     viewer.set_drawing_mask(np.zeros((12, 12), dtype=np.uint8))
     viewer.set_drawing_options("replace", "freehand", "add", 1)
@@ -460,7 +481,7 @@ def test_freehand_drawing_live_fills_its_enclosed_polygon() -> None:
 
 def test_brush_never_fills_or_erases_an_enclosed_area() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.set_image(np.zeros((16, 16)))
     viewer.set_drawing_mask(np.zeros((16, 16), dtype=np.uint8))
     viewer.set_drawing_options("edit", "brush", "add", 1)
@@ -497,7 +518,7 @@ def test_brush_never_fills_or_erases_an_enclosed_area() -> None:
 
 def test_freehand_rasterization_does_not_rebuild_each_segment(monkeypatch) -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.set_image(np.zeros((128, 128)))
     viewer.set_drawing_mask(np.zeros((128, 128), dtype=np.uint8))
     viewer.set_drawing_options("replace", "freehand", "add", 3)
@@ -516,7 +537,7 @@ def test_freehand_rasterization_does_not_rebuild_each_segment(monkeypatch) -> No
 
 def test_line_drawing_stays_open() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     viewer.set_image(np.zeros((12, 12)))
     viewer.set_drawing_mask(np.zeros((12, 12), dtype=np.uint8))
     viewer.set_drawing_options("edit", "line", "add", 1)
@@ -530,7 +551,7 @@ def test_line_drawing_stays_open() -> None:
 
 def test_lut_controls_levels_and_removes_selected_marker() -> None:
     _app()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     image = np.arange(100, dtype=float).reshape(10, 10)
     image[-1, -1] = 10000
     viewer.set_image(image)
@@ -546,11 +567,11 @@ def test_lut_controls_levels_and_removes_selected_marker() -> None:
     assert marker not in viewer.histogram.item.gradient.ticks
 
 
-def test_viewer_browser_filters_non_fits_artifacts() -> None:
+def test_viewer_browser_filters_non_pipeline_artifacts() -> None:
     _app()
     window = SegmentationTunerWindow()
 
-    assert window.directory_browser.model.nameFilters() == [FITS_ARRAY_NAME]
+    assert window.directory_browser.model.nameFilters() == list(IMAGE_NAMES)
     assert window.directory_browser.model.nameFilterDisables() is False
     assert window.grayscale_lut_button.isChecked() is False
     assert ":checked" in window.grayscale_lut_button.styleSheet()
@@ -558,7 +579,7 @@ def test_viewer_browser_filters_non_fits_artifacts() -> None:
     assert "colour marker" in window.image_viewer.histogram.toolTip()
     assert "grayscale" in window.grayscale_lut_button.toolTip()
     assert "opacity" in window.mask_opacity.toolTip()
-    assert window.tool_panel is window.settings_panel
+    assert window.tool_panel is window.tool_tabs
     assert not hasattr(window, "reference_panel")
     assert not hasattr(window, "roi_panel")
     window.close()
@@ -571,7 +592,7 @@ def test_mask_editor_has_reference_and_roi_tabs() -> None:
     assert window.tool_tabs.widget(0) is window.reference_panel
     assert window.tool_tabs.widget(1) is window.roi_panel
     assert window.directory_browser.model.nameFilters() == [
-        FITS_ARRAY_NAME, "fits_ref_*.tif", "fits_roi_*.tif"]
+        *IMAGE_NAMES, "proc_ref_*.tif", "proc_roi_*.tif"]
     assert window.reference_mask_colour_button.isVisibleTo(window)
     assert not hasattr(window, "settings_panel")
     assert not hasattr(window, "_segmentation_session")
@@ -584,8 +605,8 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
     app = _app()
     experiment = tmp_path / "experiment_1"
     experiment.mkdir()
-    source = experiment / FITS_ARRAY_NAME
-    source.touch()
+    source = experiment / ARRAY_NAME
+    _write_current_image(source)
 
     class FakeSession:
         def __init__(self, source_path: Path, *, segment_settings=None) -> None:
@@ -612,7 +633,7 @@ def test_viewer_opens_a_source_and_emits_complete_settings(tmp_path: Path,
             pass
 
     monkeypatch.setattr(
-        "fits.gui.viewer.segmentation.window.SegmentationTuningSession",
+        "fisch.gui.viewer.segmentation.window.SegmentationTuningSession",
         FakeSession,)
 
     preview_requests: list[bool] = []
@@ -683,8 +704,8 @@ def test_reference_tab_commits_raster_edits_and_persists_drawings(
     _app()
     experiment = tmp_path / "experiment"
     experiment.mkdir()
-    source = experiment / FITS_ARRAY_NAME
-    source.touch()
+    source = experiment / ARRAY_NAME
+    _write_current_image(source)
 
     class FakeReferenceSession:
         def __init__(self, source_path: Path, *, reference_path=None) -> None:
@@ -738,13 +759,13 @@ def test_reference_tab_commits_raster_edits_and_persists_drawings(
 
         def save(self, label: str, **kwargs):
             self.saved_mask = self.masks.copy()
-            return self.source_path.with_name(f"fits_ref_{label}.tif")
+            return self.source_path.with_name(f"proc_ref_{label}.tif")
 
         def saved_channels(self, label: str):
             return self.existing_channels
 
     monkeypatch.setattr(
-        "fits.gui.viewer.masks.window.ReferenceMaskSession",
+        "fisch.gui.viewer.masks.window.ReferenceMaskSession",
         FakeReferenceSession,)
     class FakeRoiSession(FakeReferenceSession):
         def __init__(self, source_path: Path, *, roi_path=None) -> None:
@@ -757,7 +778,7 @@ def test_reference_tab_commits_raster_edits_and_persists_drawings(
         def threshold_range(self, **kwargs):
             return None
 
-    monkeypatch.setattr("fits.gui.viewer.masks.window.RoiSession", FakeRoiSession)
+    monkeypatch.setattr("fisch.gui.viewer.masks.window.RoiSession", FakeRoiSession)
     window = MaskDrawingWindow(tmp_path)
     window._open_source(source)
     reference_session = window._reference_session
@@ -813,15 +834,15 @@ def test_mask_window_uses_mask_sessions_for_navigation_threshold_and_save(
     from types import SimpleNamespace
 
     _app()
-    source = tmp_path / FITS_ARRAY_NAME
-    source.touch()
+    source = tmp_path / ARRAY_NAME
+    _write_current_image(source)
     data = np.arange(2 * 2 * 8 * 8).reshape(2, 2, 8, 8)
     saved = {}
 
     class Reader:
         channel_labels = ("GFP", "RFP")
         axes = "TCYX"
-        reader = SimpleNamespace(shape=data.shape)
+        reader = SimpleNamespace(shape=data.shape, metadata=_current_metadata())
 
         def get_plane(self, frame_index=0, channel=0, z_index=0):
             return SimpleNamespace(array=data[frame_index, channel], axes="YX")
@@ -834,13 +855,13 @@ def test_mask_window_uses_mask_sessions_for_navigation_threshold_and_save(
             saved[path.name] = array.copy()
             return path
 
-    monkeypatch.setattr("fits.interaction.image.ScopeIO.from_path", lambda _: Reader())
+    monkeypatch.setattr("fisch.interaction.image.ScopeIO.from_path", lambda _: Reader())
 
     def unexpected_segmentation(*args, **kwargs):
         raise AssertionError("Mask drawing must not create a segmentation session")
 
     monkeypatch.setattr(
-        "fits.gui.viewer.segmentation.window.SegmentationTuningSession",
+        "fisch.gui.viewer.segmentation.window.SegmentationTuningSession",
         unexpected_segmentation)
     window = MaskDrawingWindow()
     window._open_source(source)
@@ -848,7 +869,9 @@ def test_mask_window_uses_mask_sessions_for_navigation_threshold_and_save(
     assert window.channel_combo.count() == 2
     window.frame_slider.setValue(1)
     window.channel_combo.setCurrentText("RFP")
-    np.testing.assert_array_equal(window.image_viewer.image_item.image, data[1, 1])
+    displayed = window.image_viewer.image_item.image
+    assert displayed is not None
+    np.testing.assert_array_equal(displayed, data[1, 1])
 
     mask = np.zeros((8, 8), dtype=np.uint8)
     mask[2:5, 2:5] = 1
@@ -856,7 +879,7 @@ def test_mask_window_uses_mask_sessions_for_navigation_threshold_and_save(
     window.reference_panel.label_edit.setText("edge")
     window._display_selection()
     window._save_reference_mask()
-    assert "fits_ref_edge.tif" in saved
+    assert "proc_ref_edge.tif" in saved
 
     window.tool_tabs.setCurrentWidget(window.roi_panel)
     window._apply_roi_threshold(210, 230)
@@ -864,7 +887,7 @@ def test_mask_window_uses_mask_sessions_for_navigation_threshold_and_save(
     np.testing.assert_array_equal(window.image_viewer.drawing_mask, expected_roi)
     window.roi_panel.label_edit.setText("region")
     window._save_roi_mask()
-    assert "fits_roi_region.tif" in saved
+    assert "proc_roi_region.tif" in saved
 
     window.tool_tabs.setCurrentWidget(window.reference_panel)
     np.testing.assert_array_equal(window.image_viewer.drawing_mask, mask)
@@ -882,19 +905,19 @@ def test_mask_window_loads_sibling_masks_and_honours_selected_file(
     from types import SimpleNamespace
 
     _app()
-    source = tmp_path / FITS_ARRAY_NAME
-    source.touch()
+    source = tmp_path / ARRAY_NAME
+    _write_current_image(source)
     data = np.arange(2 * 2 * 8 * 8).reshape(2, 2, 8, 8)
     readers = {source: SimpleNamespace(
         channel_labels=("GFP", "RFP"),
         get_array=lambda: SimpleNamespace(array=data, axes="TCYX"))}
     masks = {}
-    from fits.tasks.roi_mask.artifact import ROI_MASK_ENCODING
+    from fisch.tasks.roi_mask.artifact import ROI_MASK_ENCODING
 
     # Create z before a to verify selection uses filename order.
     for kind, channel in (("ref", "GFP"), ("roi", "RFP")):
         for label, start in (("z", 4), ("a", 1)):
-            path = tmp_path / f"fits_{kind}_{label}.tif"
+            path = tmp_path / f"proc_{kind}_{label}.tif"
             path.touch()
             mask = np.zeros((2, 8, 8), dtype=np.uint16)
             mask[:, start:start + 2, start:start + 2] = 1
@@ -908,27 +931,27 @@ def test_mask_window_loads_sibling_masks_and_honours_selected_file(
         loaded = reader.get_array()
         reader.axes = loaded.axes
         reader.reader = SimpleNamespace(shape=loaded.array.shape, dtype=loaded.array.dtype,
-                                        img_path=path)
+                                        img_path=path, metadata=_current_metadata())
         def get_plane(frame_index=0, channel=0, z_index=0, loaded=loaded):
             positions = {"T": frame_index, "C": channel, "Z": z_index}
             indices = tuple(positions.get(axis, slice(None)) for axis in loaded.axes)
             return SimpleNamespace(array=loaded.array[indices], axes="YX")
         reader.get_plane = get_plane
     monkeypatch.setattr(
-        "fits.interaction.image.ScopeIO.from_path",
+        "fisch.interaction.image.ScopeIO.from_path",
         lambda path: readers[Path(path)])
     window = MaskDrawingWindow()
     selected = {"array": source, "folder": tmp_path,
-                "roi": tmp_path / "fits_roi_z.tif",
-                "reference": tmp_path / "fits_ref_z.tif"}[selection]
+                "roi": tmp_path / "proc_roi_z.tif",
+                "reference": tmp_path / "proc_ref_z.tif"}[selection]
     window._path_selected(selected)
     assert window._source_path == source, window.status_label.text()
     ref_label = "z" if selection == "reference" else "a"
     roi_label = "z" if selection == "roi" else "a"
     assert window.reference_panel.label_edit.text() == ref_label
     assert window.roi_panel.label_edit.text() == roi_label
-    assert window._reference_path == tmp_path / f"fits_ref_{ref_label}.tif"
-    assert window._roi_path == tmp_path / f"fits_roi_{roi_label}.tif"
+    assert window._reference_path == tmp_path / f"proc_ref_{ref_label}.tif"
+    assert window._roi_path == tmp_path / f"proc_roi_{roi_label}.tif"
     if selection == "roi":
         assert window.tool_tabs.currentWidget() is window.roi_panel
         assert window.channel_combo.currentText() == "RFP"

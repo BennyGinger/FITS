@@ -10,12 +10,12 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
 from scope_io import ScopeIO
 
-from fits.workflows.file_management.compaction import plan_compaction
-from fits.environment import constant as cst
-from fits.gui.file_management.compaction import publish_compaction
-from fits.gui.artifact_decisions import choose_artifacts
-from fits.workflows.checks.models import ArtifactRecord, PreflightReport
-from fits.workflows.experiments import ExperimentState, save_experiment_state, discover_saved_states
+from fisch.workflows.file_management.compaction import plan_compaction
+from fisch.environment import constant as cst
+from fisch.gui.file_management.compaction import publish_compaction
+from fisch.gui.artifact_decisions import choose_artifacts
+from fisch.workflows.checks.models import ArtifactRecord, PreflightReport
+from fisch.workflows.experiments import ExperimentState, save_experiment_state, discover_saved_states
 
 _APP: QApplication | None = None
 
@@ -40,7 +40,7 @@ def test_shared_preflight_choices(tmp_path: Path, title: str, expected: str, leg
     Keep normal overwrite choices available even when downstream combined analysis is outdated.
     """
     app = application()
-    path = tmp_path / cst.FITS_ARRAY_BGSUB
+    path = tmp_path / cst.ARRAY_BGSUB
     report = PreflightReport((ArtifactRecord(path, cst.StepName.BG_SUB, None,
         'Input revision differs', legacy),), (cst.StepName.BG_SUB,), (cst.StepName.SEGMENT,), (),
         outdated_masters=(tmp_path / cst.MASTER_QUANTI_NAME,) if outdated_master else ())
@@ -63,12 +63,12 @@ def test_gui_compact_worker_publishes_and_updates_state(tmp_path):
     tifffile.imwrite(original, pixels, photometric='minisblack')
     reader = ScopeIO.from_path(original)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
-        custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
-    raw = reader.save_array(pixels, metadata=payload, output_path=tmp_path / cst.FITS_ARRAY_RAW)
+        custom_metadata={'pipeline_meta': {'version': '5.0.0'}}).new_revision()
+    raw = reader.save_array(pixels, metadata=payload, output_path=tmp_path / cst.ARRAY_RAW)
     state = ExperimentState.init(tmp_path, original).with_complete_step(
         step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=raw)
     save_experiment_state(state)
     result = publish_compaction(plan_compaction(tmp_path))
-    assert result == (tmp_path / cst.FITS_ARRAY_NAME,)
+    assert result == (tmp_path / cst.ARRAY_NAME,)
     assert discover_saved_states(tmp_path)[0].compacted
     assert not raw.exists()

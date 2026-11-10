@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from fits.environment import hidden, paths
+from fisch.environment import hidden, paths
 
 
 def test_linux_never_inspects_or_changes_attributes(monkeypatch):
@@ -52,20 +52,20 @@ def test_windows_attribute_denial_does_not_raise(monkeypatch):
 def test_creation_hides_metadata_root_only_and_lookup_does_not_create(tmp_path, monkeypatch):
     hidden_paths = []
     monkeypatch.setattr(paths, "hide_on_windows", lambda path: hidden_paths.append(path))
-    metadata = paths.fits_dir(tmp_path)
+    metadata = paths.pipeline_dir(tmp_path)
     assert not metadata.exists()
     target = metadata / "viewer_cache" / "tracking_paths"
-    paths.ensure_fits_directory(target)
+    paths.ensure_metadata_directory(target)
     assert target.is_dir()
     assert hidden_paths == [metadata, metadata]
-    paths.ensure_fits_directory(tmp_path / "ordinary logs")
+    paths.ensure_metadata_directory(tmp_path / "ordinary logs")
     assert hidden_paths == [metadata, metadata]
 
 
 def test_installer_hides_only_internal_entries_and_tolerates_failure(tmp_path, monkeypatch, capsys):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "startup"))
     source = Path(__file__).resolve().parents[1] / "startup" / "verify.py"
-    spec = importlib.util.spec_from_file_location("fits_install_verify", source)
+    spec = importlib.util.spec_from_file_location("proc_install_verify", source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     (tmp_path / ".gitignore").touch()
@@ -90,8 +90,8 @@ def test_installer_hides_only_internal_entries_and_tolerates_failure(tmp_path, m
 
 
 @pytest.mark.parametrize("filename, expected", [
-    ("C:\\data\\.fits", "\\\\?\\C:\\data\\.fits"),
-    ("\\\\server\\share\\.fits", "\\\\?\\UNC\\server\\share\\.fits"),
+    ("C:\\data\\.pipeline", "\\\\?\\C:\\data\\.pipeline"),
+    ("\\\\server\\share\\.pipeline", "\\\\?\\UNC\\server\\share\\.pipeline"),
 ])
 def test_native_call_sets_hidden_without_replacing_other_flags(monkeypatch, filename, expected):
     setter = Mock(return_value=1)

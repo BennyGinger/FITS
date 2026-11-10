@@ -10,8 +10,8 @@
 | `file_management/` | Explicit migration, relocation/path/tag updates, numerical reconstruction plans, compaction publication and retained history. |
 | `runtime/` | Batch, conveyor and interactive execution; run decisions, progress and errors. |
 
-`fits.pipeline` coordinates these responsibilities. Numerical implementations
-remain in `fits.tasks` and their submodules; GUI dialogs remain in `fits.gui`.
+`fisch.pipeline` coordinates these responsibilities. Numerical implementations
+remain in `fisch.tasks` and their submodules; GUI dialogs remain in `fisch.gui`.
 The top-level `fits` package contains the pipeline entry point and package files;
 supporting implementations live in the responsibility packages below it.
 
@@ -35,7 +35,7 @@ supporting implementations live in the responsibility packages below it.
 - `checks/space.py`: shared free-space guard and raw/final-array output estimates.
 - `checks/pipeline.py`: count pending enabled outputs before pipeline execution.
 - `artifacts/provenance.py`: metadata reading, compatibility, input references and
-  creation of output revision metadata. FITS-specific logic stays out of scope_io.
+  creation of output revision metadata. FIScH-specific logic stays out of scope_io.
 - `artifacts/paths.py`: locate current/compacted images and resolve viewer/tuner
   inputs through the same step contracts used by execution.
 - `artifacts/branch_masks.py`: validate REF/ROI registration dependencies and
@@ -83,23 +83,23 @@ set of module aliases at the workflow root.
 
 ## Shared user interfaces
 
-- `fits.gui.file_management.manager`: the GUI/CLI Manage files entry point, with
+- `fisch.gui.file_management.manager`: the GUI/CLI Manage files entry point, with
   Experiment files and Manage backups sections.
-- `fits.gui.file_management.guidance`: shared plain-language summary, next actions
+- `fisch.gui.file_management.guidance`: shared plain-language summary, next actions
   and expandable affected-file details. The main status tooltip and the GUI/CLI
   manager use the same explanations; there is no separate Details dialog.
-- `fits.gui.file_management.compaction`: conflict review and exact compaction preview.
-- `fits.gui.file_management.tasks`: shared responsive execution of reviewed file writes.
-- `fits.gui.file_preview`: reusable document-icon rendering, per-file change lists
+- `fisch.gui.file_management.compaction`: conflict review and exact compaction preview.
+- `fisch.gui.file_management.tasks`: shared responsive execution of reviewed file writes.
+- `fisch.gui.file_preview`: reusable document-icon rendering, per-file change lists
   and adapters for reviewed migration, processing, compaction and restore plans.
   `overview.py` aggregates stages across the run, deduplicating shared originals;
   `stage_files.py` lists exact per-file actions grouped by acquisition and series.
   These are temporary presentation models, not another persisted artifact registry.
-- `fits.gui.artifact_lineage`: recorded conflict dependencies and geometry-only
+- `fisch.gui.artifact_lineage`: recorded conflict dependencies and geometry-only
   REF/ROI relationships, adapted into the same file-preview renderer.
-- `fits.gui.run_result.dialog`: shared completion summary, full-report access and
+- `fisch.gui.run_result.dialog`: shared completion summary, full-report access and
   successful-run management navigation.
-- `fits.gui.run_result.report`: resizable, scrollable presentation of the full report.
+- `fisch.gui.run_result.report`: resizable, scrollable presentation of the full report.
 - `runtime/progress/outcome.py`: Qt-independent success/failure/cancellation
   classification; intentional drawing skips are not failures.
 
@@ -114,7 +114,7 @@ arrays are transported. Stop run requests cancellation, then terminates the
 isolated process tree if processing does not return promptly. The run writer
 lock belongs to that process and is released by the OS on termination. This
 adds no persistent resume state; existing artifact publication/checks remain
-responsible for outputs. Intentional Quit terminates FITS-owned descendants and
+responsible for outputs. Intentional Quit terminates FIScH-owned descendants and
 exits with status 0 so the startup supervisor does not offer installation repair.
 
 ## Reference
@@ -123,11 +123,11 @@ Existing material moved from the project README; it has not been rewritten into 
 
 ### Design
 
-FITS owns experiment discovery, scheduling, state, paths, provenance, and saved
+FIScH owns experiment discovery, scheduling, state, paths, provenance, and saved
 artifacts. Numerical work is delegated to focused submodules that accept arrays
 and can also be used independently:
 
-- `scope_io` reads microscopy formats and writes metadata-rich FITS TIFFs.
+- `scope_io` reads microscopy formats and writes metadata-rich FIScH TIFFs.
 - `stackalign` performs time-wise and cross-channel registration.
 - `bg_sub` removes spatially varying image background.
 - `cellpose_kit` provides a stable Cellpose v3/v4 segmentation interface.
@@ -136,8 +136,8 @@ and can also be used independently:
 - `bioimagequant` performs object extraction and distance-profile analysis.
 - `progress_bar` provides terminal progress and controlled log display.
 
-`fits.pipeline` is the top-level processing entry point. Supporting workflow code
+`fisch.pipeline` is the top-level processing entry point. Supporting workflow code
 is grouped into definitions, experiments, metadata, artifacts, file management
 and runtime execution. See the [workflow responsibility map](workflow_architecture.md)
-for module locations; `fits.workflows.file_management.api` exposes file actions
+for module locations; `fisch.workflows.file_management.api` exposes file actions
 and compacting.

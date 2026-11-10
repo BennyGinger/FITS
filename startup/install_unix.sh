@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap with uv's Python; FITS and its environment need not exist yet.
+# Bootstrap with uv's Python; FIScH and its environment need not exist yet.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 # Desktop sessions may not include uv's default install directory in PATH.
@@ -15,20 +15,20 @@ pause_on_exit() {
 }
 # Keep prerequisite and bootstrap failures visible as well as successful installs.
 trap 'pause_on_exit' EXIT
-install_fits() {
+install_fisch() {
     local bootstrap_python
     if ! command -v git >/dev/null 2>&1; then
         echo "Git is required. Install Git, then run this installer again."
         return 1
     fi
-    echo "uv is required by FITS and will be installed if missing."
-    echo "uv is maintained independently; FITS does not manage its updates or removal."
+    echo "uv is required by FIScH and will be installed if missing."
+    echo "uv is maintained independently; FIScH does not manage its updates or removal."
     if command -v uv >/dev/null 2>&1; then
         echo "Reusing uv: $(command -v uv)"
     else
         echo "Downloading uv from its official installer..."
         local uv_installer
-        uv_installer="$(mktemp "${TMPDIR:-/tmp}/fits-uv.XXXXXX")" || return "$?"
+        uv_installer="$(mktemp "${TMPDIR:-/tmp}/fisch-uv.XXXXXX")" || return "$?"
         if command -v curl >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 -fLsS https://astral.sh/uv/install.sh -o "$uv_installer" || {
                 rm -f -- "$uv_installer"; return 1;
@@ -64,10 +64,10 @@ install_fits() {
     done
     "$bootstrap_python" startup/setup.py ${arguments[@]+"${arguments[@]}"}
 }
-if install_fits "$@"; then
+if install_fisch "$@"; then
     exit 0
 else
     result=$?
-    echo "FITS installation failed. See startup/logs/install.log if it was created."
+    echo "FIScH installation failed. See startup/logs/install.log if it was created."
     exit "$result"
 fi

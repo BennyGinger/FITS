@@ -1,4 +1,4 @@
-# FITS 4: intermediate artifacts, provenance, and compacting
+# FIScH 4: intermediate artifacts, provenance, and compacting
 
 Status: all five implementation phases completed. No commits or publication.
 Validation limits are recorded below.
@@ -9,16 +9,16 @@ now preserves existing results; processing is a separate, explicitly chosen acti
 
 ## Agreed contract
 
-- FITS owns filenames, artifact roles, workflow order, dependency resolution,
+- FIScH owns filenames, artifact roles, workflow order, dependency resolution,
   compatibility policy, user decisions, and compacting. Define names centrally in
-  `fits.environment.constant`; scope_io accepts supplied paths and remains unaware
-  of FITS filename conventions.
+  `fisch.environment.constant`; scope_io accepts supplied paths and remains unaware
+  of FIScH filename conventions.
 - Convert -> channel registration -> time registration -> background subtraction
   -> segmentation -> tracking -> optional edited tracking -> analysis. Keep the
   GUI registration-settings order unchanged.
-- Independent image outputs: `fits_array_raw.tif`,
-  `fits_array_reg_channel.tif`, `fits_array_reg.tif`, `fits_array_bgsub.tif`.
-  Segmentation/tracking: `fits_masks_seg.tif`, `fits_masks_track.tif`.
+- Independent image outputs: `proc_array_raw.tif`,
+  `proc_array_reg_channel.tif`, `proc_array_reg.tif`, `proc_array_bgsub.tif`.
+  Segmentation/tracking: `proc_masks_seg.tif`, `proc_masks_track.tif`.
 - Each step reads its proper predecessor, skipping disabled optional stages.
   StepProfile declares inputs/outputs, including additional image/mask inputs.
   Execution, provenance, and the checker share input resolution.
@@ -28,9 +28,9 @@ now preserves existing results; processing is a separate, explicitly chosen acti
   or pixel edits create a revision; metadata-only rewrites, copies, renames and
   compacting preserve it. Existing run/step/channel timestamps retain their meaning
   and format. Analysis Parquets carry equivalent provenance.
-- Use existing `pipeline_meta.version`, with FITS 4.0.0 as the boundary. No
+- Use existing `pipeline_meta.version`, with FIScH 4.0.0 as the boundary. No
   separate schema-version field. Newly generated outputs record their producing
-  FITS version. Pre-4 results are read-only; missing/unverifiable provenance is
+  FIScH version. Pre-4 results are read-only; missing/unverifiable provenance is
   not silently invented. Original acquisition files are valid external inputs.
 - A temporary ordered inventory checks actual recorded inputs and propagates
   conflicts downstream. Reference/ROI and analysis branches have explicit input
@@ -48,7 +48,7 @@ now preserves existing results; processing is a separate, explicitly chosen acti
   and compact, cancel. The latter deliberately selects the furthest existing
   image/mask, including active edited tracking, even when outdated. Preserve
   original provenance and record acceptance of conflicts.
-- Canonical compacted outputs: `fits_array.tif`, `fits_masks.tif`. Record compacted
+- Canonical compacted outputs: `proc_array.tif`, `proc_masks.tif`. Record compacted
   state/authoritative paths without rewriting historical input references.
   Preserve acquisitions, reference/ROI files unchanged, measurements, settings,
   and processing history. Delete superseded intermediates/caches only after
@@ -64,12 +64,12 @@ now preserves existing results; processing is a separate, explicitly chosen acti
 Status: completed.
 
 - Add generic revision/input metadata in scope_io, including preservation rules.
-- Centralize FITS 4 names/roles and compatibility utilities.
+- Centralize FIScH 4 names/roles and compatibility utilities.
 - Validate metadata round trips, distinct revisions and metadata-only preservation.
-- Do not label partially implemented pipeline outputs as FITS 4 prematurely.
+- Do not label partially implemented pipeline outputs as FIScH 4 prematurely.
 
 Validation: 163 tests passed (`tests/test_artifact_provenance.py` and
-`scope_io/tests`). Generic references preserve metadata-only revisions; FITS owns
+`scope_io/tests`). Generic references preserve metadata-only revisions; FIScH owns
 all new names. Existing run/step timestamp format is unchanged.
 
 ## Phase 2 — StepProfile and execution
@@ -130,7 +130,7 @@ Status: completed.
 
 - Finish intermediate/compacted/legacy loading and artifact-appropriate controls.
 - Enforce read-only legacy operation in editing and channel-label tools.
-- Complete FITS 4 version activation, documentation and end-to-end validation.
+- Complete FIScH 4 version activation, documentation and end-to-end validation.
 - Record focused success separately from unavailable native Windows/hardware checks.
 
 Validation:
@@ -147,7 +147,7 @@ Validation:
 - The propagation-preview group passes all 24 tests after keeping the worker
   alive until its thread is joined during cleanup.
 - Compilation, parent/submodule whitespace checks and `fits compact --help`
-  pass. FITS 4.0.0 was installed into the existing editable environment offline,
+  pass. FIScH 4.0.0 was installed into the existing editable environment offline,
   without changing dependency versions.
 - Broader offscreen GUI checks encounter native Qt/pyqtgraph cleanup crashes in
   `tests/gui/test_viewer.py` and `tests/gui/test_brush_performance.py`; those
@@ -165,13 +165,13 @@ Validation:
 
 - Final integration preserves metadata revisions through channel-label changes,
   including Parquet metadata, and keeps backup history out of active discovery.
-- Pyqtgraph is pinned to FITS's PySide6 binding so dependencies importing another
+- Pyqtgraph is pinned to FIScH's PySide6 binding so dependencies importing another
   Qt binding cannot select incompatible widget/enum types.
-- README and the implemented TODO section now describe FITS 4 behavior.
+- README and the implemented TODO section now describe FIScH 4 behavior.
 - Removed unnecessary version-prefixed mask constant aliases: the established
   constant names directly define current filenames; legacy names stay in the
   compatibility lists.
-- Follow-up: exclude `.fits` snapshots/caches from saved-experiment and raw-input
+- Follow-up: exclude `.pipeline` snapshots/caches from saved-experiment and raw-input
   discovery. Retained backups state snapshots previously caused repeated rebuild
   prompts after a successful rebuild. A real rebuild-then-compact regression now
   verifies compacting completes in the same flow and a second compact does not

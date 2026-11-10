@@ -1,8 +1,8 @@
-# Install, launch, and update FITS
+# Install, launch, and update FIScH
 
 [User guide](README.md) · [Next: Your first analysis](first_analysis.md)
 
-Install FITS, open the GUI, and keep an existing installation working. Start with the requirements, then follow the instructions for your platform. Setup can also install the optional Tad table viewer.
+Install FIScH, open the GUI, and keep an existing installation working. Start with the requirements, then follow the instructions for your platform. Setup can also install the optional Tad table viewer.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ Before starting, you need:
 - **Git installed and available in your terminal.** Check with `git --version`.
   The platform instructions below include installation links.
 - **uv is required.** It is a tool that downloads Python and installs the software
-  libraries FITS needs, keeping them together in a dedicated environment. Setup
+  libraries FIScH needs, keeping them together in a dedicated environment. Setup
   installs uv automatically if missing and reuses an existing installation;
   you do not need to install it beforehand.
 - **An internet connection** to download submodules, Python, and dependencies.
@@ -21,14 +21,14 @@ Before starting, you need:
   Use a Git clone rather than a downloaded ZIP archive.
 
 **Installed automatically:** setup installs **uv** if missing, then uses it to
-download **Python 3.12**, create the repository's `.venv`, and install FITS
+download **Python 3.12**, create the repository's `.venv`, and install FIScH
 dependencies. You do not need to install Python separately. **A GPU is optional.**
 
 An existing uv installation is reused. uv is a required, independent third-party tool;
-FITS does not maintain, update, or uninstall it. The installer uses uv's official
+FIScH does not maintain, update, or uninstall it. The installer uses uv's official
 installer and installs it for your user in `~/.local/bin` (on Windows,
 `%USERPROFILE%\.local\bin`), without changing shell profiles. No terminal restart
-is needed for FITS installation or launch. To use a newly installed uv directly
+is needed for FIScH installation or launch. To use a newly installed uv directly
 in a terminal, add that directory to your PATH. Like the optional Tad viewer,
 uv is maintained separately; unlike Tad, uv is mandatory.
 
@@ -41,11 +41,11 @@ uv is maintained separately; unlike Tad, uv is mandatory.
    git --version
    ```
 
-2. Clone FITS into a folder you can write to, then run the installer:
+2. Clone FIScH into a folder you can write to, then run the installer:
 
    ```bash
-   git clone https://github.com/BennyGinger/FITS.git fits
-   cd fits
+   git clone https://github.com/BennyGinger/fisch.git
+   cd fisch
    bash install_linux.sh
    ```
 
@@ -54,7 +54,7 @@ uv is maintained separately; unlike Tad, uv is mandatory.
    double-clicking a shell script may open it in a text editor.
 
 3. Wait for the installation to finish. Answer the optional **Tad** viewer
-   prompt, then press Enter to close. Open **FITS** from your Applications menu.
+   prompt, then press Enter to close. Open **FIScH** from your Applications menu.
    You can also run `bash startup/launch_linux.sh` from the repository folder.
 
 ## Windows
@@ -66,11 +66,11 @@ uv is maintained separately; unlike Tad, uv is mandatory.
    git --version
    ```
 
-2. Clone FITS into a folder you can write to:
+2. Clone FIScH into a folder you can write to:
 
    ```powershell
-   git clone https://github.com/BennyGinger/FITS.git fits
-   cd fits
+   git clone https://github.com/BennyGinger/fisch.git
+   cd fisch
    .\install_win.bat
    ```
 
@@ -78,7 +78,7 @@ uv is maintained separately; unlike Tad, uv is mandatory.
    its main folder, or run `.\install_win.bat` from PowerShell in that folder.
 
 3. Wait for the installation to finish. Answer the optional **Tad** viewer
-   prompt, then press Enter to close. Open **FITS** from the Start menu or
+   prompt, then press Enter to close. Open **FIScH** from the Start menu or
    the desktop shortcut.
 
 ## macOS (experimental)
@@ -86,11 +86,11 @@ uv is maintained separately; unlike Tad, uv is mandatory.
 1. Install [Git](https://git-scm.com/downloads/mac), then open Terminal and check
    `git --version`. If macOS asks to install Command Line Tools, finish that first.
 
-2. Clone FITS and run the Mac installer:
+2. Clone FIScH and run the Mac installer:
 
    ```bash
-   git clone https://github.com/BennyGinger/FITS.git fits
-   cd fits
+   git clone https://github.com/BennyGinger/fisch.git
+   cd fisch
    bash install_macos.sh
    ```
 
@@ -98,7 +98,7 @@ uv is maintained separately; unlike Tad, uv is mandatory.
    uv and Python are downloaded automatically when missing. Keep the terminal
    output and `startup/logs/install.log` if dependencies or verification fail.
 
-3. After successful installation, double-click `FITS.command` in your home
+3. After successful installation, double-click `FIScH.command` in your home
    folder's `Applications` directory. It opens a terminal for startup and updates.
    Alternatively, run `bash startup/launch_macos.sh` from the repository folder.
    Install optional Tad separately from [its website](https://www.tadviewer.com/).
@@ -110,10 +110,10 @@ validated; providing this script does not guarantee every backend works on a Mac
 Interactive installers wait for **Enter** before finishing, so you can read the
 result. No `--pause` flag is needed; unattended runs do not wait for input.
 
-Run the FITS installers as your normal user, without `sudo` or **Run as
+Run the FIScH installers as your normal user, without `sudo` or **Run as
 administrator**. Use a Git clone rather than a downloaded ZIP; the installer
 fetches the required submodules automatically. Keep the repository folder
-after installation, since the shortcuts launch FITS from there.
+after installation, since the shortcuts launch FIScH from there.
 
 If installation fails, read the terminal message and
 `startup/logs/install.log` (if created), fix the reported problem, and rerun
@@ -122,23 +122,23 @@ optional settings, updates, and repair.
 
 ## Optional Tad installation
 
-**Tad** is a separate desktop application for viewing tables. FITS saves its
+**Tad** is a separate desktop application for viewing tables. FIScH saves its
 measurement results as **Parquet (`.parquet`) files**, which Tad lets you open
 and inspect without writing Python code.
 
-Tad setup is included with the FITS installer. After FITS installs, the terminal
+Tad setup is included with the FIScH installer. After FIScH installs, the terminal
 offers to install Tad too. If you accept, it downloads Tad and keeps its files
-and licence notices alongside FITS under `startup/tools/Tad`. An existing
+and licence notices alongside FIScH under `startup/tools/Tad`. An existing
 discoverable Tad installation is reused. Tad is developed independently of
-FITS; FITS does not manage its updates.
+FIScH; FIScH does not manage its updates.
 
 On Linux, this local installation is outside APT and needs no package hold.
 If you separately install Tad's `.deb`, run `sudo apt-mark hold tad` afterward
 to prevent Ubuntu from replacing it with an unrelated package of the same name.
 
-To use it, **double-click a Parquet file in the FITS run browser**. Tad opens in
+To use it, **double-click a Parquet file in the FIScH run browser**. Tad opens in
 its own window. **Tad is optional:** skipping it, or a failed Tad installation,
-does not prevent FITS from processing images or saving measurements. If Tad is
+does not prevent FIScH from processing images or saving measurements. If Tad is
 unavailable, it can be downloaded manually from [Tad's website](https://www.tadviewer.com/). As another
 alternative, the user can use
 [Data Wrangler for Visual Studio Code](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.datawrangler)
@@ -148,18 +148,18 @@ Automatic installation supports **x86-64 Linux and Windows**, using Tad 0.14.0.
 On macOS, or if you prefer a separate installation, download it from
 [Tad's website](https://www.tadviewer.com/).
 Use `--with-tad` to install without the prompt, or `--without-tad` to skip it.
-Unattended installation skips Tad unless requested; automatic FITS updates
+Unattended installation skips Tad unless requested; automatic FIScH updates
 also skip this optional setup.
 
 ## Installation details
 
 The installer downloads and updates all submodules to the versions recorded by
-your FITS checkout before running ordinary `uv sync`. After pulling FITS in an
+your FIScH checkout before running ordinary `uv sync`. After pulling FIScH in an
 existing clone, rerunning setup also updates clean, older submodules. Local
 module edits or independent commits stop installation without being discarded.
 It then checks GUI/backend imports and model-cache write access, and creates a
 per-user Applications-menu entry on Linux, Start-menu and desktop shortcuts on Windows,
-or a `~/Applications/FITS.command` launcher on macOS. It does
+or a `~/Applications/FIScH.command` launcher on macOS. It does
 not run the pipeline or request model weights. Model downloads happen on first
 use. GPU availability is reported without making it an installation requirement.
 Run as your normal user, rather than as administrator or with `sudo`.
@@ -167,8 +167,8 @@ Run as your normal user, rather than as administrator or with `sudo`.
 On Windows, installation also marks dot-prefixed files and folders directly
 inside the checkout (including `.git` and `.venv`) as hidden. `uv.lock` and
 `pyproject.toml` remain visible; installation clears their Hidden attribute if
-an earlier installer hid them. FITS marks its
-`.fits` metadata folders as hidden when creating or accessing them, keeping
+an earlier installer hid them. FIScH marks its
+`.pipeline` metadata folders as hidden when creating or accessing them, keeping
 their logs and caches out of ordinary Explorer views. Existing folders are
 handled when next used; no drive-wide scan is performed. Hidden items remain
 accessible through Explorer's **Hidden items** option. Failure to set the
@@ -178,12 +178,12 @@ Progress and subprocess errors are saved to `startup/logs/install.log`. If a
 step fails, correct the reported problem and rerun the installer. Submodules
 with local edits or independent commits cause setup to stop before changing
 their checkouts. Clean, older modules are fetched and updated to the commits
-required by the FITS checkout; local work is not reset or discarded. If `uv sync`
+required by the FIScH checkout; local work is not reset or discarded. If `uv sync`
 changes the lockfile, the installer reports it for review.
 
 Use `bash install_linux.sh --no-shortcut`, `bash install_macos.sh --no-shortcut`,
 or `install_win.bat --no-shortcut`
-to omit shortcuts. If an existing FITS shortcut points to another checkout,
+to omit shortcuts. If an existing FIScH shortcut points to another checkout,
 the installer asks before replacing it, after the new installation passes its
 checks. The old folder is left untouched. Rerunning in the same location
 refreshes that user's shortcut. Separate OS users should use their own writable
@@ -200,7 +200,7 @@ new location and rerun the installer; virtual environments are not portable.
 Menu/desktop shortcuts and the launchers check the configured upstream GitHub
 repository's latest published stable release on startup. Only published releases
 with an `X.Y.Z` tag count as updates; ordinary commits, tags without a release,
-drafts, and prereleases do not. The check fetches only that FITS release tag, without checking
+drafts, and prereleases do not. The check fetches only that FIScH release tag, without checking
 submodule remotes or changing the working checkout. If an update is available,
 the prompt shows the available and current version numbers. Choose **Yes** to
 update or **Skip** to keep the current version. **Details** starts collapsed;
@@ -210,13 +210,13 @@ with its current version; the failed check is recorded in the update log.
 
 Updates require a clean checkout and a fast-forward from the installed commit.
 Local edits, untracked files, conflicting module commits, or divergent history
-disable automatic updating. FITS never stashes, resets, deletes local work, or
+disable automatic updating. FIScH never stashes, resets, deletes local work, or
 advances modules independently of their recorded commits. Developer branches
 and checkouts without a configured main/master upstream on GitHub skip automatic
 checks. Checkouts already ahead of the release are left unchanged.
 
 The prompt closes before installation starts. An independent process then
-updates FITS to the selected release's exact commit, initializes/synchronizes the pinned
+updates FIScH to the selected release's exact commit, initializes/synchronizes the pinned
 submodules, runs the installer checks, and refreshes this checkout's existing
 shortcuts. Progress appears in a terminal window (Linux requires an installed
 GNOME Terminal, Konsole, or xterm when launching from a desktop shortcut).
@@ -224,7 +224,7 @@ The GUI opens only after verification succeeds. Installing an update can take
 time when dependency downloads are needed.
 
 The supervisor/updater use uv's managed Python outside `.venv`, so they remain
-available if FITS's environment needs repair. The installed Python path is saved
+available if FIScH's environment needs repair. The installed Python path is saved
 under `startup/logs/`; no extra virtual environment is created. A missing
 environment, changed dependency receipt, or interrupted update offers **Repair
 and launch**. If Qt itself cannot import, Windows's native dialog or Linux's
@@ -237,13 +237,13 @@ output is captured in `launcher.log`. The progress terminal offers retry after
 fixing the reported issue. Local edits made during an interrupted update still
 require manual reconciliation; they are never discarded automatically.
 
-One supervised FITS session per checkout is allowed. Close FITS completely
+One supervised FIScH session per checkout is allowed. Close FIScH completely
 before updating; the updater also checks the application lease used by direct
-`uv run fits-gui` launches. Independent viewer commands should be closed too.
+`uv run fisch-gui` launches. Independent viewer commands should be closed too.
 
 For troubleshooting, append `--skip-update-check` to a launcher to skip the
 network check, `--repair` to offer synchronization, or `--check-only` to print
-the available update as JSON without opening the GUI. Direct `uv run fits-gui`
+the available update as JSON without opening the GUI. Direct `uv run fisch-gui`
 continues to launch without the startup update check.
 
 After first pulling the updater changes, rerun the OS installer once. This
@@ -262,13 +262,13 @@ shortcuts by rerunning the OS installer.
 
 ## Refreshing the Linux shortcut
 
-On Ubuntu, install an Applications-menu launcher with the FITS logo:
+On Ubuntu, install an Applications-menu launcher with the FIScH logo:
 
 ```bash
 .venv/bin/python startup/shortcuts.py
 ```
 
-Search for **FITS** in Applications, then pin it to your favourites if desired.
+Search for **FIScH** in Applications, then pin it to your favourites if desired.
 The launcher checks for updates before opening this checkout's GUI. Ordinary
 launches do not open a terminal; accepted updates/repairs show terminal progress.
 Rerun the installer if you move the repository.

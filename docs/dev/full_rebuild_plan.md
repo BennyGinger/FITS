@@ -27,7 +27,7 @@ plans. It does not change migration-only behaviour or backup restoration.
 
 ## Validation
 
-- 685 core/workflow/FITS I/O/progress tests passed.
+- 685 core/workflow/FIScH I/O/progress tests passed.
 - 18 focused GUI/CLI tests passed, including unchecked migration-only behaviour
   and the checked full-rebuild path with time/result-change/backup warnings.
 - Pyright reports zero errors or warnings for the reviewed code; whitespace checks pass.

@@ -20,7 +20,7 @@ def setup_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     Load the standalone installer for isolated installation checks.
     """
     monkeypatch.syspath_prepend(str(STARTUP))
-    spec = importlib.util.spec_from_file_location("fits_installer", STARTUP / "setup.py")
+    spec = importlib.util.spec_from_file_location("proc_installer", STARTUP / "setup.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -45,7 +45,7 @@ def checkout(tmp_path):
     (source / "module.py").write_text("value = 1\n")
     git(source, "add", ".")
     git(source, "commit", "-qm", "initial")
-    root = tmp_path / "FITS checkout"
+    root = tmp_path / "FIScH checkout"
     root.mkdir()
     git(root, "init", "-q")
     git(root, "config", "user.email", "test@example.org")
@@ -95,14 +95,14 @@ def test_older_module_is_fetched_and_updated_before_dependency_sync(setup_module
     monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
     source = checkout.parent / "module source"
     (source / "module.py").write_text("value = 2\n")
-    git(source, "commit", "-qam", "required by new FITS")
+    git(source, "commit", "-qam", "required by new FIScH")
     required = git(source, "rev-parse", "HEAD").strip()
     git(checkout, "update-index", "--cacheinfo", "160000", required, "example")
     git(checkout, "commit", "-qm", "update required library")
     module = checkout / "example"
     missing = subprocess.run(["git", "-C", str(module), "cat-file", "-e", required], capture_output=True)
     assert missing.returncode != 0
-    # A newer upstream library release need not belong to this FITS version.
+    # A newer upstream library release need not belong to this FIScH version.
     (source / "module.py").write_text("value = 3\n")
     git(source, "commit", "-qam", "later independent library release")
     installer = setup_module.Installer(checkout)
@@ -164,17 +164,17 @@ def make_install(root):
     (root / ".venv" / "bin").mkdir(parents=True)
     (root / ".venv" / "bin" / "python").touch()
     (root / "assets").mkdir()
-    (root / "assets" / "fits_icon.png").touch()
+    (root / "assets" / "fisch_icon.png").touch()
     (root / "startup").mkdir()
     (root / "startup" / "launch_linux.sh").touch()
 
 
 def test_shortcut_replacement_requires_consent(shortcuts, tmp_path, monkeypatch):
-    root = tmp_path / "new FITS"
+    root = tmp_path / "new FIScH"
     make_install(root)
     menu = tmp_path / "menu"
     menu.mkdir()
-    shortcut = menu / "fits.desktop"
+    shortcut = menu / "fisch.desktop"
     original = "[Desktop Entry]\nPath=/old/fits\n"
     shortcut.write_text(original)
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
@@ -188,7 +188,7 @@ def test_shortcut_replacement_requires_consent(shortcuts, tmp_path, monkeypatch)
 
 
 def test_desktop_command_quotes_special_paths(shortcuts, tmp_path):
-    root = tmp_path / 'FITS with spaces $`"%'
+    root = tmp_path / 'FIScH with spaces $`"%'
     entry = shortcuts.desktop_entry(root)
     command = next(line for line in entry.splitlines() if line.startswith("Exec="))
     assert command.startswith('Exec="') and command.endswith('/startup/launch_linux.sh"')
@@ -198,13 +198,13 @@ def test_desktop_command_quotes_special_paths(shortcuts, tmp_path):
 
 def test_linux_shortcut_changes_icon_path_when_image_changes(shortcuts, tmp_path):
     """Refresh cached desktop icons without changing canonical asset filenames."""
-    root = tmp_path / 'FITS'
+    root = tmp_path / 'FIScH'
     make_install(root)
-    icon = root / 'assets/fits_icon.png'
+    icon = root / 'assets/fisch_icon.png'
     menu = tmp_path / 'menu'
     icon.write_bytes(b'first image')
     shortcuts.install_shortcut(root, output_dir=menu)
-    entry = menu / 'fits.desktop'
+    entry = menu / 'fisch.desktop'
     first = Path(next(line[5:] for line in entry.read_text().splitlines() if line.startswith('Icon=')))
     assert first.read_bytes() == b'first image'
     icon.write_bytes(b'replacement image')
@@ -224,7 +224,7 @@ def test_linux_entry_runs_installation_from_another_directory(checkout: Path, tm
     shutil.copytree(STARTUP, checkout / "startup", ignore=shutil.ignore_patterns("__pycache__", "logs", "tools"))
     shutil.copy2(STARTUP.parent / "install_linux.sh", checkout / "install_linux.sh")
     (checkout / "assets").mkdir()
-    (checkout / "assets" / "fits_icon.png").touch()
+    (checkout / "assets" / "fisch_icon.png").touch()
     (checkout / "startup" / "verify.py").write_text("print('Verification invoked')\n")
     tools = tmp_path / "tools"
     tools.mkdir()
@@ -253,8 +253,8 @@ def test_linux_entry_runs_installation_from_another_directory(checkout: Path, tm
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Verification invoked" in result.stdout
-    assert "FITS installation complete" in result.stdout
-    shortcut = Path(environment["XDG_DATA_HOME"]) / "applications" / "fits.desktop"
+    assert "FIScH installation complete" in result.stdout
+    shortcut = Path(environment["XDG_DATA_HOME"]) / "applications" / "fisch.desktop"
     assert f"Path={checkout}" in shortcut.read_text()
     if shutil.which("desktop-file-validate"):
         subprocess.run(["desktop-file-validate", str(shortcut)], check=True)
@@ -279,7 +279,7 @@ def test_linux_bootstrap_failure_is_reported(tmp_path, failure):
         capture_output=True, text=True,
     )
     assert result.returncode == (1 if failure == 'missing_git' else 7)
-    assert 'FITS installation failed' in result.stdout
+    assert 'FIScH installation failed' in result.stdout
     if failure == 'missing_git':
         assert 'Git is required' in result.stdout
 
@@ -291,7 +291,7 @@ def test_unix_uv_bootstrap(tmp_path: Path, entry: str, mode: str) -> None:
     """
     Download/reuse uv and reach setup immediately, without network or shell edits.
     """
-    root = tmp_path / 'FITS checkout'
+    root = tmp_path / 'FIScH checkout'
     (root / 'startup').mkdir(parents=True)
     shutil.copy2(STARTUP.parent / entry, root / entry)
     shutil.copy2(STARTUP / 'install_unix.sh', root / 'startup/install_unix.sh')
@@ -318,7 +318,7 @@ def test_unix_uv_bootstrap(tmp_path: Path, entry: str, mode: str) -> None:
     curl = tools / 'curl'
     installer = (
         'mkdir -p "$UV_INSTALL_DIR"\n'
-        'cp "$FITS_TEST_UV" "$UV_INSTALL_DIR/uv"\n'
+        'cp "$FISCH_TEST_UV" "$UV_INSTALL_DIR/uv"\n'
         'chmod +x "$UV_INSTALL_DIR/uv"\n'
         'printf "%s" "$UV_NO_MODIFY_PATH" > "$HOME/profile-policy"\n'
     )
@@ -334,10 +334,10 @@ def test_unix_uv_bootstrap(tmp_path: Path, entry: str, mode: str) -> None:
     result = subprocess.run(
         [bash, str(root / entry), '--pause', '--without-tad'],
         cwd=tmp_path, capture_output=True, text=True,
-        env={**os.environ, 'HOME': str(home), 'PATH': str(tools), 'FITS_TEST_UV': str(fake_uv)},
+        env={**os.environ, 'HOME': str(home), 'PATH': str(tools), 'FISCH_TEST_UV': str(fake_uv)},
     )
-    assert 'uv is required by FITS' in result.stdout
-    assert 'FITS does not manage its updates or removal' in result.stdout
+    assert 'uv is required by FIScH' in result.stdout
+    assert 'FIScH does not manage its updates or removal' in result.stdout
     if mode == 'download_failure':
         assert result.returncode != 0
         assert not (root / 'setup-args').exists()
@@ -351,12 +351,12 @@ def test_unix_uv_bootstrap(tmp_path: Path, entry: str, mode: str) -> None:
 
 def test_macos_shortcut_runs_quoted_checkout_and_preserves_other_install(shortcuts, tmp_path, monkeypatch):
     monkeypatch.setattr(shortcuts.sys, 'platform', 'darwin')
-    root = tmp_path / 'FITS spaces $`" and apostrophe\''
+    root = tmp_path / 'FIScH spaces $`" and apostrophe\''
     (root / 'startup').mkdir(parents=True)
     (root / 'startup/launch_macos.sh').write_text('printf "%s" "$1"')
     menu = tmp_path / 'Applications'
     shortcuts.install_shortcut(root, output_dir=menu)
-    shortcut = menu / 'FITS.command'
+    shortcut = menu / 'FIScH.command'
     result = subprocess.run(['bash', str(shortcut), 'hello'], capture_output=True, text=True, check=True)
     assert result.stdout == 'hello'
     original = shortcut.read_bytes()

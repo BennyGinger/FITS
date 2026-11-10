@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from fits.workflows.runtime.batch.workers import execute_items
+from fisch.workflows.runtime.batch.workers import execute_items
 
 
 def test_execute_items_serially_runs_in_input_order() -> None:

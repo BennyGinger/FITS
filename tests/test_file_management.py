@@ -8,12 +8,12 @@ import pytest
 import tifffile
 from numpy.typing import NDArray
 from scope_io import ScopeIO
-from fits.environment import constant as cst
-from fits.gui.settings import SettingsAdapter
-from fits.workflows.experiments import ExperimentState, discover_saved_states
-from fits.workflows.experiments.serialization import serialize_experiment_state
-from fits.workflows.file_management.api import plan_migration, migrate
-from fits.workflows.artifacts.provenance import read_metadata, compatible
+from fisch.environment import constant as cst
+from fisch.gui.settings import SettingsAdapter
+from fisch.workflows.experiments import ExperimentState, discover_saved_states
+from fisch.workflows.experiments.serialization import serialize_experiment_state
+from fisch.workflows.file_management.api import plan_migration, migrate
+from fisch.workflows.artifacts.provenance import read_metadata, compatible
 
 
 def legacy_run(root: Path, *, masks: bool = False, frames: int = 1, channels: int = 1) -> tuple[SettingsAdapter, ExperimentState, NDArray[np.uint16]]:
@@ -34,7 +34,7 @@ def legacy_run(root: Path, *, masks: bool = False, frames: int = 1, channels: in
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG,
         channel_labels=labels, custom_metadata={'pipeline_meta': {'version': '3.3.0'},
         'steps': {}})
-    image = reader.save_array(pixels, metadata=payload, output_path=series / cst.FITS_ARRAY_NAME)
+    image = reader.save_array(pixels, metadata=payload, output_path=series / cst.ARRAY_NAME)
     state = ExperimentState.init(series, original, run_dir=root).with_complete_step(
         step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG, artifact_path=image)
     state = replace(state, completed_steps=('convert', 'bg_sub'))
@@ -42,7 +42,7 @@ def legacy_run(root: Path, *, masks: bool = False, frames: int = 1, channels: in
         seg = reader.save_array(np.ones_like(pixels), metadata=payload.with_artifact(artifact_type=cst.ARTI_SEG),
             output_path=series / 'fits_mask.tif')
         state = state.with_complete_step(step_name=cst.StepName.SEGMENT, artifact_kind=cst.ARTI_SEG, artifact_path=seg)
-        table = series / cst.FITS_QUANTI_NAME
+        table = series / cst.QUANTI_NAME
         pd.DataFrame({'object_name': ['segmentation'], 'object_channel': ['Red'], 'label': [1],
             'frame': [1], 'intensity_mean': [123.25]}).to_parquet(table, index=False)
         state = state.with_complete_step(step_name=cst.StepName.EXTRACT, artifact_kind=cst.ARTI_QUANTI, artifact_path=table)
@@ -62,12 +62,12 @@ def mock_rebuild_processing(monkeypatch: pytest.MonkeyPatch, adapter: SettingsAd
     Exercise real metadata/state publication without loading segmentation or tracking backends.
     """
     from typing import Any
-    from fits.workflows.definitions.models import StepProfile
-    from fits.workflows.definitions.registry import REGISTRY
-    from fits.tasks.common.preparation import load_input_reader
-    from fits.tasks.common.artifact_results import save_step_result, complete_step_result
-    from fits.tasks.common.table_results import save_parquet
-    from fits.workflows.artifacts.provenance import revision_payload
+    from fisch.workflows.definitions.models import StepProfile
+    from fisch.workflows.definitions.registry import REGISTRY
+    from fisch.tasks.common.preparation import load_input_reader
+    from fisch.tasks.common.artifact_results import save_step_result, complete_step_result
+    from fisch.tasks.common.table_results import save_parquet
+    from fisch.workflows.artifacts.provenance import revision_payload
 
     calls: list[str] = []
     adapter.set_segment_channels([{'channel': 'Red'}])
@@ -105,14 +105,14 @@ def mock_rebuild_processing(monkeypatch: pytest.MonkeyPatch, adapter: SettingsAd
 
 
 def test_migrate_preserves_legacy_pixels_measurements_and_producer_history(tmp_path):
-    from fits.workflows.checks.compatibility import inspect_run_compatibility
-    from fits.workflows.checks.artifacts import inspect_run
+    from fisch.workflows.checks.compatibility import inspect_run_compatibility
+    from fisch.workflows.checks.artifacts import inspect_run
     adapter, old, pixels = legacy_run(tmp_path, masks=True)
     plan = plan_migration(tmp_path)
     assert plan.migrate and not plan.rebuild
     state = migrate(plan)[0]
     assert state.migration_checkpoint == 'bg_sub'
-    assert state.artifact(cst.ARTI_IMG_BGSUB).name == cst.FITS_ARRAY_BGSUB
+    assert state.artifact(cst.ARTI_IMG_BGSUB).name == cst.ARRAY_BGSUB
     assert state.artifact(cst.ARTI_IMG_RAW) is None
     np.testing.assert_array_equal(ScopeIO.from_path(state.artifact(cst.ARTI_IMG)).get_array().array, pixels)
     for kind in (cst.ARTI_IMG, cst.ARTI_SEG, cst.ARTI_QUANTI):
@@ -129,10 +129,10 @@ def test_migrate_preserves_legacy_pixels_measurements_and_producer_history(tmp_p
 
 
 def test_migrated_preprocess_can_build_segmentation_without_rebuilding(tmp_path, monkeypatch):
-    from fits.pipeline import start_pipeline
-    from fits.workflows.definitions.registry import REGISTRY
-    from fits.tasks.common.preparation import load_input_reader
-    from fits.tasks.common.artifact_results import save_step_result
+    from fisch.pipeline import start_pipeline
+    from fisch.workflows.definitions.registry import REGISTRY
+    from fisch.tasks.common.preparation import load_input_reader
+    from fisch.tasks.common.artifact_results import save_step_result
     adapter, old, pixels = legacy_run(tmp_path)
     state = migrate(plan_migration(tmp_path))[0]
     before = state.artifact(cst.ARTI_IMG).read_bytes()
@@ -157,11 +157,11 @@ def test_optional_full_rebuild_replaces_final_results_with_consistent_provenance
     """
     Rebuild registration, final arrays, masks and measurements instead of accepting old finals.
     """
-    from fits.workflows.file_management.api import plan_full_rebuild, update_downstream
-    from fits.workflows.file_management.history import snapshots
-    from fits.workflows.checks.artifacts import inspect_run
-    from fits.settings.loader import load_settings
-    from fits.pipeline import start_pipeline
+    from fisch.workflows.file_management.api import plan_full_rebuild, update_downstream
+    from fisch.workflows.file_management.history import snapshots
+    from fisch.workflows.checks.artifacts import inspect_run
+    from fisch.settings.loader import load_settings
+    from fisch.pipeline import start_pipeline
     adapter, old, pixels = legacy_run(tmp_path, masks=True, frames=2, channels=2)
     old = replace(old, completed_steps=('convert', 'register_channel', 'register_time', 'bg_sub', 'segment', 'extract'))
     (old.workdir / 'experiment_state.json').write_text(json.dumps(serialize_experiment_state(old)))
@@ -178,7 +178,7 @@ def test_optional_full_rebuild_replaces_final_results_with_consistent_provenance
     current = discover_saved_states(tmp_path)[0]
     assert current.migration_checkpoint is None
     assert calls == ['register_channel', 'register_time', 'bg_sub', 'segment', 'extract']
-    from fits.workflows.definitions.registry import REGISTRY
+    from fisch.workflows.definitions.registry import REGISTRY
     for step in plan.scope[state.workdir]:
         assert (current.workdir / REGISTRY[step].profile.output_name).is_file()
     np.testing.assert_array_equal(ScopeIO.from_path(current.artifact(cst.ARTI_IMG)).get_array().array, pixels + 3)
@@ -194,19 +194,19 @@ def test_optional_full_rebuild_replaces_final_results_with_consistent_provenance
 def test_downstream_update_preserves_upstream_and_other_series(tmp_path, monkeypatch):
     import importlib
     import shutil
-    from fits.workflows.experiments import save_experiment_state
-    from fits.workflows.file_management.api import plan_downstream_update, update_downstream
-    from fits.workflows.checks.artifacts import inspect_run
-    from fits.pipeline import start_pipeline
+    from fisch.workflows.experiments import save_experiment_state
+    from fisch.workflows.file_management.api import plan_downstream_update, update_downstream
+    from fisch.workflows.checks.artifacts import inspect_run
+    from fisch.pipeline import start_pipeline
     from scope_io.writers.metadata_update import rewrite_metadata
     adapter, old, pixels = legacy_run(tmp_path)
     state = migrate(plan_migration(tmp_path))[0]
     reader = ScopeIO.from_path(state.original_image)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
-        channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
-    raw = reader.save_array(pixels, metadata=payload, output_path=state.workdir / cst.FITS_ARRAY_RAW)
+        channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '5.0.0'}}).new_revision()
+    raw = reader.save_array(pixels, metadata=payload, output_path=state.workdir / cst.ARRAY_RAW)
     bg = reader.save_array(pixels.astype(np.float32), metadata=payload.with_artifact(artifact_type=cst.ARTI_IMG_BGSUB).new_revision([
-        {'artifact_path': raw.name, 'created_at': payload.artifact.created_at}]), output_path=state.workdir / cst.FITS_ARRAY_BGSUB)
+        {'artifact_path': raw.name, 'created_at': payload.artifact.created_at}]), output_path=state.workdir / cst.ARRAY_BGSUB)
     state = state.with_complete_step(step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=raw)
     state = state.with_complete_step(step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG_BGSUB, artifact_path=bg)
     save_experiment_state(state)
@@ -221,7 +221,7 @@ def test_downstream_update_preserves_upstream_and_other_series(tmp_path, monkeyp
     raw_bytes = raw.read_bytes()
     plan = plan_downstream_update(tmp_path)
     assert plan.scope == {state.workdir: ('bg_sub',)}
-    monkeypatch.setattr(importlib.import_module('fits.tasks.bg_sub'), 'bg_sub', lambda array, **kw: array.astype(np.float32) + .5)
+    monkeypatch.setattr(importlib.import_module('fisch.tasks.bg_sub'), 'bg_sub', lambda array, **kw: array.astype(np.float32) + .5)
     update_downstream(plan, lambda plan: start_pipeline(adapter.save_to_run_dir(), maintenance=plan, terminal_progress=False))
     assert raw.read_bytes() == raw_bytes
     assert all(path.read_bytes() == data for path, data in untouched.items())
@@ -230,7 +230,7 @@ def test_downstream_update_preserves_upstream_and_other_series(tmp_path, monkeyp
 
 
 def test_migration_rollback_restores_original_files_and_layout(tmp_path, monkeypatch):
-    import fits.workflows.file_management.relocation as portable
+    import fisch.workflows.file_management.relocation as portable
     adapter, state, pixels = legacy_run(tmp_path, masks=True)
     originals = {path: path.read_bytes() for path in state.workdir.iterdir() if path.is_file()}
     plan = plan_migration(tmp_path)
@@ -245,8 +245,8 @@ def test_migration_rollback_restores_original_files_and_layout(tmp_path, monkeyp
 
 
 def test_migrated_masks_notice_new_processing_inputs(tmp_path):
-    from fits.workflows.experiments import save_experiment_state
-    from fits.workflows.checks.artifacts import inspect_run
+    from fisch.workflows.experiments import save_experiment_state
+    from fisch.workflows.checks.artifacts import inspect_run
     adapter, old, pixels = legacy_run(tmp_path, masks=True)
     state = migrate(plan_migration(tmp_path))[0]
     old_image = state.artifact(cst.ARTI_IMG)
@@ -255,7 +255,7 @@ def test_migrated_masks_notice_new_processing_inputs(tmp_path):
     # references the old canonical image and must become stale.
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_BGSUB).new_revision()
     current = reader.save_array(pixels.astype(np.float32), metadata=payload,
-        output_path=state.workdir / cst.FITS_ARRAY_BGSUB)
+        output_path=state.workdir / cst.ARRAY_BGSUB)
     state = state.with_complete_step(step_name=cst.StepName.BG_SUB, artifact_kind=cst.ARTI_IMG_BGSUB, artifact_path=current)
     save_experiment_state(state)
     report = inspect_run(tmp_path, adapter.as_mapping(), for_execution=False)
@@ -263,7 +263,7 @@ def test_migrated_masks_notice_new_processing_inputs(tmp_path):
 
 
 def test_migrated_final_can_be_compacted_without_reprocessing(tmp_path):
-    from fits.workflows.file_management.compaction import compact_run
+    from fisch.workflows.file_management.compaction import compact_run
     adapter, old, pixels = legacy_run(tmp_path, masks=True)
     state = migrate(plan_migration(tmp_path))[0]
     stamp = read_metadata(state.artifact(cst.ARTI_IMG)).artifact.created_at
@@ -272,14 +272,14 @@ def test_migrated_final_can_be_compacted_without_reprocessing(tmp_path):
     assert compacted.compacted
     assert read_metadata(compacted.artifact(cst.ARTI_IMG)).artifact.created_at == stamp
     np.testing.assert_array_equal(ScopeIO.from_path(compacted.artifact(cst.ARTI_IMG)).get_array().array, pixels)
-    assert compacted.artifact(cst.ARTI_SEG).name == cst.FITS_MASKS_COMPACTED
+    assert compacted.artifact(cst.ARTI_SEG).name == cst.MASKS_COMPACTED
 
 
 def test_full_rebuild_merges_all_series_from_one_original(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import importlib
-    from fits.pipeline import start_pipeline
-    from fits.workflows.experiments import save_experiment_state
-    from fits.workflows.file_management.api import plan_full_rebuild, update_downstream
+    from fisch.pipeline import start_pipeline
+    from fisch.workflows.experiments import save_experiment_state
+    from fisch.workflows.file_management.api import plan_full_rebuild, update_downstream
     adapter, old, pixels = legacy_run(tmp_path)
     mock_rebuild_processing(monkeypatch, adapter)
     adapter.save_to_run_dir()
@@ -288,9 +288,9 @@ def test_full_rebuild_merges_all_series_from_one_original(tmp_path: Path, monkey
     other.mkdir()
     reader = ScopeIO.from_path(first.original_image)
     payload = reader.build_payload(export_channels='all', artifact_type=cst.ARTI_IMG_RAW,
-        channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '4.0.0'}}).new_revision()
+        channel_labels=['Red'], custom_metadata={'pipeline_meta': {'version': '5.0.0'}}).new_revision()
     raw = reader.save_array(np.full((8, 8), 9, dtype=np.uint16), metadata=payload,
-        output_path=other / cst.FITS_ARRAY_RAW)
+        output_path=other / cst.ARRAY_RAW)
     sibling = ExperimentState.init(other, first.original_image, run_dir=tmp_path).with_complete_step(
         step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=raw)
     save_experiment_state(sibling)
@@ -308,7 +308,7 @@ def test_full_rebuild_merges_all_series_from_one_original(tmp_path: Path, monkey
             return self.first.resolve_channel_selection(**kwargs)
         def split_series(self):
             return [self.first, from_path(source)]
-    monkeypatch.setattr(importlib.import_module('fits.tasks.convert').ScopeIO, 'from_path',
+    monkeypatch.setattr(importlib.import_module('fisch.tasks.convert').ScopeIO, 'from_path',
         lambda path: TwoSeries(path) if Path(path) == source else from_path(path))
     plan = plan_full_rebuild(tmp_path)
     assert set(plan.scope) == {first.workdir, other}
@@ -319,36 +319,36 @@ def test_full_rebuild_merges_all_series_from_one_original(tmp_path: Path, monkey
     assert len(states) == 2
     current = next(state for state in states if state.workdir == first.workdir)
     assert current.artifact(cst.ARTI_IMG_RAW).is_file()
-    assert current.artifact(cst.ARTI_IMG).name == cst.FITS_ARRAY_BGSUB
+    assert current.artifact(cst.ARTI_IMG).name == cst.ARRAY_BGSUB
 
 
 def test_update_rebinds_saved_run_settings_after_move(tmp_path):
     import shutil
     import tomlkit
-    from fits.workflows.file_management.api import plan_update, update
+    from fisch.workflows.file_management.api import plan_update, update
     old_root = tmp_path / 'old'
     old_root.mkdir()
     adapter, old, pixels = legacy_run(old_root)
     state = migrate(plan_migration(old_root))[0]
-    settings = old_root / '.fits/fits_settings.toml'
+    settings = old_root / '.pipeline/settings.toml'
     document = tomlkit.parse(settings.read_text())
     document['optimize'] = str(state.original_image)
     settings.write_text(tomlkit.dumps(document))
     moved = tmp_path / 'moved'
     shutil.move(old_root, moved)
     update(plan_update(moved))
-    document = tomlkit.parse((moved / '.fits/fits_settings.toml').read_text())
+    document = tomlkit.parse((moved / '.pipeline/settings.toml').read_text())
     assert document['run_dir'] == str(moved)
     assert document['optimize'] == str(moved / 'control/image/image.tif')
 
 
 def test_full_rebuild_recreates_segmentation_and_tracking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from fits.workflows.file_management.api import plan_full_rebuild, update_downstream
-    from fits.workflows.definitions.registry import REGISTRY
-    from fits.workflows.checks.artifacts import inspect_run
-    from fits.tasks.common.preparation import load_input_reader
-    from fits.tasks.common.artifact_results import save_step_result
-    from fits.pipeline import start_pipeline
+    from fisch.workflows.file_management.api import plan_full_rebuild, update_downstream
+    from fisch.workflows.definitions.registry import REGISTRY
+    from fisch.workflows.checks.artifacts import inspect_run
+    from fisch.tasks.common.preparation import load_input_reader
+    from fisch.tasks.common.artifact_results import save_step_result
+    from fisch.pipeline import start_pipeline
     adapter, state, pixels = legacy_run(tmp_path, frames=2)
     image = state.artifact(cst.ARTI_IMG)
     reader = ScopeIO.from_path(image)
@@ -377,8 +377,8 @@ def _active_run_bytes(root: Path) -> dict[Path, bytes]:
     Capture active files without retained history or the runtime write lock.
     """
     return {path.relative_to(root): path.read_bytes() for path in root.rglob('*')
-            if path.is_file() and not path.is_relative_to(root / '.fits/backup')
-            and path != root / '.fits/run_write.lock'}
+            if path.is_file() and not path.is_relative_to(root / '.pipeline/backup')
+            and path != root / '.pipeline/run_write.lock'}
 
 
 def test_migration_history_restores_original_layout_and_bytes(tmp_path: Path) -> None:
@@ -386,9 +386,9 @@ def test_migration_history_restores_original_layout_and_bytes(tmp_path: Path) ->
     Restore pre-v4 files exactly, then recover the retained migrated run as well.
     """
     import shutil
-    from fits.workflows.file_management.history import snapshots, restore_history
-    from fits.workflows.checks.compatibility import inspect_run_compatibility
-    from fits.workflows.experiments import discover_saved_states
+    from fisch.workflows.file_management.history import snapshots, restore_history
+    from fisch.workflows.checks.compatibility import inspect_run_compatibility
+    from fisch.workflows.experiments import discover_saved_states
 
     _, old, _ = legacy_run(tmp_path, masks=True)
     sibling = old.workdir.with_name('image_s2')
@@ -422,8 +422,8 @@ def test_failed_migration_keeps_original_run_without_history(tmp_path: Path, mon
     """
     Roll back migration and discard its unpublished folder copy on failure.
     """
-    from fits.workflows.file_management.history import snapshots
-    import fits.workflows.file_management.relocation as relocation
+    from fisch.workflows.file_management.history import snapshots
+    import fisch.workflows.file_management.relocation as relocation
 
     legacy_run(tmp_path, masks=True)
     before = _active_run_bytes(tmp_path)
@@ -439,15 +439,15 @@ def test_failed_migration_keeps_original_run_without_history(tmp_path: Path, mon
         migrate(plan_migration(tmp_path))
     assert _active_run_bytes(tmp_path) == before
     assert not snapshots(tmp_path)
-    assert not list((tmp_path / '.fits').glob('file_update_*'))
+    assert not list((tmp_path / '.pipeline').glob('file_update_*'))
 
 
 def test_failed_run_restore_preserves_both_versions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Recover the migrated run and its original snapshot if restoration fails.
     """
-    from fits.workflows.file_management.history import snapshots, restore_history, verify_snapshot
-    import fits.workflows.file_management.run_history as run_history
+    from fisch.workflows.file_management.history import snapshots, restore_history, verify_snapshot
+    import fisch.workflows.file_management.run_history as run_history
 
     legacy_run(tmp_path, masks=True)
     migrate(plan_migration(tmp_path))
@@ -476,8 +476,8 @@ def test_migration_checks_space_before_review_and_execution(tmp_path: Path,
     """
     Stop without modifying the run when space is low initially or after review.
     """
-    from fits.workflows.file_management.history import snapshots
-    import fits.workflows.file_management.run_history as run_history
+    from fisch.workflows.file_management.history import snapshots
+    import fisch.workflows.file_management.run_history as run_history
 
     legacy_run(tmp_path, masks=True)
     plan = plan_migration(tmp_path) if after_review else None
@@ -492,15 +492,15 @@ def test_migration_checks_space_before_review_and_execution(tmp_path: Path,
             plan_migration(tmp_path)
     assert _active_run_bytes(tmp_path) == before
     assert not snapshots(tmp_path)
-    assert not list((tmp_path / '.fits').glob('file_update_*'))
+    assert not list((tmp_path / '.pipeline').glob('file_update_*'))
 
 
 def test_update_backup_is_not_discovered_as_active_experiment(tmp_path: Path) -> None:
     """
     Keep pre-update folders restorable without discovering their states as live work.
     """
-    from fits.workflows.file_management.api import plan_update, update
-    from fits.workflows.file_management.history import snapshots, restore_history
+    from fisch.workflows.file_management.api import plan_update, update
+    from fisch.workflows.file_management.history import snapshots, restore_history
     _, _, _ = legacy_run(tmp_path, masks=True)
     state = migrate(plan_migration(tmp_path))[0]
     original = state.artifact(cst.ARTI_IMG)
@@ -526,13 +526,13 @@ def test_pipeline_overwrite_retains_experiment_backup(tmp_path: Path, monkeypatc
     """
     Retain a restorable experiment folder before an ordinary overwrite run.
     """
-    from fits.pipeline import start_pipeline
-    from fits.workflows.file_management.history import snapshots, restore_history
+    from fisch.pipeline import start_pipeline
+    from fisch.workflows.file_management.history import snapshots, restore_history
     adapter, _, _ = legacy_run(tmp_path)
     mock_rebuild_processing(monkeypatch, adapter)
     adapter.save_to_run_dir()
     state = migrate(plan_migration(tmp_path))[0]
-    from fits.workflows.file_management.api import plan_full_rebuild, update_downstream
+    from fisch.workflows.file_management.api import plan_full_rebuild, update_downstream
     plan = plan_full_rebuild(tmp_path)
     update_downstream(plan, lambda reviewed: start_pipeline(adapter.save_to_run_dir(), maintenance=reviewed, terminal_progress=False))
     state = discover_saved_states(tmp_path)[0]
@@ -553,17 +553,17 @@ def test_previous_backup_folder_name_remains_restorable(tmp_path: Path) -> None:
     """
     Retain access to backups created before the storage-directory rename.
     """
-    from fits.workflows.file_management.history import snapshots, restore_history
+    from fisch.workflows.file_management.history import snapshots, restore_history
     _, old, _ = legacy_run(tmp_path)
     migrate(plan_migration(tmp_path))
-    (tmp_path / '.fits/backup').rename(tmp_path / '.fits/legacy')
+    (tmp_path / '.pipeline/backup').rename(tmp_path / '.pipeline/legacy')
     entries = snapshots(tmp_path)
     assert len(entries) == 1 and entries[0].whole_run
     restore_history(tmp_path, entries[0])
-    image = old.workdir / cst.FITS_ARRAY_NAME
+    image = old.workdir / cst.ARRAY_NAME
     assert image.is_file()
     assert read_metadata(image).custom_metadata['pipeline_meta']['version'] == '3.3.0'
-    assert (tmp_path / '.fits/backup').is_dir()
+    assert (tmp_path / '.pipeline/backup').is_dir()
 
 
 def test_failed_full_rebuild_retains_a_restorable_original(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -571,11 +571,11 @@ def test_failed_full_rebuild_retains_a_restorable_original(tmp_path: Path, monke
     Keep an exact pre-rebuild backup even if an intermediate step fails.
     """
     from typing import Any
-    from fits.workflows.definitions.models import StepProfile
-    from fits.workflows.definitions.registry import REGISTRY
-    from fits.workflows.file_management.api import plan_full_rebuild, update_downstream
-    from fits.workflows.file_management.history import snapshots, restore_history
-    from fits.pipeline import start_pipeline
+    from fisch.workflows.definitions.models import StepProfile
+    from fisch.workflows.definitions.registry import REGISTRY
+    from fisch.workflows.file_management.api import plan_full_rebuild, update_downstream
+    from fisch.workflows.file_management.history import snapshots, restore_history
+    from fisch.pipeline import start_pipeline
     adapter, _, _ = legacy_run(tmp_path, masks=True)
     mock_rebuild_processing(monkeypatch, adapter)
     adapter.save_to_run_dir()

@@ -1,9 +1,9 @@
-from fits.environment.constant import StepName
-from fits.workflows.metadata import FitsMeta
+from fisch.environment.constant import StepName
+from fisch.workflows.metadata import PipelineMetadata
 
 
-def test_fits_metadata_records_run_and_step_provenance() -> None:
-    metadata = FitsMeta.init(user_name="ben").with_step(
+def test_proc_metadata_records_run_and_step_provenance() -> None:
+    metadata = PipelineMetadata.init(user_name="ben").with_step(
         step_name=StepName.CONVERT,
         created_by="fits-io",
         exported_channel="all",

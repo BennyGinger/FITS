@@ -5,15 +5,15 @@ import numpy as np
 import pytest
 from PySide6.QtGui import QColor
 
-from fits.gui.viewer.tracking.path_cache import PathDrawingCache
-from fits.gui.viewer.tracking.path_item import prepare_paths
+from fisch.gui.viewer.tracking.path_cache import PathDrawingCache
+from fisch.gui.viewer.tracking.path_item import prepare_paths
 
 
 STYLE = {"single": False, "color": "#ffd700", "thickness": 2, "markers": True, "size": 3}
 
 
 def drawing(tmp_path):
-    source = tmp_path / "fits_track.tif"
+    source = tmp_path / "proc_masks_track.tif"
     source.write_bytes(b"source mask")
     tracks = {7: np.array([[0, 3, 4], [1, 6, 5], [3, 9, 7]], dtype=np.float64)}
     cache = PathDrawingCache(source, 0, 0, tracks, STYLE)
@@ -66,7 +66,7 @@ def test_broken_disk_drawing_is_ignored(tmp_path, corruption):
 
 
 def test_partial_drawing_is_removed_and_not_reused(tmp_path):
-    source = tmp_path / "fits_track.tif"
+    source = tmp_path / "proc_masks_track.tif"
     source.touch()
     tracks = {7: np.array([[0, 1, 1]], dtype=np.float64)}
     cache = PathDrawingCache(source, 0, 0, tracks, STYLE)
@@ -81,7 +81,7 @@ def test_partial_drawing_is_removed_and_not_reused(tmp_path):
 
 @pytest.mark.parametrize("limit", ["CACHE_ENTRIES", "CACHE_BYTES"])
 def test_disk_cache_keeps_latest_drawing_when_pruning(tmp_path, monkeypatch, limit):
-    import fits.gui.viewer.tracking.path_cache as module
+    import fisch.gui.viewer.tracking.path_cache as module
     source, tracks, old, _ = drawing(tmp_path)
     monkeypatch.setattr(module, limit, 1)
     latest = PathDrawingCache(source, 0, 0, tracks, {**STYLE, "thickness": 4})
@@ -112,7 +112,7 @@ def test_read_only_cache_can_still_be_loaded(tmp_path, monkeypatch):
 def test_unwritable_cache_directory_uses_temporary_storage(tmp_path, monkeypatch):
     from pathlib import Path
 
-    source = tmp_path / "fits_track.tif"
+    source = tmp_path / "proc_masks_track.tif"
     source.touch()
     cache = PathDrawingCache(source, 0, 0, {}, STYLE)
     mkdir = Path.mkdir

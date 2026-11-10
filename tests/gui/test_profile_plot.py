@@ -12,7 +12,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QWidget
 
-from fits.gui.viewer.common.profile_plot import AxisRangeDialog, ProfilePlot
+from fisch.gui.viewer.common.profile_plot import AxisRangeDialog, ProfilePlot
 
 
 _APP: QApplication | None = None

@@ -1,9 +1,9 @@
-"""Validated compartment settings exposed by FITS quantification."""
+"""Validated compartment settings exposed by FIScH quantification."""
 
 import pytest
 from pydantic import ValidationError
 
-from fits.settings.models import ExtractSettings
+from fisch.settings.models import ExtractSettings
 
 
 @pytest.mark.parametrize("field, value", [

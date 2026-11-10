@@ -9,13 +9,13 @@ import pytest
 import tifffile
 from scope_io import ScopeIO
 
-from fits.environment.constant import StepName
-from fits.workflows.experiments import ExperimentState
-from fits.settings.models import BGSubSettings
-from fits.tasks.bg_sub import remove_bg
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.definitions.inputs import configured_profile
-from fits.workflows.runtime.errors import StepExecutionError
+from fisch.environment.constant import StepName
+from fisch.workflows.experiments import ExperimentState
+from fisch.settings.models import BGSubSettings
+from fisch.tasks.bg_sub import remove_bg
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.definitions.inputs import configured_profile
+from fisch.workflows.runtime.errors import StepExecutionError
 
 
 class _CallableWithoutName:
@@ -59,7 +59,7 @@ class DummyReader:
 
 def _image_state(tmp_path: Path) -> ExperimentState:
     raw = tmp_path / "raw.nd2"
-    image = tmp_path / "fits_array.tif"
+    image = tmp_path / "proc_array.tif"
     raw.write_bytes(b"")
     image.write_bytes(b"")
     return ExperimentState.init(tmp_path, raw).with_complete_step(
@@ -88,16 +88,16 @@ def test_remove_bg_processes_only_included_channels(monkeypatch, tmp_path: Path)
     input_array = np.stack(
         [np.full((4, 4), 1, dtype=np.uint16), np.full((4, 4), 5, dtype=np.uint16)]
     )
-    reader = DummyReader(input_array, tmp_path / "fits_array.tif")
+    reader = DummyReader(input_array, tmp_path / "proc_array.tif")
     seen: dict[str, Any] = {}
 
     def fake_bg_sub(array: np.ndarray, **kwargs: Any) -> np.ndarray:
         seen.update(kwargs)
         return array + 2
 
-    monkeypatch.setattr("fits.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
-    monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
-    monkeypatch.setattr("fits.tasks.bg_sub.bg_sub", fake_bg_sub)
+    monkeypatch.setattr("fisch.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fisch.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
+    monkeypatch.setattr("fisch.tasks.bg_sub.bg_sub", fake_bg_sub)
 
     result = remove_bg(
         BGSubSettings.model_validate({"exclude_channel": "RFP", "statistic": "median", "bg_execution": "sequential"}),
@@ -124,7 +124,7 @@ def test_remove_bg_saves_signed_float32_and_restores_excluded_channels(monkeypat
     input_path = tmp_path / "input.tif"
     tifffile.imwrite(input_path, original, imagej=True, metadata={"axes": "CYX"})
     source = ScopeIO.from_path(input_path).save_array(
-        original, channel_labels=("GFP", "RFP"), output_path=tmp_path / "fits_array.tif")
+        original, channel_labels=("GFP", "RFP"), output_path=tmp_path / "proc_array.tif")
     raw = tmp_path / "raw.nd2"
     raw.write_bytes(b"raw")
     state = ExperimentState.init(tmp_path, raw).with_complete_step(
@@ -134,9 +134,9 @@ def test_remove_bg_saves_signed_float32_and_restores_excluded_channels(monkeypat
         """Supply known signed fractional results independently of background estimation."""
         return array.astype(np.float32) - 106.5
 
-    monkeypatch.setattr("fits.tasks.bg_sub.bg_sub", subtract)
+    monkeypatch.setattr("fisch.tasks.bg_sub.bg_sub", subtract)
     remove_bg(BGSubSettings(exclude_channel=exclude), state, configured_profile(REGISTRY[StepName.BG_SUB].profile, {"convert": {"enabled": True}}))
-    saved = ScopeIO.from_path(tmp_path / "fits_array_bgsub.tif").get_array().array
+    saved = ScopeIO.from_path(tmp_path / "proc_array_bgsub.tif").get_array().array
     assert saved.dtype == np.float32
     np.testing.assert_array_equal(saved[0], original[0].astype(np.float32) - 106.5)
     expected_second = original[1] if exclude else original[1].astype(np.float32) - 106.5
@@ -146,11 +146,11 @@ def test_remove_bg_saves_signed_float32_and_restores_excluded_channels(monkeypat
 
 def test_remove_bg_skips_completed_step(monkeypatch, tmp_path: Path) -> None:
     state = _image_state(tmp_path)
-    reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), tmp_path / "fits_array.tif")
-    monkeypatch.setattr("fits.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
-    monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=True))
+    reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), tmp_path / "proc_array.tif")
+    monkeypatch.setattr("fisch.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fisch.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=True))
     monkeypatch.setattr(
-        "fits.tasks.bg_sub.bg_sub",
+        "fisch.tasks.bg_sub.bg_sub",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("background subtraction should not run")),
     )
 
@@ -159,9 +159,9 @@ def test_remove_bg_skips_completed_step(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_remove_bg_wraps_reader_errors(monkeypatch, tmp_path: Path) -> None:
-    reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), tmp_path / "fits_array.tif")
-    monkeypatch.setattr("fits.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
-    monkeypatch.setattr("fits.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
+    reader = DummyReader(np.ones((2, 4, 4), dtype=np.uint16), tmp_path / "proc_array.tif")
+    monkeypatch.setattr("fisch.tasks.common.preparation.ScopeIO.from_path", lambda path: reader)
+    monkeypatch.setattr("fisch.tasks.common.preparation.decide_run", lambda *args: SimpleNamespace(is_complete=False))
 
     with pytest.raises(StepExecutionError, match="Unknown exclude_channel"):
         remove_bg(
@@ -174,11 +174,11 @@ def test_remove_bg_wraps_reader_errors(monkeypatch, tmp_path: Path) -> None:
 @pytest.fixture(autouse=True)
 def isolate_revision_payload_for_fake_readers(monkeypatch):
     from scope_io.metadata.models import ImageMetadata
-    from fits.workflows.artifacts.provenance import revision_payload
+    from fisch.workflows.artifacts.provenance import revision_payload
     def payload(reader, state, profile, *, export_channels):
         if hasattr(reader, 'build_payload'):
             return revision_payload(reader, state, profile, export_channels=export_channels)
         return ImageMetadata().with_artifact(
             artifact_type=profile.output_artifact, channel_labels=list(export_channels)
         ).with_custom_metadata(state.metadata_dump).new_revision()
-    monkeypatch.setattr('fits.tasks.common.artifact_results.revision_payload', payload)
+    monkeypatch.setattr('fisch.tasks.common.artifact_results.revision_payload', payload)

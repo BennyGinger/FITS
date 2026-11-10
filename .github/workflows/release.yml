@@ -10,12 +10,12 @@ permissions:
 
 # Each run checks for all missing releases, including bumps in a skipped pending run.
 concurrency:
-  group: fits-releases
+  group: fisch-releases
   cancel-in-progress: false
 
 jobs:
   release:
-    if: github.repository == 'BennyGinger/FITS' && github.ref == 'refs/heads/main'
+    if: github.repository == 'BennyGinger/fisch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

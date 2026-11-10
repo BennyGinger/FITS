@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from collections.abc import Iterator
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,11 +12,24 @@ import tifffile
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from fits.gui.channel_labels import ChannelLabelsWindow
-from fits.gui.main_window.window import FitsMainWindow
-from fits.settings.loader import run_settings_path
-from fits.gui.settings import SettingsAdapter
+from fisch.gui.channel_labels import ChannelLabelsWindow
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.settings.loader import run_settings_path
+from fisch.gui.settings import SettingsAdapter
 from scope_io import ScopeIO
+from fisch.gui.segmentation_models.loader import ModelOptionsLoader
+
+
+@pytest.fixture(scope='module', autouse=True)
+def finish_model_discovery() -> Iterator[None]:
+    """
+    Retain Qt and finish shared model discovery before tearing down the application.
+    """
+    app = QApplication.instance() or QApplication([])
+    yield
+    loader = app.findChild(ModelOptionsLoader, 'fisch-cellpose-model-options')
+    if loader is not None:
+        loader.wait()
 
 
 def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> None:
@@ -25,25 +40,25 @@ def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> N
     pixels = np.zeros((2, 8, 9), dtype=np.uint8)
     tifffile.imwrite(source, pixels, imagej=True, metadata={"axes": "TYX"})
     ScopeIO.from_path(source).save_array(
-        pixels, channel_labels="GFP", custom_metadata={"pipeline_meta": {"version": "4.0.0"}}, output_path=experiment / "fits_array.tif")
+        pixels, channel_labels="GFP", custom_metadata={"pipeline_meta": {"version": "5.0.0"}}, output_path=experiment / "proc_array.tif")
     settings = run_settings_path(tmp_path)
     settings.parent.mkdir()
     settings.write_text('[convert.params]\nchannel_labels = ["GFP"]\n')
     adapter = SettingsAdapter()
     adapter.load(settings)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     editor: ChannelLabelsWindow | None = None
     try:
         layout = window.run_browser.selection_layout
         labels = []
-        for index in range(3):
+        for index in range(4):
             item = layout.itemAt(index)
             assert item is not None
             button = item.widget()
             assert isinstance(button, QPushButton)
             labels.append(button.text())
         assert labels == [
-            "Image / Mask Viewer", "Edit Channel Labels", "Full Report"]
+            "File Viewer", "Edit Track", "Edit Channel Labels", "Full Report"]
         window.run_dir_edit.setText(str(tmp_path))
         assert window.channel_labels_button.isEnabled()
         window.channel_labels_button.click()
@@ -59,7 +74,7 @@ def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> N
         assert editor.plan.run_dir == tmp_path
         assert editor._fields[0].text() == "GFP"
         assert editor.files.toPlainText() == (
-            f"Scanned {len(editor.plan.files)} FITS files.\n\n"
+            f"Scanned {len(editor.plan.files)} FIScH files.\n\n"
             "No files need updating.")
         app.processEvents()
         assert editor.status.y() > editor.save_button.y()
@@ -71,7 +86,7 @@ def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> N
         assert editor.files.geometry() == files_geometry
         file_count = len(editor.plan.files)
         editor._fields[0].setText("Green")
-        assert "experiment/fits_array.tif" in editor.files.toPlainText()
+        assert "experiment/proc_array.tif" in editor.files.toPlainText()
         editor.save_button.click()
         assert not editor.rename_progress.isHidden()
         assert editor.rename_progress.maximum() == 0
@@ -80,7 +95,7 @@ def test_main_window_channel_tool_order_and_run_wide_editor(tmp_path: Path) -> N
             if window.adapter.document["convert"]["params"]["channel_labels"] == ["Green"]:
                 break
             QTest.qWait(10)
-        assert ScopeIO.from_path(experiment / "fits_array.tif").channel_labels == ["Green"]
+        assert ScopeIO.from_path(experiment / "proc_array.tif").channel_labels == ["Green"]
         assert window.adapter.document["convert"]["params"]["channel_labels"] == ["Green"]
         assert editor.rename_progress.maximum() == file_count
         assert editor.rename_progress.value() == file_count
@@ -109,10 +124,10 @@ def test_editor_previews_only_files_with_changed_channel(tmp_path: Path) -> None
     tifffile.imwrite(source, raw, imagej=True, metadata={"axes": "TCYX"})
     array_path = ScopeIO.from_path(source).save_array(
         raw, channel_labels=["BFP", "RFP"],
-        output_path=experiment / "fits_array.tif")
+        output_path=experiment / "proc_array.tif")
     ScopeIO.from_path(array_path).save_array(
         raw[:, 1], export_channels=["RFP"],
-        output_path=experiment / "fits_mask.tif")
+        output_path=experiment / "proc_masks_seg.tif")
     settings = run_settings_path(tmp_path)
     settings.parent.mkdir()
     settings.write_text('[convert.params]\nchannel_labels = ["BFP", "RFP"]\n')
@@ -126,13 +141,13 @@ def test_editor_previews_only_files_with_changed_channel(tmp_path: Path) -> None
             QTest.qWait(10)
         assert editor.plan is not None
         assert editor.files.toPlainText() == (
-            f"Scanned {len(editor.plan.files)} FITS files.\n\n"
+            f"Scanned {len(editor.plan.files)} FIScH files.\n\n"
             "No files need updating.")
         editor._fields[0].setText("Blue")
         preview = editor.files.toPlainText()
-        assert "fits_array.tif" in preview
-        assert "fits_settings.toml" in preview
-        assert "fits_mask.tif" not in preview
+        assert "proc_array.tif" in preview
+        assert "settings.toml" in preview
+        assert "proc_masks_seg.tif" not in preview
         assert editor.save_button.isEnabled()
     finally:
         for _ in range(100):
@@ -155,7 +170,7 @@ def test_editor_stays_visible_when_inspection_fails(tmp_path: Path) -> None:
             QTest.qWait(10)
         assert editor.isVisible()
         assert editor.status.text() == "Could not inspect channel labels."
-        assert "No FITS TIFFs" in editor.files.toPlainText()
+        assert "No FIScH TIFFs" in editor.files.toPlainText()
     finally:
         if editor._job is not None:
             editor._job.wait(3000)

@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import logging
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Literal
+
+from fisch.environment.paths import ensure_metadata_directory
+
+
+LevelName = Literal["debug", "info", "warning", "error", "critical"]
+
+_LEVEL_MAP: dict[LevelName, int] = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL,
+}
+
+
+def configure_logging(*,
+                    log_dir: Path | None,
+                    console_level: LevelName = "info",
+                    file_level: LevelName = "debug",
+                    console_handler: logging.Handler | None = None,
+                    ) -> Path | None:
+    """
+    Configure global logging for the FIScH pipeline.
+
+    This function should be called once from the top-level CLI entry point.
+
+    Parameters
+    ----------
+    log_dir:
+        Exact directory in which to write log files, or None to disable file logging.
+    console_level:
+        Verbosity shown in the console.
+    file_level:
+        Verbosity written to the log file.
+    console_handler:
+        Optional application-provided handler. The CLI uses stdout by default;
+        the GUI supplies a Qt signal handler.
+    """
+    root = logging.getLogger()
+
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+
+    root.propagate = False
+
+    # Let all records flow through the root logger.
+    # Individual handlers decide which levels to emit.
+    root.setLevel(logging.DEBUG)
+
+    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+
+    console_handler = console_handler or logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(_LEVEL_MAP[console_level])
+    console_handler.set_name("proc_console")
+    root.addHandler(console_handler)
+
+    log_path = None
+    if log_dir is not None:
+        ensure_metadata_directory(log_dir)
+
+        log_path = log_dir / f"proc_{datetime.now():%Y%m%d_%H%M%S}.log"
+
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(_LEVEL_MAP[file_level])
+        file_handler.set_name("proc_file")
+        root.addHandler(file_handler)
+
+    # Reduce verbosity of noisy third-party loggers by default.
+    _quiet_logger("cellpose")
+    _quiet_logger("scope_io.readers.r_nd2", logging.ERROR)
+    _quiet_logger("numba")
+    _quiet_logger("numcodecs")
+    _quiet_logger("hydra.core.utils")
+    _quiet_logger("trackastra.model.model_api")
+    return log_path
+
+
+def _quiet_logger(name: str, level: int = logging.WARNING,) -> None:
+    logging.getLogger(name).setLevel(level)

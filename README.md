@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="assets/fits_logo.png" alt="FITS logo: fluorescent cells and tracking trajectories forming a fish" width="480">
+  <img src="assets/fisch_logo.png" alt="FIScH logo: fluorescent cells and tracking trajectories forming a fish" width="480">
 </p>
 
 <p align="center">
-  <img src="assets/fits_title.svg" alt="Fluorescent Image Tracking Software" width="900">
+  <img src="assets/fisch_title.svg" alt="Fluorescent Imaging and Single-cell Histories" width="900">
 </p>
 
 ## Description
 
-FITS—Fluorescent Image Tracking Software—is a reproducible workflow for
+FIScH—Fluorescent Imaging and Single-cell Histories—is a reproducible workflow for
 processing and quantifying fluorescence-microscopy experiments. It brings image
 conversion, registration, background subtraction, segmentation, tracking,
 spatial profiling, and labeled-region extraction into one experiment-aware
@@ -28,7 +28,7 @@ workflow engine.
 
 - **Linux or Windows.** A macOS installer is available for testing.
 - **Git**, installed and available in your terminal (`git --version`).
-- **uv**, the tool that installs Python and the libraries FITS needs in a dedicated
+- **uv**, the tool that installs Python and the libraries FIScH needs in a dedicated
   environment. Setup installs uv automatically if missing; existing installations
   are reused.
 - **Internet access** and a folder you can write to for the Git clone.
@@ -36,19 +36,19 @@ workflow engine.
 You do not need to install Python separately. Setup installs Python 3.12 and
 creates the repository's `.venv`. **A GPU is optional.** Run the installer as
 normal user, without `sudo` or **Run as administrator**, and keep the repository
-folder afterward: the shortcuts launch FITS from there.
+folder afterward: the shortcuts launch FIScH from there.
 
 ### Linux
 
 Install [Git](https://git-scm.com/downloads/linux), then run:
 
 ```bash
-git clone https://github.com/BennyGinger/FITS.git fits
-cd fits
+git clone https://github.com/BennyGinger/fisch.git
+cd fisch
 bash install_linux.sh
 ```
 
-Open **FITS** from your Applications menu, or run
+Open **FIScH** from your Applications menu, or run
 `bash startup/launch_linux.sh` from the repository folder.
 
 ### Windows
@@ -57,19 +57,19 @@ Install [Git for Windows](https://git-scm.com/downloads/win), open PowerShell,
 then run:
 
 ```powershell
-git clone https://github.com/BennyGinger/FITS.git fits
-cd fits
+git clone https://github.com/BennyGinger/fisch.git
+cd fisch
 .\install_win.bat
 ```
 
-Open **FITS** from the Start menu or desktop shortcut.
+Open **FIScH** from the Start menu or desktop shortcut.
 
 ### macOS (experimental)
 
 Follow the [macOS installation instructions](docs/user_guide/installation.md#macos-experimental).
 Mac dependency compatibility and processing still require validation on real hardware.
 
-For an existing clone, pull FITS updates and rerun its installer from the main
+For an existing clone, pull FIScH updates and rerun its installer from the main
 repository folder. Setup updates clean, older submodules to the versions required
 by that checkout before installing dependencies. Interactive installers wait for
 **Enter** before finishing; `--pause` is unnecessary.
@@ -77,8 +77,8 @@ by that checkout before installing dependencies. Interactive installers wait for
 ### Optional Tad installation
 
 Setup offers to install [Tad](https://www.tadviewer.com/), a separate application
-for viewing FITS measurement tables (`.parquet`). It is optional and maintained
-independently of FITS. Once installed, double-click a Parquet file in the FITS
+for viewing FIScH measurement tables (`.parquet`). It is optional and maintained
+independently of FIScH. Once installed, double-click a Parquet file in the FIScH
 run browser to open it.
 
 See [optional Tad setup](docs/user_guide/installation.md#optional-tad-installation)
@@ -88,7 +88,7 @@ For installer failures, updates, or repair, see the
 
 ## Quick usage
 
-1. Open FITS, choose your run folder containing the raw acquisitions, and enter
+1. Open FIScH, choose your run folder containing the raw acquisitions, and enter
    your user name.
 2. In **Convert**, enter channel labels in source order, select channels to
    export, then click **Next**.
@@ -111,17 +111,17 @@ for overwrites, conflicts, compaction, and backups.
 Projects can be moved as complete folders. See
 [what is portable and how to refresh paths/tags](docs/user_guide/portable_projects.md).
 
-Command-line users can launch the GUI with `uv run fits-gui` or process a settings
-file with `uv run fits run /path/to/settings.toml`, from the FITS repository.
+Command-line users can launch the GUI with `uv run fisch-gui` or process a settings
+file with `uv run fisch run /path/to/settings.toml`, from the FIScH repository.
 
 ## Citations and acknowledgments
 
-FITS builds on the work of the following projects and their contributors.
+FIScH builds on the work of the following projects and their contributors.
 When publishing results, cite the methods and models actually used in your
-analysis and record your FITS version and settings. Follow each project's
+analysis and record your FIScH version and settings. Follow each project's
 citation guidance for its particular version/model.
 
-| Project | Contribution to FITS |
+| Project | Contribution to FIScH |
 | --- | --- |
 | [Cellpose](https://github.com/MouseLand/cellpose#citation) | Cell segmentation and model-specific restoration. |
 | [nd2](https://github.com/tlambert03/nd2) | Nikon ND2 images and metadata. |
@@ -132,12 +132,12 @@ citation guidance for its particular version/model.
 | [Trackastra](https://arxiv.org/abs/2405.15700) | Cell tracking. |
 | [µSAM](https://doi.org/10.1038/s41592-024-02580-4), [Segment Anything](https://arxiv.org/abs/2304.02643), [MobileSAM](https://arxiv.org/abs/2306.14289) | Prompt-based mask prediction in the tracking editor. |
 
-FITS also relies on **NumPy, SciPy, pandas, PyArrow, PyTorch, joblib, PySide6/Qt,
+FIScH also relies on **NumPy, SciPy, pandas, PyArrow, PyTorch, joblib, PySide6/Qt,
 pyqtgraph, Pydantic, Typer, Rich, tqdm**, and the wider Python ecosystem.
 **uv** supports installation and environment management; **Tad** is an optional
 independent table viewer.
 
-FITS's companion libraries—**scope_io, cellpose_kit, stackalign, bg_sub, tracklink,
+FIScH's companion libraries—**scope_io, cellpose_kit, stackalign, bg_sub, tracklink,
 mask_interpolation, bioimagequant, and progress_bar**—connect these tools to the
 workflow. See [software credits and citation guidance](docs/dev/software_credits.md)
 for project links, method references, and supporting-library acknowledgments.

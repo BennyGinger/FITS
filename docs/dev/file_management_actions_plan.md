@@ -12,7 +12,7 @@ rebuild every pre-4 artifact during an upgrade.
    to affected series/steps, preserve unrelated work, and expose the shared checker
    on GUI load and immediately before GUI/CLI execution.
 3. **Manage files presentation** — completed. Two sections with always-clickable actions:
-   Migrate to FITS 4 / Rebuild all experiment results, Update paths/tags,
+   Migrate to FIScH 4 / Rebuild all experiment results, Update paths/tags,
    Rebuild outdated results, and a separated Compact experiment action. Explain
    no-op actions in the window. Manage backups shows availability/size, reasons,
    restore and delete controls; do not duplicate the directory browser.
@@ -28,7 +28,7 @@ reruns final images, masks and measurements as well as intermediates. It can tak
 a long time and may change final results. Existing results are backed up first.
 
 Migration and path/tag updates retain a complete pre-change run copy under
-`.fits/backup/<revision>/run/`. This preserves original folder structure, files,
+`.pipeline/backup/<revision>/run/`. This preserves original folder structure, files,
 metadata, settings and tables without reverse-converting metadata. Manage files
 shows these as **Whole run** backups, including when a series is selected.
 Restoration exchanges the run folders transactionally and retains the displaced
@@ -41,7 +41,7 @@ Available disk space is checked before all reviewed file-management actions and
 again at execution. The shared guard lives in `workflows/checks/space.py`.
 Migration budgets the retained folder and rewrite workspace; path/tag updates,
 compacting and metadata edits budget their outputs and temporary copies. Rebuilds
-use the raw FITS array size (or preserved final array, falling back to the
+use the raw FIScH array size (or preserved final array, falling back to the
 original acquisition) multiplied by the number of scheduled outputs, plus
 headroom. Restoration budgets metadata writes; deleting history remains possible
 without a data-copy budget. The whole GUI/CLI pipeline uses the same estimates
@@ -87,7 +87,7 @@ series/step scope is temporary runtime context and is not saved as a validity li
 
 - **572 core/workflow/scope_io tests passed**, plus **98 focused offscreen GUI
   tests**. After the final conversion-metadata refinement, **20 focused migration,
-  conversion and FITS 4 execution tests passed**.
+  conversion and FIScH 4 execution tests passed**.
 - Real-file cases cover legacy TIFF/mask/Parquet migration preserving pixels and
   measurements; original producer metadata; segmentation directly from an adopted
   preprocessing checkpoint; tracked masks whose earlier segmentation is absent;

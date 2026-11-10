@@ -15,7 +15,7 @@ APP = QApplication.instance() or QApplication([])
 @pytest.fixture
 def dialog_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """
-    Load the standalone Qt startup dialog without importing FITS.
+    Load the standalone Qt startup dialog without importing FIScH.
     """
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "startup"))
     return importlib.import_module("update_dialog")
@@ -25,7 +25,7 @@ def test_update_prompt_choices_and_window_close_default(dialog_module: ModuleTyp
     """
     Offer Yes and Skip while retaining the current version by default.
     """
-    dialog = dialog_module.UpdateDialog({"kind": "update", "release": "4.4.4", "current_version": "4.3.3", "message": "FITS update available"})
+    dialog = dialog_module.UpdateDialog({"kind": "update", "release": "4.4.4", "current_version": "4.3.3", "message": "FIScH update available"})
     assert dialog.action == "current"
     assert dialog.buttons["current"].text() == "Skip"
     assert dialog.buttons["update"].text() == "Yes"
@@ -64,7 +64,7 @@ def test_release_details_expand_downward_and_collapse(dialog_module: ModuleType)
     """
     description = "## Changes\n\n" + "- Improved tracking and image processing.\n" * 80
     dialog = dialog_module.UpdateDialog({"kind": "update", "release": "4.4.4", "current_version": "4.3.3",
-                                         "message": "FITS 4.2.0 is available. You are currently using 4.1.0.\n\nWould you like to update?",
+                                         "message": "FIScH 5.1.0 is available. You are currently using 5.0.0.\n\nWould you like to update?",
                                          "details": description,
                                          })
     dialog.show()

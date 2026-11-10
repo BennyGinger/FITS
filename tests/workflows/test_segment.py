@@ -8,18 +8,18 @@ import importlib
 import numpy as np
 import pytest
 
-from fits.environment.constant import StepName
-from fits.workflows.experiments import ExperimentState
-from fits.settings.models import SegmentChannelSettings, SegmentSettings
-from fits.tasks.segmentation.segment import segment
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.definitions.inputs import configured_profile
-from fits.workflows.runtime.errors import StepExecutionError
+from fisch.environment.constant import StepName
+from fisch.workflows.experiments import ExperimentState
+from fisch.settings.models import SegmentChannelSettings, SegmentSettings
+from fisch.tasks.segmentation.segment import segment
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.definitions.inputs import configured_profile
+from fisch.workflows.runtime.errors import StepExecutionError
 
 
-segment_module = importlib.import_module("fits.tasks.segmentation.segment")
-channels_module = importlib.import_module("fits.tasks.segmentation.channels")
-preparation_module = importlib.import_module("fits.tasks.common.preparation")
+segment_module = importlib.import_module("fisch.tasks.segmentation.segment")
+channels_module = importlib.import_module("fisch.tasks.segmentation.channels")
+preparation_module = importlib.import_module("fisch.tasks.common.preparation")
 
 
 class DummyReader:
@@ -67,7 +67,7 @@ class DummyWrapper:
 
 def _image_state(tmp_path: Path) -> ExperimentState:
     raw = tmp_path / "raw.nd2"
-    image = tmp_path / "fits_array.tif"
+    image = tmp_path / "proc_array.tif"
     raw.write_bytes(b"")
     image.write_bytes(b"")
     return ExperimentState.init(tmp_path, raw).with_complete_step(
@@ -100,7 +100,7 @@ def test_segment_requires_a_configured_channel(tmp_path: Path) -> None:
 
 
 def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Path) -> None:
-    reader = DummyReader(tmp_path / "fits_mask.tif")
+    reader = DummyReader(tmp_path / "proc_masks_seg.tif")
     wrapper = DummyWrapper()
     monkeypatch.setattr(preparation_module.ScopeIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
@@ -124,7 +124,7 @@ def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Pat
     )
 
     assert results[0].last_step == StepName.SEGMENT
-    assert results[0].artifact("segmentation") == tmp_path / "fits_mask.tif"
+    assert results[0].artifact("segmentation") == tmp_path / "proc_masks_seg.tif"
     assert reader.get_channel_calls == [["RFP", "DAPI"]]
     assert wrapper.setup_called
     assert wrapper.run_calls[0][1] == "CYX"
@@ -134,7 +134,7 @@ def test_segment_processes_pending_channels_and_saves(monkeypatch, tmp_path: Pat
 
 def test_segment_skips_when_requested_channels_are_complete(monkeypatch, tmp_path: Path) -> None:
     state = _image_state(tmp_path)
-    reader = DummyReader(tmp_path / "fits_mask.tif")
+    reader = DummyReader(tmp_path / "proc_masks_seg.tif")
     monkeypatch.setattr(preparation_module.ScopeIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
         preparation_module,
@@ -156,7 +156,7 @@ def test_segment_skips_when_requested_channels_are_complete(monkeypatch, tmp_pat
 
 
 def test_segment_uses_independent_settings_and_saves_once(monkeypatch, tmp_path: Path) -> None:
-    reader = DummyReader(tmp_path / "fits_mask.tif")
+    reader = DummyReader(tmp_path / "proc_masks_seg.tif")
     wrappers = [DummyWrapper(), DummyWrapper()]
     payloads: list[dict[str, Any]] = []
     monkeypatch.setattr(preparation_module.ScopeIO, "from_path", lambda path: reader)
@@ -192,7 +192,7 @@ def test_segment_uses_independent_settings_and_saves_once(monkeypatch, tmp_path:
 
 
 def test_segment_failure_does_not_save_partial_output(monkeypatch, tmp_path: Path) -> None:
-    reader = DummyReader(tmp_path / "fits_mask.tif")
+    reader = DummyReader(tmp_path / "proc_masks_seg.tif")
     first = DummyWrapper()
     monkeypatch.setattr(preparation_module.ScopeIO, "from_path", lambda path: reader)
     monkeypatch.setattr(
@@ -227,11 +227,11 @@ def test_segment_failure_does_not_save_partial_output(monkeypatch, tmp_path: Pat
 @pytest.fixture(autouse=True)
 def isolate_revision_payload_for_fake_readers(monkeypatch):
     from scope_io.metadata.models import ImageMetadata
-    from fits.workflows.artifacts.provenance import revision_payload
+    from fisch.workflows.artifacts.provenance import revision_payload
     def payload(reader, state, profile, *, export_channels):
         if hasattr(reader, 'build_payload'):
             return revision_payload(reader, state, profile, export_channels=export_channels)
         return ImageMetadata().with_artifact(
             artifact_type=profile.output_artifact, channel_labels=list(export_channels)
         ).with_custom_metadata(state.metadata_dump).new_revision()
-    monkeypatch.setattr('fits.tasks.common.artifact_results.revision_payload', payload)
+    monkeypatch.setattr('fisch.tasks.common.artifact_results.revision_payload', payload)

@@ -2,13 +2,13 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
-from fits.workflows.experiments import (
+from fisch.workflows.experiments import (
     ExperimentState, assemble_experiment_states, save_experiment_state)
-from fits.environment.constant import StepName
+from fisch.environment.constant import StepName
 
 
 def _saved_state(workdir: Path, raw: Path) -> ExperimentState:
-    image = workdir / "fits_array.tif"
+    image = workdir / "proc_array.tif"
     image.parent.mkdir(parents=True, exist_ok=True)
     image.touch()
     state = ExperimentState.init(workdir, raw).with_complete_step(

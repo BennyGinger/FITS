@@ -1,23 +1,32 @@
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+import numpy as np
+import tifffile
+from scope_io import ScopeIO
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QMessageBox, QVBoxLayout
 
-from fits.environment.constant import StepName
-from fits.gui.main_window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.gui.viewer.masks import MaskDrawingWindow
-from fits.gui.viewer.segmentation import SegmentationTunerWindow
-from fits.settings.models import SegmentSettings
+from fisch.environment.constant import StepName
+from fisch.gui.main_window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.viewer.masks import MaskDrawingWindow
+from fisch.gui.viewer.segmentation import SegmentationTunerWindow
+from fisch.settings.models import SegmentSettings
+from fisch.workflows.experiments import ExperimentState, save_experiment_state
 
 _APP = None
 
 
 @pytest.fixture(autouse=True)
-def _skip_background_model_initialization(monkeypatch):
+def _skip_background_model_initialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Keep settings tests free of model loading and unrelated discard dialogs.
+    """
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.StandardButton.Discard)
     monkeypatch.setattr(
         SegmentationTunerWindow,
         "_initialize_selected_model",
@@ -31,22 +40,42 @@ def application() -> None:
     """
     global _APP
     _APP = QApplication.instance() or QApplication([])
-    from fits.gui.segmentation_models.loader import model_options_loader
+    from fisch.gui.segmentation_models.loader import model_options_loader
     loader = model_options_loader()
     loader.start()
     loader.wait()
     _APP.processEvents()
 
 
-def test_tuner_round_trip_and_close(monkeypatch, tmp_path):
+def _write_current_run(root: Path) -> None:
+    """
+    Give settings-save tests a valid current portable image rather than an empty TIFF.
+    """
+    raw = root / 'input.tif'
+    pixels = np.zeros((8, 8), dtype=np.uint16)
+    tifffile.imwrite(raw, pixels, imagej=True, metadata={'axes': 'YX'})
+    directory = root / 'series'
+    directory.mkdir()
+    image = ScopeIO.from_path(raw).save_array(pixels, output_path=directory / 'proc_array_raw.tif',
+                                             channel_labels=['GFP'],
+                                             custom_metadata={'pipeline_meta': {'version': '5.0.0'}})
+    state = ExperimentState.init(directory, raw, run_dir=root).with_complete_step(
+        step_name=StepName.CONVERT, artifact_kind='image_raw', artifact_path=image)
+    save_experiment_state(state)
+
+
+def test_tuner_round_trip_and_close(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """
+    Apply tuner settings to the main GUI while preserving unrelated draft settings.
+    """
     application()
-    (tmp_path / "fits_array.tif").touch()
+    _write_current_run(tmp_path)
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["GFP"])
     adapter.set_field_value(StepName.SEGMENT, "workers", 3)
     adapter.set_segment_channels([{"channel": "GFP", "user_settings": {"diameter": 19}}])
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     window.user_name_edit.setText("Unsaved user")
     window._open_segmentation_tuner()
     tuner = window._segmentation_tuner
@@ -68,19 +97,22 @@ def test_tuner_round_trip_and_close(monkeypatch, tmp_path):
     assert window._editors[StepName.SEGMENT].channel_widgets[0]["user_settings.diameter"].value() == 31
     adapter.save_to_run_dir()
     reloaded = SettingsAdapter()
-    reloaded.load(tmp_path / ".fits" / "fits_settings.toml")
+    reloaded.load(tmp_path / ".pipeline" / "settings.toml")
     settings = reloaded.segmentation_settings().channels[0]
     assert settings.user_settings["diameter"] == 31
     assert settings.nuclear_channel is None
     window.close()
 
 
-def test_close_without_apply_leaves_settings_unchanged(tmp_path):
+def test_close_without_apply_leaves_settings_unchanged(tmp_path: Path) -> None:
+    """
+    Discard unsaved tuning without changing the main GUI draft.
+    """
     application()
-    (tmp_path / "fits_array.tif").touch()
+    _write_current_run(tmp_path)
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     before = adapter.as_mapping()
     window._open_segmentation_tuner()
     active = window._segmentation_tuner
@@ -95,9 +127,9 @@ def test_drawmask_exposes_both_mask_types():
     application()
     viewer = MaskDrawingWindow()
     assert [viewer.tool_tabs.tabText(i) for i in range(2)] == ["Reference", "ROI"]
-    from fits.environment.constant import IMAGE_NAMES
+    from fisch.environment.constant import IMAGE_NAMES
     assert viewer.directory_browser.model.nameFilters() == [
-        *IMAGE_NAMES, "fits_ref_*.tif", "fits_roi_*.tif"]
+        *IMAGE_NAMES, "proc_ref_*.tif", "proc_roi_*.tif"]
     viewer.close()
 
 

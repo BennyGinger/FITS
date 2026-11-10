@@ -5,8 +5,8 @@ import tomllib
 
 import pytest
 
-from fits.settings.loader import load_settings, run_settings_path, save_run_settings
-from fits.settings.models import RegisterChannelSettings, RegisterTimeSettings
+from fisch.settings.loader import load_settings, run_settings_path, save_run_settings
+from fisch.settings.models import RegisterChannelSettings, RegisterTimeSettings
 
 
 @pytest.mark.parametrize("settings_type", [RegisterTimeSettings, RegisterChannelSettings])

@@ -13,8 +13,8 @@ from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox, QSpinBox, QWidget
 
-from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK
-from fits.gui.viewer.tracking.window import TrackingViewerWindow
+from fisch.environment.constant import ARRAY_NAME, MASK_TRACK
+from fisch.gui.viewer.tracking.window import TrackingViewerWindow
 
 
 _APP: QApplication | None = None
@@ -44,14 +44,14 @@ def tracking(tmp_path):
     tifffile.imwrite(input_path, raw, imagej=True, metadata={"axes": "TCYX"})
     reader = ScopeIO.from_path(input_path)
     source = reader.save_array(raw, channel_labels=("GFP", "RFP"),
-                                output_path=tmp_path / FITS_ARRAY_NAME)
+                                output_path=tmp_path / ARRAY_NAME)
     masks = np.zeros((4, 100, 120), dtype=np.uint16)
     for frame in range(4):
         masks[frame, 20:25, 10 + frame * 10:15 + frame * 10] = 7
         masks[frame, 50:55, 60:65] = 11
         masks[frame, 70:75, 90:95] = 23
     path = ScopeIO.from_path(source).save_array(
-        masks, export_channels=("GFP",), output_path=tmp_path / FITS_MASK_TRACK)
+        masks, export_channels=("GFP",), output_path=tmp_path / MASK_TRACK)
     return path, raw
 
 
@@ -136,7 +136,7 @@ def test_plain_drag_selects_masks_and_measures_without_enabling_crop(window: Tra
     assert panel.bounds == bounds
 
 
-def test_crop_rectangle_selects_cells_and_crop_refits_selected_tracks(window):
+def test_crop_rectangle_selects_cells_and_crop_reproc_selected_tracks(window):
     """Verify crop rectangle selects cells and crop refits selected tracks."""
     panel = window.crop_panel
     panel.enabled.setChecked(True)
@@ -218,7 +218,7 @@ def test_rectangle_draw_move_edge_corner_resize_and_numeric_sizes(window, monkey
     panel.width_input.setValue(60)
     panel.height_input.setValue(40)
     assert panel.bounds == (20, 21, 80, 61)
-    monkeypatch.setattr("fits.gui.viewer.common.drawing_panel.QColorDialog.getColor",
+    monkeypatch.setattr("fisch.gui.viewer.common.drawing_panel.QColorDialog.getColor",
                         lambda *args: QColor("cyan"))
     window.measurement.drawing.color_button.click()
     assert window.measurement.drawing._roi.pen.color() == QColor("cyan")
@@ -260,7 +260,7 @@ def test_saving_crops_in_home_and_preview_but_not_when_mode_is_off(window, track
         wait_until(lambda: window._save_thread is None, window)
         assert errors == []
         suffix = "_cropped" if enabled else ""
-        output = tmp_path / f"fits_track_overlay_{label}{suffix}.tif"
+        output = tmp_path / f"proc_track_overlay_{label}{suffix}.tif"
         expected = tracking[1][..., 10:80, 5:85] if enabled else tracking[1]
         np.testing.assert_array_equal(tifffile.imread(output), expected)
         meta = ScopeIO.from_path(output).metadata.custom_metadata

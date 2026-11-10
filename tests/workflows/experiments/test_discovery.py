@@ -4,14 +4,14 @@ import tempfile
 
 import pytest
 
-from fits.workflows.experiments import (
+from fisch.workflows.experiments import (
     ExperimentState, collect_supported_files, discover_saved_states,
     save_experiment_state)
-from fits.environment.constant import StepName
+from fisch.environment.constant import StepName
 
 
 def _saved_state(workdir: Path, raw: Path) -> ExperimentState:
-    image = workdir / "fits_array.tif"
+    image = workdir / "proc_array.tif"
     image.parent.mkdir(parents=True, exist_ok=True)
     image.touch()
     state = ExperimentState.init(workdir, raw).with_complete_step(
@@ -30,10 +30,10 @@ def test_collect_supported_files_recursive_and_filters(tmp_path: Path, touch) ->
     c = touch(tmp_path / "deep" / "more" / "c.tiff")
 
     # excluded prefix
-    touch(tmp_path / "fits_skip.tif")
-    touch(tmp_path / "sub" / "fits_skip2.nd2")
-    touch(tmp_path / ".fits" / "viewer_cache" / "preview.tif")
-    touch(tmp_path / "sub" / ".fits" / "legacy" / "old.nd2")
+    touch(tmp_path / "proc_skip.tif")
+    touch(tmp_path / "sub" / "proc_skip2.nd2")
+    touch(tmp_path / ".pipeline" / "viewer_cache" / "preview.tif")
+    touch(tmp_path / "sub" / ".pipeline" / "legacy" / "old.nd2")
 
     # unsupported files
     touch(tmp_path / "notes.csv")
@@ -78,7 +78,7 @@ def test_discover_saved_states_skips_invalid_json_and_warns(caplog: pytest.LogCa
 
         bad_workdir = run_dir / "broken"
         bad_workdir.mkdir(parents=True, exist_ok=True)
-        from fits.environment.paths import experiment_state_path
+        from fisch.environment.paths import experiment_state_path
         bad_path = experiment_state_path(bad_workdir, acquisition=run_dir)
         bad_path.parent.mkdir(parents=True)
         bad_path.write_text("{ not json", encoding="utf-8")
@@ -95,6 +95,6 @@ def test_discover_saved_states_ignores_internal_snapshots(tmp_path: Path) -> Non
     raw = tmp_path / "source.nd2"
     raw.touch()
     active = _saved_state(tmp_path / "source_s1", raw)
-    _saved_state(active.workdir / ".fits" / "legacy" / "revision", raw)
-    _saved_state(tmp_path / ".fits" / "snapshots" / "old", raw)
+    _saved_state(active.workdir / ".pipeline" / "legacy" / "revision", raw)
+    _saved_state(tmp_path / ".pipeline" / "snapshots" / "old", raw)
     assert [state.workdir for state in discover_saved_states(tmp_path)] == [active.workdir]

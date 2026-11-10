@@ -13,11 +13,11 @@ import tifffile
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
 
-from fits.environment.constant import StepName
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings.conversion_channels import ConversionChannelsWidget
-from fits.gui.settings import SettingsAdapter
-from fits.workflows.runtime.progress import StageStatus, WorkflowStage
+from fisch.environment.constant import StepName
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings.conversion_channels import ConversionChannelsWidget
+from fisch.gui.settings import SettingsAdapter
+from fisch.workflows.runtime.progress import StageStatus, WorkflowStage
 
 _APP = None
 
@@ -31,8 +31,8 @@ def window(tmp_path, monkeypatch):
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "Test"
     adapter.set_field_value(StepName.CONVERT, "channel_labels", ["Red"])
-    monkeypatch.setattr("fits.gui.main_window.window.choose_artifacts", lambda report, parent=None, **kwargs: "rebuild")
-    main = FitsMainWindow(adapter)
+    monkeypatch.setattr("fisch.gui.main_window.window.choose_artifacts", lambda report, parent=None, **kwargs: "rebuild")
+    main = FischMainWindow(adapter)
     _APP.processEvents()
     yield main
     if main._worker is not None:
@@ -43,7 +43,7 @@ def window(tmp_path, monkeypatch):
     _APP.processEvents()
 
 
-def wait_for_run(window: FitsMainWindow) -> None:
+def wait_for_run(window: FischMainWindow) -> None:
     """
     Pump GUI events while giving the Python pipeline worker time to execute.
     """
@@ -56,7 +56,7 @@ def wait_for_run(window: FitsMainWindow) -> None:
 
 
 @pytest.mark.parametrize("channels", [1, 2])
-def test_expected_channels_uses_all_raw_files(window: FitsMainWindow, tmp_path: Path, channels: int) -> None:
+def test_expected_channels_uses_all_raw_files(window: FischMainWindow, tmp_path: Path, channels: int) -> None:
     """
     Convey the raw channel count through table rows and reserve the hint for warnings.
     """
@@ -81,7 +81,7 @@ def test_expected_channels_uses_all_raw_files(window: FitsMainWindow, tmp_path: 
     assert window.file_frames_label.text() == "<u>Frames:</u> —"
 
 
-def test_incompatible_steps_warn_on_activation_and_block_launch(window: FitsMainWindow,
+def test_incompatible_steps_warn_on_activation_and_block_launch(window: FischMainWindow,
                                                                tmp_path: Path,
                                                                monkeypatch: pytest.MonkeyPatch,
                                                                ) -> None:
@@ -109,7 +109,7 @@ def test_incompatible_steps_warn_on_activation_and_block_launch(window: FitsMain
         toggle.setChecked(False)
 
 
-def test_frame_summary_and_single_channel_registration_guard(window: FitsMainWindow, tmp_path: Path) -> None:
+def test_frame_summary_and_single_channel_registration_guard(window: FischMainWindow, tmp_path: Path) -> None:
     """
     Show minimum frame counts and make single-channel registration unavailable.
     """
@@ -126,7 +126,7 @@ def test_frame_summary_and_single_channel_registration_guard(window: FitsMainWin
     assert StepName.TRACK not in window._step_input_problems()
 
 
-def test_missing_user_name_is_a_red_console_error(window: FitsMainWindow,
+def test_missing_user_name_is_a_red_console_error(window: FischMainWindow,
                                                  monkeypatch: pytest.MonkeyPatch,
                                                  ) -> None:
     """
@@ -140,7 +140,7 @@ def test_missing_user_name_is_a_red_console_error(window: FitsMainWindow,
     assert window._thread is None
 
 
-def test_quantification_without_processing_warns_and_blocks(window: FitsMainWindow,
+def test_quantification_without_processing_warns_and_blocks(window: FischMainWindow,
                                                            monkeypatch: pytest.MonkeyPatch,
                                                            ) -> None:
     """
@@ -164,11 +164,11 @@ def test_quantification_without_processing_warns_and_blocks(window: FitsMainWind
     assert StepName.EXTRACT not in window._enabled_step_input_problems()
 
 
-def test_reviewed_rebuild_validates_its_effective_included_steps(window: FitsMainWindow, tmp_path: Path) -> None:
+def test_reviewed_rebuild_validates_its_effective_included_steps(window: FischMainWindow, tmp_path: Path) -> None:
     """
     Use the reviewed scope when it includes a required producer absent from the GUI draft.
     """
-    from fits.workflows.file_management.rebuild import ProcessingPlan
+    from fisch.workflows.file_management.rebuild import ProcessingPlan
 
     for step in (StepName.SEGMENT, StepName.TRACK):
         window._editors[step].enable_group.setChecked(False)
@@ -178,7 +178,7 @@ def test_reviewed_rebuild_validates_its_effective_included_steps(window: FitsMai
     assert StepName.EXTRACT not in window._enabled_step_input_problems()
 
 
-def test_channel_registration_guard_follows_export_choices(window: FitsMainWindow, tmp_path: Path) -> None:
+def test_channel_registration_guard_follows_export_choices(window: FischMainWindow, tmp_path: Path) -> None:
     """
     Let users disable incompatible saved settings and restore eligibility by exporting all channels.
     """
@@ -202,7 +202,7 @@ def test_channel_registration_guard_follows_export_choices(window: FitsMainWindo
     assert toggle.isEnabled()
 
 
-def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
+def test_mixed_raw_channel_counts_block_conversion(window: FischMainWindow,
                                                   tmp_path: Path,
                                                   monkeypatch: pytest.MonkeyPatch,
                                                   ) -> None:
@@ -243,7 +243,7 @@ def test_mixed_raw_channel_counts_block_conversion(window: FitsMainWindow,
     assert window.run_button.isEnabled()
 
 
-def test_label_count_warning_is_orange_nonblocking_and_clears_after_edit(window: FitsMainWindow,
+def test_label_count_warning_is_orange_nonblocking_and_clears_after_edit(window: FischMainWindow,
                                                                         tmp_path: Path,
                                                                         ) -> None:
     """
@@ -276,7 +276,7 @@ def test_label_count_warning_is_orange_nonblocking_and_clears_after_edit(window:
     assert window.run_button.isEnabled()
 
 
-def test_duplicate_stems_load_without_popup(window: FitsMainWindow,
+def test_duplicate_stems_load_without_popup(window: FischMainWindow,
                                            tmp_path: Path,
                                            monkeypatch: pytest.MonkeyPatch,
                                            ) -> None:
@@ -296,7 +296,7 @@ def test_duplicate_stems_load_without_popup(window: FitsMainWindow,
     assert window._raw_input_report.acquisition_directories[tmp_path / "sample.tif"] == tmp_path / "sample_tif"
 
 
-def test_destination_conflict_identifies_input_in_red(window: FitsMainWindow, tmp_path: Path) -> None:
+def test_destination_conflict_identifies_input_in_red(window: FischMainWindow, tmp_path: Path) -> None:
     """
     Show a blocking destination conflict and its source file through shared inspection.
     """
@@ -323,7 +323,7 @@ def test_next_converts_once_then_unchanged_back_next_only_navigates(window, tmp_
     assert not window.back_button.isEnabled()
     wait_for_run(window)
     assert not failures
-    assert list(tmp_path.rglob("fits_array_raw.tif"))
+    assert list(tmp_path.rglob("proc_array_raw.tif"))
     assert window.workflow_pages.currentIndex() == 1
     assert window._current_step == StepName.REGISTER_TIME
     assert window.adapter.step_enabled(StepName.SEGMENT)
@@ -350,7 +350,7 @@ def test_next_converts_once_then_unchanged_back_next_only_navigates(window, tmp_
 
 
 def test_changed_conversion_settings_force_rebuild_without_changing_overwrite(window, tmp_path, monkeypatch):
-    (tmp_path / "fits_array.tif").touch()
+    (tmp_path / "proc_array.tif").touch()
     window._populate_from_adapter()
     # Simulate reopening this prepared run with the current conversion settings.
     window._converted_settings = window._conversion_signature()
@@ -365,7 +365,7 @@ def test_changed_conversion_settings_force_rebuild_without_changing_overwrite(wi
         kwargs["run_progress"].add("experiment", {WorkflowStage.CONVERT})
         kwargs["run_progress"].update("experiment", WorkflowStage.CONVERT, StageStatus.COMPLETED)
 
-    monkeypatch.setattr("fits.gui.main_window.pipeline_worker.start_pipeline", convert)
+    monkeypatch.setattr("fisch.gui.main_window.pipeline_worker.start_pipeline", convert)
     window.run_button.click()
     assert window._worker.force_conversion
     wait_for_run(window)
@@ -377,7 +377,7 @@ def test_changed_conversion_settings_force_rebuild_without_changing_overwrite(wi
 
 @pytest.mark.parametrize("outcome", ["failure", "cancel", "no_conversion", "changed_while_running"])
 def test_unsuccessful_or_changed_conversion_does_not_advance(window, tmp_path, monkeypatch, outcome):
-    (tmp_path / "fits_array.tif").touch()
+    (tmp_path / "proc_array.tif").touch()
     window._refresh_phase_access()
     window._converted_settings = window._conversion_signature()
     window._editors[StepName.CONVERT].widgets["overwrite"].setChecked(True)
@@ -388,13 +388,13 @@ def test_unsuccessful_or_changed_conversion_does_not_advance(window, tmp_path, m
         if outcome == "failure":
             raise RuntimeError("conversion failed")
         if outcome == "cancel":
-            from fits.workflows.runtime.interactive import PipelineCancelled
+            from fisch.workflows.runtime.interactive import PipelineCancelled
             raise PipelineCancelled()
         if outcome == "changed_while_running":
             kwargs["run_progress"].add("experiment", {WorkflowStage.CONVERT})
             kwargs["run_progress"].update("experiment", WorkflowStage.CONVERT, StageStatus.COMPLETED)
 
-    monkeypatch.setattr("fits.gui.main_window.pipeline_worker.start_pipeline", convert)
+    monkeypatch.setattr("fisch.gui.main_window.pipeline_worker.start_pipeline", convert)
     window.run_button.click()
     if outcome == "changed_while_running":
         field = cast(ConversionChannelsWidget, window._editors[StepName.CONVERT].widgets["channel_labels"])
@@ -407,12 +407,12 @@ def test_unsuccessful_or_changed_conversion_does_not_advance(window, tmp_path, m
 
 
 def test_processing_run_uses_normal_pipeline(window, tmp_path, monkeypatch):
-    (tmp_path / "fits_array.tif").touch()
+    (tmp_path / "proc_array.tif").touch()
     window._refresh_phase_access()
     window._converted_settings = window._conversion_signature()
     window._next_from_convert()
     captured = []
-    monkeypatch.setattr("fits.gui.main_window.pipeline_worker.start_pipeline", lambda **kwargs: captured.append(kwargs))
+    monkeypatch.setattr("fisch.gui.main_window.pipeline_worker.start_pipeline", lambda **kwargs: captured.append(kwargs))
     window.run_button.click()
     assert not window._worker.convert_only
     assert not window._worker.force_conversion
@@ -425,7 +425,7 @@ def test_selecting_saved_converted_run_opens_processing_with_loaded_settings(win
     root = tmp_path / "saved_run"
     root.mkdir()
     tifffile.imwrite(root / "input.tif", np.zeros((8, 8), dtype=np.uint16), metadata={"axes": "YX"})
-    (root / "fits_array.tif").touch()
+    (root / "proc_array.tif").touch()
     saved = SettingsAdapter()
     saved.run_dir = str(root)
     saved.set_field_value(StepName.CONVERT, "channel_labels", ["FarRed"])
@@ -444,7 +444,7 @@ def test_selecting_saved_converted_run_opens_processing_with_loaded_settings(win
     assert window._thread is None
 
 
-def test_empty_channel_labels_use_defaults_without_warning(window: FitsMainWindow, tmp_path: Path) -> None:
+def test_empty_channel_labels_use_defaults_without_warning(window: FischMainWindow, tmp_path: Path) -> None:
     tifffile.imwrite(tmp_path / "input.tif", np.zeros((2, 8, 8), dtype=np.uint16),
                      imagej=True, metadata={"axes": "CYX"})
     window.adapter.set_field_value(StepName.CONVERT, "channel_labels", [])
@@ -458,6 +458,6 @@ def isolate_settings_navigation_inventory(monkeypatch: pytest.MonkeyPatch) -> No
     """
     Isolate navigation/settings tests from metadata checks on empty image fixtures.
     """
-    from fits.workflows.checks.models import RunCompatibility
-    monkeypatch.setattr('fits.gui.main_window.window.inspect_run_compatibility',
+    from fisch.workflows.checks.models import RunCompatibility
+    monkeypatch.setattr('fisch.gui.main_window.window.inspect_run_compatibility',
         lambda root: RunCompatibility(Path(root).resolve(), (), (), (), ()))

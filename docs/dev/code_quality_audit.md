@@ -5,7 +5,7 @@ user-data processing are part of this pass.
 
 ## Scope and conventions
 
-The pass covers 79 recently changed production Python files in FITS and scope_io,
+The pass covers 79 recently changed production Python files in FIScH and scope_io,
 including `workflows/artifacts`, `definitions`, `experiments`, `file_management`,
 their runtime/GUI/CLI callers, and the metadata writer. There is no `agents/`
 package in this repository; the requested artifact area is `artifacts/`.
@@ -36,7 +36,7 @@ package in this repository; the requested artifact area is `artifacts/`.
   operations run after the manager closes.
 - Compact and Manage files share the responsive file worker/progress dialog.
 - CLI compact/manage reuse the GUI application factory. Master-table filenames
-  and artifact roles are centralized in FITS constants.
+  and artifact roles are centralized in FIScH constants.
 
 ## scope_io metadata writing
 

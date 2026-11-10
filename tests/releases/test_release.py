@@ -11,7 +11,7 @@ from urllib.error import HTTPError
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / ".github/scripts/release.py"
-spec = importlib.util.spec_from_file_location("fits_release", SCRIPT)
+spec = importlib.util.spec_from_file_location("proc_release", SCRIPT)
 assert spec is not None and spec.loader is not None
 release = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = release
@@ -19,7 +19,7 @@ spec.loader.exec_module(release)
 
 
 class FakeGitHub:
-    repository = "example/FITS"
+    repository = "example/FIScH"
 
     def __init__(self):
         self.releases = {}
@@ -39,7 +39,7 @@ class FakeGitHub:
             if self.fail_publish:
                 self.fail_publish = False
                 raise RuntimeError("Temporary publishing failure")
-            saved = {**data, "html_url": f"https://github.com/example/FITS/releases/tag/{data['tag_name']}"}
+            saved = {**data, "html_url": f"https://github.com/example/FIScH/releases/tag/{data['tag_name']}"}
             self.releases[data["tag_name"]] = saved
             if data["make_latest"] == "true":
                 self.latest = data["tag_name"]
@@ -67,8 +67,8 @@ class ReleaseTests(unittest.TestCase):
         return release.git(self.root, *arguments)
 
     def commit_version(self, version, *, locked=None):
-        (self.root / "pyproject.toml").write_text(f'[project]\nname = "fits"\nversion = "{version}"\n')
-        (self.root / "uv.lock").write_text(f'[[package]]\nname = "fits"\nversion = "{locked or version}"\n')
+        (self.root / "pyproject.toml").write_text(f'[project]\nname = "fisch"\nversion = "{version}"\n')
+        (self.root / "uv.lock").write_text(f'[[package]]\nname = "fisch"\nversion = "{locked or version}"\n')
         self.git("add", "pyproject.toml", "uv.lock")
         self.git("commit", "-qm", f"Release {version}")
         return self.git("rev-parse", "HEAD")
@@ -150,7 +150,7 @@ class ReleaseTests(unittest.TestCase):
     def test_direct_commits_appear_in_notes(self):
         work = self.commit_work("Fix [preview] <labels>")
         self.commit_version("1.1.0")
-        notes = release.commit_notes(self.root, self.plan()[0], "example/FITS")
+        notes = release.commit_notes(self.root, self.plan()[0], "example/FIScH")
         self.assertIn(r"Fix \[preview\] \<labels\>", notes)
         self.assertIn(work, notes)
         self.assertIn("compare/1.0.0...1.1.0", notes)
@@ -164,7 +164,7 @@ class ReleaseTests(unittest.TestCase):
             "git", "--git-dir", str(self.remote), "rev-parse", "1.1.0^{commit}"], text=True).strip()
         self.assertEqual(remote_commit, commit)
         saved = github.releases["1.1.0"]
-        self.assertEqual(saved["name"], "FITS 1.1.0")
+        self.assertEqual(saved["name"], "FIScH 1.1.0")
         self.assertFalse(saved["draft"])
         self.assertFalse(saved["prerelease"])
         self.assertIn("Commit summary", saved["body"])
@@ -209,7 +209,7 @@ class ReleaseTests(unittest.TestCase):
             release.publish_release(self.root, self.plan()[0], github)
 
     def test_only_404_is_treated_as_missing(self):
-        github = release.GitHub("example/FITS", "test-token")
+        github = release.GitHub("example/FIScH", "test-token")
         for status in (401, 403, 500):
             error = HTTPError("https://api.github.com", status, "Failure", {}, None)
             with patch.object(release, "urlopen", side_effect=error):

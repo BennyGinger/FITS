@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from fits.gui.viewer.common.image_viewer import FitsImageViewer, _label_rgba
+from fisch.gui.viewer.common.image_viewer import FischImageViewer, _label_rgba
 
 
 def test_uint16_palette_matches_existing_colours_without_sorting(monkeypatch):
@@ -11,7 +11,7 @@ def test_uint16_palette_matches_existing_colours_without_sorting(monkeypatch):
     expected = np.asarray([_label_rgba(int(value)) for value in labels.ravel()],
                           dtype=np.uint8).reshape(256, 256, 4)
     monkeypatch.setattr(np, "unique", lambda *a, **k: pytest.fail("Sorted mask pixels"))
-    np.testing.assert_array_equal(FitsImageViewer._colour_mask(labels), expected)
+    np.testing.assert_array_equal(FischImageViewer._colour_mask(labels), expected)
 
 
 @pytest.mark.parametrize("labels", [
@@ -25,7 +25,7 @@ def test_uint16_palette_matches_existing_colours_without_sorting(monkeypatch):
 def test_unusual_label_planes_preserve_colours(labels):
     expected = np.asarray([_label_rgba(int(value)) for value in labels.ravel()],
                           dtype=np.uint8).reshape(*labels.shape, 4)
-    np.testing.assert_array_equal(FitsImageViewer._colour_mask(labels), expected)
+    np.testing.assert_array_equal(FischImageViewer._colour_mask(labels), expected)
 
 
 pytestmark = pytest.mark.usefixtures("current_format_tiffs")

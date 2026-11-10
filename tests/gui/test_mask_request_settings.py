@@ -3,8 +3,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from fits.environment.constant import StepName
-from fits.gui.settings import SettingsAdapter, StepSettingsEditor
+from fisch.environment.constant import StepName
+from fisch.gui.settings import SettingsAdapter, StepSettingsEditor
 
 _APP = None
 

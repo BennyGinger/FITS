@@ -13,7 +13,7 @@ list of available controls and actions.
 
 ## Per-channel segmentation settings
 
-In `fits-gui`, each segmentation channel has its own settings section. New
+In `fisch-gui`, each segmentation channel has its own settings section. New
 sections start with an empty target channel; enter its name explicitly before
 running segmentation. Use
 **+** beside the target channel to add a section, or **−** to remove one.
@@ -23,7 +23,7 @@ helper channel. Execution and overwrite controls apply to the whole step.
 ## Models, diameter, and flow threshold
 
 Segmentation's main settings use the installed Cellpose built-in model list,
-matching SegTune. FITS opens before loading Cellpose; model choices are discovered
+matching SegTune. FIScH opens before loading Cellpose; model choices are discovered
 once in a background thread while other settings remain editable. Saved model
 selections stay visible; empty model controls show **Loading models…** until
 discovery finishes. An early segmentation **Preview** request waits for that
@@ -76,7 +76,7 @@ unsaved processing settings in either tab, including channel additions and delet
 Closing without saving discards pending changes; previously applied settings remain
 in the main GUI draft. Use Save settings or Run
 pipeline to persist the updated settings. Standalone saves update the run's
-normal settings file; `fits-segtune [image-or-folder] --tab compartment` selects
+normal settings file; `fisch-segtune [image-or-folder] --tab compartment` selects
 the Compartment tab directly.
 
 When segmentation is needed, the selected Cellpose model initializes in the
@@ -87,4 +87,4 @@ memory.
 
 ## Run and inspect segmentation
 
-Save the preview settings, return to the main GUI, enable Segmentation, and use **Run pipeline**. Inspect `fits_masks_seg.tif` with [Image / Mask Viewer](viewers.md). For changes to existing masks, review the [overwrite choices](reprocessing_and_file_management.md#review-overwrites-and-input-conflicts). Tracking and measurements based on an older mask may need rerunning.
+Save the preview settings, return to the main GUI, enable Segmentation, and use **Run pipeline**. Inspect `proc_masks_seg.tif` with [Image / Mask Viewer](viewers.md). For changes to existing masks, review the [overwrite choices](reprocessing_and_file_management.md#review-overwrites-and-input-conflicts). Tracking and measurements based on an older mask may need rerunning.

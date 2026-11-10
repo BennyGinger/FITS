@@ -2,23 +2,25 @@
 
 from pathlib import Path
 from typing import Any
+import json
 
 import numpy as np
 import pytest
 import tifffile
 
-from fits.environment import constant as cst
-from fits.gui.settings import SettingsAdapter
-from fits.pipeline import start_pipeline
-from fits.tasks.common.preparation import resolve_step_run
-from fits.workflows.checks import space
-from fits.workflows.checks.pipeline import require_pipeline_space
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.experiments import ExperimentState
-from fits.workflows.file_management import api
-from fits.workflows.file_management.compaction import plan_compaction
-from fits.workflows.file_management.history import delete_history, restore_history, snapshots
-from fits.workflows.file_management.rebuild import ProcessingPlan
+from fisch.environment import constant as cst
+from fisch.environment.paths import experiment_state_path
+from fisch.gui.settings import SettingsAdapter
+from fisch.pipeline import start_pipeline
+from fisch.tasks.common.preparation import resolve_step_run
+from fisch.workflows.checks import space
+from fisch.workflows.checks.pipeline import require_pipeline_space
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.experiments import ExperimentState
+from fisch.workflows.file_management import api
+from fisch.workflows.file_management.compaction import plan_compaction
+from fisch.workflows.file_management.history import delete_history, restore_history, snapshots
+from fisch.workflows.file_management.rebuild import ProcessingPlan
 from test_file_management import legacy_run
 
 
@@ -47,8 +49,8 @@ def test_pipeline_space_failure_keeps_source_and_settings(tmp_path: Path, monkey
         start_pipeline(settings, terminal_progress=False)
     assert all(path.read_bytes() == data for path, data in before.items())
     assert not (tmp_path / 'image').exists()
-    assert not (tmp_path / '.fits/logs').exists()
-    assert not list(tmp_path.rglob(cst.FITS_ARRAY_RAW))
+    assert not (tmp_path / '.pipeline/logs').exists()
+    assert not list(tmp_path.rglob(cst.ARRAY_RAW))
 
 
 def test_pending_output_estimate_respects_completion_and_overwrite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,7 +59,7 @@ def test_pending_output_estimate_respects_completion_and_overwrite(tmp_path: Pat
     """
     original = tmp_path / 'image.nd2'
     original.write_bytes(b'raw' * 100)
-    raw = tmp_path / cst.FITS_ARRAY_RAW
+    raw = tmp_path / cst.ARRAY_RAW
     raw.write_bytes(b'array' * 200)
     state = ExperimentState.init(tmp_path, original, run_dir=tmp_path).with_complete_step(
         step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=raw)
@@ -90,7 +92,7 @@ def test_pending_step_rechecks_space_but_completed_step_skips(tmp_path: Path, mo
     _full_disk(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match='Not enough disk space'):
         resolve_step_run(state, profile, False)
-    output = tmp_path / cst.FITS_ARRAY_BGSUB
+    output = tmp_path / cst.ARRAY_BGSUB
     output.write_bytes(b'completed')
     state = state.with_complete_step(step_name=profile.step_name,
                                      artifact_kind=profile.output_artifact, artifact_path=output)
@@ -112,7 +114,12 @@ def test_file_actions_stop_on_full_disk(tmp_path: Path, monkeypatch: pytest.Monk
     entry = snapshots(tmp_path)[0]
     calls: list[ProcessingPlan] = []
     if action == 'update':
-        (tmp_path / cst.MASTER_QUANTI_NAME).write_bytes(b'invalid master needing update')
+        # Absolute saved references request a location update, independently of
+        # combined-analysis membership checks.
+        path = experiment_state_path(state.workdir)
+        payload = json.loads(path.read_text())
+        payload['artifacts'][cst.ARTI_RAW] = str(state.original_image)
+        path.write_text(json.dumps(payload))
     _full_disk(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match='Not enough disk space'):
         if action == 'update':

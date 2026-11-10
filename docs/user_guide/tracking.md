@@ -12,7 +12,7 @@ filtering, and editing controls.
 
 ## Run tracking and inspect tracks
 
-Select **Include in workflow** for Tracking in **Process**, select the segmented channels, and run the pipeline. Leave Tracking included with Overwrite unchecked to reuse valid saved tracks for Quantification. Bypassing Tracking makes Quantification use included Segmentation instead. Open `fits_masks_track.tif` in [Image / Mask Viewer](viewers.md) to inspect cell IDs, trajectories, and track-length filters. A segmentation label is a per-frame object; a tracking label links observations over time. Review suspicious identity switches and gaps before extracting measurements.
+Select **Include in workflow** for Tracking in **Process**, select the segmented channels, and run the pipeline. Leave Tracking included with Overwrite unchecked to reuse valid saved tracks for Quantification. Bypassing Tracking makes Quantification use included Segmentation instead. Open `proc_masks_track.tif` in [Image / Mask Viewer](viewers.md) to inspect cell IDs, trajectories, and track-length filters. A segmentation label is a per-frame object; a tracking label links observations over time. Review suspicious identity switches and gaps before extracting measurements.
 
 ## Optional static-cell mask repair
 
@@ -38,12 +38,12 @@ first tracked result in the run, in the existing standalone editor.
 The displayed image
 channel can be changed independently from the mask channel and is the channel
 used by local mask prediction. **Save edited tracking** writes
-`fits_track_edited.tif`, or `fits_track_edited_filtered.tif` when track-length
-filtering is enabled. The original `fits_masks_track.tif` remains in place.
+`proc_track_edited.tif`, or `proc_track_edited_filtered.tif` when track-length
+filtering is enabled. The original `proc_masks_track.tif` remains in place.
 This standalone button does not include an editing stage in pipeline execution;
 Quantification continues to follow the included workflow's mask source.
 
-Standalone `fits-trackedit /path/to/experiment/fits_array_raw.tif` starts an empty
+Standalone `fisch-trackedit /path/to/experiment/proc_array_raw.tif` starts an empty
 tracking session without an existing tracking mask. Add/Edit uses headless
 micro-SAM with positive/negative prompts and an expected cell diameter defining
 the local crop. Predict, inspect or brush-correct the proposal, then accept it;

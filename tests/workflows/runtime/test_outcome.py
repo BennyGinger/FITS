@@ -3,8 +3,8 @@
 from pathlib import Path
 
 import pytest
-from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
-from fits.workflows.runtime.progress.outcome import RunOutcome, summarize_run
+from fisch.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
+from fisch.workflows.runtime.progress.outcome import RunOutcome, summarize_run
 
 
 @pytest.mark.parametrize('status,error,expected', [

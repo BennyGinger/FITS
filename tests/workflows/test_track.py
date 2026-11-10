@@ -6,16 +6,16 @@ import pytest
 from tifffile import imwrite
 from scope_io import ScopeIO
 
-from fits.environment.constant import StepName
-from fits.workflows.experiments import ExperimentState
-from fits.settings.models import ConvertSettings, TrackSettings
-from fits.tasks.convert import convert
-from fits.tasks.tracking.track import track
-from fits.workflows.definitions.registry import REGISTRY
-from fits.workflows.runtime.errors import StepExecutionError
+from fisch.environment.constant import StepName
+from fisch.workflows.experiments import ExperimentState
+from fisch.settings.models import ConvertSettings, TrackSettings
+from fisch.tasks.convert import convert
+from fisch.tasks.tracking.track import track
+from fisch.workflows.definitions.registry import REGISTRY
+from fisch.workflows.runtime.errors import StepExecutionError
 
 
-backend_module = importlib.import_module("fits.tasks.tracking.backend")
+backend_module = importlib.import_module("fisch.tasks.tracking.backend")
 PROFILE = REGISTRY[StepName.TRACK].profile
 
 
@@ -37,7 +37,7 @@ def segmented_state(tmp_path: Path) -> ExperimentState:
     masks[:, 0] = 3
     masks[:, 1] = 1
     path = reader.save_array(
-        masks, output_name="fits_mask.tif",
+        masks, output_name="proc_masks_seg.tif",
         export_channels=["RFP", "GFP"], artifact_kind="segmentation")
     return state.with_complete_step(
         step_name=StepName.SEGMENT, artifact_kind="segmentation", artifact_path=path)
@@ -107,7 +107,7 @@ def test_channel_failure_does_not_replace_existing_tracking(monkeypatch, tmp_pat
     first = track(TrackSettings(channel_to_track=["GFP"]), state, PROFILE)[0]
     output_path = first.artifact("tracking")
     saved_output = output_path.read_bytes()
-    from fits.environment.paths import experiment_state_path
+    from fisch.environment.paths import experiment_state_path
     state_path = experiment_state_path(first.workdir)
     saved_state = state_path.read_bytes()
     tracker.fail_on = 3

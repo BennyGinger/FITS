@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from fits.environment.constant import StepName
-from fits.workflows.checks.models import RawInputReport
-from fits.workflows.checks.step_requirements import frame_count_summary, step_input_problems
-from fits.workflows.checks.step_requirements import require_workflow_steps, workflow_step_problems
+from fisch.environment.constant import StepName
+from fisch.workflows.checks.models import RawInputReport
+from fisch.workflows.checks.step_requirements import frame_count_summary, step_input_problems
+from fisch.workflows.checks.step_requirements import require_workflow_steps, workflow_step_problems
 
 
 @pytest.mark.parametrize("frames,channels,summary,affected", [

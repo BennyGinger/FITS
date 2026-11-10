@@ -15,11 +15,11 @@ import pytest
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.gui.main_window.pipeline_worker import PipelineWorker
-from fits.gui.main_window.stop_dialog import QUIT_STYLE
-from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, SAVE_SETTINGS_STYLE
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.main_window.pipeline_worker import PipelineWorker
+from fisch.gui.main_window.stop_dialog import QUIT_STYLE
+from fisch.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, SAVE_SETTINGS_STYLE
 
 
 @pytest.mark.parametrize("confirm", [False, True])
@@ -34,7 +34,7 @@ def test_stop_and_quit_require_confirmation(monkeypatch: pytest.MonkeyPatch,
     """
     app = QApplication.instance() or QApplication([])
     assert isinstance(app, QApplication)
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     stopped: list[bool] = []
     worker = PipelineWorker(tmp_path / 'settings.toml', logging.NullHandler())
     window._worker = worker
@@ -45,7 +45,7 @@ def test_stop_and_quit_require_confirmation(monkeypatch: pytest.MonkeyPatch,
         """
         dialog = app.activeModalWidget()
         assert isinstance(dialog, QMessageBox)
-        assert dialog.windowTitle() == ('Stop run?' if action == 'stop' else 'Quit FITS?')
+        assert dialog.windowTitle() == ('Stop run?' if action == 'stop' else 'Quit FIScH?')
         assert 'Overwrite' in dialog.informativeText()
         no = dialog.button(QMessageBox.StandardButton.No)
         yes = dialog.button(QMessageBox.StandardButton.Yes)
@@ -61,7 +61,7 @@ def test_stop_and_quit_require_confirmation(monkeypatch: pytest.MonkeyPatch,
         """
         stopped.append(True)
 
-    monkeypatch.setattr("fits.gui.main_window.window.terminate_application", record_stop)
+    monkeypatch.setattr("fisch.gui.main_window.window.terminate_application", record_stop)
     try:
         app.processEvents()
         window.show()
@@ -92,10 +92,10 @@ def test_idle_quit_closes_normally(monkeypatch: pytest.MonkeyPatch) -> None:
     Quit without a running pipeline behaves like the ordinary window close button.
     """
     app = QApplication.instance() or QApplication([])
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     window.show()
     app.processEvents()
-    monkeypatch.setattr('fits.gui.main_window.window.confirm_stop',
+    monkeypatch.setattr('fisch.gui.main_window.window.confirm_stop',
                         lambda *args, **kwargs: pytest.fail('Idle quit must not ask to terminate processing.'))
     window.quit_button.click()
     assert not window.isVisible()
@@ -116,7 +116,7 @@ def test_emergency_stop_kills_descendants_and_busy_threads(tmp_path: Path) -> No
     application_code = (
         "import json, subprocess, sys, threading, time\n"
         "from pathlib import Path\n"
-        "from fits.gui.main_window.emergency_stop import terminate_application\n"
+        "from fisch.gui.main_window.emergency_stop import terminate_application\n"
         "threading.Thread(target=time.sleep, args=(120,)).start()\n"
         "child = subprocess.Popen([sys.executable, '-c', sys.argv[3]], stdout=subprocess.PIPE, text=True)\n"
         "grandchild_pid = int(child.stdout.readline())\n"

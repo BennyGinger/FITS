@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from fits.environment.constant import ARTI_QUANTI, StepName
-from fits.workflows.experiments import ExperimentState
-from fits.tasks.analysis.extraction.aggregate import _save_master_quantification
+from fisch.environment.constant import ARTI_QUANTI, StepName
+from fisch.workflows.experiments import ExperimentState
+from fisch.tasks.analysis.extraction.aggregate import _save_master_quantification
 
 
 def _state_with_quantification(
@@ -18,7 +18,7 @@ def _state_with_quantification(
     workdir = condition_dir / f"{experiment_name}_s1"
     workdir.mkdir(parents=True)
 
-    quantification_path = workdir / "fits_quantification.parquet"
+    quantification_path = workdir / "proc_quantification.parquet"
     pd.DataFrame(
         {
             "experiment_id": [experiment_name],

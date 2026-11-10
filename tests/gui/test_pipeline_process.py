@@ -18,18 +18,18 @@ from PySide6.QtCore import QThread
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from fits.environment.constant import StepName
-from fits.gui.main_window.pipeline_worker import PipelineWorker
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.gui.theme import get_application
-from fits.pipeline import start_pipeline
-from fits.settings.loader import load_settings
-from fits.workflows.checks.models import PreflightReport
-from fits.workflows.experiments import discover_saved_states
-from fits.workflows.runtime.interactive import PipelineInteraction
-from fits.workflows.runtime.interactive.messages import MaskCollectionOutcome, MaskCollectionRequest, TrackEditOutcome, TrackEditRequest
-from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
+from fisch.environment.constant import StepName
+from fisch.gui.main_window.pipeline_worker import PipelineWorker
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.theme import get_application
+from fisch.pipeline import start_pipeline
+from fisch.settings.loader import load_settings
+from fisch.workflows.checks.models import PreflightReport
+from fisch.workflows.experiments import discover_saved_states
+from fisch.workflows.runtime.interactive import PipelineInteraction
+from fisch.workflows.runtime.interactive.messages import MaskCollectionOutcome, MaskCollectionRequest, TrackEditOutcome, TrackEditRequest
+from fisch.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
 
 
 pytestmark = pytest.mark.process_pipeline
@@ -102,7 +102,7 @@ def _crashing_pipeline(**options: Any) -> None:
     os._exit(9)
 
 
-def _wait_for_finished(window: FitsMainWindow, timeout: float = 15) -> None:
+def _wait_for_finished(window: FischMainWindow, timeout: float = 15) -> None:
     """
     Keep the GUI responsive while waiting for its worker and final status refresh.
     """
@@ -113,7 +113,7 @@ def _wait_for_finished(window: FitsMainWindow, timeout: float = 15) -> None:
 
 
 @pytest.fixture
-def window(tmp_path: Path) -> Iterator[FitsMainWindow]:
+def window(tmp_path: Path) -> Iterator[FischMainWindow]:
     """
     Open the main GUI on a real converted movie, with all numerical backends idle.
     """
@@ -127,7 +127,7 @@ def window(tmp_path: Path) -> Iterator[FitsMainWindow]:
     adapter.set_field_value(StepName.CONVERT, 'channel_labels', ['Red'])
     adapter.set_runtime_value('execution', 'batch')
     start_pipeline(adapter.save_to_run_dir(), terminal_progress=False)
-    main = FitsMainWindow(adapter)
+    main = FischMainWindow(adapter)
     main.show()
     app.processEvents()
     yield main
@@ -139,7 +139,7 @@ def window(tmp_path: Path) -> Iterator[FitsMainWindow]:
     app.processEvents()
 
 
-def test_stop_run_kills_busy_worker_and_descendant_then_allows_restart(window: FitsMainWindow,
+def test_stop_run_kills_busy_worker_and_descendant_then_allows_restart(window: FischMainWindow,
                                                                     tmp_path: Path,
                                                                     monkeypatch: pytest.MonkeyPatch,
                                                                     ) -> None:
@@ -152,8 +152,8 @@ def test_stop_run_kills_busy_worker_and_descendant_then_allows_restart(window: F
         """
         return PipelineWorker(*args, runner=_blocking_pipeline, **kwargs)
 
-    monkeypatch.setattr('fits.gui.main_window.window.PipelineWorker', blocking_worker)
-    monkeypatch.setattr('fits.gui.main_window.window.confirm_stop', lambda *args, **kwargs: True)
+    monkeypatch.setattr('fisch.gui.main_window.window.PipelineWorker', blocking_worker)
+    monkeypatch.setattr('fisch.gui.main_window.window.confirm_stop', lambda *args, **kwargs: True)
     window._run_pipeline()
     assert window._run_progress is not None
     deadline = monotonic() + 20
@@ -183,14 +183,14 @@ def test_stop_run_kills_busy_worker_and_descendant_then_allows_restart(window: F
         """
         return PipelineWorker(*args, runner=_complete_pipeline, **kwargs)
 
-    monkeypatch.setattr('fits.gui.main_window.window.PipelineWorker', complete_worker)
+    monkeypatch.setattr('fisch.gui.main_window.window.PipelineWorker', complete_worker)
     window._run_pipeline()
     _wait_for_finished(window)
     assert window._last_run_succeeded and window.isVisible()
     assert (tmp_path / 'completed.txt').is_file()
 
 
-def test_real_pipeline_completes_in_separate_process(window: FitsMainWindow, tmp_path: Path) -> None:
+def test_real_pipeline_completes_in_separate_process(window: FischMainWindow, tmp_path: Path) -> None:
     """
     Exercise actual image processing, publication and progress through spawn transport.
     """
@@ -209,7 +209,7 @@ def test_real_pipeline_completes_in_separate_process(window: FitsMainWindow, tmp
 
 @pytest.mark.parametrize('runner,expected', [(_failing_pipeline, 'Intentional worker failure'),
                                             (_crashing_pipeline, '9')])
-def test_process_failure_returns_diagnostics_without_closing_gui(window: FitsMainWindow,
+def test_process_failure_returns_diagnostics_without_closing_gui(window: FischMainWindow,
                                                                monkeypatch: pytest.MonkeyPatch,
                                                                runner: Callable[..., None],
                                                                expected: str,
@@ -223,7 +223,7 @@ def test_process_failure_returns_diagnostics_without_closing_gui(window: FitsMai
         """
         return PipelineWorker(*args, runner=runner, **kwargs)
 
-    monkeypatch.setattr('fits.gui.main_window.window.PipelineWorker', failing_worker)
+    monkeypatch.setattr('fisch.gui.main_window.window.PipelineWorker', failing_worker)
     window._run_pipeline()
     _wait_for_finished(window)
     assert not window._last_run_succeeded

@@ -1,6 +1,7 @@
 """Background tuner navigation, measurement, worker lifecycle and settings transfer."""
 
 import os
+from pathlib import Path
 from threading import Event
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -8,6 +9,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import pytest
 import tifffile
+from scope_io import ScopeIO
+from fisch.environment import constant as cst
+from fisch.workflows.experiments import ExperimentState, save_experiment_state
 from bg_sub import bg_sub
 from typing import cast
 from PySide6.QtCore import QPoint, QPointF, Qt
@@ -15,14 +19,14 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QTableWidget, QWidget
 
-from fits.environment.constant import StepName
-from fits.gui.main_window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.gui.viewer.background import BackgroundTunerWindow
-from fits.gui.viewer.common.information_dialog import ViewerInformationDialog
-from fits.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, RUN_PREVIEW_STYLE, SAVE_SETTINGS_STYLE
-from fits.settings.loader import load_settings, run_settings_path
-from fits.settings.models import BGSubSettings
+from fisch.environment.constant import StepName
+from fisch.gui.main_window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.viewer.background import BackgroundTunerWindow
+from fisch.gui.viewer.common.information_dialog import ViewerInformationDialog
+from fisch.gui.viewer.common.tuner_actions import CLOSE_WINDOW_STYLE, RUN_PREVIEW_STYLE, SAVE_SETTINGS_STYLE
+from fisch.settings.loader import load_settings, run_settings_path
+from fisch.settings.models import BGSubSettings
 
 _APP = None
 
@@ -37,19 +41,30 @@ def application():
 @pytest.fixture(autouse=True)
 def discard_unsaved_settings(monkeypatch):
     """Keep unrelated test cleanup from waiting on an unsaved-settings dialog."""
-    monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+    monkeypatch.setattr('fisch.gui.viewer.background.window.confirm_discard_tuner_changes',
                         lambda parent, tabs: True)
 
 
 @pytest.fixture
-def source(tmp_path):
-    """Write distinguishable frames, channels and Z planes without full-stack processing."""
-    path = tmp_path / "fits_array.tif"
+def source(tmp_path: Path) -> Path:
+    """
+    Write a current portable artifact with distinguishable frames, channels and Z planes.
+    """
+    directory = tmp_path / 'acquisition' / 'series'
+    directory.mkdir(parents=True)
+    path = directory / cst.ARRAY_RAW
     image = np.random.default_rng(4).integers(100, 400, (32, 32), dtype=np.uint16)
     image[8:16, 10:18] += 1000
     array = np.stack([np.stack([np.stack([image + t * 10 + c * 20 + z * 5
                                        for c in range(2)]) for z in range(2)]) for t in range(4)])
     tifffile.imwrite(path, array, imagej=True, metadata={"axes": "TZCYX"})
+    raw = directory.parent / 'input.tif'
+    raw.write_bytes(path.read_bytes())
+    ScopeIO.from_path(raw).save_array(array, output_path=path,
+                                     custom_metadata={'pipeline_meta': {'version': '5.0.0'}})
+    state = ExperimentState.init(directory, raw, run_dir=tmp_path).with_complete_step(
+        step_name=cst.StepName.CONVERT, artifact_kind=cst.ARTI_IMG_RAW, artifact_path=path)
+    save_experiment_state(state)
     return path
 
 
@@ -241,12 +256,12 @@ def test_close_waits_for_active_plane_before_releasing_session(window, monkeypat
             if entered.is_set():
                 break
         assert entered.is_set()
-        monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+        monkeypatch.setattr('fisch.gui.viewer.background.window.confirm_discard_tuner_changes',
                             lambda parent, tabs: False)
         window.close_button.click()
         assert window.isVisible() and not window._closing
         assert window._thread is not None
-        monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+        monkeypatch.setattr('fisch.gui.viewer.background.window.confirm_discard_tuner_changes',
                             lambda parent, tabs: True)
         window.close_button.click()
         assert window.isVisible() and window._closing
@@ -265,7 +280,7 @@ def test_gui_selected_experiment_settings_and_save_without_preview(source, tmp_p
     adapter.set_step_enabled(StepName.BG_SUB, enabled)
     adapter.set_field_value(StepName.BG_SUB, "size", 5)
     adapter.set_field_value(StepName.BG_SUB, "sigma", 0.5)
-    main = FitsMainWindow(adapter)
+    main = FischMainWindow(adapter)
     try:
         main._open_background_tuner()
         tuner = main._background_tuner
@@ -342,13 +357,13 @@ def test_close_warns_and_discard_never_saves(window, monkeypatch, title_bar):
     def keep_editing(parent, tabs):
         prompts.append(tabs)
         return False
-    monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes', keep_editing)
+    monkeypatch.setattr('fisch.gui.viewer.background.window.confirm_discard_tuner_changes', keep_editing)
     close = window.close if title_bar else window.close_button.click
     close()
     assert window.isVisible() and window._session is not None
     assert prompts == [['Background subtraction']]
     assert not accepted
-    monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+    monkeypatch.setattr('fisch.gui.viewer.background.window.confirm_discard_tuner_changes',
                         lambda parent, tabs: True)
     close()
     assert not window.isVisible() and window._session is None
@@ -358,7 +373,7 @@ def test_close_warns_and_discard_never_saves(window, monkeypatch, title_bar):
 def test_saved_and_measurement_only_changes_close_without_warning(window: BackgroundTunerWindow, monkeypatch: pytest.MonkeyPatch) -> None:
     """Measurement geometry and viewing controls are temporary, not unsaved processing work."""
     prompts = []
-    monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes',
+    monkeypatch.setattr('fisch.gui.viewer.background.window.confirm_discard_tuner_changes',
                         lambda parent, tabs: prompts.append(tabs) or False)
     window.settings_panel.window_size.setValue(7)
     window.save_button.click()

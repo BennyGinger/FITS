@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from fits.environment.constant import ARTI_DIST_PROF, StepName
-from fits.workflows.experiments import ExperimentState
-from fits.tasks.analysis.aggregate import save_master_analysis_table
+from fisch.environment.constant import ARTI_DIST_PROF, StepName
+from fisch.workflows.experiments import ExperimentState
+from fisch.tasks.analysis.aggregate import save_master_analysis_table
 
 
 def test_master_distance_profile_retains_condition_tags(tmp_path: Path) -> None:
@@ -12,7 +12,7 @@ def test_master_distance_profile_retains_condition_tags(tmp_path: Path) -> None:
     workdir = condition_dir / "sample_s1"
     workdir.mkdir(parents=True)
     raw_path = condition_dir / "sample.nd2"
-    profile_path = workdir / "fits_distance_profile.parquet"
+    profile_path = workdir / "proc_distance_profile.parquet"
     pd.DataFrame({
         "experiment_id": ["sample"],
         "frame": [1],

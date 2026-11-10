@@ -16,15 +16,15 @@ import pytest
 @pytest.fixture
 def tad(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """
-    Import the standalone installer module without loading the FITS GUI.
+    Import the standalone installer module without loading the FIScH GUI.
     """
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / 'startup'))
-    return importlib.import_module('fits.external_tools.tad')
+    return importlib.import_module('fisch.external_tools.tad')
 
 
 def test_existing_tad_is_reused(tad: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    Reinstalling FITS neither prompts nor downloads when Tad is present.
+    Reinstalling FIScH neither prompts nor downloads when Tad is present.
     """
     monkeypatch.setattr(tad, 'find_tad', lambda root: tmp_path / 'Tad')
     monkeypatch.setattr('builtins.input', lambda prompt: pytest.fail('Unexpected prompt'))
@@ -56,7 +56,7 @@ def test_path_tad_requires_viewer_bundle(tad: ModuleType, tmp_path: Path,
     monkeypatch.setattr(tad.shutil, 'which', lambda name: str(launcher))
     # Keep host installations out of this discovery and setup check.
     monkeypatch.setattr(tad.os, 'access', lambda path, mode: Path(path).is_relative_to(tmp_path))
-    root = tmp_path / 'fits'
+    root = tmp_path / 'fisch'
     assert tad.find_tad(root) == (launcher if viewer else None)
     install = Mock(return_value=root / 'startup/tools/Tad/tad')
     monkeypatch.setattr(tad, '_install_tad', install)
@@ -80,7 +80,7 @@ def test_optional_prompt(tad: ModuleType, tmp_path: Path, monkeypatch: pytest.Mo
     assert 'third-party' in messages[0] and 'does not manage its updates' in messages[0]
 
 
-def test_failed_optional_install_keeps_fits_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tad: ModuleType) -> None:
+def test_failed_optional_install_keeps_proc_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tad: ModuleType) -> None:
     """
     A failed Tad download leaves the main installer successful and clearly reports both outcomes.
     """
@@ -96,7 +96,7 @@ def test_failed_optional_install_keeps_fits_success(tmp_path: Path, monkeypatch:
     assert setup.main() == 0
     log = (tmp_path / 'startup/logs/install.log').read_text()
     assert 'Optional Tad installation was unsuccessful' in log
-    assert log.rstrip().endswith('FITS installed successfully and is ready to use.')
+    assert log.rstrip().endswith('FIScH installed successfully and is ready to use.')
 
 
 def test_noninteractive_install_does_not_download(tad: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,7 +140,7 @@ def test_windows_install_uses_current_user_and_reuses_result(tad: ModuleType, tm
     monkeypatch.setattr(tad.shutil, 'which', lambda name: None)
     monkeypatch.setattr(tad.platform, 'machine', lambda: 'AMD64')
     monkeypatch.setattr(tad, 'urlopen', lambda url, timeout: io.BytesIO(b'installer'))
-    destination = tmp_path / 'FITS with spaces/startup/tools/Tad'
+    destination = tmp_path / 'FIScH with spaces/startup/tools/Tad'
     commands: list[str] = []
 
     def install(command: str, check: bool) -> None:
@@ -155,10 +155,10 @@ def test_windows_install_uses_current_user_and_reuses_result(tad: ModuleType, tm
         executable.chmod(0o755)
 
     monkeypatch.setattr(tad.subprocess, 'run', install)
-    executable = tad._install_tad(tmp_path / 'FITS with spaces', lambda message: None)
+    executable = tad._install_tad(tmp_path / 'FIScH with spaces', lambda message: None)
     assert executable == destination / 'Tad.exe'
     assert commands[0].endswith(f' /S /currentuser /D={destination}')
-    assert tad.find_tad(tmp_path / 'FITS with spaces') == executable
+    assert tad.find_tad(tmp_path / 'FIScH with spaces') == executable
 
 
 def test_macos_tad_setup_uses_manual_installation(tad: ModuleType, tmp_path: Path,

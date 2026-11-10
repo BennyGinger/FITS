@@ -1,7 +1,7 @@
 # Developer documentation
 
 Architecture, development procedures, implementation plans, and audit records
-for FITS. For practical GUI instructions, start with the
+for FIScH. For practical GUI instructions, start with the
 [user guide](../user_guide/README.md). The [project README](../../README.md)
 provides the overview, basic installation, and quick usage.
 
@@ -17,7 +17,7 @@ provides the overview, basic installation, and quick usage.
   supporting dependencies, and citation guidance.
 - [Workflow responsibilities](workflow_architecture.md): package boundaries and
   ownership of processing, artifacts, state, and file management.
-- [Git and submodule cheatsheet](git_cheatsheet.md): maintaining the FITS checkout
+- [Git and submodule cheatsheet](git_cheatsheet.md): maintaining the FIScH checkout
   and its numerical libraries.
 - [Development TODOs](todos.txt): completed work and remaining proposals; check
   each item's status before treating it as current behavior.
@@ -30,7 +30,7 @@ These documents record design decisions and implementation progress. They are
 not step-by-step user instructions. Later revisions may supersede earlier
 decisions; each document retains its existing status and historical notes.
 
-- [FITS 4 artifacts and provenance](fits4_artifacts_plan.md).
+- [FIScH 4 artifacts and provenance](fits4_artifacts_plan.md).
 - [Portable acquisitions and run status](portable_experiments_plan.md).
 - [File-management actions](file_management_actions_plan.md).
 - [Compaction, backups, and completion](compaction_backups_completion_plan.md).
@@ -55,6 +55,6 @@ Existing material moved from the project README; it has not been rewritten into 
 
 ### Repository maintenance
 
-FITS uses Git submodules and a uv workspace. The practical commands for
+FIScH uses Git submodules and a uv workspace. The practical commands for
 cloning, updating, editing, adding, and removing submodules are collected in
 the [Git and submodule cheatsheet](git_cheatsheet.md).

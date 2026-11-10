@@ -1,4 +1,4 @@
-FITS TODO
+FIScH TODO
 =========
 
 Pipeline robustness and performance
@@ -16,7 +16,7 @@ Pipeline robustness and performance
     a performance limitation.
 [ ] Define realistic cancellation guarantees for each processing backend.
 
-Intermediate artifacts and experiment compacting — FITS 4 implementation
+Intermediate artifacts and experiment compacting — FIScH 4 implementation
 ----------------------------------------------------------------------
 [x] Independent raw/channel/frame/background image artifacts and segmentation/
     tracking masks, with channel-before-time execution and disabled-stage bypass.
@@ -24,7 +24,7 @@ Intermediate artifacts and experiment compacting — FITS 4 implementation
 [x] Generic created_at / derived_from metadata in scope_io; preserve existing step
     timestamps and preserve data revisions through metadata-only edits/compact.
 [x] Shared GUI/CLI overwrite/conflict decisions with explicit downstream plans.
-[x] FITS <4 read-only viewing until migration; preserve results during migration,
+[x] FIScH <4 read-only viewing until migration; preserve results during migration,
     with optional missing-intermediate reconstruction and separate downstream updates.
 [x] Compact preview, canonical image/mask aliases, accepted-conflict provenance,
     retained REF/ROI/acquisitions/tables/settings/reports, and publication rollback.
@@ -36,7 +36,7 @@ Full agreed contract, five implementation phases and validation evidence:
 Portable acquisitions and file management — implemented
 -------------------------------------------------------
 [x] Group originals and series under portable acquisition folders; keep state,
-    tuning, cache and history in acquisition-local .fits_experiment directories.
+    tuning, cache and history in acquisition-local .acquisition directories.
 [x] Promote processed selections to their run root and rebind moved run paths.
 [x] Mark the entire run read-only when active legacy layout/metadata is present.
 [x] Preview and apply migrations and path/condition/ID table refreshes with rollback;
@@ -69,7 +69,7 @@ GUI settings validation before starting a run
 
 Run-wide channel-label renaming — implemented
 --------------------------------------------
-[x] Inspect FITS artifacts across the whole run, validate labels by source
+[x] Inspect FIScH artifacts across the whole run, validate labels by source
     index, preview affected files, and rename through GUI or CLI.
 [x] Update known channel-bearing TIFF, Parquet, experiment-state, and saved
     settings fields while retaining pixels, lineage indices, and overlays.
@@ -90,7 +90,7 @@ Mask label consistency across experiments — proposal only
 
 Tracking post-processing for static cells
 -----------------------------------------
-[x] Implemented a FITS-owned, tracker-agnostic static-mask postprocessor.
+[x] Implemented a FIScH-owned, tracker-agnostic static-mask postprocessor.
     It restores stable identities with a temporal super-mask built from pixels
     present in at least half of each label's observed frames,
     removes masks that differ from each track's consensus shape, discards
@@ -107,7 +107,7 @@ Tracking post-processing for static cells
 
 Manual tracking viewer/editor
 -----------------------------
-[x] Build a dedicated FITS tracking viewer/editor, reusing the existing image
+[x] Build a dedicated FIScH tracking viewer/editor, reusing the existing image
     viewer's navigation and interaction patterns but with a multi-label
     track overlay and track-aware session/model (not the binary mask canvas).
 [x] Implement local Add/Edit proposals with headless micro-SAM, positive and
@@ -115,14 +115,14 @@ Manual tracking viewer/editor
     manual brush corrections, and protection of other track IDs. Accepted masks
     update centroids and trajectory displays. Split retains its separate
     geometry/intensity/watershed predictor. See microsam_tracking_cleanup.md.
-[x] Start an empty tracking session from fits_array.tif, allocate track IDs,
+[x] Start an empty tracking session from proc_array.tif, allocate track IDs,
     and accept masks across frames. Save through the existing edited-tracking
-    outputs (fits_track_edited.tif or fits_track_edited_filtered.tif).
+    outputs (proc_track_edited.tif or proc_track_edited_filtered.tif).
 [x] Inspect and correct existing tracking: merge/link tracks, split a history
     after the selected frame, unlink detections, delete a mask or whole track,
     split a mask, and undo accepted edits. Save compact steps.edit_track.params
     provenance with source artifact, operations used, mask/image channels,
-    filter condition, timestamp, and FITS version.
+    filter condition, timestamp, and FIScH version.
 
 Remaining proposals below are not completed by those features: there is no
 standalone point-observation annotation store, redo/complete unsaved-change
@@ -137,7 +137,7 @@ pending; current Add/Edit uses micro-SAM instead of that proposed default.
     its centroid and use only that recalculated centroid for the displayed
     track path.
 [ ] Add click-seeded, local cell segmentation for manual tracking and for
-    creating tracks from scratch when no `fits_track.tif` exists. The first
+    creating tracks from scratch when no `proc_track.tif` exists. The first
     implementation should target isolated, irregular neutrophils and
     macrophages on a relatively dark background and must not assume roundness
     or temporal shape stability.
@@ -167,10 +167,10 @@ pending; current Add/Edit uses micro-SAM instead of that proposed default.
        and image-refined interpolation as explicit alternatives. Because these
        immune cells can change shape sharply, never apply interpolation without
        preview and user acceptance.
-    8. Support a new-session mode opened from `fits_array.tif` without a
+    8. Support a new-session mode opened from `proc_array.tif` without a
        tracking artifact. Starting a track allocates an ID; accepted seeded
        masks add detections to it. Adapt the saving panel to create a new
-       `fits_track.tif` as well as save corrected copies of existing tracking
+       `proc_track.tif` as well as save corrected copies of existing tracking
        artifacts.
     9. Add undo/redo for seed placement, mask proposals, manual mask edits, and
        track assignment. Record the proposal method, its settings, the seed,
@@ -206,7 +206,7 @@ GUI
     Save current settings transfers the complete collection without closing.
 [x] Add compartment preview using shared bioimagequant distance maps, independent
     mask/image channels, per-tab colours, and unsaved-settings checks.
-[x] Optionally export mb/cyto FITS masks; remove exports on compaction and rebuild
+[x] Optionally export mb/cyto FIScH masks; remove exports on compaction and rebuild
     them only when enabled in the saved extraction settings.
 [x] Keep execution, workers, ordering, and overwrite at the shared step level.
 
@@ -298,7 +298,7 @@ mask unchanged.
     marker-negative/positive when the configured segmentation and scientific
     interpretation justify that claim.
 [ ] Keep numerical overlap/matching and its public table convention in the
-    array-based quantification layer; FITS owns settings, paths, scheduling,
+    array-based quantification layer; FIScH owns settings, paths, scheduling,
     artifacts, and provenance. Validate the current `labelquant` API and schema
     before choosing the exact package/module boundary.
 [ ] Validate with matched masks of unequal size, contained masks, unmatched
@@ -317,7 +317,7 @@ Status: registration tuner complete and ready; initial on-demand background tune
     settings section, initially selecting the corresponding tab. Load the GUI's
     current settings and selected experiment; lock run-directory browsing while
     retaining experiment selection within that run.
-[x] Offer standalone fits-regtune with an optional image, --mode,
+[x] Offer standalone fisch-regtune with an optional image, --mode,
     --experiments-dir, and --settings. Keep standalone directory browsing.
     The pipeline CLI needs no tuner.
 [x] Reuse the classic experiment browser, navigation, Info dialog, and loading
@@ -405,11 +405,11 @@ Goal: provide a tool for users to generate and visualize line profiles from bioi
 Change logs/reports structure folder
 -------------------------------
 Goal: organize and structure the logs and reports generated by the pipeline for easier access and management.
-[x] Use .fits/ as the implemented run-metadata folder (rather than docs/).
-[x] Store logs in .fits/logs/.
-[x] Store reports in .fits/reports/.
-[x] Store run settings in .fits/fits_settings.toml.
-[x] Route pipeline logs/reports through fits.environment.paths; runtime log_dir
+[x] Use .pipeline/ as the implemented run-metadata folder (rather than docs/).
+[x] Store logs in .pipeline/logs/.
+[x] Store reports in .pipeline/reports/.
+[x] Store run settings in .pipeline/settings.toml.
+[x] Route pipeline logs/reports through fisch.environment.paths; runtime log_dir
     can override their root. Run settings remain under the run directory.
 
 

@@ -1,6 +1,6 @@
 # FITS to FIScH: coordinated rename, migration and release
 
-Status: planning agreed; application implementation has not started.
+Status: implemented on `refactor/fisch`; automated validation complete. Manual review and release tasks remain.
 Updated: 2026-11-10.
 
 ## Agreed identity and scope
@@ -235,28 +235,28 @@ snapshot/transaction facilities rather than inventing a second migration system.
 1. [x] Confirm the application release/compatibility threshold: **5.0.0**.
 2. [x] Review and checkpoint all intended local changes, submodules first and
        then the parent repository/pins. Record the starting branches and commits.
-3. [ ] Create the FIScH rename branch from the tested, complete ScopeIO integration,
+3. [x] Create the FIScH rename branch from the tested, complete ScopeIO integration,
        using the current checkout and shared environment. Preserve the main
        branch and the named FITS rollback checkpoint; do not merge the FIScH
        rename until validation and review.
-4. [ ] Implement the central current/legacy naming conventions and preservation tests.
-5. [ ] Rename the source package, distribution, imports, commands and GUI identity.
+4. [x] Implement the central current/legacy naming conventions and preservation tests.
+5. [x] Rename the source package, distribution, imports, commands and GUI identity.
        Apply the single confirmed application-version bump on this branch so
        new records already carry the target version during migration testing.
-6. [ ] Update launch/setup/updater/scripts/shortcuts/assets/configuration together.
-7. [ ] Apply the new threshold and shared whole-run read-only/Run-block policy,
+6. [x] Update launch/setup/updater/scripts/shortcuts/assets/configuration together.
+7. [x] Apply the new threshold and shared whole-run read-only/Run-block policy,
        retaining historical readers and the single migration entry point.
-8. [ ] Implement complete active-file/folder/metadata/table migration with backup,
+8. [x] Implement complete active-file/folder/metadata/table migration with backup,
        collision checks, rollback and pending-rebuild handling.
-9. [ ] Update compaction, rebuilding, reset, extraction, editors and viewers to
+9. [x] Update compaction, rebuilding, reset, extraction, editors and viewers to
        use the central names and honor migration/read-only status.
-10. [ ] Test pre-4 and FITS-4 runs, compacted runs, missing originals, restored
+10. [x] Test pre-4 and FITS-4 runs, compacted runs, missing originals, restored
         backups, failed/interrupted migration and existing REF/ROI/manual edits.
-11. [ ] Run scientific preservation, GUI/CLI, startup/install/update, package-build
+11. [x] Run scientific preservation, GUI/CLI, startup/install/update, package-build
         and type checks; distinguish baseline failures from rename regressions.
 12. [ ] Manually verify old-run viewing/migration and a new end-to-end FIScH run.
 13. [ ] Rename the existing main remote repository and update remotes/instructions.
-14. [ ] Verify that the single application-version bump matches the compatibility
+14. [x] Verify that the single application-version bump matches the compatibility
         threshold; keep the prepared ScopeIO 3.0.0 identity. Do not bump again
         merely for merging or integration.
 15. [ ] Publish dependency commits before the application pins, validate a fresh
@@ -326,3 +326,70 @@ The changed test file passes Pyright with zero errors/warnings. The combined
 ScopeIO/FITS-compatibility/stackalign/tracklink run passed 427 tests; the real
 pipeline-process suite passed another 5 tests. All merge working trees are clean
 at handoff, with the shared environment synchronized to the recorded lockfile.
+
+
+## FIScH branch validation — 2026-11-10
+
+The current checkout and shared environment use **FIScH 5.0.0** and
+**ScopeIO 3.0.0**. Application work is on `refactor/fisch`. `main` and
+`safety/fits-before-fisch` both remain at `db02db3`. ScopeIO's additional
+metadata-only TIFF fix is checkpointed at `778519e` on
+`refactor/fisch-metadata`; its normal `main` is unchanged.
+No experiment data was migrated or reset during development: scientific
+preservation and migration checks used temporary generated fixtures.
+
+| Check | Final result |
+| --- | --- |
+| Application/backend, migration, file management, CLI helpers and startup tests (`tests`, excluding GUI groups) | **668 passed** |
+| All GUI tests, including channel-label windows | **705 passed** across 58 modules, with process isolation as described below |
+| ScopeIO and progress-bar tests | **285 passed** |
+| stackalign, tracklink, bg-sub, bioimagequant, mask-interpolation and cellpose-kit tests | **461 passed** |
+| Application source and new migration-test Pyright check | **273 files; 0 errors, 0 warnings** |
+| Broader changed GUI-test typing inspection | No newly introduced diagnostics. Older test-double/widget annotations still produce 59 existing errors; the equivalent main-branch files produced 71. This is not a clean type-check claim for the historical test suite. |
+| Final wheel and source archive | Built `fisch-5.0.0-py3-none-any.whl` and `fisch-5.0.0.tar.gz`; wheel package/import/entry-point smoke checks passed |
+| Renamed command entry points | All nine `fisch` / `fisch-*` commands returned successful `--help` output |
+| Startup verifier | All required backend imports and model-cache permission checks passed; CUDA available on this Linux host |
+| Dependency lock | `uv lock --check --offline` passed |
+| Shell scripts and whitespace | `bash -n` and `git diff --check` passed |
+
+GUI validation ran modules in separate processes. All 36 trajectory
+responsiveness cases were additionally run individually and passed. Larger
+combined Qt/pyqtgraph runs can hang or crash during native object/painter
+cleanup on this host, so the combined GUI invocation is **not** recorded as a
+passing run. No test cases were skipped to obtain the counts above.
+
+Failures resolved during validation included stale expectations for console
+validation instead of popups, the new channel-label table, the separate manual
+tracking editor and current viewer layout. Tuner-save fixtures now contain
+valid current metadata/state instead of empty or unversioned managed TIFFs.
+A queued profile-plot callback now has a QObject context so it is cancelled if
+the plot is deleted before delivery.
+
+Migration checks also found and fixed two data-format issues: repeated growth
+of both TIFF metadata blocks could overlap due to tifffile's cached EOF, and
+pre-4 `fits_array.tif` checkpoints were not recognized under their historical
+name. Tests cover repeated metadata growth without altering encoded pixels,
+true FITS-era names/headers, preserved revisions and saved table identities,
+partial manual renames, collisions without mutation, compacted pending-rebuild
+blocking, rollback after an injected failure, and pre-4 stage-name migration.
+
+The validation logs/build artifacts are under `/tmp/fisch-*` on this workstation;
+they are temporary evidence, not committed scientific data. Existing unrelated
+working-tree edits inside stackalign/tracklink are left untouched.
+
+### Remaining review and release procedure
+
+1. Manually open the branch's GUI (`.venv/bin/fisch-gui`), process a small fresh
+   run, and inspect its previews/results. Use a **copy** of a legacy run to test
+   viewing, migration and any required rebuild; retain the original separately.
+2. Review existing desktop/start-menu shortcuts and the installer/update path.
+   Automated bootstrap tests passed, but Windows/macOS installation and native
+   desktop behavior were not exercised on this Linux host.
+3. Rename the existing GitHub repository from `fits` to `fisch`, preserving its
+   history, then update the local origin URL. Online rename is not a prerequisite
+   for local branch testing. New installation URLs target `fisch` and must not be
+   published as ready before the remote rename.
+4. Publish/review the ScopeIO dependency commit before the parent pin, validate a
+   fresh recursive checkout and an existing-install update, then merge/tag/release
+   the coordinated ScopeIO/FIScH changes. No push, normal-branch merge or release
+   was performed as part of this validation.

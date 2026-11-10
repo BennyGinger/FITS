@@ -8,17 +8,17 @@ import pandas as pd
 import pytest
 from bioimagequant import ExtractData
 
-from fits.environment.constant import (
+from fisch.environment.constant import (
     ARTI_IMG, ARTI_QUANTI, ARTI_SEG, ARTI_TRACK, DIST_EXTRACT,
-    FITS_QUANTI_NAME, StepName,
+    QUANTI_NAME, StepName,
 )
-from fits.settings.models import ExtractSettings
-from fits.tasks.analysis.extraction.aggregate import _save_master_quantification
-from fits.tasks.analysis.extraction.extract import extract
-from fits.tasks.analysis.extraction.manager import ExtractionManager
-from fits.tasks.analysis.identity import add_quantification_ids
-from fits.workflows.definitions.models import StepProfile
-from fits.workflows.experiments import (
+from fisch.settings.models import ExtractSettings
+from fisch.tasks.analysis.extraction.aggregate import _save_master_quantification
+from fisch.tasks.analysis.extraction.extract import extract
+from fisch.tasks.analysis.extraction.manager import ExtractionManager
+from fisch.tasks.analysis.identity import add_quantification_ids
+from fisch.workflows.definitions.models import StepProfile
+from fisch.workflows.experiments import (
     ExperimentState, assemble_experiment_states, discover_saved_states,
     save_experiment_state,
 )
@@ -98,7 +98,7 @@ def test_discovery_rebinds_run_root_after_moving_entire_run(tmp_path: Path) -> N
     assert restored.run_dir == moved
     assert restored.analysis_experiment_id == state.analysis_experiment_id == "condition/sample_s1"
     assert str(tmp_path) not in restored.analysis_experiment_id
-    from fits.environment.paths import experiment_state_path
+    from fisch.environment.paths import experiment_state_path
     assert "run_dir" not in experiment_state_path(restored.workdir).read_text()
 
 
@@ -110,7 +110,7 @@ def test_assembly_preserves_root_when_conversion_creates_branch(tmp_path: Path) 
     branch_dir = raw.parent / "sample_s1"
     branch = state.with_complete_step(
         step_name=StepName.CONVERT, artifact_kind=ARTI_IMG,
-        artifact_path=branch_dir / "fits_array.tif", workdir=branch_dir)
+        artifact_path=branch_dir / "proc_array.tif", workdir=branch_dir)
     assert branch.analysis_experiment_id == "condition/sample_s1"
 
 
@@ -120,7 +120,7 @@ def test_master_upgrades_legacy_ids_without_rewriting_experiment_files(tmp_path:
     for parent in ("control", "treated"):
         workdir = tmp_path / parent / "sample_s1"
         workdir.mkdir(parents=True)
-        path = workdir / FITS_QUANTI_NAME
+        path = workdir / QUANTI_NAME
         source = measurements()
         source.insert(0, "experiment_id", str(workdir))
         source.to_parquet(path, index=False)
@@ -147,7 +147,7 @@ def test_extraction_saves_portable_ids_with_real_quantification(
 ) -> None:
     workdir = tmp_path / "condition" / "sample_s1"
     workdir.mkdir(parents=True)
-    image_path = workdir / "fits_array.tif"
+    image_path = workdir / "proc_array.tif"
     image_path.touch()
     state = ExperimentState.init(workdir, workdir.parent / "sample.nd2", run_dir=tmp_path)
     state = state.with_complete_step(
@@ -161,7 +161,7 @@ def test_extraction_saves_portable_ids_with_real_quantification(
     profile = StepProfile(
         step_name=StepName.EXTRACT, distribution=DIST_EXTRACT,
         input_artifact=ARTI_IMG, output_artifact=ARTI_QUANTI,
-        output_name=FITS_QUANTI_NAME)
+        output_name=QUANTI_NAME)
     updated = extract(ExtractSettings(), state, profile)[0]
     path = updated.artifact(ARTI_QUANTI)
     assert path is not None
@@ -184,7 +184,7 @@ def test_extraction_and_master_save_calibrated_motion_and_reference_progress(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workdir = tmp_path / "condition" / "sample_s1"
     workdir.mkdir(parents=True)
-    image_path = workdir / "fits_array.tif"
+    image_path = workdir / "proc_array.tif"
     image_path.touch()
     state = ExperimentState.init(workdir, workdir.parent / "sample.nd2", run_dir=tmp_path)
     state = state.with_complete_step(
@@ -200,7 +200,7 @@ def test_extraction_and_master_save_calibrated_motion_and_reference_progress(
     monkeypatch.setattr(ExtractionManager, "prepare_quantification", lambda self: extractor)
     profile = StepProfile(
         step_name=StepName.EXTRACT, distribution=DIST_EXTRACT,
-        input_artifact=ARTI_IMG, output_artifact=ARTI_QUANTI, output_name=FITS_QUANTI_NAME)
+        input_artifact=ARTI_IMG, output_artifact=ARTI_QUANTI, output_name=QUANTI_NAME)
     updated = extract(ExtractSettings(), state, profile)[0]
     path = updated.artifact(ARTI_QUANTI)
     assert path is not None
@@ -224,11 +224,11 @@ def test_compartments_save_shared_identity_and_motion_from_dilated_full_cells(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         ) -> None:
     """
-    Exercise FITS settings through quantification, Parquet and master aggregation.
+    Exercise FIScH settings through quantification, Parquet and master aggregation.
     """
     workdir = tmp_path / "condition" / "sample_s1"
     workdir.mkdir(parents=True)
-    image_path = workdir / "fits_array.tif"
+    image_path = workdir / "proc_array.tif"
     image_path.touch()
     state = ExperimentState.init(workdir, workdir.parent / "sample.nd2", run_dir=tmp_path)
     state = state.with_complete_step(step_name=StepName.CONVERT,
@@ -248,7 +248,7 @@ def test_compartments_save_shared_identity_and_motion_from_dilated_full_cells(
                           distribution=DIST_EXTRACT,
                           input_artifact=ARTI_IMG,
                           output_artifact=ARTI_QUANTI,
-                          output_name=FITS_QUANTI_NAME,
+                          output_name=QUANTI_NAME,
                           )
     settings = ExtractSettings(compartments=True, membrane_thickness=6, dilation_radius=1, frame_workers=1)
     updated = extract(settings, state, profile)[0]
@@ -280,6 +280,6 @@ def test_compartments_save_shared_identity_and_motion_from_dilated_full_cells(
 def isolate_table_provenance(monkeypatch):
     from scope_io.metadata.models import ImageMetadata
     import importlib
-    monkeypatch.setattr(importlib.import_module('fits.tasks.analysis.extraction.extract'), 'revision_payload',
+    monkeypatch.setattr(importlib.import_module('fisch.tasks.analysis.extraction.extract'), 'revision_payload',
         lambda reader, state, profile, **kwargs: ImageMetadata().with_custom_metadata(state.metadata_dump).new_revision())
     monkeypatch.setattr(ExtractionManager, 'image_reader', property(lambda self: None))

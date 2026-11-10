@@ -27,7 +27,7 @@ full-cell centroid and reference distances. A fully eroded cytoplasm retains
 one cell pixel nearest the full-cell centroid, excluded from the membrane.
 Compartment masks are generated in memory during extraction. Enable **Save
 compartment masks** to export `_mb.tif` and `_cyto.tif` beside the selected
-segmentation/tracking mask using the FITS TIFF protocol. The source mask is
+segmentation/tracking mask using the FIScH TIFF protocol. The source mask is
 unchanged, including when dilation is enabled. Compaction removes these exports
 while retaining source masks, measurements and settings. Rebuilding regenerates
 them only when compartment measurement and saving remain enabled. Rerun extraction with overwrite to update existing
@@ -43,11 +43,11 @@ For the controls shared with segmentation, see [segmentation and compartment pre
 
 ## Distance profiles
 
-Enable **Distance profile** to summarize image intensity in distance bins around a saved reference. Provide at least one nonempty REF mask; use the [drawing workflow](reference_and_roi_masks.md) when new masks are needed. Set `bin_width` in pixels and optionally `maximum_bins`. FITS calculates the whole-image profile as well as profiles for each saved ROI variant. See [distance-profile columns](output_tables.md#distance-profiles-what-does-one-row-represent) for bin edges, empty bins, ROI variants, and calibrated distances.
+Enable **Distance profile** to summarize image intensity in distance bins around a saved reference. Provide at least one nonempty REF mask; use the [drawing workflow](reference_and_roi_masks.md) when new masks are needed. Set `bin_width` in pixels and optionally `maximum_bins`. FIScH calculates the whole-image profile as well as profiles for each saved ROI variant. See [distance-profile columns](output_tables.md#distance-profiles-what-does-one-row-represent) for bin edges, empty bins, ROI variants, and calibrated distances.
 
 ## Open the results
 
-Run the enabled analyses and read the completion report. Each series saves its own `fits_quantification.parquet` and/or `fits_distance_profile.parquet`; the run folder contains the corresponding master tables. Double-click a Parquet in the run browser to open optional [Tad](installation.md#optional-tad-installation), or use the Data Wrangler alternative described there. Master tables combine rows rather than averaging cells. Use [Analysis identifiers](analysis_identifiers.md) to distinguish experiments and cells.
+Run the enabled analyses and read the completion report. Each series saves its own `proc_quantification.parquet` and/or `proc_distance_profile.parquet`; the run folder contains the corresponding master tables. Double-click a Parquet in the run browser to open optional [Tad](installation.md#optional-tad-installation), or use the Data Wrangler alternative described there. Master tables combine rows rather than averaging cells. Use [Analysis identifiers](analysis_identifiers.md) to distinguish experiments and cells.
 
 ## When to rerun analysis
 

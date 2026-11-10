@@ -8,7 +8,7 @@
 
 ## Verification
 
-- 684 core, workflow, FITS I/O and progress tests passed.
+- 684 core, workflow, FIScH I/O and progress tests passed.
 - 99 focused GUI/CLI tests passed, including success/failure/cancellation, intentional drawing skips, nested CLI maintenance, full-report access and navigation preservation.
 - Pyright standard-mode checks report zero errors and warnings for the reviewed production modules and new focused tests.
 - Shared GUI functions have parameter/return annotations and docstrings; whitespace checks pass.

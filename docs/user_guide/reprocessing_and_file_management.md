@@ -11,7 +11,7 @@ Use the saved run status to decide whether you need to resume processing, rerun 
 | --- | --- | --- |
 | Continue unfinished work | Run the enabled pipeline steps | Reuses completed outputs when their inputs/settings remain valid. |
 | Apply changed processing settings or update outdated results | Rerun with overwrite, or use the applicable Rebuild action | Recomputes the reviewed results and any selected downstream work. |
-| Open older results for editing | Migrate to FITS 4 | Adapts metadata/layout while retaining existing pixels and measurements; a full numerical rebuild is a separate optional choice. |
+| Open older results for editing | Migrate to FIScH 4 | Adapts metadata/layout while retaining existing pixels and measurements; a full numerical rebuild is a separate optional choice. |
 | Refresh a moved/reorganized run | Update paths and condition tags | Refreshes known location information and master identities/tags without numerical processing. |
 | Remove unneeded intermediates/caches | Compact experiment | Keeps the retained scientific outputs and original acquisitions; creates no persistent backup. |
 | Recover or remove a retained version | Manage backups | Restores a reviewed version or deletes selected backups. |
@@ -25,7 +25,7 @@ Each artifact records its own UTC `created_at` revision and the paths/revisions
 of its actual inputs in `derived_from`; existing step timestamps keep their
 previous meaning. Analysis Parquets carry the same provenance.
 
-Before a GUI or CLI run, FITS compares recorded input revisions with current
+Before a GUI or CLI run, FIScH compares recorded input revisions with current
 files and propagates conflicts downstream. The shared dialog lists affected
 files and offers **selected step and downstream**, **selected step only**, or
 **cancel** for an overwrite. Selecting only that step suppresses dependent work
@@ -35,12 +35,12 @@ embedded revisions, not filesystem modification times.
 
 An overwrite alone needs no review when the experiment has no existing
 downstream results. Quantification explicitly produces
-`fits_quantification.parquet` and can be rerun directly; Distance Profile is an
+`proc_quantification.parquet` and can be rerun directly; Distance Profile is an
 independent analysis output. Likewise, overwriting background subtraction needs
 no review if no dependent masks or measurements exist yet. Existing downstream
 files require review when their steps are included. Bypassed downstream results
 are preserved and receive a console warning if they are stale or affected by
-the overwrite. FITS checks them again before reuse when their steps are included
+the overwrite. FIScH checks them again before reuse when their steps are included
 later. Real upstream,
 legacy-format and missing-input conflicts remain subject to review; changed
 settings on a result explicitly selected for overwrite do not themselves
@@ -57,7 +57,7 @@ Overwriting the final analysis step can refresh its own master table directly.
 ### Include, bypass, and reuse
 
 Every step has an **Include in workflow** checkbox. Checked means the step's
-output participates in the flow: FITS reuses valid existing results unless
+output participates in the flow: FIScH reuses valid existing results unless
 **Overwrite** is selected. Unchecked means the step is bypassed and its saved
 output is ignored when selecting downstream inputs. Existing files are kept.
 
@@ -66,7 +66,7 @@ files exist. It uses tracking when Tracking is included, otherwise segmentation
 when Segmentation is included. Accepted tracking edits participate only when
 Edit tracking is included. The intensity image similarly comes from the latest
 included preprocessing stage, with converted raw images as the baseline.
-Missing selected inputs are reported; FITS does not silently fall back to a
+Missing selected inputs are reported; FIScH does not silently fall back to a
 bypassed result. Measurements, provenance, compartment exports, and compartment
 previews share this source selection. The numerical bioimagequant API is unchanged.
 
@@ -111,9 +111,9 @@ Current-file actions check the whole run and use three controls:
   experiments remain untouched. Complete reconstruction reruns final outputs as
   well as intermediates; it can take a long time and may change results. A backup
   is retained first. The button is disabled when no rebuilding is needed.
-  For pre-v4 runs this control initially reads **Migrate to FITS 4…**, with an
+  For pre-v4 runs this control initially reads **Migrate to FIScH 4…**, with an
   optional full rebuild, unchecked by default. Migrated arrays receive their
-  actual stage filename; canonical `fits_array.tif` is reserved for compaction.
+  actual stage filename; canonical `proc_array.tif` is reserved for compaction.
 - **Update paths and condition tags…** is enabled only when saved state/settings
   references or existing master-table identities/tags differ from the current
   run. Condition tags belong to the master tables. Portable per-experiment
@@ -134,19 +134,19 @@ the master tables are out of date. **Rebuild analysis…** combines the currentl
 included experiments using valid individual measurements; it does not rerun
 image processing when those measurements are current.
 
-Current-file actions check the whole run, regardless of the selected series. The manager is also available with `uv run fits manage /path/to/run`.
+Current-file actions check the whole run, regardless of the selected series. The manager is also available with `uv run fisch manage /path/to/run`.
 
 ### Reset to raw inputs (main GUI only)
 
 The red **Reset to raw inputs** section resets the **whole run directory**, including
 every experiment. It moves original acquisitions out of their portable folders and
-permanently removes FITS results, REF/ROI drawings, measurements, settings, logs,
-caches and FITS backup history. Unrelated files are preserved. Missing originals
+permanently removes FIScH results, REF/ROI drawings, measurements, settings, logs,
+caches and FIScH backup history. Unrelated files are preserved. Missing originals
 or conflicting destination filenames block the reset before removal begins.
 
 Reset cannot be undone and creates no backup. Make a manual backup first if you
 want to keep any results. The confirmation requires typing **RESET**. After success,
-FITS opens a fresh window on the same run directory with template settings, an
+FIScH opens a fresh window on the same run directory with template settings, an
 empty user name and a clear console. Cancelling confirmation or an unsaved-editor
 close leaves the run intact.
 
@@ -171,9 +171,9 @@ preview does not change any files.
 
 ## Compact an experiment
 
-Use **Manage files… → Compact experiment…**, or `uv run fits compact /path/to/run`, to
+Use **Manage files… → Compact experiment…**, or `uv run fisch compact /path/to/run`, to
 preview the exact retained and removed files. Compacting keeps the furthest
-image as `fits_array.tif` and the active final object mask as `fits_masks.tif`,
+image as `proc_array.tif` and the active final object mask as `proc_masks.tif`,
 including edited/filtered tracking when active. Original acquisitions, REF/ROI,
 measurements, settings and reports remain. Superseded intermediates and viewer
 caches are removed only after publishing and verifying the retained files and
@@ -183,7 +183,7 @@ Accepted conflicts remain recorded alongside the original provenance.
 
 ## Migrate older results or rebuild completely
 
-Files from FITS versions before 4, or files lacking revision provenance, remain
+Files from FIScH versions before 4, or files lacking revision provenance, remain
 viewable but read-only until explicitly migrated through **Manage files**.
 Migration updates folder structure, metadata, paths, identifiers and condition
 tags without rerunning processing or changing pixels/measurements. It retains
@@ -208,13 +208,13 @@ For location-only updates, portable per-experiment Parquets remain unchanged; ma
 
 Retained backups are never deleted automatically by compaction. A storage hint
 appears only when backups exist; delete reviewed snapshots through Manage
-files to reclaim that space. Before migration or path/tag updates, FITS retains a complete original
-run folder under `.fits/backup/<revision>/run/`, including original files,
-metadata, settings and tables. This copy uses additional disk space; FITS checks
+files to reclaim that space. Before migration or path/tag updates, FIScH retains a complete original
+run folder under `.pipeline/backup/<revision>/run/`, including original files,
+metadata, settings and tables. This copy uses additional disk space; FIScH checks
 free space before migration and stops if the backup and working files will not fit. Restoring a
 **Whole run** backup restores the original folder structure and file contents,
 and retains the current run as another backup. Rebuilding existing results retains a per-experiment backup under
-`.fits_experiment/backup/<series>/<revision>/`. A full rebuild replaces final
+`.acquisition/backup/<series>/<revision>/`. A full rebuild replaces final
 results as well as intermediates; it does not keep an old final image active
 beside a new upstream chain. Per-experiment backups restore coherent outputs
 and state. REF/ROI drawings are preserved;

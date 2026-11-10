@@ -13,7 +13,7 @@ supported files and settings stay consistent.
 | --- | --- | --- |
 | Channel label/name | `GFP`, `RFP`, `nuclei`, `C_1` | Name assigned to an image or mask channel. It identifies a channel, not a particular cell. |
 | Object/mask label | `7`, `24` | Nonzero integer stored in a segmentation/tracking mask to identify an object. Label 0 is background. |
-| Reference/ROI name | `edge`, `region` | Name of a saved drawing, such as `fits_ref_edge.tif` or `fits_roi_region.tif`. A named drawing can contain one or more channels. |
+| Reference/ROI name | `edge`, `region` | Name of a saved drawing, such as `proc_ref_edge.tif` or `proc_roi_region.tif`. A named drawing can contain one or more channels. |
 | Cell identifier | `cell_id` in a table | Identifier built from experiment, object type, object channel, and numeric object label; segmentation IDs also include the frame. |
 
 The **Edit Channel Labels** tool renames channel names. Numeric object labels in
@@ -34,7 +34,7 @@ GFP, RFP, DAPI
 
 Here the first source channel becomes GFP, the second RFP, and the third DAPI.
 Entering `RFP, GFP, DAPI` would give different names to the same channel data;
-FITS does not infer or correct their biological identity from the names.
+FIScH does not infer or correct their biological identity from the names.
 
 The channel count alone cannot detect an incorrectly ordered list. Check the
 acquisition or view its channels if you are unsure. Names used by later settings
@@ -114,7 +114,7 @@ this warning; the red status indicator and blocked conversion remain visible.
 ## Exported channels and downstream choices
 
 **Exported channels** selects which of the source channels are converted and
-saved in the FITS raw image. All listed channels are selected by default;
+saved in the FIScH raw image. All listed channels are selected by default;
 multiple selection is allowed. You must still label all source channels even
 when exporting only a subset.
 
@@ -135,7 +135,7 @@ Multi-selection controls display the selected names on one line, with an
 ellipsis if needed. Click to open the checked choices; click outside or press
 Escape to close. Hovering shows the complete selection and parameter help.
 
-FITS records original source channel indices so a subset still refers to the
+FIScH records original source channel indices so a subset still refers to the
 correct original channels. In **Edit Channel Labels**, these indices start at
 **0**: source channel 0 corresponds to the first source channel (`C_1` under
 generic naming). A subset need not start at index 0 or have consecutive indices.
@@ -146,7 +146,7 @@ Changing the Convert naming list prepares conversion settings; it does not
 perform the run-wide rename of existing saved results. For an existing analysis:
 
 1. Open its run folder and finish/stop any running processing.
-2. Click **Edit Channel Labels** in the main GUI. FITS inspects its managed files
+2. Click **Edit Channel Labels** in the main GUI. FIScH inspects its managed files
    and displays names by original **Source channel** index.
 3. Enter the new, unique, non-empty name for each displayed source channel.
    This changes names, not the channel order or which signal a channel contains.
@@ -161,10 +161,10 @@ need the appropriate migration before they can be modified.
 
 ### Which files does the rename cover?
 
-For the opened run, the tool inspects supported active FITS files and updates
+For the opened run, the tool inspects supported active FIScH files and updates
 known references to the changed source channels:
 
-- Managed FITS TIFF image/mask channel metadata, supported overlay exports,
+- Managed FIScH TIFF image/mask channel metadata, supported overlay exports,
   and relevant channel references in embedded workflow metadata.
 - Quantification channel columns: `object_channel`, `intensity_channel`, and
   `ref_channel`, in experiment and master tables.
@@ -181,12 +181,12 @@ because the object-channel name is part of cell identity. Renaming only an
 intensity channel leaves `cell_id` unchanged. Keep this in mind if external
 tables or scripts join results using old cell IDs.
 
-The operation covers known FITS files in the opened run. It does not rename
+The operation covers known FIScH files in the opened run. It does not rename
 raw acquisition filenames, reference/ROI drawing names, retained backup copies,
 external protocols, or references in your own notebooks and spreadsheets.
 Update separately maintained copies and scripts as needed.
 
-### Why might FITS refuse a rename?
+### Why might FIScH refuse a rename?
 
 - One source index has different existing names in different files.
 - One existing name maps to different source indices.
@@ -215,8 +215,8 @@ Channel names can also appear in a TIFF's
 ## Implementation references
 
 - [Channel selection and fallback names](../../scope_io/src/scope_io/metadata/resolve.py).
-- [Shared raw-input checks](../../src/fits/workflows/checks/raw_inputs.py).
-- [Run inspection and name validation](../../src/fits/channel_labels/discovery.py).
-- [Settings/table channel mappings](../../src/fits/channel_labels/documents.py).
-- [Rename application](../../src/fits/channel_labels/apply.py) and
-  [GUI controls](../../src/fits/gui/channel_labels/window.py).
+- [Shared raw-input checks](../../src/fisch/workflows/checks/raw_inputs.py).
+- [Run inspection and name validation](../../src/fisch/channel_labels/discovery.py).
+- [Settings/table channel mappings](../../src/fisch/channel_labels/documents.py).
+- [Rename application](../../src/fisch/channel_labels/apply.py) and
+  [GUI controls](../../src/fisch/gui/channel_labels/window.py).

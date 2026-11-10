@@ -2,7 +2,7 @@
 
 [User guide](README.md) · [Full output-table reference](output_tables.md)
 
-FITS adds `experiment_id` values to quantification and distance-profile Parquets.
+FIScH adds `experiment_id` values to quantification and distance-profile Parquets.
 Current per-experiment exports use an acquisition-local ID such as
 `sample/sample_s1`. Master tables use the complete experiment path relative to
 the run directory, using `/` separators. For example, master IDs can be:
@@ -59,7 +59,7 @@ Quantification also includes three nullable integer columns for tracking rows:
 Gaps count towards the total length: a track present in frames 3 and 8 has a
 length of 6 frames. Repeated intensity-channel measurements do not affect it.
 Segmentation rows contain null values in these columns; a single-frame track has
-length 1. FITS calculates these statistics per `cell_id` from the final extracted
+length 1. FIScH calculates these statistics per `cell_id` from the final extracted
 measurements, reflecting mask edits and postprocessing when extraction is rerun.
 Master aggregation also recalculates them from the available experiment tables.
 Rerun extraction after editing masks to replace measurements from older masks;
@@ -102,7 +102,7 @@ masks can produce values outside the fixed-reference range. A missing reference
 distance at an endpoint leaves that endpoint distance and `Dw` null.
 Without a reference mask, all reference-dependent motion columns remain null.
 
-FITS calculates each cell/frame once, then attaches step values and whole-track
+FIScH calculates each cell/frame once, then attaches step values and whole-track
 summaries to the original intensity/reference rows. Whole-track values repeat
 across those rows; `Dw` and endpoint-reference distances are specific to each
 reference name/channel. Segmentation rows have null motion values. These
@@ -129,7 +129,7 @@ columns. This does
 not refresh measurements after image/mask changes; rerun extraction for those.
 Already-running Python processes
 need restarting to use updated code; existing Parquets are not changed simply
-by updating FITS.
+by updating FIScH.
 
 Standalone Python callers should pass `run_dir` to `ExperimentState.init()` or
 `load_experiment_state()` when working with nested experiments. Without it, a

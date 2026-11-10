@@ -11,10 +11,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QTableWidgetItem
 
-from fits.environment.constant import StepName
-from fits.gui.settings import SettingsAdapter, StepSettingsEditor
-from fits.gui.settings.conversion_channels import ConversionChannelsWidget
-from fits.workflows.checks.models import RawInputReport
+from fisch.environment.constant import StepName
+from fisch.gui.settings import SettingsAdapter, StepSettingsEditor
+from fisch.gui.settings.conversion_channels import ConversionChannelsWidget
+from fisch.workflows.checks.models import RawInputReport
 
 
 @pytest.mark.parametrize("key", [Qt.Key.Key_Tab, Qt.Key.Key_Return, Qt.Key.Key_Enter])

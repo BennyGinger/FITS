@@ -13,25 +13,25 @@ from PySide6.QtTest import QTest
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from fits.environment.constant import StepName
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.gui.settings.field_widgets import ChannelChoiceWidget
-from fits.gui.theme import get_application
-from fits.gui.segmentation_models.loader import model_options_loader
-from fits.gui.viewer.segmentation import SegmentationTunerWindow
-from fits.gui.viewer.registration import RegistrationTunerWindow
-from fits.gui.viewer.background import BackgroundTunerWindow
-from fits.pipeline import start_pipeline
-from fits.settings.loader import load_settings, resolve_step_params, run_settings_path
-from fits.tasks.registration.tuned import Mode
-from fits.tasks.registration.tuning import RegistrationTuningSession
-from fits.settings.models import RegisterTimeSettings
-from fits.workflows.experiments import discover_saved_states
+from fisch.environment.constant import StepName
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.settings.field_widgets import ChannelChoiceWidget
+from fisch.gui.theme import get_application
+from fisch.gui.segmentation_models.loader import model_options_loader
+from fisch.gui.viewer.segmentation import SegmentationTunerWindow
+from fisch.gui.viewer.registration import RegistrationTunerWindow
+from fisch.gui.viewer.background import BackgroundTunerWindow
+from fisch.pipeline import start_pipeline
+from fisch.settings.loader import load_settings, resolve_step_params, run_settings_path
+from fisch.tasks.registration.tuned import Mode
+from fisch.tasks.registration.tuning import RegistrationTuningSession
+from fisch.settings.models import RegisterTimeSettings
+from fisch.workflows.experiments import discover_saved_states
 
 
 @pytest.fixture
-def window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FitsMainWindow]:
+def window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FischMainWindow]:
     """
     Prepare a small converted movie with two channels and an existing settings file.
     """
@@ -51,12 +51,12 @@ def window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FitsMain
     adapter.set_field_value(StepName.CONVERT, 'channel_labels', ['GFP', 'RFP'])
     adapter.set_segment_channels([{'channel': 'GFP', 'do_denoise': False, 'user_settings': {'diameter': 19}}])
     start_pipeline(adapter.save_to_run_dir(), terminal_progress=False)
-    main = FitsMainWindow(adapter)
+    main = FischMainWindow(adapter)
     app.processEvents()
     main._sync_identity()
     yield main
-    monkeypatch.setattr('fits.gui.viewer.registration.window.confirm_discard_tuner_changes', lambda parent, tabs: True)
-    monkeypatch.setattr('fits.gui.viewer.background.window.confirm_discard_tuner_changes', lambda parent, tabs: True)
+    monkeypatch.setattr('fisch.gui.viewer.registration.window.confirm_discard_tuner_changes', lambda parent, tabs: True)
+    monkeypatch.setattr('fisch.gui.viewer.background.window.confirm_discard_tuner_changes', lambda parent, tabs: True)
     monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.StandardButton.Discard)
     if main._registration_tuner is not None:
         main._registration_tuner.close()
@@ -71,7 +71,7 @@ def window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FitsMain
 
 @pytest.mark.parametrize('mode', ['time', 'channel'])
 @pytest.mark.parametrize('action', ['save', 'run', 'run_after_edit'])
-def test_tuner_draft_is_persisted_by_main_gui(window: FitsMainWindow,
+def test_tuner_draft_is_persisted_by_main_gui(window: FischMainWindow,
                                             tmp_path: Path,
                                             monkeypatch: pytest.MonkeyPatch,
                                             mode: Mode,
@@ -111,7 +111,7 @@ def test_tuner_draft_is_persisted_by_main_gui(window: FitsMainWindow,
             """
             captured.append(load_settings(settings_path)[step]['params'][field])
 
-        monkeypatch.setattr('fits.gui.main_window.pipeline_worker.start_pipeline', run)
+        monkeypatch.setattr('fisch.gui.main_window.pipeline_worker.start_pipeline', run)
         window._editors[step].enable_group.setChecked(True)
         window._run_pipeline()
         assert window._thread is not None
@@ -126,7 +126,7 @@ def test_tuner_draft_is_persisted_by_main_gui(window: FitsMainWindow,
 
 @pytest.mark.parametrize('tool', ['background', 'segmentation', 'compartments'])
 @pytest.mark.parametrize('action', ['save', 'run'])
-def test_other_tuners_only_update_main_gui_draft(window: FitsMainWindow,
+def test_other_tuners_only_update_main_gui_draft(window: FischMainWindow,
                                                 tmp_path: Path,
                                                 monkeypatch: pytest.MonkeyPatch,
                                                 tool: str,
@@ -182,7 +182,7 @@ def test_other_tuners_only_update_main_gui_draft(window: FitsMainWindow,
             """
             captured.append(value(load_settings(settings_path)))
 
-        monkeypatch.setattr('fits.gui.main_window.pipeline_worker.start_pipeline', run)
+        monkeypatch.setattr('fisch.gui.main_window.pipeline_worker.start_pipeline', run)
         if tool == 'compartments':
             window._editors[StepName.SEGMENT].enable_group.setChecked(True)
         window._editors[step].enable_group.setChecked(True)
@@ -199,7 +199,7 @@ def test_other_tuners_only_update_main_gui_draft(window: FitsMainWindow,
 
 @pytest.mark.parametrize('tool', ['time', 'channel', 'background', 'segmentation', 'compartments'])
 @pytest.mark.parametrize('applied', [False, True])
-def test_closing_discards_private_tuner_copy(window: FitsMainWindow,
+def test_closing_discards_private_tuner_copy(window: FischMainWindow,
                                             tmp_path: Path,
                                             monkeypatch: pytest.MonkeyPatch,
                                             tool: str,
@@ -216,14 +216,14 @@ def test_closing_discards_private_tuner_copy(window: FitsMainWindow,
         attribute = '_registration_tuner'
         assert tuner is not None
         tuner.panels[tool].channel.setCurrentText('RFP')
-        target = 'fits.gui.viewer.registration.window.confirm_discard_tuner_changes'
+        target = 'fisch.gui.viewer.registration.window.confirm_discard_tuner_changes'
     elif tool == 'background':
         window._open_background_tuner()
         tuner = window._background_tuner
         attribute = '_background_tuner'
         assert tuner is not None
         tuner.settings_panel.sigma.setValue(0.7)
-        target = 'fits.gui.viewer.background.window.confirm_discard_tuner_changes'
+        target = 'fisch.gui.viewer.background.window.confirm_discard_tuner_changes'
     else:
         window._open_segmentation_tuner('compartment' if tool == 'compartments' else 'segmentation')
         tuner = window._segmentation_tuner
@@ -270,7 +270,7 @@ def test_closing_discards_private_tuner_copy(window: FitsMainWindow,
 
 
 @pytest.mark.parametrize('save', [False, True])
-def test_segmentation_channel_deletion_only_merges_on_save(window: FitsMainWindow,
+def test_segmentation_channel_deletion_only_merges_on_save(window: FischMainWindow,
                                                           tmp_path: Path,
                                                           monkeypatch: pytest.MonkeyPatch,
                                                           save: bool,
@@ -304,7 +304,7 @@ def test_segmentation_channel_deletion_only_merges_on_save(window: FitsMainWindo
     assert run_settings_path(tmp_path).read_bytes() == disk
 
 
-def test_standalone_registration_reads_settings_instead_of_old_cache(window: FitsMainWindow, tmp_path: Path) -> None:
+def test_standalone_registration_reads_settings_instead_of_old_cache(window: FischMainWindow, tmp_path: Path) -> None:
     """
     Build the standalone draft from the settings file even when older tuning exists.
     """

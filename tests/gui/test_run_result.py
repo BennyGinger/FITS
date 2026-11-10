@@ -8,13 +8,13 @@ import pytest
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QPushButton, QWidget
 
-from fits.gui.theme import get_application
-from fits.gui.run_result.dialog import RunResultDialog, show_run_result
-from fits.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
-from fits.workflows.runtime.progress.outcome import RunOutcome, RunResult, summarize_run
-from fits.workflows.runtime.errors import PipelineCancelled
-from fits.workflows.file_management.rebuild import ProcessingPlan
-from fits.cli.interactive import run_pipeline_cli
+from fisch.gui.theme import get_application
+from fisch.gui.run_result.dialog import RunResultDialog, show_run_result
+from fisch.workflows.runtime.progress import RunProgress, StageStatus, WorkflowStage
+from fisch.workflows.runtime.progress.outcome import RunOutcome, RunResult, summarize_run
+from fisch.workflows.runtime.errors import PipelineCancelled
+from fisch.workflows.file_management.rebuild import ProcessingPlan
+from fisch.cli.interactive import run_pipeline_cli
 from test_compaction import prepared
 
 
@@ -35,7 +35,7 @@ def test_completion_actions_follow_run_outcome(tmp_path: Path, successful: bool,
         captured.append(text)
         return SimpleNamespace(exec=lambda: None)
 
-    monkeypatch.setattr('fits.gui.run_result.dialog.ReportDialog', report)
+    monkeypatch.setattr('fisch.gui.run_result.dialog.ReportDialog', report)
     dialog = RunResultDialog(result, tmp_path)
     try:
         dialog.show()
@@ -83,7 +83,7 @@ def test_cli_uses_shared_completion(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     settings = tmp_path / 'settings.toml'
     settings.touch()
     captured: list[RunResult] = []
-    monkeypatch.setattr('fits.cli.interactive.load_settings', lambda path: {'run_dir': str(tmp_path)})
+    monkeypatch.setattr('fisch.cli.interactive.load_settings', lambda path: {'run_dir': str(tmp_path)})
 
     def run(**options: object) -> None:
         """
@@ -102,8 +102,8 @@ def test_cli_uses_shared_completion(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         """
         captured.append(result)
 
-    monkeypatch.setattr('fits.cli.interactive.start_pipeline', run)
-    monkeypatch.setattr('fits.cli.interactive.show_run_result', completion)
+    monkeypatch.setattr('fisch.cli.interactive.start_pipeline', run)
+    monkeypatch.setattr('fisch.cli.interactive.show_run_result', completion)
     run_pipeline_cli(settings)
     assert len(captured) == 1
     assert captured[0].outcome == (RunOutcome.CANCELLED if cancelled else RunOutcome.SUCCESS)
@@ -116,8 +116,8 @@ def test_nested_cli_maintenance_suppresses_completion(tmp_path: Path, monkeypatc
     get_application()
     settings = tmp_path / 'settings.toml'
     settings.touch()
-    monkeypatch.setattr('fits.cli.interactive.load_settings', lambda path: {'run_dir': str(tmp_path)})
-    monkeypatch.setattr('fits.cli.interactive.start_pipeline', lambda **options: None)
+    monkeypatch.setattr('fisch.cli.interactive.load_settings', lambda path: {'run_dir': str(tmp_path)})
+    monkeypatch.setattr('fisch.cli.interactive.start_pipeline', lambda **options: None)
     completed: list[RunResult] = []
 
     def completion(result: RunResult, root: Path, *, manage_files: Callable[[], object]) -> None:
@@ -127,7 +127,7 @@ def test_nested_cli_maintenance_suppresses_completion(tmp_path: Path, monkeypatc
         completed.append(result)
         run_pipeline_cli(settings, maintenance=ProcessingPlan(tmp_path, 'rebuild', {}, ()))
 
-    monkeypatch.setattr('fits.cli.interactive.show_run_result', completion)
+    monkeypatch.setattr('fisch.cli.interactive.show_run_result', completion)
     run_pipeline_cli(settings)
     assert len(completed) == 1
 
@@ -136,17 +136,17 @@ def test_management_preserves_main_page_and_selection(tmp_path: Path, monkeypatc
     """
     Opening and closing management returns to the same processing subtab and folder.
     """
-    from fits.environment import constant as cst
-    from fits.gui.main_window.window import FitsMainWindow
-    from fits.gui.settings import SettingsAdapter
+    from fisch.environment import constant as cst
+    from fisch.gui.main_window.window import FischMainWindow
+    from fisch.gui.settings import SettingsAdapter
     app = get_application()
     state, _, _ = prepared(tmp_path)
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     adapter.user_name = 'Test'
     adapter.set_field_value(cst.StepName.CONVERT, 'channel_labels', ['Red'])
-    window = FitsMainWindow(adapter)
-    monkeypatch.setattr('fits.gui.main_window.window.manage_files', lambda *args, **kwargs: False)
+    window = FischMainWindow(adapter)
+    monkeypatch.setattr('fisch.gui.main_window.window.manage_files', lambda *args, **kwargs: False)
     try:
         window.show()
         app.processEvents()

@@ -9,10 +9,10 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QApplication
 
-from fits.gui.viewer.common.information_dialog import ViewerInformationDialog
-from fits.gui.viewer.masks.window import MaskDrawingWindow
-from fits.gui.viewer.segmentation.window import SegmentationTunerWindow
-from fits.gui.viewer.tracking.window import TrackingViewerWindow
+from fisch.gui.viewer.common.information_dialog import ViewerInformationDialog
+from fisch.gui.viewer.masks.window import MaskDrawingWindow
+from fisch.gui.viewer.segmentation.window import SegmentationTunerWindow
+from fisch.gui.viewer.tracking.window import TrackingViewerWindow
 
 _APP: QApplication | None = None
 
@@ -100,7 +100,7 @@ def test_read_only_tracking_help_only_lists_available_selection_controls():
 @pytest.mark.parametrize('roi', [False, True])
 def test_top_actions_and_clear_shortcuts_use_active_mask(tmp_path: Path, monkeypatch, roi: bool):
     app()
-    source = tmp_path / 'fits_array.tif'
+    source = tmp_path / 'proc_array.tif'
     tifffile.imwrite(source, np.zeros((3, 20, 22), dtype=np.uint16),
                      imagej=True, metadata={'axes': 'TYX'})
     window = MaskDrawingWindow()
@@ -125,9 +125,9 @@ def test_top_actions_and_clear_shortcuts_use_active_mask(tmp_path: Path, monkeyp
         assert panel.clear_all_button.parentWidget() is panel.action_row
         actions = panel.action_row.layout()
         assert actions is not None
-        assert actions.indexOf(panel.undo_button) == 1
-        assert actions.indexOf(panel.clear_button) == 2
-        assert actions.indexOf(panel.clear_all_button) == 3
+        assert actions.indexOf(panel.undo_button) == 0
+        assert actions.indexOf(panel.clear_button) == 1
+        assert actions.indexOf(panel.clear_all_button) == 2
         monkeypatch.setattr(window, 'isActiveWindow', lambda: True)
         current = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
         assert window.eventFilter(window.image_viewer, current)

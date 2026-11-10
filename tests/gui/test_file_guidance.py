@@ -8,12 +8,12 @@ from PySide6.QtCore import QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton
 
-from fits.environment import constant as cst
-from fits.gui.file_management.guidance import FileGuidanceWidget, file_guidance
-from fits.gui.file_management.manager import manage_files
-from fits.workflows.checks.locations import LocationIssue, LocationReport
-from fits.workflows.checks.models import ArtifactRecord, PreflightReport, RunCompatibility
-from fits.workflows.experiments import ExperimentState
+from fisch.environment import constant as cst
+from fisch.gui.file_management.guidance import FileGuidanceWidget, file_guidance
+from fisch.gui.file_management.manager import manage_files
+from fisch.workflows.checks.locations import LocationIssue, LocationReport
+from fisch.workflows.checks.models import ArtifactRecord, PreflightReport, RunCompatibility
+from fisch.workflows.experiments import ExperimentState
 
 
 _APP: QApplication | None = None
@@ -34,7 +34,7 @@ def _status(root: Path) -> RunCompatibility:
     Represent a current converted experiment without touching scientific files.
     """
     state = ExperimentState(root / 'control/image/image_s1', completed_steps=('convert',))
-    return RunCompatibility(root, (state,), (), (state.workdir / cst.FITS_ARRAY_RAW,), ())
+    return RunCompatibility(root, (state,), (), (state.workdir / cst.ARRAY_RAW,), ())
 
 
 def test_master_guidance_explains_reuse_and_lists_affected_tables(tmp_path: Path) -> None:
@@ -67,11 +67,11 @@ def test_common_guidance_retains_the_reason_and_next_action(tmp_path: Path, case
         status = replace(status, states=(), files=())
         expected = ('No converted experiments', 'Converting the original images', '')
     elif case == 'migration':
-        status = replace(status, problems=('Older artifact: old/fits_array.tif',))
-        expected = ('read-only', 'preserve image pixels and measurements', 'old/fits_array.tif')
+        status = replace(status, problems=('Older artifact: old/proc_array.tif',))
+        expected = ('read-only', 'preserve image pixels and measurements', 'old/proc_array.tif')
     elif case == 'processing':
-        record = ArtifactRecord(status.states[0].workdir / cst.FITS_ARRAY_BGSUB, cst.StepName.BG_SUB,
-                                None, 'Input revision differs: fits_array_raw.tif')
+        record = ArtifactRecord(status.states[0].workdir / cst.ARRAY_BGSUB, cst.StepName.BG_SUB,
+                                None, 'Input revision differs: proc_array_raw.tif')
         report = PreflightReport((record,), (), (), status.states)
         expected = ('older inputs', 'would recalculate the affected files', str(record.path))
     elif case == 'locations':
@@ -82,7 +82,7 @@ def test_common_guidance_retains_the_reason_and_next_action(tmp_path: Path, case
         status = replace(status, states=(replace(status.states[0], compacted=True),))
         expected = ('compacted', 'including final results', str(status.states[0].workdir))
     elif case == 'drawings':
-        reviews = ((status.states[0].workdir / 'fits_roi_area.tif', status.files[0]),)
+        reviews = ((status.states[0].workdir / 'proc_roi_area.tif', status.files[0]),)
         expected = ('alignment check', 'Compare the listed drawings', str(reviews[0][0]))
     elif case == 'inputs':
         input_problem = 'sample.nd2: inconsistent channel counts'
@@ -141,12 +141,12 @@ def test_manager_combines_master_status_and_relevant_action(tmp_path: Path, monk
     status = _status(tmp_path)
     master = tmp_path / cst.MASTER_QUANTI_NAME
     report = PreflightReport((), (), (), status.states, outdated_masters=(master,))
-    monkeypatch.setattr('fits.gui.file_management.manager.inspect_run_compatibility', lambda root: status)
-    monkeypatch.setattr('fits.gui.file_management.manager.inspect_run', lambda *args, **kwargs: report)
-    monkeypatch.setattr('fits.gui.file_management.manager.inspect_locations', lambda *args: LocationReport())
-    monkeypatch.setattr('fits.gui.file_management.manager.snapshots', lambda *args: ())
-    monkeypatch.setattr('fits.gui.file_management.manager.geometry_reviews', lambda *args: ())
-    monkeypatch.setattr('fits.gui.file_management.manager.api.can_compact', lambda *args: False)
+    monkeypatch.setattr('fisch.gui.file_management.manager.inspect_run_compatibility', lambda root: status)
+    monkeypatch.setattr('fisch.gui.file_management.manager.inspect_run', lambda *args, **kwargs: report)
+    monkeypatch.setattr('fisch.gui.file_management.manager.inspect_locations', lambda *args: LocationReport())
+    monkeypatch.setattr('fisch.gui.file_management.manager.snapshots', lambda *args: ())
+    monkeypatch.setattr('fisch.gui.file_management.manager.geometry_reviews', lambda *args: ())
+    monkeypatch.setattr('fisch.gui.file_management.manager.api.can_compact', lambda *args: False)
 
     def inspect() -> None:
         """

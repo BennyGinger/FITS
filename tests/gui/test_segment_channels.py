@@ -4,14 +4,18 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+import tifffile
+from scope_io import ScopeIO
 from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QComboBox
 
-from fits.environment.constant import StepName
-from fits.gui.settings import SettingsAdapter, StepSettingsEditor
-from fits.gui.viewer.segmentation import SegmentationTunerWindow
-from fits.gui.viewer.segmentation.worker import (
+from fisch.environment.constant import StepName
+from fisch.gui.settings import SettingsAdapter, StepSettingsEditor
+from fisch.gui.settings.field_widgets import IntWidget
+from fisch.gui.viewer.segmentation import SegmentationTunerWindow
+from fisch.gui.viewer.segmentation.worker import (
     ModelInitializationRequest, ModelInitializationWorker,)
-from fits.settings.models import SegmentChannelSettings
+from fisch.settings.models import SegmentChannelSettings
 
 _APP = None
 
@@ -29,8 +33,12 @@ def test_channel_sections_add_edit_remove_and_round_trip(tmp_path):
     adapter.set_segment_channels([{"channel": "GFP", "user_settings": {"diameter": 20}}])
     editor = StepSettingsEditor(adapter, StepName.SEGMENT)
     editor._add_channel(0)
-    editor.channel_widgets[1]["channel"].setCurrentText("DAPI")
-    editor.channel_widgets[1]["user_settings.diameter"].setValue(12)
+    channel = editor.channel_widgets[1]["channel"]
+    diameter = editor.channel_widgets[1]["user_settings.diameter"]
+    assert isinstance(channel, QComboBox)
+    assert isinstance(diameter, IntWidget)
+    channel.setCurrentText("DAPI")
+    diameter.setValue(12)
     editor.sync_to_adapter()
     assert adapter.segment_channels()[0]["user_settings"]["diameter"] == 20
     assert adapter.segment_channels()[1]["user_settings"]["diameter"] == 12
@@ -71,10 +79,14 @@ def test_tuner_switches_independent_channels_and_applies_collection(monkeypatch,
             pass
 
     monkeypatch.setattr(
-        "fits.gui.viewer.segmentation.window.SegmentationTuningSession", Session)
+        "fisch.gui.viewer.segmentation.window.SegmentationTuningSession", Session)
     monkeypatch.setattr(SegmentationTunerWindow, "_initialize_selected_model", lambda self: None)
-    source = tmp_path / "fits_array.tif"
-    source.touch()
+    source = tmp_path / "proc_array.tif"
+    raw = tmp_path / 'input.tif'
+    pixels = np.zeros((3, 8, 8), dtype=np.uint16)
+    tifffile.imwrite(raw, pixels, imagej=True, metadata={'axes': 'CYX'})
+    ScopeIO.from_path(raw).save_array(pixels, output_path=source,
+                                     custom_metadata={'pipeline_meta': {'version': '5.0.0'}})
     window = SegmentationTunerWindow()
     window._open_source(source)
     assert window.channel_combo.currentText() == "GFP"
@@ -142,11 +154,11 @@ def test_tuner_initialization_reuses_both_models(monkeypatch):
 
 
 def test_diameter_reference_has_image_pixel_size_and_follows_visible_corner():
-    from fits.gui.viewer.common.image_viewer import FitsImageViewer
-    from fits.gui.viewer.segmentation.diameter_reference import DiameterReference
+    from fisch.gui.viewer.common.image_viewer import FischImageViewer
+    from fisch.gui.viewer.segmentation.diameter_reference import DiameterReference
 
     application()
-    viewer = FitsImageViewer()
+    viewer = FischImageViewer()
     image = np.zeros((256, 256))
     viewer.set_image(image)
     reference = DiameterReference(viewer.view_box, viewer.image_item)
@@ -158,7 +170,9 @@ def test_diameter_reference_has_image_pixel_size_and_follows_visible_corner():
     assert reference.pos().x() >= visible.left()
     assert reference.pos().y() + 30 < visible.bottom()
     assert reference.rect().width() == 30
-    np.testing.assert_array_equal(viewer.image_item.image, image)
+    displayed = viewer.image_item.image
+    assert displayed is not None
+    np.testing.assert_array_equal(displayed, image)
     reference.set_diameter(0)
     assert not reference.isVisible()
     viewer.close()

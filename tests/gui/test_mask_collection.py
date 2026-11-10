@@ -9,9 +9,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from fits.gui.viewer.masks.collection import (
+from fisch.gui.viewer.masks.collection import (
     MaskCollectionRequest, MaskCollectionWindow,)
-from fits.settings.models import DistanceProfileSettings, ExtractSettings
+from fisch.settings.models import DistanceProfileSettings, ExtractSettings
 
 _APP = None
 
@@ -29,7 +29,7 @@ def window(monkeypatch):
 def request(tmp_path, name='a'):
     folder = tmp_path / name
     folder.mkdir()
-    source = folder / 'fits_array.tif'
+    source = folder / 'proc_array.tif'
     tifffile.imwrite(source, np.arange(128, dtype=np.uint16).reshape(2, 8, 8),
                      imagej=True, metadata={'axes': 'TYX'})
     return MaskCollectionRequest(name, source)
@@ -192,13 +192,13 @@ def test_empty_queue_distinguishes_waiting_from_complete(window):
 
 
 def test_requests_use_analysis_settings(tmp_path):
-    r = MaskCollectionRequest.from_settings(tmp_path / 'fits_array.tif',
+    r = MaskCollectionRequest.from_settings(tmp_path / 'proc_array.tif',
         extraction=ExtractSettings(draw_ref_mask=True, expected_ref_masks=3),
         profile=DistanceProfileSettings(draw_roi_mask=True, expected_roi_masks=2))
     assert r.expected_ref_masks == 3
     assert r.expected_roi_masks == 2
     assert r.requires_reference
-    r = MaskCollectionRequest.from_settings(tmp_path / 'fits_array.tif', extraction=ExtractSettings())
+    r = MaskCollectionRequest.from_settings(tmp_path / 'proc_array.tif', extraction=ExtractSettings())
     assert r.expected_ref_masks == r.expected_roi_masks == 0
     assert not r.requires_reference
 
@@ -253,7 +253,7 @@ def test_close_checks_missing_masks_in_both_tabs(window: MaskCollectionWindow, t
 
 
 def save_reference(req, label='edge'):
-    from fits.tasks.reference_mask import ReferenceMaskSession
+    from fisch.tasks.reference_mask import ReferenceMaskSession
     session = ReferenceMaskSession(req.image_path)
     session.set_mask_plane(np.ones((8, 8), dtype=np.uint8))
     return session.save(label)
@@ -269,8 +269,8 @@ def test_tree_shows_current_waiting_and_completed_experiments(window, tmp_path, 
     assert tree.topLevelItemCount() == 2
     assert 'current' in tree.topLevelItem(0).text(0)
     assert tree.topLevelItem(0).font(0).bold()
-    assert tree.topLevelItem(0).child(0).text(0) == 'fits_ref_edge.tif'
-    assert tree.topLevelItem(1).child(0).text(0) == 'fits_ref_other.tif'
+    assert tree.topLevelItem(0).child(0).text(0) == 'proc_ref_edge.tif'
+    assert tree.topLevelItem(1).child(0).text(0) == 'proc_ref_other.tif'
     monkeypatch.setattr(window, '_confirm', lambda *args: True)
     window._finish_experiment()
     assert 'finished' in tree.topLevelItem(0).text(0)
@@ -355,7 +355,7 @@ def test_integrated_window_has_no_manual_experiment_loader():
 
 
 def test_saved_masks_appear_immediately_and_roi_click_selects_roi(window, tmp_path):
-    from fits.tasks.roi_mask import RoiSession
+    from fisch.tasks.roi_mask import RoiSession
     req = request(tmp_path)
     roi = RoiSession(req.image_path)
     roi.threshold_plane(10, 30)
@@ -373,7 +373,7 @@ def test_saved_masks_appear_immediately_and_roi_click_selects_roi(window, tmp_pa
     window._new_mask()
     parent = window.experiment_tree.topLevelItem(0)
     assert [parent.child(i).text(0) for i in range(parent.childCount())] == [
-        'fits_ref_first.tif', 'fits_ref_second.tif', 'fits_roi_region.tif']
+        'proc_ref_first.tif', 'proc_ref_second.tif', 'proc_roi_region.tif']
     window._tree_mask_selected(parent.child(2))
     assert window._kind() == 'roi'
     assert window.roi_panel.label_edit.text() == 'region'
@@ -421,7 +421,7 @@ def test_collection_modes_have_different_dark_backgrounds(window, tmp_path):
 
 
 def test_roi_label_suggestion_keeps_previous_saved_name(window, tmp_path, monkeypatch):
-    from fits.tasks.roi_mask import RoiSession
+    from fisch.tasks.roi_mask import RoiSession
     first, second = request(tmp_path), request(tmp_path, 'b')
     roi = RoiSession(first.image_path)
     roi.threshold_plane(10, 30)
@@ -468,7 +468,7 @@ def test_experiment_names_are_relative_and_tree_stays_flat(window, tmp_path):
     assert tree.topLevelItemCount() == 1
     parent = tree.topLevelItem(0)
     assert parent.text(0) == "condition/a — current"
-    assert parent.child(0).text(0) == "fits_ref_reference.tif"
+    assert parent.child(0).text(0) == "proc_ref_reference.tif"
     assert not hasattr(window, "save_next_button")
 
 
@@ -509,7 +509,7 @@ def test_saved_session_dirty_check_avoids_full_stack_copy(window, tmp_path, monk
     session = window._reference_session
     session.set_mask_plane(np.ones((8, 8), dtype=np.uint8))
     window.reference_panel.label_edit.setText('ref')
-    window._saved_mask('reference', tmp_path / 'fits_ref_ref.tif')
+    window._saved_mask('reference', tmp_path / 'proc_ref_ref.tif')
     def unexpected(*args, **kwargs):
         pytest.fail('unchanged-session check assembled the full mask stack')
     monkeypatch.setattr(session._mask, 'copy', unexpected)
@@ -518,7 +518,7 @@ def test_saved_session_dirty_check_avoids_full_stack_copy(window, tmp_path, monk
 
 
 def test_next_experiment_does_not_copy_stacks_or_read_later_frames(window, tmp_path, monkeypatch):
-    from fits.interaction.planes import PlaneStore
+    from fisch.interaction.planes import PlaneStore
 
     first, second = request(tmp_path), request(tmp_path, 'b')
     window.enqueue_experiment(first)
@@ -548,7 +548,7 @@ def test_saved_baseline_survives_edits_and_restoring_pixels(window, tmp_path, ki
     mask = np.ones((8, 8), dtype=np.uint8)
     session.set_mask_plane(mask)
     panel.label_edit.setText('test')
-    window._saved_mask(kind, tmp_path / f'fits_{kind}_test.tif')
+    window._saved_mask(kind, tmp_path / f'proc_{kind}_test.tif')
     session.set_mask_plane(np.zeros_like(mask))
     assert window._dirty(kind)
     session.set_mask_plane(mask)
@@ -558,7 +558,7 @@ def test_saved_baseline_survives_edits_and_restoring_pixels(window, tmp_path, ki
 def test_saving_one_channel_keeps_other_channel_dirty(window, tmp_path):
     folder = tmp_path / 'multi'
     folder.mkdir()
-    source = folder / 'fits_array.tif'
+    source = folder / 'proc_array.tif'
     tifffile.imwrite(source, np.zeros((2, 2, 8, 8), dtype=np.uint16),
                      imagej=True, metadata={'axes': 'TCYX'})
     window.enqueue_experiment(MaskCollectionRequest('multi', source))
@@ -567,7 +567,7 @@ def test_saving_one_channel_keeps_other_channel_dirty(window, tmp_path):
     session.set_mask_plane(mask, channel=0)
     session.set_mask_plane(mask, channel=1)
     window.channel_combo.setCurrentIndex(0)
-    window._saved_mask('reference', folder / 'fits_ref_ref.tif')
+    window._saved_mask('reference', folder / 'proc_ref_ref.tif')
     assert window._dirty('reference')
 
 
@@ -604,7 +604,7 @@ def test_saved_mask_deletion_requires_confirmation_and_removes_file(window: Mask
     """
     The bin deletes the actual file only after accepting the permanent deletion.
     """
-    from fits.tasks.roi_mask import RoiSession
+    from fisch.tasks.roi_mask import RoiSession
     req = request(tmp_path)
     if kind == 'reference':
         path = save_reference(req)
@@ -736,7 +736,7 @@ def test_saving_under_new_label_keeps_both_saved_files_listed(window: MaskCollec
     window.enqueue_experiment(req)
     window.reference_panel.label_edit.setText('second')
     window._save_reference_mask()
-    copy = original.with_name('fits_ref_second.tif')
+    copy = original.with_name('proc_ref_second.tif')
     assert original.is_file() and copy.is_file()
     assert {slot.path for slot in window._slots['reference']} == {original, copy}
     assert window._targets['reference'] == 2

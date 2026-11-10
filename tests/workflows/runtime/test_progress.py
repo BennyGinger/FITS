@@ -1,4 +1,4 @@
-from fits.workflows.runtime.progress import (
+from fisch.workflows.runtime.progress import (
     RunProgress,
     StageStatus,
     WorkflowStage,

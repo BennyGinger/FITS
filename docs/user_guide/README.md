@@ -1,6 +1,6 @@
-# FITS user guide
+# FIScH user guide
 
-A practical guide to processing microscopy images with the FITS GUI, from
+A practical guide to processing microscopy images with the FIScH GUI, from
 installation to inspecting measurements.
 
 The chapters explain installation, processing, result interpretation, and file
@@ -12,7 +12,7 @@ worked dataset and screenshots are still to be added. The
 
 ## Start here
 
-1. [Install, launch, and update FITS](installation.md).
+1. [Install, launch, and update FIScH](installation.md).
 2. [Your first analysis](first_analysis.md): the general start-to-finish workflow.
 3. [Runs, channels, and settings](runs_and_settings.md).
 
@@ -38,7 +38,7 @@ dedicated [Channels and labels](channels_and_labels.md) guide.
 - [Preview and editing GUIs](gui_tools.md): a separate feature list for each
   preview, REF/ROI drawing tool, and tracking viewer/editor.
 - [Inspect artifact metadata in ImageJ/Fiji](viewers.md#inspecting-artifact-metadata-in-imagejfiji):
-  open a TIFF's readable processing summary and understand its relationship to FITS metadata.
+  open a TIFF's readable processing summary and understand its relationship to FIScH metadata.
 - [Moving a project: what is portable?](portable_projects.md): whole projects,
   acquisition folders, individual exports, and refreshing paths/condition tags.
 - [Understanding the output tables](output_tables.md): all standard dataframe

@@ -1,12 +1,12 @@
-"""Compartment controls use the existing FITS settings editor and persistence."""
+"""Compartment controls use the existing FIScH settings editor and persistence."""
 
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-from fits.environment.constant import StepName
-from fits.gui.settings import SettingsAdapter, StepSettingsEditor
-from fits.gui.settings.field_widgets import BoolWidget, FloatWidget
+from fisch.environment.constant import StepName
+from fisch.gui.settings import SettingsAdapter, StepSettingsEditor
+from fisch.gui.settings.field_widgets import BoolWidget, FloatWidget
 
 
 def test_compartment_controls_save_reload_and_validate(tmp_path: Path) -> None:

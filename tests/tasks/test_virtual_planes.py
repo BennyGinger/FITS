@@ -7,17 +7,17 @@ import pytest
 import tifffile
 from scope_io import ScopeIO
 
-from fits.environment.constant import FITS_ARRAY_NAME, FITS_MASK_TRACK
-from fits.gui.viewer.tracking.session import TrackingViewerSession
-from fits.interaction import FitsImageSession
-from fits.interaction.planes import PlaneStore
-from fits.tasks.reference_mask import ReferenceMaskSession
-from fits.tasks.roi_mask import RoiSession
-from fits.tasks.roi_mask.artifact import ROI_MASK_ENCODING
+from fisch.environment.constant import ARRAY_NAME, MASK_TRACK
+from fisch.gui.viewer.tracking.session import TrackingViewerSession
+from fisch.interaction import FischImageSession
+from fisch.interaction.planes import PlaneStore
+from fisch.tasks.reference_mask import ReferenceMaskSession
+from fisch.tasks.roi_mask import RoiSession
+from fisch.tasks.roi_mask.artifact import ROI_MASK_ENCODING
 
 
 def test_image_session_reads_and_caches_only_requested_planes(tmp_path, monkeypatch):
-    source = tmp_path / FITS_ARRAY_NAME
+    source = tmp_path / ARRAY_NAME
     array = np.arange(20 * 2 * 8 * 9, dtype=np.uint16).reshape(20, 2, 8, 9)
     tifffile.imwrite(source, array, photometric="minisblack", compression="zlib",
                      metadata={"axes": "TCYX"})
@@ -29,7 +29,7 @@ def test_image_session_reads_and_caches_only_requested_planes(tmp_path, monkeypa
     monkeypatch.setattr(ScopeIO, "get_plane", read)
     monkeypatch.setattr(ScopeIO, "get_array",
                         lambda *args, **kwargs: pytest.fail("Eager movie read"))
-    session = FitsImageSession(source)
+    session = FischImageSession(source)
     assert calls == []
     np.testing.assert_array_equal(session.display_frame(7, 1), array[7, 1])
     assert not session.display_frame(7, 1).flags.writeable
@@ -92,11 +92,11 @@ def test_read_snapshot_preserves_source_edits_and_deferred_operations(tmp_path):
 @pytest.mark.parametrize("kind", ["reference", "roi"])
 def test_loaded_mask_navigation_is_lazy_and_save_keeps_session_anchors(
         tmp_path, monkeypatch, kind):
-    source = tmp_path / FITS_ARRAY_NAME
+    source = tmp_path / ARRAY_NAME
     image = np.ones((4, 8, 9), dtype=np.uint16)
     tifffile.imwrite(source, image, photometric="minisblack", metadata={"axes": "TYX"})
     labels = ScopeIO.from_path(source).channel_labels
-    artifact = tmp_path / f"fits_{'ref' if kind == 'reference' else 'roi'}_test.tif"
+    artifact = tmp_path / f"proc_{'ref' if kind == 'reference' else 'roi'}_test.tif"
     masks = np.zeros_like(image)
     masks[1, 2:4, 3:5] = 1 if kind == "reference" else 3
     ScopeIO.from_path(source).save_array(
@@ -123,8 +123,8 @@ def test_loaded_mask_navigation_is_lazy_and_save_keeps_session_anchors(
 
 
 def test_tracking_real_disk_edit_save_and_undo(tmp_path, monkeypatch):
-    source = tmp_path / FITS_ARRAY_NAME
-    tracking = tmp_path / FITS_MASK_TRACK
+    source = tmp_path / ARRAY_NAME
+    tracking = tmp_path / MASK_TRACK
     image = np.ones((4, 8, 9), dtype=np.uint16)
     masks = np.zeros_like(image)
     masks[:, 2:4, 3:5] = 10
@@ -150,7 +150,7 @@ def test_tracking_real_disk_edit_save_and_undo(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("operation", ["merge", "link", "stop", "unlink", "delete-track"])
 def test_tracking_movie_edits_match_eager_results(tmp_path, operation):
-    tracking = tmp_path / FITS_MASK_TRACK
+    tracking = tmp_path / MASK_TRACK
     masks = np.zeros((4, 8, 9), dtype=np.uint16)
     masks[:, 1:3, 1:3] = 10
     masks[2:, 4:6, 5:7] = 20
@@ -182,10 +182,10 @@ def test_tracking_movie_edits_match_eager_results(tmp_path, operation):
 
 @pytest.mark.parametrize("kind", ["reference", "roi"])
 def test_clear_current_and_stack_do_not_read_or_write_pixels(tmp_path, monkeypatch, kind):
-    source = tmp_path / FITS_ARRAY_NAME
+    source = tmp_path / ARRAY_NAME
     image = np.ones((12, 2, 8, 9), dtype=np.uint16)
     tifffile.imwrite(source, image, photometric="minisblack", metadata={"axes": "TCYX"})
-    artifact = tmp_path / f"fits_{'ref' if kind == 'reference' else 'roi'}_test.tif"
+    artifact = tmp_path / f"proc_{'ref' if kind == 'reference' else 'roi'}_test.tif"
     labels = ScopeIO.from_path(source).channel_labels
     masks = np.ones_like(image) * (1 if kind == "reference" else 3)
     ScopeIO.from_path(source).save_array(
@@ -214,7 +214,7 @@ def test_clear_current_and_stack_do_not_read_or_write_pixels(tmp_path, monkeypat
 
 
 def test_lazy_tracking_deletion_reuses_centroids_and_undo(tmp_path, monkeypatch):
-    tracking = tmp_path / FITS_MASK_TRACK
+    tracking = tmp_path / MASK_TRACK
     masks = np.zeros((8, 20, 20), dtype=np.uint16)
     masks[:, 2:5, 2:5] = 10
     masks[:, 10:12, 10:12] = 20

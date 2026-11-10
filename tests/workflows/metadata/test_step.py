@@ -1,5 +1,5 @@
-from fits.environment.constant import StepName
-from fits.workflows.metadata import StepMetadata
+from fisch.environment.constant import StepName
+from fisch.workflows.metadata import StepMetadata
 
 
 def test_step_metadata_preserves_existing_channels_when_updated() -> None:

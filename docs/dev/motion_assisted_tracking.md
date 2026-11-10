@@ -139,7 +139,7 @@ existing 2D intensity or shape measurements can separate their contributions.
 - `tracklink` remains the home for linking algorithms, with a Baxter-derived
   backend as the first priority. A later experimental backend may combine
   pretrained Trackastra associations with motion and alternative assignment logic.
-- FITS coordinates images, segmentation, tracking, local segmentation repair,
+- FIScH coordinates images, segmentation, tracking, local segmentation repair,
   contexts, artifact saving, and provenance. Avoid package dependencies that
   make segmentation and tracking import each other.
 - Preserve initial segmentation and automatic results so corrections can be
@@ -183,7 +183,7 @@ Prefer retaining the C++ linking core and exposing it with a Python binding
 such as pybind11. Replace MATLAB-specific interfaces and translate only the
 necessary MATLAB logic into Python. Establish whether the core can compile
 independently before committing to a broader port. Include portable builds for
-the FITS target machines in the feasibility assessment.
+the FIScH target machines in the feasibility assessment.
 
 There is no working MATLAB installation available, so direct MATLAB/Python
 comparison is optional, not a prerequisite. Seek any saved old results or
@@ -225,7 +225,7 @@ measure installation reproducibility, runtime, and memory as well as accuracy.
 Compare the current configuration with suitable existing linking options and
 short gaps before developing new algorithms. The inspected installation
 separates association prediction from linking and exposes `delta_t` in candidate
-graph construction; the FITS wrapper currently does not pass it and therefore
+graph construction; the FIScH wrapper currently does not pass it and therefore
 uses its default of one frame.
 
 Verify prediction-window coverage, candidate pruning, and gap behavior through
@@ -271,7 +271,7 @@ Deliverable: improved segmentation and tracks, measured against fixed-mask
 tracking and annotated boundaries. Do not enforce static consensus shapes on
 migrating cells or let propagated errors reinforce themselves indefinitely.
 
-### 7. Integrate the validated approach into FITS
+### 7. Integrate the validated approach into FIScH
 
 Expose experiment contexts and a small number of meaningful controls only after
 defaults have been tested. Record resolved settings and algorithm versions.

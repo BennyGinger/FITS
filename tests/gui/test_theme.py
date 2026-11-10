@@ -1,6 +1,8 @@
 """Readable placeholder and checkbox rendering with the application theme."""
 
 import os
+from collections.abc import Iterator
+from typing import cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -9,17 +11,20 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication, QCheckBox, QStyle, QStyleOptionButton
 
-from fits.gui.main_window.window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
-from fits.gui.theme import apply_dark_theme
+from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
+from fisch.gui.theme import apply_dark_theme
 
 _APP = None
 
 
-@pytest.fixture
-def themed_app():
+@pytest.fixture(scope='module')
+def themed_app() -> Iterator[QApplication]:
+    """
+    Apply one theme for the module, retaining the Qt application until cleanup.
+    """
     global _APP
-    _APP = QApplication.instance() or QApplication([])
+    _APP = cast(QApplication, QApplication.instance() or QApplication([]))
     old_style = _APP.style().objectName() or "Fusion"
     old_palette = QPalette(_APP.palette())
     old_stylesheet = _APP.styleSheet()
@@ -43,7 +48,7 @@ def contrast(first: QColor, second: QColor) -> float:
 @pytest.mark.parametrize("group", [QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive,
                                     QPalette.ColorGroup.Disabled])
 def test_main_window_inherits_readable_text_and_placeholder_colors(themed_app, group):
-    window = FitsMainWindow(SettingsAdapter())
+    window = FischMainWindow(SettingsAdapter())
     try:
         field = window.run_dir_edit
         assert field.placeholderText()

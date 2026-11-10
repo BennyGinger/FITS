@@ -7,7 +7,7 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
-from fits.gui.viewer.tracking.window import TrackingViewerWindow
+from fisch.gui.viewer.tracking.window import TrackingViewerWindow
 
 _APP: QApplication | None = None
 

@@ -3,7 +3,7 @@
 [User guide](README.md) · [Previous: Runs and settings](runs_and_settings.md) ·
 [Next: Segmentation](segmentation.md)
 
-Preprocessing corrects alignment and image background before segmentation and measurement. Enable only the corrections you need. FITS executes channel registration, time registration, then background subtraction; disabled steps are bypassed.
+Preprocessing corrects alignment and image background before segmentation and measurement. Enable only the corrections you need. FIScH executes channel registration, time registration, then background subtraction; disabled steps are bypassed.
 
 Registration changes image geometry and can require [REF/ROI alignment review](reference_and_roi_masks.md#reuse-masks-after-processing-changes). Intensity-only background correction does not invalidate that geometry.
 
@@ -122,7 +122,7 @@ in the main GUI write that draft to disk; processing starts only after saving su
 **Save current settings** works with or without a preview. When opened from the
 main GUI, it updates the GUI's editable settings without writing its TOML file.
 It also caches the experiment's fitting crop, settings signature and any matching
-fitted matrices in the acquisition's `.fits_experiment/tuning/<series>/registration/time.npz` or `channel.npz`.
+fitted matrices in the acquisition's `.acquisition/tuning/<series>/registration/time.npz` or `channel.npz`.
 Accepting changed manual algorithm/method overrides opens **Advanced settings**
 in the main panel. Unchanged saves and named preset selections leave it
 collapsed. All tuners preserve advanced sections the user already opened.
@@ -152,24 +152,24 @@ Delete the relevant tuning file to remove its saved fitting crop and transforms.
 Standalone launch supports an initial image/folder, tab, and settings file:
 
 ```bash
-uv run fits-regtune /path/to/experiment --mode channel --settings /path/to/fits_settings.toml
+uv run fisch-regtune /path/to/experiment --mode channel --settings /path/to/settings.toml
 ```
 
-Standalone Save updates the supplied settings file, or the nearest saved FITS
+Standalone Save updates the supplied settings file, or the nearest saved FIScH
 settings found within the browser root. Without one, it creates
-`<browser-root>/.fits/fits_settings.toml` from the template. The module launcher
-`python -m fits.gui.viewer.registration` accepts the same arguments.
+`<browser-root>/.pipeline/settings.toml` from the template. The module launcher
+`python -m fisch.gui.viewer.registration` accepts the same arguments.
 
 ## Background-subtraction preview
 
 Click **Preview** in the background-subtraction settings
 section to open BGTune. It loads the GUI's current settings and selected
-experiment, with run-directory browsing locked. Standalone `fits-bgtune` keeps
+experiment, with run-directory browsing locked. Standalone `fisch-bgtune` keeps
 browsing and accepts an initial experiment/image, `--experiments-dir`, and
 `--settings`, for example:
 
 ```bash
-uv run fits-bgtune /path/to/experiment --settings /path/to/fits_settings.toml
+uv run fisch-bgtune /path/to/experiment --settings /path/to/settings.toml
 ```
 
 The three actions sit to the right of the LUT, matching RegTune: orange **Run preview**,

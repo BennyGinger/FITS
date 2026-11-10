@@ -9,13 +9,13 @@ import tifffile
 from scope_io import ScopeIO
 from PySide6.QtWidgets import QApplication, QWidget
 
-from fits.environment import constant as cst
-from fits.gui.main_window import FitsMainWindow
-from fits.gui.settings import SettingsAdapter
+from fisch.environment import constant as cst
+from fisch.gui.main_window import FischMainWindow
+from fisch.gui.settings import SettingsAdapter
 
 
 @pytest.fixture
-def main_window(tmp_path: Path) -> Iterator[FitsMainWindow]:
+def main_window(tmp_path: Path) -> Iterator[FischMainWindow]:
     """
     Start with a saved setting that previously included the interactive pipeline step.
     """
@@ -24,7 +24,7 @@ def main_window(tmp_path: Path) -> Iterator[FitsMainWindow]:
     adapter.run_dir = str(tmp_path)
     adapter.user_name = "Test"
     adapter.set_step_enabled(cst.StepName.EDIT_TRACK, True)
-    window = FitsMainWindow(adapter)
+    window = FischMainWindow(adapter)
     app.processEvents()
     yield window
     window.close()
@@ -33,7 +33,7 @@ def main_window(tmp_path: Path) -> Iterator[FitsMainWindow]:
 
 def _write_artifact(root: Path, folder: str, name: str, kind: cst.ArtifactType) -> Path:
     """
-    Write a current FITS artifact so eligibility uses real run inventory metadata.
+    Write a current FIScH artifact so eligibility uses real run inventory metadata.
     """
     directory = root / folder
     directory.mkdir(parents=True, exist_ok=True)
@@ -42,22 +42,22 @@ def _write_artifact(root: Path, folder: str, name: str, kind: cst.ArtifactType) 
     tifffile.imwrite(raw, array, photometric="minisblack")
     reader = ScopeIO.from_path(raw)
     payload = reader.build_payload(export_channels="all", artifact_type=kind,
-                                   custom_metadata={"pipeline_meta": {"version": "4.0.0"}}).new_revision([])
+                                   custom_metadata={"pipeline_meta": {"version": "5.0.0"}}).new_revision([])
     return reader.save_array(array, metadata=payload, output_path=directory / name)
 
 
-def test_editing_is_absent_from_pipeline_and_requires_tracking(main_window: FitsMainWindow, tmp_path: Path) -> None:
+def test_editing_is_absent_from_pipeline_and_requires_tracking(main_window: FischMainWindow, tmp_path: Path) -> None:
     """
     Hide the step and keep image/segmentation-only or internal-history runs ineligible.
     """
     assert cst.StepName.EDIT_TRACK not in main_window._editors
     assert not main_window.adapter.step_enabled(cst.StepName.EDIT_TRACK)
     assert not main_window.tracking_edit_button.isEnabled()
-    _write_artifact(tmp_path, "experiment", cst.FITS_MASK_SEG, cst.ARTI_SEG)
-    _write_artifact(tmp_path, ".fits/backup", cst.FITS_MASK_TRACK, cst.ARTI_TRACK)
+    _write_artifact(tmp_path, "experiment", cst.MASK_SEG, cst.ARTI_SEG)
+    _write_artifact(tmp_path, ".pipeline/backup", cst.MASK_TRACK, cst.ARTI_TRACK)
     main_window._refresh_run_inventory()
     assert not main_window.tracking_edit_button.isEnabled()
-    tracking = _write_artifact(tmp_path, "experiment", cst.FITS_MASK_TRACK, cst.ARTI_TRACK)
+    tracking = _write_artifact(tmp_path, "experiment", cst.MASK_TRACK, cst.ARTI_TRACK)
     main_window._refresh_run_inventory()
     assert main_window.tracking_edit_button.isEnabled()
     assert main_window._tracking_edit_sources() == [tracking]
@@ -69,15 +69,15 @@ def test_editing_is_absent_from_pipeline_and_requires_tracking(main_window: Fits
     main_window._running = False
 
 
-def test_edit_button_opens_selected_tracking_with_existing_editor_api(main_window: FitsMainWindow,
+def test_edit_button_opens_selected_tracking_with_existing_editor_api(main_window: FischMainWindow,
                                                                      tmp_path: Path,
                                                                      monkeypatch: pytest.MonkeyPatch,
                                                                      ) -> None:
     """
     Pass editing mode and the chosen saved track without involving viewer implementation.
     """
-    first = _write_artifact(tmp_path, "first", cst.FITS_MASK_TRACK, cst.ARTI_TRACK)
-    selected = _write_artifact(tmp_path, "selected", cst.FITS_MASK_TRACK, cst.ARTI_TRACK)
+    first = _write_artifact(tmp_path, "first", cst.MASK_TRACK, cst.ARTI_TRACK)
+    selected = _write_artifact(tmp_path, "selected", cst.MASK_TRACK, cst.ARTI_TRACK)
     opened: list[Path] = []
 
     class Editor(QWidget):
@@ -91,7 +91,7 @@ def test_edit_button_opens_selected_tracking_with_existing_editor_api(main_windo
             assert editing_enabled
             opened.append(tracking_path)
 
-    monkeypatch.setattr("fits.gui.viewer.tracking.TrackingViewerWindow", Editor)
+    monkeypatch.setattr("fisch.gui.viewer.tracking.TrackingViewerWindow", Editor)
     main_window._refresh_run_inventory()
     assert main_window.run_browser.select_path(selected.parent)
     main_window.tracking_edit_button.click()
@@ -105,14 +105,14 @@ def test_edit_button_opens_selected_tracking_with_existing_editor_api(main_windo
     assert opened == [selected, first]
 
 
-def test_gui_cannot_restore_hidden_editing_as_a_pipeline_step(main_window: FitsMainWindow,
+def test_gui_cannot_restore_hidden_editing_as_a_pipeline_step(main_window: FischMainWindow,
                                                             tmp_path: Path,
                                                             monkeypatch: pytest.MonkeyPatch,
                                                             ) -> None:
     """
     Prevent saved flags and reviewed maintenance scopes from reopening pipeline editing.
     """
-    from fits.workflows.file_management.rebuild import ProcessingPlan
+    from fisch.workflows.file_management.rebuild import ProcessingPlan
 
     main_window.adapter.set_step_enabled(cst.StepName.EDIT_TRACK, True)
     main_window._sync_identity()

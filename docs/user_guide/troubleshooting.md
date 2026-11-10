@@ -3,7 +3,7 @@
 [User guide](README.md) ·
 [Previous: Reprocessing and file management](reprocessing_and_file_management.md)
 
-Start with the exact error and the latest report. Record the FITS version, operating system, action you attempted, and relevant settings. Installation errors and processing errors have different logs and recovery steps.
+Start with the exact error and the latest report. Record the FIScH version, operating system, action you attempted, and relevant settings. Installation errors and processing errors have different logs and recovery steps.
 
 ## Find the right first check
 
@@ -30,7 +30,7 @@ maintenance processing do not show a duplicate full-run completion dialog.
 
 GUI and CLI pipelines check free disk space before processing and before pending
 steps. File-management actions use the same checker. Processing estimates use
-the raw FITS array or current final array size multiplied by the number of outputs
+the raw FIScH array or current final array size multiplied by the number of outputs
 to build, with additional headroom. If space is insufficient, the action stops
 and explains how much space is needed and available. Retained-history deletion
 remains available to reclaim space.
@@ -38,7 +38,7 @@ remains available to reclaim space.
 ## Processing logs and reports
 
 Interactive-mask and conversion-only GUI runs write a timestamped log and full
-text report under `.fits/logs/` and `.fits/reports/`, respectively. Reports list
+text report under `.pipeline/logs/` and `.pipeline/reports/`, respectively. Reports list
 completed, partial, skipped, and failed work by phase and experiment. The GUI
 opens the latest report when a run
 finishes; **Full Report** and report files in the directory browser can reopen
@@ -46,12 +46,12 @@ it later.
 
 ## Custom log locations
 
-Runtime `log_dir` overrides the root for FITS metadata. FITS creates
-`.fits/logs/` and `.fits/reports/` below that root; when `log_dir` is empty,
+Runtime `log_dir` overrides the root for FIScH metadata. FIScH creates
+`.pipeline/logs/` and `.pipeline/reports/` below that root; when `log_dir` is empty,
 both are created below `run_dir`.
 
 ## Report a reproducible problem
 
-Include the FITS version, platform, exact message, relevant log/report, and the smallest settings/example that reproduces the issue. State which steps completed before the failure and whether the run was migrated, moved, compacted, or edited.
+Include the FIScH version, platform, exact message, relevant log/report, and the smallest settings/example that reproduces the issue. State which steps completed before the failure and whether the run was migrated, moved, compacted, or edited.
 
 Display contrast does not change stored measurements. A skipped step may be intentional; read its reported reason. Reaggregating tables cannot detect unmeasured mask edits, so rerun the affected analysis when numerical inputs change.

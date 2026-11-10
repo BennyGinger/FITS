@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from fits.tasks.tracking.static_masks import process_static_masks
-from fits.tasks.tracking.static_masks.completion import complete_tracks
-from fits.tasks.tracking.static_masks.identities import reconnect_identities
+from fisch.tasks.tracking.static_masks import process_static_masks
+from fisch.tasks.tracking.static_masks.completion import complete_tracks
+from fisch.tasks.tracking.static_masks.identities import reconnect_identities
 
 
 def test_reconnection_clears_weak_ambiguous_and_unmatched_observations() -> None:

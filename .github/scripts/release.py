@@ -1,4 +1,4 @@
-"""Release stable FITS version bumps after the existing 4.1.0 release.
+"""Release stable FIScH version bumps after the existing 4.1.0 release.
 
 The default invocation previews the plan without network calls or changes.
 Publishing uses the Actions token and checkout credentials; no extra key is needed.
@@ -74,9 +74,9 @@ def plan_releases(root: Path, baseline: str = BASELINE_TAG, head: str = "HEAD") 
         if old_base is None or version_key(new) < version_key(old_base.group()):
             raise ValueError(f"Version decreased: {old} -> {new} at {commit[:8]}.")
         lock = tomllib.loads(git(root, "show", f"{commit}:uv.lock"))
-        locked = [package["version"] for package in lock["package"] if package["name"] == "fits"]
+        locked = [package["version"] for package in lock["package"] if package["name"] == "fisch"]
         if locked != [new]:
-            raise ValueError(f"uv.lock must also declare FITS {new} at {commit[:8]}; run uv lock before committing the bump.")
+            raise ValueError(f"uv.lock must also declare FIScH {new} at {commit[:8]}; run uv lock before committing the bump.")
         existing = tag_commit(root, new)
         if existing is not None and existing != commit:
             raise ValueError(f"Tag {new} already points to a different commit; published tags will not be moved.")
@@ -141,7 +141,7 @@ def publish_release(root: Path, release: Release, github: GitHub) -> None:
     if existing_tag is None:
         git(root, "-c", "user.name=github-actions[bot]",
             "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com",
-            "tag", "-a", release.version, release.commit, "-m", f"FITS {release.version}")
+            "tag", "-a", release.version, release.commit, "-m", f"FIScH {release.version}")
     # Also push an existing matching tag, to recover from an interrupted local tag/push.
     git(root, "push", "origin", f"refs/tags/{release.version}")
     generated = github.request("POST", "releases/generate-notes", {
@@ -156,7 +156,7 @@ def publish_release(root: Path, release: Release, github: GitHub) -> None:
     if generated.get("body"):
         notes += "\n\n" + generated["body"]
     published = github.request("POST", "releases", {
-        "tag_name": release.version, "name": f"FITS {release.version}", "body": notes,
+        "tag_name": release.version, "name": f"FIScH {release.version}", "body": notes,
         "draft": False, "prerelease": False, "make_latest": "true" if make_latest else "false",
     })
     assert published is not None
@@ -169,13 +169,13 @@ def main() -> None:
     arguments = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     releases = plan_releases(root)
-    repository = os.environ.get("GITHUB_REPOSITORY", "BennyGinger/FITS")
+    repository = os.environ.get("GITHUB_REPOSITORY", "BennyGinger/fisch")
     if not releases:
-        print("No new stable FITS version bumps to release.")
+        print("No new stable FIScH version bumps to release.")
         return
     github = GitHub(repository, os.environ["GH_TOKEN"]) if arguments.publish else None
     for release in releases:
-        print(f"FITS {release.version}: {release.commit} (previous release: {release.previous})")
+        print(f"FIScH {release.version}: {release.commit} (previous release: {release.previous})")
         if github is None:
             print(commit_notes(root, release, repository))
         else:

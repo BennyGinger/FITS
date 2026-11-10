@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from fits.environment.constant import ARTI_IMG, ARTI_TRACK
-from fits.workflows.experiments import ExperimentState
-from fits.tasks.analysis.extraction.manager import ExtractionManager
+from fisch.environment.constant import ARTI_IMG, ARTI_TRACK
+from fisch.workflows.experiments import ExperimentState
+from fisch.tasks.analysis.extraction.manager import ExtractionManager
 
 
 class FakeScopeIO:
@@ -35,10 +35,10 @@ class FakeScopeIO:
 
 def test_manager_automatically_loads_all_reference_artifacts(
         tmp_path: Path, monkeypatch,) -> None:
-    image_path = tmp_path / "fits_array.tif"
-    labels_path = tmp_path / "fits_track.tif"
-    first_reference = tmp_path / "fits_ref_needle.tif"
-    second_reference = tmp_path / "fits_ref_edge.tif"
+    image_path = tmp_path / "proc_array.tif"
+    labels_path = tmp_path / "proc_masks_track.tif"
+    first_reference = tmp_path / "proc_ref_needle.tif"
+    second_reference = tmp_path / "proc_ref_edge.tif"
     for path in (image_path, labels_path, first_reference, second_reference):
         path.touch()
 
@@ -58,8 +58,8 @@ def test_manager_automatically_loads_all_reference_artifacts(
             single_reference, "TZYX", ("GFP",)),
         second_reference.name: FakeScopeIO(
             multi_reference, "TZCYX", ("GFP", "RFP")),}
-    monkeypatch.setattr("fits.tasks.analysis.extraction.manager.ScopeIO", FakeScopeIO)
-    monkeypatch.setattr("fits.tasks.analysis.manager.ScopeIO", FakeScopeIO)
+    monkeypatch.setattr("fisch.tasks.analysis.extraction.manager.ScopeIO", FakeScopeIO)
+    monkeypatch.setattr("fisch.tasks.analysis.manager.ScopeIO", FakeScopeIO)
 
     state = ExperimentState(
         workdir=tmp_path,
@@ -85,4 +85,4 @@ import pytest
 @pytest.fixture(autouse=True)
 def isolate_geometry_metadata(monkeypatch):
     # Readers in this numerical test are in-memory arrays, not TIFF files.
-    monkeypatch.setattr('fits.tasks.analysis.manager.refresh_branch', lambda *args: None)
+    monkeypatch.setattr('fisch.tasks.analysis.manager.refresh_branch', lambda *args: None)

@@ -2,7 +2,7 @@
 
 [User guide](README.md) · [Analysis and results](analysis_and_results.md)
 
-FITS saves its measurements as **Parquet (`.parquet`) files**. Each file contains
+FIScH saves its measurements as **Parquet (`.parquet`) files**. Each file contains
 a table that can be opened in Tad, Data Wrangler, or Python as a dataframe.
 This reference describes columns produced by the current exporters; older saved
 results can have fewer columns until the relevant analysis is rerun.
@@ -13,9 +13,9 @@ can be empty and need not contain every optional measurement column.
 
 | File | Location | Contents |
 | --- | --- | --- |
-| `fits_quantification.parquet` | Each experiment/series folder | Object shape, intensity, reference distance, and tracking measurements. |
+| `proc_quantification.parquet` | Each experiment/series folder | Object shape, intensity, reference distance, and tracking measurements. |
 | `master_quantification.parquet` | Run folder | The available experiment quantification tables combined, with folder-based condition tags. |
-| `fits_distance_profile.parquet` | Each experiment/series folder | Image intensity summarized in distance bins around a reference mask. |
+| `proc_distance_profile.parquet` | Each experiment/series folder | Image intensity summarized in distance bins around a reference mask. |
 | `master_distance_profile.parquet` | Run folder | The available experiment distance profiles combined, with folder-based condition tags. |
 
 Only enabled analyses with available results produce their corresponding tables.
@@ -38,7 +38,7 @@ one dataframe. Master tables combine experiment rows; they do not average them.
   pandas `NA` can represent missing or undefined values. Their display/storage
   representation varies. Types below describe the values, not a guaranteed
   pandas dtype or integer bit width.
-- **These analyses are currently 2D.** With a Z stack, FITS maximum-projects
+- **These analyses are currently 2D.** With a Z stack, FIScH maximum-projects
   images and object labels before quantification; binary reference/ROI masks
   use inclusion across Z. Distance profiles also use a maximum-projected image.
   Quantification does not export `centroid_z` or a Z-plane identity column.
@@ -49,7 +49,7 @@ One row describes **one labeled object in one frame, measured in one intensity
 channel and one compartment**, with one reference name/channel combination
 when references exist.
 
-FITS uses the active tracking mask when available, otherwise the segmentation
+FIScH uses the active tracking mask when available, otherwise the segmentation
 mask. It measures every intensity channel in the selected analysis image and
 every channel in the selected object-mask artifact. These are different roles:
 a GFP-derived mask can have both GFP and RFP intensity measurements.
@@ -96,7 +96,7 @@ are explained in [Analysis identifiers](analysis_identifiers.md).
 
 These defaults use scikit-image's
 [region measurements](https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops).
-FITS supplies no physical spacing to these shape measurements, so it does not
+FIScH supplies no physical spacing to these shape measurements, so it does not
 automatically add `area_um2`, `perimeter_um`, or calibrated centroid columns.
 
 When compartments are enabled, optional expansion first defines `full`; `mb`
@@ -116,7 +116,7 @@ reference mask, they are absent rather than filled with zero.
 
 | Column | Type / units | Meaning |
 | --- | --- | --- |
-| `ref_label_name` | Text | Reference name, for example `edge` from `fits_ref_edge.tif`. |
+| `ref_label_name` | Text | Reference name, for example `edge` from `proc_ref_edge.tif`. |
 | `ref_channel` | Text, possibly missing | Channel stored in the reference mask; independent of object and intensity channels. |
 | `dist_pixel` | Number or missing, pixels | Distance from the full-cell centroid's integer pixel position to the nearest included reference pixel. |
 | `dist_um` | Number or missing, µm | `dist_pixel × pixel size`; missing without usable isotropic calibration. |
@@ -129,7 +129,7 @@ distances for that reference. A single-frame reference is reused across time.
 
 ### Track bounds and duration in frames
 
-These columns are always added by current FITS extraction. They are populated
+These columns are always added by current FIScH extraction. They are populated
 for `tracking` rows and missing for `segmentation` rows.
 
 | Column | Type / units | Meaning |
@@ -145,7 +145,7 @@ rows belonging to the same track.
 
 ### Tracking motion columns
 
-All columns below exist in current FITS quantification exports. Their values
+All columns below exist in current FIScH quantification exports. Their values
 are missing for segmentation rows. Spatially calibrated columns additionally
 require isotropic pixel calibration; speeds require positive elapsed time.
 
@@ -176,7 +176,7 @@ Values are not clipped; moving/changing references can produce `Dw` outside
 are not replaced with distances from another frame.
 
 Steps join consecutive **observed** positions, even across gaps. Speeds across
-a gap use the full elapsed time; FITS does not reconstruct unobserved detours.
+a gap use the full elapsed time; FIScH does not reconstruct unobserved detours.
 Whole-track metrics repeat across frames, intensity channels, and compartments;
 reference-specific metrics additionally vary by reference name/channel.
 
@@ -226,7 +226,7 @@ against one reference name/channel, for one ROI variant**. These are image-pixel
 statistics, not individual-cell measurements; the table has no `cell_id`, object
 label, or compartment column.
 
-FITS always calculates a whole-image variant, with missing `roi_label_name` and
+FIScH always calculates a whole-image variant, with missing `roi_label_name` and
 `roi_channel`, **as well as** each saved ROI name/channel variant. The reference
 defines distances; the ROI only chooses which pixels contribute to statistics.
 Pixels inside the reference have distance zero and can contribute to bin 0.
@@ -303,7 +303,7 @@ The master adds:
 | `condition_level_1` | Text or missing | Outermost user-created condition folder below the run folder. |
 | `condition_level_2`, `condition_level_3`, … | Text or missing | Successive nested condition folders. The number of columns depends on the deepest included experiment. |
 
-For `run/control/drugA/sample/sample_s1/`, where `sample/` is FITS's acquisition
+For `run/control/drugA/sample/sample_s1/`, where `sample/` is FIScH's acquisition
 folder, the conditions are `control` and `drugA`; the structural acquisition and
 series folders are not condition tags. Shallower experiments receive missing
 values for deeper levels. With no condition folders, no condition columns are
@@ -317,9 +317,9 @@ from the saved observations. It preserves existing motion measurements, but
 does not calculate missing motion columns in legacy experiment tables. Combining
 tables with different optional columns can create missing values in the master.
 
-The standard per-experiment Parquets also contain file-level FITS provenance,
+The standard per-experiment Parquets also contain file-level FIScH provenance,
 such as input revisions and processing settings. Those are **metadata, not
-dataframe columns**. Master export does not carry the same per-experiment FITS
+dataframe columns**. Master export does not carry the same per-experiment FIScH
 metadata payload; keep the experiment artifacts and settings for provenance.
 
 For the readable metadata embedded in TIFF images and masks, see
@@ -341,7 +341,7 @@ For the readable metadata embedded in TIFF images and masks, see
   `sum(mean_intensity × pixel_count) / sum(pixel_count)`, not the unweighted mean
   of their means; exclude empty bins from that calculation.
 
-Updating FITS or rebuilding a master does not remeasure edited images or masks.
+Updating FIScH or rebuilding a master does not remeasure edited images or masks.
 Rerun quantification or distance profiling with overwrite when its numerical
 inputs change. See [Reprocessing and file management](reprocessing_and_file_management.md).
 
@@ -352,12 +352,12 @@ Column definitions were checked against the current exporters:
 - [Region properties and compartments](../../bioimagequant/src/bioimagequant/extraction/regions.py),
   [column formatting](../../bioimagequant/src/bioimagequant/extraction/formatting.py), and
   [reference distances](../../bioimagequant/src/bioimagequant/extraction/distances.py).
-- [FITS quantification export](../../src/fits/tasks/analysis/extraction/extract.py),
-  [identity and conditions](../../src/fits/tasks/analysis/identity.py),
-  [track spans](../../src/fits/tasks/analysis/tracking_summary.py), and
-  [motion](../../src/fits/tasks/analysis/tracking_motion.py).
+- [FIScH quantification export](../../src/fisch/tasks/analysis/extraction/extract.py),
+  [identity and conditions](../../src/fisch/tasks/analysis/identity.py),
+  [track spans](../../src/fisch/tasks/analysis/tracking_summary.py), and
+  [motion](../../src/fisch/tasks/analysis/tracking_motion.py).
 - [Distance-profile columns](../../bioimagequant/src/bioimagequant/distance_profile/table.py),
   [bin statistics](../../bioimagequant/src/bioimagequant/distance_profile/binning.py), and
-  [FITS profile adapter](../../src/fits/tasks/analysis/dist_profile/manager.py).
-- [Master aggregation](../../src/fits/tasks/analysis/aggregate.py) and
-  [per-experiment Parquet metadata](../../src/fits/tasks/common/table_results.py).
+  [FIScH profile adapter](../../src/fisch/tasks/analysis/dist_profile/manager.py).
+- [Master aggregation](../../src/fisch/tasks/analysis/aggregate.py) and
+  [per-experiment Parquet metadata](../../src/fisch/tasks/common/table_results.py).

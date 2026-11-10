@@ -1,18 +1,18 @@
 # Git and submodule cheatsheet
 
-FITS records each submodule as a repository URL in `.gitmodules` plus an exact
+FIScH records each submodule as a repository URL in `.gitmodules` plus an exact
 commit in the parent repository. Updating files inside a submodule and updating
-the commit recorded by FITS are therefore two separate commits.
+the commit recorded by FIScH are therefore two separate commits.
 
-## Clone FITS
+## Clone FIScH
 
 ```bash
-git clone --recurse-submodules https://github.com/BennyGinger/FITS.git fits
-cd fits
+git clone --recurse-submodules https://github.com/BennyGinger/fisch.git
+cd fisch
 uv sync
 ```
 
-If FITS was cloned without its submodules:
+If FIScH was cloned without its submodules:
 
 ```bash
 git submodule update --init --recursive
@@ -29,11 +29,11 @@ git diff --submodule=log
 ```
 
 A leading `-` in `git submodule status` means the submodule is not initialized;
-`+` means its checked-out commit differs from the commit recorded by FITS.
+`+` means its checked-out commit differs from the commit recorded by FIScH.
 
-## Restore the versions recorded by FITS
+## Restore the versions recorded by FIScH
 
-Use this after switching or pulling a FITS branch:
+Use this after switching or pulling a FIScH branch:
 
 ```bash
 git submodule sync --recursive
@@ -41,10 +41,10 @@ git submodule update --init --recursive
 uv sync
 ```
 
-This checks out the exact submodule commits recorded by the current FITS
+This checks out the exact submodule commits recorded by the current FIScH
 commit. It does not update them to the newest upstream revisions.
 
-## Pull FITS and its recorded submodule versions
+## Pull FIScH and its recorded submodule versions
 
 ```bash
 git pull --recurse-submodules
@@ -66,7 +66,7 @@ git push
 cd ..
 ```
 
-Then record that new submodule commit in FITS:
+Then record that new submodule commit in FIScH:
 
 ```bash
 git add bioimagequant
@@ -86,7 +86,7 @@ git diff --submodule=log
 ```
 
 Review the resulting revisions, run the tests, then commit the changed
-submodule pointers in FITS. Add `--recursive` only if nested submodules are ever
+submodule pointers in FIScH. Add `--recursive` only if nested submodules are ever
 introduced.
 
 ## Add a submodule
@@ -102,7 +102,7 @@ Also add the package to `[tool.uv.workspace].members`, register it under
 
 ## Remove a submodule
 
-First commit or push anything worth keeping inside the submodule. From the FITS
+First commit or push anything worth keeping inside the submodule. From the FIScH
 root:
 
 ```bash
@@ -129,7 +129,7 @@ git commit -m "Update submodule URL"
 
 ## Useful recovery commands
 
-Return one submodule to the commit currently recorded by FITS:
+Return one submodule to the commit currently recorded by FIScH:
 
 ```bash
 git submodule update --checkout package_name

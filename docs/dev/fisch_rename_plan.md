@@ -1,7 +1,7 @@
 # FITS to FIScH: coordinated rename, migration and release
 
-Status: implemented on `refactor/fisch`; automated validation complete. Manual review and release tasks remain.
-Updated: 2026-11-10.
+Status: FIScH 5.0.0 published and ScopeIO 3.0.0 tagged.
+Updated: 2026-11-11.
 
 ## Agreed identity and scope
 
@@ -254,12 +254,12 @@ snapshot/transaction facilities rather than inventing a second migration system.
         backups, failed/interrupted migration and existing REF/ROI/manual edits.
 11. [x] Run scientific preservation, GUI/CLI, startup/install/update, package-build
         and type checks; distinguish baseline failures from rename regressions.
-12. [ ] Manually verify old-run viewing/migration and a new end-to-end FIScH run.
-13. [ ] Rename the existing main remote repository and update remotes/instructions.
+12. [x] Manually verify old-run viewing/migration and a new end-to-end FIScH run.
+13. [x] Rename the existing main remote repository and update remotes/instructions.
 14. [x] Verify that the single application-version bump matches the compatibility
         threshold; keep the prepared ScopeIO 3.0.0 identity. Do not bump again
         merely for merging or integration.
-15. [ ] Publish dependency commits before the application pins, validate a fresh
+15. [x] Publish dependency commits before the application pins, validate a fresh
         checkout and an existing-install update, then tag/release both together.
 
 ## Branch, merge and rollback policy
@@ -377,7 +377,7 @@ The validation logs/build artifacts are under `/tmp/fisch-*` on this workstation
 they are temporary evidence, not committed scientific data. Existing unrelated
 working-tree edits inside stackalign/tracklink are left untouched.
 
-### Remaining review and release procedure
+### Review and release procedure
 
 1. Manually open the branch's GUI (`.venv/bin/fisch-gui`), process a small fresh
    run, and inspect its previews/results. Use a **copy** of a legacy run to test
@@ -440,3 +440,22 @@ migration/workflow/GUI group passed 54 tests and the main-window module passed
 errors or warnings. New regression-test code has no introduced diagnostics;
 older annotations in the existing file-management test modules remain outside
 this focused change. Whitespace checks passed.
+
+## Release verification
+
+FIScH 5.0.0 is published from merge commit `e218057`. ScopeIO 3.0.0 is tagged
+at the pinned `778519e` commit on its `main` branch. The existing FITS GitHub
+repository was renamed to `BennyGinger/fisch` and this checkout's origin uses
+that URL. [FIScH release](https://github.com/BennyGinger/fisch/releases/tag/5.0.0)
+
+A fresh recursive Linux checkout installed from the lockfile and passed the
+startup import and command checks. A separate installation of the published
+FITS 4.1.0 tag upgraded to the FIScH release commit using the real installer.
+The upgrade replaced the old package and shortcut, verified backend imports,
+and left a clean checkout with all nine recorded submodule pins.
+The startup and release suite passed 119 tests. ScopeIO passed 201 tests.
+
+FITS 4 users follow the one-time installer procedure. The running FITS 4
+launcher still expects the previous Python package name. Linux was verified on
+this host. Native Windows and macOS upgrades remain unverified.
+[Upgrade instructions](../user_guide/installation.md#upgrade-an-existing-fits-4-installation-to-fisch-5)

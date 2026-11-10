@@ -210,7 +210,8 @@ git pull --ff-only
 Run the installer for your platform from the updated checkout
 (`bash install_linux.sh`, `bash install_macos.sh`, or `install_win.bat` on
 Windows). This one-time installer step updates the environment and replaces the
-old shortcut for this checkout. Then open FIScH from the new shortcut. The
+old shortcut for this checkout. On GNOME it also moves an existing FITS dock pin
+to FIScH. Then open FIScH from the new shortcut. The
 FITS 4 launcher in memory still expects the old package name, so use these
 steps for the transition to 5.0.0. Later FIScH versions use the startup update
 prompt described below.

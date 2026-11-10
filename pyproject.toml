@@ -1,6 +1,6 @@
 [project]
 name = "fisch"
-version = "5.0.0"
+version = "5.0.1"
 description = "Fluorescent Imaging and Single-cell Histories, or FIScH, is a Python package to analyze fluorescent microscopy images and track individual cells over time."
 readme = "README.md"
 authors = [

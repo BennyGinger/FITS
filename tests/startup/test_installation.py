@@ -250,6 +250,51 @@ def test_refresh_migrates_only_owned_fits_shortcuts(shortcuts: ModuleType, tmp_p
         assert legacy.read_text(encoding='utf-8') == contents
 
 
+@pytest.mark.parametrize('existing_new_pin,save_succeeds', [(False, True), (True, True), (False, False)])
+def test_upgrade_moves_owned_gnome_dock_pin(shortcuts: ModuleType, tmp_path: Path,
+                                           monkeypatch: pytest.MonkeyPatch,
+                                           existing_new_pin: bool, save_succeeds: bool,
+                                           ) -> None:
+    """
+    Move the pin in place and keep the old launcher when GNOME cannot save the change.
+    """
+    root = tmp_path / 'checkout'
+    make_install(root)
+    data_home = tmp_path / 'data'
+    menu = data_home / 'applications'
+    menu.mkdir(parents=True)
+    legacy = menu / 'fits.desktop'
+    legacy.write_text(f'[Desktop Entry]\nName=FITS\nPath={root}\n', encoding='utf-8')
+    monkeypatch.setenv('XDG_CURRENT_DESKTOP', 'ubuntu:GNOME')
+    monkeypatch.setenv('XDG_DATA_HOME', str(data_home))
+    initial = ['editor.desktop', 'fits.desktop', 'browser.desktop']
+    if existing_new_pin:
+        initial.append('fisch.desktop')
+    expected = (['editor.desktop', 'browser.desktop', 'fisch.desktop'] if existing_new_pin
+                else ['editor.desktop', 'fisch.desktop', 'browser.desktop'])
+    reads = iter([repr(initial), repr(expected if save_succeeds else initial)])
+
+    def read(command: list[str], **kwargs: object) -> str:
+        """
+        Return the initial or persisted GNOME setting.
+        """
+        assert command == ['gsettings', 'get', 'org.gnome.shell', 'favorite-apps']
+        return next(reads)
+
+    def write(command: list[str], **kwargs: object) -> None:
+        """
+        Check that GNOME can find both entries when its favorite is replaced.
+        """
+        assert command == ['gsettings', 'set', 'org.gnome.shell', 'favorite-apps', repr(expected)]
+        assert legacy.is_file() and (menu / 'fisch.desktop').is_file()
+
+    monkeypatch.setattr(shortcuts.subprocess, 'check_output', read)
+    monkeypatch.setattr(shortcuts.subprocess, 'run', write)
+    shortcuts.install_shortcut(root, refresh_only=True)
+    assert (menu / 'fisch.desktop').is_file()
+    assert legacy.exists() != save_succeeds
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux entry-file integration")
 def test_linux_entry_runs_installation_from_another_directory(checkout: Path, tmp_path: Path) -> None:
     """

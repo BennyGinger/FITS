@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ast import literal_eval
 from collections.abc import Callable
 from hashlib import sha256
 import os
@@ -30,6 +31,37 @@ def desktop_entry(root: Path, *, icon_path: Path | None = None) -> str:
         "Terminal=false\nStartupNotify=true\nCategories=Science;\n"
         "Keywords=microscopy;fluorescence;tracking;images;\n"
     )
+
+
+def _migrate_gnome_favorite(old_id: str, new_id: str, report: Callable[[str], None]) -> bool:
+    """
+    Move the owned shortcut's dock pin and report whether the old shortcut can be removed.
+    """
+    if "gnome" not in os.environ.get("XDG_CURRENT_DESKTOP", "").casefold().split(":"):
+        return True
+    setting = ["org.gnome.shell", "favorite-apps"]
+    read = ["gsettings", "get", *setting]
+    try:
+        current = subprocess.check_output(read, text=True, stderr=subprocess.PIPE, timeout=5)
+        favorites = literal_eval(current.strip().removeprefix("@as "))
+        if not isinstance(favorites, list) or not all(isinstance(item, str) for item in favorites):
+            raise ValueError("Invalid GNOME favorites list")
+        if old_id not in favorites:
+            return True
+        if new_id in favorites:
+            updated = [item for item in favorites if item != old_id]
+        else:
+            updated = [new_id if item == old_id else item for item in favorites]
+        subprocess.run(["gsettings", "set", *setting, repr(updated)], check=True,
+                       capture_output=True, timeout=5)
+        saved = subprocess.check_output(read, text=True, stderr=subprocess.PIPE, timeout=5)
+        if literal_eval(saved.strip().removeprefix("@as ")) != updated:
+            raise ValueError("GNOME did not save the updated dock pin")
+    except (OSError, subprocess.SubprocessError, SyntaxError, ValueError):
+        report("Could not update the GNOME dock pin. Rerun the installer to retry.")
+        return False
+    report("Updated the GNOME dock pin to FIScH.")
+    return True
 
 
 def install_macos_shortcut(root: Path, output_dir: Path | None, refresh_only: bool,
@@ -116,7 +148,7 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
     launcher = root / "startup" / "launch_linux.sh"
     launcher.chmod(launcher.stat().st_mode | 0o100)
     destination.write_text(contents, encoding="utf-8")
-    if owns_legacy:
+    if owns_legacy and (output_dir is not None or _migrate_gnome_favorite(legacy.name, destination.name, report)):
         legacy.unlink(missing_ok=True)
     if shutil.which("update-desktop-database"):
         subprocess.run(["update-desktop-database", str(destination_dir)], check=True)

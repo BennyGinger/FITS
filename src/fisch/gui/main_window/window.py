@@ -1694,9 +1694,7 @@ class FischMainWindow(QMainWindow):
         self._refresh_phase_access()
         self._maintenance_plan = plan
         try:
-            if plan.skipped_steps:
-                self._append_log('WARNING | Rebuild skips unavailable or manual historical steps: '
-                                 + ', '.join(plan.skipped_steps) + '. Existing results remain in the backup.')
+            self._log_skipped_rebuild_steps()
             self._run_error = ''
             self._run_pipeline()
             if self._thread is None:
@@ -1709,6 +1707,22 @@ class FischMainWindow(QMainWindow):
         finally:
             self._maintenance_plan = None
             self._upgrading = previous_upgrading
+
+    def _log_skipped_rebuild_steps(self) -> None:
+        """
+        Highlight historical steps excluded from the current rebuild.
+        """
+        plan = self._maintenance_plan
+        if plan is not None and plan.skipped_steps:
+            steps = ', '.join(plan.skipped_steps)
+            message = f'WARNING | Historical steps excluded from this rebuild: {steps}.'
+            if (cst.StepName.EDIT_TRACK in plan.skipped_steps
+                    and any(cst.StepName.TRACK in scope for scope in plan.scope.values())):
+                message += (' Rebuilt tracking contains only automatically generated tracks. '
+                            'Any previous manual edits are kept in the backup.')
+            else:
+                message += ' Existing results remain in the backup.'
+            self._append_log(message)
 
     @Slot(object)
     def _enqueue_mask_request(self, request: MaskCollectionRequest) -> None:
@@ -1863,6 +1877,7 @@ class FischMainWindow(QMainWindow):
         self._last_run_succeeded = result.successful
         self._append_log("FIScH pipeline completed with errors." if had_errors
                          else "FIScH pipeline completed successfully.")
+        self._log_skipped_rebuild_steps()
         self._refresh_phase_access()
         converted = self._run_progress is not None and any(
             experiment.stage(WorkflowStage.CONVERT) is not None

@@ -1,6 +1,8 @@
 # Install, launch, and update FIScH
 
-[User guide](README.md) · [Next: Your first analysis](first_analysis.md)
+[Guide home](README.md)
+
+Related: [First analysis](first_analysis.md) · [Main GUI](runs_and_settings.md) · [Troubleshooting](troubleshooting.md)
 
 Install FIScH, open the GUI, and keep an existing installation working. Start with the requirements, then follow the instructions for your platform. Setup can also install the optional Tad table viewer.
 

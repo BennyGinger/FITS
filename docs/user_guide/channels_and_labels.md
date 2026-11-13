@@ -1,10 +1,12 @@
 # Channels and labels
 
-[User guide](README.md) · [Runs and settings](runs_and_settings.md)
+[Guide home](README.md)
+
+Related: [Convert](settings/convert.md) · [Channel labels editor](tools/channel_labels.md) · [Output tables](output_tables.md)
 
 Channel names connect conversion, registration, segmentation, tracking, and
 measurement tables. Choose them in **source channel order** before conversion.
-To rename channels in existing results, use **Edit Channel Labels** so the
+To rename channels in existing results, use **Manage files → Channel labels** so the
 supported files and settings stay consistent.
 
 ## What does “label” mean?
@@ -16,7 +18,7 @@ supported files and settings stay consistent.
 | Reference/ROI name | `edge`, `region` | Name of a saved drawing, such as `proc_ref_edge.tif` or `proc_roi_region.tif`. A named drawing can contain one or more channels. |
 | Cell identifier | `cell_id` in a table | Identifier built from experiment, object type, object channel, and numeric object label; segmentation IDs also include the frame. |
 
-The **Edit Channel Labels** tool renames channel names. Numeric object labels in
+The **Manage files → Channel labels** tool renames channel names. Numeric object labels in
 mask pixels and reference/ROI drawing names are separate concepts.
 
 ## Choose source channel names
@@ -136,9 +138,10 @@ ellipsis if needed. Click to open the checked choices; click outside or press
 Escape to close. Hovering shows the complete selection and parameter help.
 
 FIScH records original source channel indices so a subset still refers to the
-correct original channels. In **Edit Channel Labels**, these indices start at
-**0**: source channel 0 corresponds to the first source channel (`C_1` under
-generic naming). A subset need not start at index 0 or have consecutive indices.
+correct original channels. The GUI table numbers channels from **1**. The
+command-line rename tool uses source indices starting at **0**, so `--set 0=GFP`
+renames the first source channel. A subset need not start at the first source
+channel or have consecutive indices.
 
 ## Rename channels in an existing run
 
@@ -146,14 +149,15 @@ Changing the Convert naming list prepares conversion settings; it does not
 perform the run-wide rename of existing saved results. For an existing analysis:
 
 1. Open its run folder and finish/stop any running processing.
-2. Click **Edit Channel Labels** in the main GUI. FIScH inspects its managed files
-   and displays names by original **Source channel** index.
+2. Open **Manage files** and find **Channel labels**. You can also use
+   **Edit labels…** in Convert to open the same manager. FIScH inspects its
+   managed files and displays labels beside their channel numbers and expected colours.
 3. Enter the new, unique, non-empty name for each displayed source channel.
    This changes names, not the channel order or which signal a channel contains.
 4. Review the file list. It previews files that reference a name you changed;
    files unrelated to the changed channels are omitted.
-5. Click **Save labels** and wait for completion. Use **Rescan** if you need a
-   fresh inspection before saving again.
+5. Click **Save new labels**, confirm the proposed renames, and wait for
+   completion. Use **Rescan** for a fresh inspection before saving again.
 6. Check the updated channel choices and measurement tables.
 
 The button is disabled during pipeline processing. Older read-only artifacts

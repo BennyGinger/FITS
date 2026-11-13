@@ -14,20 +14,7 @@ changes are blocked while the pipeline runs.
 
 ## Convert and navigate the processing pages
 
-The main interface has two pages. An unconverted run opens on **Convert**;
-**Next** performs conversion only and moves to the processing page after it
-finishes successfully. Reopening a run containing converted FIScH images opens the
-processing page directly, with **Preprocess** selected. **Back** returns to
-Convert. An unchanged **Next** returns to processing without another conversion;
-changed conversion settings, including overwrite, request a fresh conversion.
-
-Before conversion, label every source channel in source order and choose which channels to export. See [Channels and labels](channels_and_labels.md) for count warnings, generic fallback names, and the choices offered downstream.
-
-Files with the same stem in the same folder receive extension-specific
-acquisition folders (for example, `sample_nd2/sample.nd2` and
-`sample_tif/sample.tif`), with a console log message and no popup. Original
-filenames are preserved. Matching stems in different subfolders do not need
-this adjustment. Existing or conflicting destination folders block conversion.
+Open the dedicated [Convert settings](settings/convert.md) page for source labels, exported channels, projection, and Next/Back behaviour.
 
 ## Processing tabs and required settings
 
@@ -79,7 +66,7 @@ completed steps, metadata, and provenance, stored inside its acquisition's
 `.acquisition/experiment_state/<series>/` directory. Artifact paths, rather than a second
 workflow manifest, are the durable evidence used to resume work. Conversion can
 split a raw file into several experiment branches. Re-running an unchanged step
-reuses completed output. FIScH 4 keeps each preprocessing result independently:
+reuses completed output. FIScH keeps each preprocessing result independently:
 
 | Step | Output |
 | --- | --- |
@@ -94,15 +81,32 @@ For folder movement and hidden metadata, see [Portable projects](portable_projec
 
 ## Exclude experiments after conversion
 
-Select one or more folders in the run browser and press **Exclude experiments**.
+Select one or more folders in the run browser and press **Exclude exps.**
 An acquisition or condition folder covers all converted series beneath it;
 overlapping selections count each experiment once. The action button sits beside
 the browser's **Selected** path display.
 
 When every selected experiment is excluded, the button becomes **Re-include
-experiments**. A mixed selection offers **Exclude experiments**, making the
+exps.** A mixed selection offers **Exclude exps.**, making the
 whole selection excluded. The action is disabled without a converted-folder
 selection and while the pipeline runs.
+
+**Exclude others**, beside this button, activates the selected experiments and
+excludes every other converted experiment in the run. This lets you overwrite
+only the selected experiments using the normal pipeline controls. The inclusion
+choices persist until you change them. Both actions require converted experiments;
+fully rebuild migrated checkpoints before changing their inclusion.
+
+When all experiments outside the selection are excluded, the second button becomes
+**Re-include others**, bringing them back into processing and analysis. A mixed
+set of other experiments offers **Exclude others**. Re-including others leaves
+the selected experiments' inclusion unchanged. The button is disabled when
+the selection already covers every converted experiment. Both buttons use a
+smaller font and update their labels to show the next action.
+
+For multiple selections, the display summarizes the selected folders and covered
+experiments. A single selection shows its path. Long text wraps and takes space
+from the browser tree; the tool buttons remain on the row below.
 
 Excluded series have muted text and a gray circle-minus folder badge. Parents
 with some excluded series have an amber half-circle badge; parents with all
@@ -126,7 +130,7 @@ appearance returns after rebuilding or updating resolves the checker warning.
 
 ## Renaming existing channel labels
 
-Use [Edit Channel Labels](channels_and_labels.md#rename-channels-in-an-existing-run) to rename saved channel references consistently. The same operation can be inspected or previewed from the command line; `--apply` is required to write:
+Use [Manage files → Channel labels](channels_and_labels.md#rename-channels-in-an-existing-run) to rename saved channel references consistently. The same operation can be inspected or previewed from the command line; `--apply` is required to write:
 
 ```bash
 uv run fisch channel-labels /path/to/run
@@ -179,3 +183,22 @@ The command-line interface is available through `uv run fisch --help`. Running
 window when the configured analyses request interactive masks. Calling
 `start_pipeline()` directly stays noninteractive unless a mask interaction
 bridge is supplied.
+
+## Help inside the GUI
+
+Click the **ⓘ** button to open **User guide** and **Shortcuts** in a separate
+help window. The guide starts at the page for the tab or tool you were using;
+subsequent application tab changes do not move it. Settings tabs without a
+dedicated guide page open the guide home page; preview-tool guides are opened
+from the preview windows themselves. Follow links or use **Back**,
+**Forward**, and **Home** to browse the full guide offline. Search lists matching guide pages, with exact titles and title words before
+body-text matches. Press Enter or select a result to open it. **Find in page**
+uses the same query within the page currently displayed. External web links open in your web browser.
+
+When a tool has shortcuts, help opens on **Shortcuts** first. Only its relevant
+shortcuts are displayed; expand **Other shortcuts** to inspect the rest of the
+catalog. The search field filters both tables. Interfaces without shortcuts,
+such as the main GUI and Manage files, open on **User guide**.
+
+The browser's title row has a **Full Report** button. **Extra tools**
+groups the File Viewer and tracking editor below the browser.

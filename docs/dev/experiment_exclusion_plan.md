@@ -13,6 +13,24 @@
 
 ## Implementation progress
 
+### Selected-only processing follow-up
+
+- [x] Follow-up: toggle **Exclude others** / **Re-include others** from the outsiders' saved state, disable an empty complement, and use smaller fonts for both action buttons. Re-including others preserves the selected experiments' inclusion. Persistence, mixed selection and layout checks pass: **53 focused tests**, **Pyright 0 errors and 0 warnings**, and clean `git diff --check`.
+
+- [x] Add **Exclude others** beside **Exclude exps.** / **Re-include exps.** in the selection row.
+- [x] Reuse saved exclusion and the writer lock to activate the selected converted experiments and exclude the others; preserve existing migration restrictions.
+- [x] Summarize multiple selected folders and covered experiments in the Selected display. Preserve wrapping and let the display take height from the tree, with tool buttons on their own row below.
+- [x] Validate selected-only overwrite, migration restrictions, browser actions and wrapping; run Pyright.
+
+Validation: **122 tests passed** across exclusion persistence, browser/exclusion GUI,
+conversion, conversion navigation and the main window. The overwrite check verifies
+that only the selected series is regenerated and excluded sibling outputs are
+preserved. The layout check verifies that long selection text wraps by reducing
+the tree height while the browser size stays fixed. Pyright on changed Python
+modules and tests reports **0 errors, 0 warnings**, using an explicit temporary
+configuration for the current environment and workspace package sources.
+`git diff --check` passed.
+
 - [x] Read global AGENTS.md and inspect existing state, execution, checks, aggregation and browser utilities.
 - [x] Add durable state field and centralized active-state/selection helpers.
 - [x] Filter batch, conveyor, interactive execution and processing checks; preserve exclusion through conversion/rebuilds.

@@ -1,51 +1,55 @@
 # FIScH user guide
 
-A practical guide to processing microscopy images with the FIScH GUI, from
-installation to inspecting measurements.
-
-The chapters explain installation, processing, result interpretation, and file
-management. Topic-specific details are integrated into each guide, with links
-to shared explanations for channels, tables, viewers, and portable projects.
-The first-analysis chapter provides a general route through the GUI; a named
-worked dataset and screenshots are still to be added. The
-[project README](../../README.md) provides the short overview and quick usage.
+Each main settings tab and preview/editor has its own page. Open a topic below,
+or search from the GUI's **ⓘ → User guide** tab. Related pages are linked at the
+top of each topic. Shortcut tables are available in **ⓘ → Shortcuts**.
 
 ## Start here
 
-1. [Install, launch, and update FIScH](installation.md).
-2. [Your first analysis](first_analysis.md): the general start-to-finish workflow.
-3. [Runs, channels, and settings](runs_and_settings.md).
+- [Install, launch, and update](installation.md)
+- [Your first analysis](first_analysis.md): the workflow from source images to results.
+- [Main GUI, runs, and settings](runs_and_settings.md): opening a run, navigation, saving, and execution.
 
-For channel naming, fallback names, and renaming existing results, see the
-dedicated [Channels and labels](channels_and_labels.md) guide.
+## Main settings tabs
 
-## Process your images
+| Tab | Dedicated page | Interactive tool |
+| --- | --- | --- |
+| Convert | [Convert](settings/convert.md) | [Channel labels editor](tools/channel_labels.md) |
+| Preprocess → Frame-shift | [Frame-shift](settings/time_registration.md) | [Time-registration preview](tools/time_registration.md) |
+| Preprocess → Channel-shift | [Channel-shift](settings/channel_registration.md) | [Channel-registration preview](tools/channel_registration.md) |
+| Preprocess → Background subtraction | [Background subtraction](settings/background_subtraction.md) | [Background preview](tools/background_subtraction.md) |
+| Process → Segmentation | [Segmentation](settings/segmentation.md) | [Segmentation preview](tools/segmentation.md) |
+| Process → Tracking | [Tracking](settings/tracking.md) | [Tracking editor](tools/tracking_editor.md) |
+| Analysis → Quantification | [Quantification](settings/quantification.md) | [Compartment preview](tools/compartments.md) |
+| Analysis → Distance profile | [Distance profile](settings/distance_profiles.md) | [Reference editor](tools/reference_masks.md) / [ROI editor](tools/roi_masks.md) |
 
-4. [Preprocessing](preprocessing.md): registration and background subtraction.
-5. [Segmentation](segmentation.md): channels, models, and tuning.
-6. [Tracking and corrections](tracking.md).
-7. [Reference and ROI masks](reference_and_roi_masks.md).
-8. [Analysis and results](analysis_and_results.md): quantification, compartments,
-   distance profiles, and opening measurement tables.
+[Shared processing settings](settings/common.md) explains Include, Overwrite,
+Execution and Workers.
 
-## Maintain and troubleshoot a run
+## Workflow overviews
 
-9. [Reprocessing and file management](reprocessing_and_file_management.md).
-10. [Troubleshooting](troubleshooting.md).
+- [Preprocessing](preprocessing.md): alignment and background correction.
+- [Segmentation](segmentation.md): object masks and previews.
+- [Tracking](tracking.md): automatic linking, inspection and correction.
+- [Reference and ROI masks](reference_and_roi_masks.md): roles and drawing workflow.
+- [Analysis and results](analysis_and_results.md): choosing analyses and reading results.
 
-## Detailed guides
+## Other GUI tools
 
-- [Preview and editing GUIs](gui_tools.md): a separate feature list for each
-  preview, REF/ROI drawing tool, and tracking viewer/editor.
-- [Inspect artifact metadata in ImageJ/Fiji](viewers.md#inspecting-artifact-metadata-in-imagejfiji):
-  open a TIFF's readable processing summary and understand its relationship to FIScH metadata.
-- [Moving a project: what is portable?](portable_projects.md): whole projects,
-  acquisition folders, individual exports, and refreshing paths/condition tags.
-- [Understanding the output tables](output_tables.md): all standard dataframe
-  columns, units, optional measurements, examples, and grouping without double-counting.
-- [Image and mask viewers](viewers.md): shared navigation, drawing tools,
-  selection shortcuts, cropping, and exported overlays.
-- [Analysis identifiers and measurement columns](analysis_identifiers.md): saved
-  experiment/cell identifiers, compartments, track lengths, and motion measurements.
-- [Developer documentation](../dev/README.md): architecture and implementation records.
+- [All preview and editing tools](gui_tools.md)
+- [Shared viewer controls](tools/viewer_controls.md)
+- [File Viewer](tools/tracking_viewer.md): raw images, masks and tracked results.
+- [Pipeline mask collection](tools/mask_collection.md)
+- [Manage files](tools/manage_files.md), [channel labels](tools/channel_labels.md), and [backups](tools/backups.md)
+- [Full Report](tools/full_report.md)
 
+## Reference and troubleshooting
+
+- [Channels and labels](channels_and_labels.md)
+- [Image/mask viewer reference and ImageJ metadata](viewers.md)
+- [Understanding the output tables](output_tables.md)
+- [Analysis identifiers](analysis_identifiers.md)
+- [Portable projects](portable_projects.md)
+- [Reprocessing and file-management concepts](reprocessing_and_file_management.md)
+- [Troubleshooting](troubleshooting.md)
+- [Developer documentation](../dev/README.md)

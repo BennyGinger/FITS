@@ -935,6 +935,12 @@ class MaskCollectionWindow(MaskDrawingWindow):
         self._selected_slots = {"reference": -1, "roi": -1}
         super()._close_session()
 
+    def _guide_page(self) -> str:
+        """
+        Open the collection workflow guide, with links to each drawing tool.
+        """
+        return "tools/mask_collection.md"
+
     def _build_mode_controls(self, layout: QHBoxLayout) -> None:
         """
         Show the active mask type above the image, matching SegTune.

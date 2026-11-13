@@ -5,9 +5,12 @@ from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any
 from pathlib import Path
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import QItemSelectionModel, QSize, Qt, QTimer
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 from fisch.gui.dialogs import size_resizable_dialog
+from fisch.gui.channel_labels.panel import ChannelLabelsPanel
+from fisch.gui.help.dialog import info_button, show_help
 from fisch.workflows.file_management.relocation import PortablePlan
 from fisch.workflows.file_management.rebuild import ProcessingPlan, geometry_reviews, accept_reviewed_geometry, full_rebuild_folders, rebuild_analysis_tables
 from fisch.workflows.file_management.compaction import run_config
@@ -30,7 +33,27 @@ from fisch.gui.file_preview.review import review_tabs, size_file_review
 from fisch.gui.file_preview.migration import MigrationPreviewWidget
 from fisch.gui.file_management.guidance import FileGuidanceWidget, file_guidance
 from fisch.gui.file_management.reset import confirm_reset
+from fisch.gui.file_management.icons import restore_icon
 from fisch.workflows.file_management.reset import plan_reset
+
+
+class _FileManagerDialog(QDialog):
+    """Keep inline rename workers alive until their file operation finishes."""
+
+    channel_editor: ChannelLabelsPanel | None = None
+    _pending_result: int | None = None
+
+    def done(self, result: int) -> None:
+        """
+        Block Escape, close, and maintenance actions while a rename is running.
+        """
+        if self.channel_editor is not None and self.channel_editor.is_busy:
+            if not self.channel_editor.is_saving:
+                self._pending_result = result
+            return
+        if self.channel_editor is not None:
+            self.channel_editor.finish_session()
+        super().done(result)
 
 
 def _fit_manager_height(dialog: QDialog) -> None:
@@ -305,7 +328,7 @@ def _history_action(root: Path,
     """
     Review restoration or deletion of the selected retained revisions.
     """
-    picked = tuple(entries[index.row()] for index in history.selectedIndexes())
+    picked = tuple(entries) if action == 'delete_all' else tuple(entries[index.row()] for index in history.selectedIndexes())
     if not picked:
         _set_notice(notice, 'Select a backup in the list above first.' if entries else 'There are no backups to restore or delete.')
         if entries:
@@ -320,11 +343,16 @@ def _history_action(root: Path,
         text = ('Restore the complete run folder, including its original structure, files, metadata, settings and tables. '
                 'This affects the whole run, regardless of the selected experiment. '
                 'The current run will be retained as another backup before restoring.')
+    if action == 'delete_all':
+        text = (f'Delete all {len(picked)} backups shown in this list '
+                f'(approximately {sum(entry.size for entry in picked)/1024**2:.1f} MiB)? '
+                'Current results, original acquisitions and backups outside this list are preserved.')
     text += '\n\n' + '\n'.join(str(path) for entry in picked for path in entry.files)
     if not confirm_files('Review backups',
                          text,
                          parent,
-                         'Restore backup' if action == 'restore' else 'Delete selected backups',
+                         'Restore backup' if action == 'restore' else
+                         'Delete all listed backups' if action == 'delete_all' else 'Delete selected backups',
                          preview=FileChangesWidget(restoration_changes(root, picked[0])) if action == 'restore' else None,
                          ):
         return None
@@ -333,53 +361,106 @@ def _history_action(root: Path,
     return lambda: run_file_task(lambda: delete_history(root, picked), parent.parentWidget())
 
 
+def _backup_row(history: QListWidget, index: int, title: str, choose: Callable[[str], None]) -> QWidget:
+    """
+    Display one backup with restore and delete actions bound to that row.
+    """
+    row = QWidget()
+    row.setAutoFillBackground(True)
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(6, 3, 3, 3)
+    label = QLabel(title)
+    label.setToolTip(title)
+    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    layout.addWidget(label, 1)
+
+    def _choose_row(action: str) -> None:
+        """
+        Target only the backup beside the clicked icon, regardless of prior selection.
+        """
+        history.setCurrentRow(index, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        choose(action)
+
+    restore = QPushButton()
+    restore.setObjectName(f'backup_restore_{index}')
+    restore.setIcon(restore_icon(history.palette().color(QPalette.ColorRole.Text)))
+    restore.setIconSize(QSize(22, 22))
+    restore.setAccessibleName('Restore this backup')
+    restore.setToolTip(f'Restore this backup and retain the current version.\n{title}')
+    delete = QPushButton('🗑')
+    delete.setObjectName(f'backup_delete_{index}')
+    delete.setAccessibleName('Delete this backup')
+    delete.setToolTip(f'Delete only this backup. Current experiment files are kept.\n{title}')
+    for button, action in ((restore, 'restore'), (delete, 'delete')):
+        button.setFixedSize(28, 28)
+        button.setProperty('compact_action', True)
+        button.clicked.connect(lambda checked=False, action=action: _choose_row(action))
+        layout.addWidget(button)
+    return row
+
+
 def _history_panel(entries: Sequence[Snapshot],
                    root: Path,
                    choose: Callable[[str], None],
                    ) -> tuple[QGroupBox, QListWidget, QLabel]:
     """
-    Build the history size summary, revision selection and restore/delete buttons.
+    List backups with row actions and an explicit delete-all action in the status row.
     """
     group = QGroupBox('Manage backups')
     layout = QVBoxLayout(group)
     size = sum(entry.size for entry in entries) / 1024**2
     layout.addWidget(QLabel(f'{len(entries)} backups available · {size:.1f} MiB' if entries else 'No backups available · 0 MiB'))
-    instruction = QLabel('Select one backup to restore, or one or more to delete. Use Ctrl+click to select multiple backups.')
+    instruction = QLabel('Use the restore or bin icon beside a backup to act on that version. Hover over a backup to read its full details.')
     instruction.setWordWrap(True)
     instruction.setVisible(bool(entries))
     layout.addWidget(instruction)
     history = QListWidget()
     history.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
     history.setToolTip(instruction.text())
-    for entry in entries:
+    rows: list[QWidget] = []
+    for index, entry in enumerate(entries):
         label = 'Whole run' if entry.whole_run else str(entry.series.relative_to(root))
-        history.addItem(f'{label} / {entry.directory.name} — {entry.reason} — {entry.size / 1024**2:.1f} MiB')
+        title = f'{label} / {entry.directory.name} — {entry.reason} — {entry.size / 1024**2:.1f} MiB'
+        item = QListWidgetItem(title, history)
+        item.setToolTip(title)
+        row = _backup_row(history, index, title, choose)
+        item.setSizeHint(row.sizeHint())
+        history.setItemWidget(item, row)
+        row.setBackgroundRole(QPalette.ColorRole.Base)
+        rows.append(row)
     history.setVisible(bool(entries))
     layout.addWidget(history)
+    bottom = QHBoxLayout()
     selection = QLabel()
+    selection.setObjectName('backup_selection_status')
     selection.setWordWrap(True)
-    selection.setVisible(bool(entries))
-    layout.addWidget(selection)
-    buttons: dict[str, QPushButton] = {}
+    selection.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    bottom.addWidget(selection, 1)
+    delete_all = QPushButton('🗑 Delete all backups…')
+    delete_all.setObjectName('backup_delete_all')
+    delete_all.setAccessibleName('Delete all listed backups')
+    delete_all.setToolTip('Review deleting every backup shown in this list. Current results, original acquisitions and backups outside this list are kept.')
+    delete_all.setEnabled(bool(entries))
+    delete_all.clicked.connect(lambda: choose('delete_all'))
+    bottom.addWidget(delete_all, 0, Qt.AlignmentFlag.AlignRight)
+    layout.addLayout(bottom)
 
     def _selection_changed() -> None:
         """
-        Show the backup selection used by the restore and delete actions.
+        Keep the short selection status and row colours in sync with the list.
         """
         count = len(history.selectedIndexes())
         noun = 'backup' if count == 1 else 'backups'
-        selection.setText(f'{count} {noun} selected.' if count else 'No backup selected. Choose a backup in the list before continuing.')
-        buttons['restore'].setEnabled(count == 1)
-        buttons['delete'].setEnabled(count > 0)
+        selection.setText(f'{count} {noun} selected.' if count else 'No backup selected.' if entries else 'No backups available.')
+        for index, row in enumerate(rows):
+            item = history.item(index)
+            selected = item is not None and item.isSelected()
+            palette = history.palette()
+            palette.setColor(QPalette.ColorRole.Base, palette.color(QPalette.ColorRole.Highlight if selected else QPalette.ColorRole.Base))
+            palette.setColor(QPalette.ColorRole.WindowText, palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text))
+            row.setPalette(palette)
 
-    for title, action, tooltip in (
-        ('Restore selected backup…', 'restore', 'Restore the selected saved version and retain the current version. Whole-run backups also restore its original folders and metadata.'),
-        ('Delete selected backups…', 'delete', 'Permanently delete only the selected backups to free disk space. Current experiment files are kept.')):
-        button = QPushButton(title)
-        buttons[action] = button
-        button.setToolTip(tooltip)
-        button.clicked.connect(lambda checked=False, action=action: choose(action))
-        layout.addWidget(button)
     history.itemSelectionChanged.connect(_selection_changed)
     _selection_changed()
     return group, history, selection
@@ -447,8 +528,17 @@ def _file_actions_panel(guidance: FileGuidanceWidget,
     """
     Place run guidance on the left and applicable file actions on the right.
     """
-    group = QGroupBox('Experiment files')
+    group = QGroupBox()
+    group.setObjectName("experiment_files")
     layout = QVBoxLayout(group)
+    header = QHBoxLayout()
+    header.addWidget(QLabel("Experiment files"))
+    header.addStretch()
+    help_button = info_button()
+    help_button.clicked.connect(lambda: show_help(group.window(), title="Manage files", gui="Manage files",
+                                                 guide_page="tools/manage_files.md"))
+    header.addWidget(help_button)
+    layout.addLayout(header)
     layout.addWidget(guidance)
     controls = QWidget()
     controls.setMinimumWidth(320)
@@ -479,6 +569,7 @@ def manage_files(root: str | Path,
                  reset_run: Callable[[], None] | None = None,
                  input_problem: str = '',
                  input_warning: str = '',
+                 labels_saved: Callable[[dict[str, str]], None] | None = None,
                  ) -> bool:
     """
     Present run-wide file actions and execute only an accepted review after closing.
@@ -491,7 +582,7 @@ def manage_files(root: str | Path,
     reviews = geometry_reviews(root)
     unavailable = _unavailable_actions(status, report, locations, reviews)
     processing_runner = run_processing or partial(_run_cli_processing, root)
-    dialog = QDialog(parent)
+    dialog = _FileManagerDialog(parent)
     dialog.setWindowTitle('Manage experiment files')
     dialog.setStyleSheet('QPushButton:disabled { color: #8a8a8a; background-color: #383838; border-color: #555555; }')
     layout = QVBoxLayout(dialog)
@@ -513,6 +604,7 @@ def manage_files(root: str | Path,
                                                input_problem=input_problem, input_warning=input_warning), notice)
     guidance.details_toggled.connect(lambda _expanded: QTimer.singleShot(0, dialog, partial(_fit_manager_height, dialog)))
     pending: list[Callable[[], Any] | None] = [None]
+    renamed = False
 
     def choose(action: str) -> None:
         """
@@ -540,6 +632,43 @@ def manage_files(root: str | Path,
             _set_notice(notice, str(error))
 
     content_layout.addWidget(_file_actions_panel(guidance, _primary_action(status, report), choose, unavailable))
+    label_group = QGroupBox("Channel labels")
+    label_layout = QVBoxLayout(label_group)
+    if status.outdated:
+        label_layout.addWidget(QLabel("Migrate this read-only run before changing its channel labels."))
+    else:
+        editor = ChannelLabelsPanel(root)
+        dialog.channel_editor = editor
+        label_layout.addWidget(editor)
+
+        def _labels_saved(mapping: dict[str, str]) -> None:
+            """
+            Remember inline changes and update the caller's in-memory settings.
+            """
+            nonlocal renamed
+            renamed = True
+            if labels_saved is not None:
+                labels_saved(mapping)
+
+        def _label_busy(busy: bool) -> None:
+            """
+            Prevent file-management actions from racing an inline rename.
+            """
+            writing = busy and editor.is_saving
+            for index in range(content_layout.count()):
+                item = content_layout.itemAt(index)
+                widget = item.widget() if item is not None else None
+                if widget is not None and widget is not label_group:
+                    widget.setEnabled(not writing)
+            close.setEnabled(not writing)
+            if not busy and dialog._pending_result is not None:
+                result, dialog._pending_result = dialog._pending_result, None
+                QTimer.singleShot(0, dialog, partial(dialog.done, result))
+            QTimer.singleShot(0, dialog, partial(_fit_manager_height, dialog))
+
+        editor.labels_saved.connect(_labels_saved)
+        editor.busy_changed.connect(_label_busy)
+    content_layout.addWidget(label_group)
     group, history, backup_notice = _history_panel(entries, root, choose)
     content_layout.addWidget(group)
     if reset_run is not None:
@@ -559,13 +688,14 @@ def manage_files(root: str | Path,
     close.rejected.connect(dialog.reject)
     layout.addWidget(close)
     for button in dialog.findChildren(QPushButton):
-        button.setMinimumHeight(38)
+        if not button.property('compact_action'):
+            button.setMinimumHeight(38)
     size_resizable_dialog(dialog, 960, 300)
     _fit_manager_height(dialog)
     dialog.exec()
     action = pending[0]
     if action is None:
-        return False
+        return renamed
     try:
         action()
     except PipelineCancelled:

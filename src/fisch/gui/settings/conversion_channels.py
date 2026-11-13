@@ -1,8 +1,8 @@
 """Conversion channel labels alongside detected ND2 display colors."""
 
-from PySide6.QtCore import QEvent, QObject, QSignalBlocker, Qt
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QKeyEvent, QPainter, QPixmap
-from PySide6.QtWidgets import QHeaderView, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHeaderView, QPushButton, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from scope_io.metadata.channel_colors import channel_color_name, conversion_channel_labels
 from fisch.gui.settings.field_widgets import ValueWidget
@@ -78,12 +78,15 @@ class _ChannelLabelsTable(QTableWidget):
 class ConversionChannelsWidget(ValueWidget):
     """Keep editable labels separate from read-only source colors and fallback names."""
 
+    manage_files_requested = Signal()
+
     def __init__(self, labels: list[str]) -> None:
         """
         Build the channel-number, expected-color and label table.
         """
         super().__init__()
         self._labels = labels
+        self._labels_editable = True
         self._count: int | None = None
         self._colors: list[str | None] | None = None
         self.table = _ChannelLabelsTable()
@@ -96,7 +99,34 @@ class ConversionChannelsWidget(ValueWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.table)
         self.table.cellChanged.connect(self._label_changed)
+        self.manage_button: QPushButton | None = None
         self._rebuild()
+
+    def add_manage_button(self) -> QPushButton:
+        """
+        Add a merged action column without changing the table's overall width.
+        """
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Channel", "Expected color", "Label", ""])
+        self.manage_button = QPushButton("Edit labels…")
+        self.manage_button.setToolTip("Open Manage files to rename existing channel labels.")
+        self.manage_button.setEnabled(False)
+        self.manage_button.clicked.connect(self.manage_files_requested)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self._rebuild()
+        return self.manage_button
+
+    def set_labels_editable(self, editable: bool) -> None:
+        """
+        Lock label cells while keeping the file-manager action usable.
+        """
+        self._labels_editable = editable
+        with QSignalBlocker(self.table):
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 2)
+                if item is not None:
+                    flags = item.flags()
+                    item.setFlags(flags | Qt.ItemFlag.ItemIsEditable if editable else flags & ~Qt.ItemFlag.ItemIsEditable)
 
     def value(self) -> list[str]:
         """
@@ -128,7 +158,9 @@ class ConversionChannelsWidget(ValueWidget):
         colors = self._colors if not self._labels or len(self._labels) == self._count else None
         defaults = conversion_channel_labels(self._labels, rows, colors)
         with QSignalBlocker(self.table):
-            self.table.setRowCount(rows)
+            if self.manage_button is not None:
+                self.table.clearSpans()
+            self.table.setRowCount(max(rows, 1) if self.manage_button is not None else rows)
             for index in range(rows):
                 number = QTableWidgetItem(str(index + 1))
                 number.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
@@ -142,7 +174,14 @@ class ConversionChannelsWidget(ValueWidget):
                 self.table.setItem(index, 1, detected)
                 label = QTableWidgetItem(self._labels[index] if index < len(self._labels) else "")
                 label.setToolTip(f"Leave blank to use {defaults[index]}.")
+                if not self._labels_editable:
+                    label.setFlags(number.flags())
                 self.table.setItem(index, 2, label)
+            if self.manage_button is not None:
+                if rows > 1:
+                    self.table.setSpan(0, 3, rows, 1)
+                if self.table.cellWidget(0, 3) is not self.manage_button:
+                    self.table.setCellWidget(0, 3, self.manage_button)
         height = self.table.horizontalHeader().height() + min(rows, 6) * self.table.verticalHeader().defaultSectionSize() + 4
         self.table.setFixedHeight(max(height, 75))
 

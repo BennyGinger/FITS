@@ -1,7 +1,8 @@
 # Your first analysis
 
-[User guide](README.md) · [Previous: Installation](installation.md) ·
-[Next: Runs, channels, and settings](runs_and_settings.md)
+[Guide home](README.md)
+
+Related: [Main GUI](runs_and_settings.md) · [Preprocessing](preprocessing.md) · [Analysis](analysis_and_results.md) · [Output tables](output_tables.md)
 
 Use this route for a first pass through the GUI. A named example dataset, its expected results, and matching screenshots are still to be added; the steps below describe the general workflow.
 

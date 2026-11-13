@@ -1,7 +1,8 @@
 # Reprocessing and file management
 
-[User guide](README.md) · [Previous: Analysis and results](analysis_and_results.md) ·
-[Next: Troubleshooting](troubleshooting.md)
+[Guide home](README.md)
+
+Related: [Manage files](tools/manage_files.md) · [Backups](tools/backups.md) · [Portable projects](portable_projects.md)
 
 Use the saved run status to decide whether you need to resume processing, rerun a changed step, refresh locations, or free space. Open **Manage files…** and review its proposed changes before applying an action.
 
@@ -102,53 +103,7 @@ processing settings; **Next** never starts conversion in this mode.
 
 ## Manage files controls
 
-**Manage files…** groups current-file actions separately from **Manage backups**.
-Current-file actions check the whole run and use three controls:
-
-- **Rebuild** changes its name with the required work: **Rebuild all results…**
-  for migrated or compacted experiments, **Rebuild outdated results…** for stale
-  downstream outputs, or **Rebuild required results…** for a mixture. Current
-  experiments remain untouched. Complete reconstruction reruns final outputs as
-  well as intermediates; it can take a long time and may change results. A backup
-  is retained first. The button is disabled when no rebuilding is needed.
-  For pre-v4 runs this control initially reads **Migrate to FIScH 4…**, with an
-  optional full rebuild, unchecked by default. Migrated arrays receive their
-  actual stage filename; canonical `proc_array.tif` is reserved for compaction.
-- **Update paths and condition tags…** is enabled only when saved state/settings
-  references or existing master-table identities/tags differ from the current
-  run. Condition tags belong to the master tables. Portable per-experiment
-  Parquets remain unchanged during a location-only update. Without a master and
-  with coherent saved paths, there is nothing to update. Location differences
-  appear as orange warnings in the main status, browser and Details.
-- **Compact experiment…**, slightly separated, removes intermediate files and
-  caches while keeping essential files. It creates no persistent backup.
-
-In Manage files, the left panel has three sections: **Summary** explains what
-needs attention, **What to do next** describes what the relevant action would do,
-and expandable **Details** lists affected files and checker reasons in a
-scrollable report. The file-action buttons sit on the right; actions that do not
-apply are greyed out. Backups remain in their own section below.
-
-If included experiments or their measurements change, the summary explains that
-the master tables are out of date. **Rebuild analysis…** combines the currently
-included experiments using valid individual measurements; it does not rerun
-image processing when those measurements are current.
-
-Current-file actions check the whole run, regardless of the selected series. The manager is also available with `uv run fisch manage /path/to/run`.
-
-### Reset to raw inputs (main GUI only)
-
-The red **Reset to raw inputs** section resets the **whole run directory**, including
-every experiment. It moves original acquisitions out of their portable folders and
-permanently removes FIScH results, REF/ROI drawings, measurements, settings, logs,
-caches and FIScH backup history. Unrelated files are preserved. Missing originals
-or conflicting destination filenames block the reset before removal begins.
-
-Reset cannot be undone and creates no backup. Make a manual backup first if you
-want to keep any results. The confirmation requires typing **RESET**. After success,
-FIScH opens a fresh window on the same run directory with template settings, an
-empty user name and a clear console. Cancelling confirmation or an unsaved-editor
-close leaves the run intact.
+Open the [Manage files guide](tools/manage_files.md) for the dialog controls. [Channel labels](tools/channel_labels.md) and [backups](tools/backups.md) have their own pages.
 
 ## Read the review diagram
 
@@ -206,20 +161,7 @@ For location-only updates, portable per-experiment Parquets remain unchanged; ma
 
 ## Backups and restoration
 
-Retained backups are never deleted automatically by compaction. A storage hint
-appears only when backups exist; delete reviewed snapshots through Manage
-files to reclaim that space. Before migration or path/tag updates, FIScH retains a complete original
-run folder under `.pipeline/backup/<revision>/run/`, including original files,
-metadata, settings and tables. This copy uses additional disk space; FIScH checks
-free space before migration and stops if the backup and working files will not fit. Restoring a
-**Whole run** backup restores the original folder structure and file contents,
-and retains the current run as another backup. Rebuilding existing results retains a per-experiment backup under
-`.acquisition/backup/<series>/<revision>/`. A full rebuild replaces final
-results as well as intermediates; it does not keep an old final image active
-beside a new upstream chain. Per-experiment backups restore coherent outputs
-and state. REF/ROI drawings are preserved;
-if registration changes, inspect their alignment in the viewer before explicitly
-accepting it through Manage files or recreating the drawings.
+See [Backups and restoration](tools/backups.md) for retained versions, restore/bin icons and Delete all.
 
 ## Review REF/ROI alignment
 

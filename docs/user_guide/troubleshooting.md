@@ -1,7 +1,8 @@
 # Troubleshooting
 
-[User guide](README.md) ·
-[Previous: Reprocessing and file management](reprocessing_and_file_management.md)
+[Guide home](README.md)
+
+Related: [Full Report](tools/full_report.md) · [Manage files](tools/manage_files.md) · [Installation](installation.md)
 
 Start with the exact error and the latest report. Record the FIScH version, operating system, action you attempted, and relevant settings. Installation errors and processing errors have different logs and recovery steps.
 
@@ -41,7 +42,7 @@ Interactive-mask and conversion-only GUI runs write a timestamped log and full
 text report under `.pipeline/logs/` and `.pipeline/reports/`, respectively. Reports list
 completed, partial, skipped, and failed work by phase and experiment. The GUI
 opens the latest report when a run
-finishes; **Full Report** and report files in the directory browser can reopen
+finishes; the **Full Report** button beside the directory-browser title and report files in the browser can reopen
 it later.
 
 ## Custom log locations

@@ -61,8 +61,9 @@ def test_editing_is_absent_from_pipeline_and_requires_tracking(main_window: Fisc
     main_window._refresh_run_inventory()
     assert main_window.tracking_edit_button.isEnabled()
     assert main_window._tracking_edit_sources() == [tracking]
-    assert main_window.run_browser.selection_layout.indexOf(main_window.tracking_edit_button) == (
-        main_window.run_browser.selection_layout.indexOf(main_window.tracking_viewer_button) + 1)
+    tools = main_window.extra_tools.layout()
+    assert tools is not None
+    assert tools.indexOf(main_window.tracking_edit_button) == tools.indexOf(main_window.tracking_viewer_button) + 1
     main_window._running = True
     main_window._refresh_tracking_viewer_button()
     assert not main_window.tracking_edit_button.isEnabled()

@@ -16,6 +16,7 @@ from fisch.workflows.runtime.progress import (
     RunProgress, StageStatus, WorkflowStage, format_run_report)
 from fisch.gui.main_window.pipeline_worker import user_error_message
 from fisch.gui.main_window.window import FischMainWindow
+from fisch.gui.settings.conversion_channels import ConversionChannelsWidget
 from fisch.gui.settings import SettingsAdapter, StepSettingsEditor
 from fisch.gui.settings.conversion_channels import ConversionChannelsWidget
 from fisch.gui.settings.field_widgets import ChannelSelectionWidget, FloatWidget
@@ -145,7 +146,10 @@ def test_reopening_converted_experiment_starts_on_preprocess(tmp_path) -> None:
     window.close()
 
 
-def test_settings_remain_editable_during_run(tmp_path) -> None:
+def test_settings_remain_editable_during_run(tmp_path: Path) -> None:
+    """
+    Keep settings available while blocking data tools during pipeline execution.
+    """
     app = _application()
     (tmp_path / "proc_array.tif").touch()
     adapter = SettingsAdapter()
@@ -163,7 +167,9 @@ def test_settings_remain_editable_during_run(tmp_path) -> None:
     assert not window.run_dir_edit.isEnabled()
     assert not window.user_name_edit.isEnabled()
     assert not window.segtune_button.isEnabled()
-    assert not window.channel_labels_button.isEnabled()
+    channels = window._editors[StepName.CONVERT].widgets["channel_labels"]
+    assert isinstance(channels, ConversionChannelsWidget)
+    assert channels.manage_button is not None and not channels.manage_button.isEnabled()
     window._select_step(StepName.BG_SUB)
     editor = window._editors[StepName.BG_SUB]
     editor.enable_group.setChecked(True)
@@ -603,15 +609,21 @@ def test_missing_results_buttons_explain_what_to_do_next(
         window.close()
 
 
-def test_main_action_buttons_describe_their_behavior(tmp_path) -> None:
+def test_main_action_buttons_describe_their_behavior(tmp_path: Path) -> None:
+    """
+    Explain file management, reports and viewer actions at their entry points.
+    """
     _application()
     (tmp_path / "proc_array.tif").touch()
     adapter = SettingsAdapter()
     adapter.run_dir = str(tmp_path)
     window = FischMainWindow(adapter)
     try:
-        assert window.channel_labels_button.text() == "Edit Channel Labels"
-        assert "rename channel labels" in window.channel_labels_button.toolTip()
+        channels = window._editors[StepName.CONVERT].widgets["channel_labels"]
+        assert isinstance(channels, ConversionChannelsWidget)
+        assert channels.manage_button is not None
+        assert channels.manage_button.text() == "Edit labels…"
+        assert "Manage files" in channels.manage_button.toolTip()
         assert "trajectories" in window.tracking_viewer_button.toolTip()
         assert "latest run report" in window.report_button.toolTip()
         assert "without running" in window.back_button.toolTip()

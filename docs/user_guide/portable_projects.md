@@ -1,6 +1,8 @@
 # Moving a project: what is portable?
 
-[User guide](README.md) · [Reprocessing and file management](reprocessing_and_file_management.md)
+[Guide home](README.md)
+
+Related: [Manage files](tools/manage_files.md) · [File-management overview](reprocessing_and_file_management.md) · [Backups](tools/backups.md)
 
 **A complete FIScH run/project can be moved or copied to another folder, disk,
 or computer.** Keep its contents and internal structure together, including

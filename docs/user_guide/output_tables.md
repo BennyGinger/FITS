@@ -1,6 +1,8 @@
 # Understanding the output tables
 
-[User guide](README.md) · [Analysis and results](analysis_and_results.md)
+[Guide home](README.md)
+
+Related: [Quantification](settings/quantification.md) · [Distance profiles](settings/distance_profiles.md) · [Identifiers](analysis_identifiers.md)
 
 FIScH saves its measurements as **Parquet (`.parquet`) files**. Each file contains
 a table that can be opened in Tad, Data Wrangler, or Python as a dataframe.

@@ -163,6 +163,29 @@ def test_viewer_browser_uses_reclaimed_path_label_height_for_the_tree(tmp_path: 
     viewer.close()
 
 
+def test_run_selection_display_wraps_by_reducing_tree_height(tmp_path: Path) -> None:
+    """
+    Keep the run browser size fixed while a long selected path takes height from the tree.
+    """
+    app = _application()
+    short = tmp_path / 'series_1'
+    long = tmp_path / ('long_condition_' * 4) / ('long_acquisition_' * 3) / 'series_1'
+    short.mkdir()
+    long.mkdir(parents=True)
+    browsers = [RunDirectoryBrowser(), RunDirectoryBrowser()]
+    for browser, path in zip(browsers, (short, long)):
+        browser.resize(540, 360)
+        browser.set_root(tmp_path)
+        browser.select_path(path)
+        browser.show()
+    app.processEvents()
+    assert browsers[1].selection_label.height() > browsers[0].selection_label.height()
+    assert browsers[1].tree.height() < browsers[0].tree.height()
+    assert browsers[1].size() == browsers[0].size()
+    for browser in browsers:
+        browser.close()
+
+
 def test_double_click_activates_file_path(tmp_path: Path) -> None:
     app = _application()
     report = tmp_path / "report_20260911_090000.txt"

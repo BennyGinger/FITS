@@ -1,6 +1,8 @@
 # Analysis identifiers
 
-[User guide](README.md) · [Full output-table reference](output_tables.md)
+[Guide home](README.md)
+
+Related: [Output tables](output_tables.md) · [Quantification](settings/quantification.md) · [Tracking](settings/tracking.md)
 
 FIScH adds `experiment_id` values to quantification and distance-profile Parquets.
 Current per-experiment exports use an acquisition-local ID such as

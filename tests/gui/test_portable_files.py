@@ -44,7 +44,10 @@ def current_window(tmp_path):
     _APP.processEvents()
 
 
-def test_summary_and_mixed_run_block_all_processing(current_window, tmp_path):
+def test_summary_and_mixed_run_block_all_processing(current_window: tuple[FischMainWindow, Path], tmp_path: Path) -> None:
+    """
+    Keep mixed-format runs read-only while retaining access to file management.
+    """
     window, series = current_window
     assert window.file_status_label.text() == 'Up to date - editable'
     assert 'Red' in window.file_channels_label.text()
@@ -63,7 +66,7 @@ def test_summary_and_mixed_run_block_all_processing(current_window, tmp_path):
     assert not hasattr(window, 'file_details_button')
     assert not window.run_button.isEnabled()
     assert not hasattr(window, 'compact_button')
-    assert not window.channel_labels_button.isEnabled()
+    assert not hasattr(window, "channel_labels_button")
     assert window.manage_files_button.isEnabled()
     assert window.tracking_viewer_button.isEnabled()
 
@@ -186,8 +189,7 @@ def test_manage_actions_disable_unavailable_work(current_window: tuple[FischMain
             assert not buttons['Rebuild results…'].isEnabled()
             assert not buttons['Update paths and condition tags…'].isEnabled()
             assert buttons['Compact experiment…'].isEnabled()
-            for title in ('Restore selected backup…', 'Delete selected backups…'):
-                assert not buttons[title].isEnabled()
+            assert not buttons['🗑 Delete all backups…'].isEnabled()
             assert 'Migrate to FIScH 5…' not in buttons
             notice = dialog.findChild(QLabel, 'file_status_summary')
             assert notice is not None
@@ -197,7 +199,7 @@ def test_manage_actions_disable_unavailable_work(current_window: tuple[FischMain
             assert not previews
             assert 'current' in rebuild.toolTip()
             from PySide6.QtWidgets import QGroupBox
-            panel = next(group for group in dialog.findChildren(QGroupBox) if group.title() == 'Experiment files')
+            panel = next(group for group in dialog.findChildren(QGroupBox) if group.objectName() == 'experiment_files')
             assert len(panel.findChildren(QPushButton)) == 3
         finally:
             dialog.reject()
@@ -285,18 +287,16 @@ def test_manager_migrates_real_legacy_run_without_launching_processing(tmp_path:
             assert history is not None and history.count() == 1
             assert history.item(0).text().startswith('Whole run /')
             labels = dialog.findChildren(QLabel)
-            assert any('Select one backup to restore' in label.text() for label in labels)
-            assert any('No backup selected.' in label.text() for label in labels)
-            buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
-            assert not buttons['Restore selected backup…'].isEnabled()
-            assert not buttons['Delete selected backups…'].isEnabled()
+            assert any('restore or bin icon' in label.text() for label in labels)
+            assert any('No backup selected.' == label.text() for label in labels)
+            restore = dialog.findChild(QPushButton, 'backup_restore_0')
+            delete = dialog.findChild(QPushButton, 'backup_delete_0')
+            assert restore is not None and restore.isEnabled() and not restore.icon().isNull()
+            assert delete is not None and delete.isEnabled() and delete.text() == '🗑'
             history.setCurrentRow(0)
-            assert buttons['Restore selected backup…'].isEnabled()
-            assert buttons['Delete selected backups…'].isEnabled()
             assert any('1 backup selected.' == label.text() for label in labels)
             history.clearSelection()
-            assert not buttons['Restore selected backup…'].isEnabled()
-            assert not buttons['Delete selected backups…'].isEnabled()
+            assert restore.isEnabled() and delete.isEnabled()
         finally:
             dialog.reject()
 
@@ -423,9 +423,9 @@ def test_empty_run_disables_file_actions(current_window: tuple[FischMainWindow, 
     assert not manage_files(empty)
 
 
-def test_backup_buttons_follow_selection_count(current_window: tuple[FischMainWindow, Path], tmp_path: Path) -> None:
+def test_backup_icons_target_their_own_row(current_window: tuple[FischMainWindow, Path], tmp_path: Path) -> None:
     """
-    Offer restoring exactly one snapshot and deleting one or multiple snapshots.
+    Keep restore and delete scoped to the clicked backup despite a prior multi-selection.
     """
     from PySide6.QtCore import QItemSelectionModel
     from PySide6.QtWidgets import QPushButton
@@ -433,18 +433,32 @@ def test_backup_buttons_follow_selection_count(current_window: tuple[FischMainWi
     from fisch.workflows.file_management.history import Snapshot
 
     entries = tuple(Snapshot(tmp_path / str(index), tmp_path, (), ()) for index in range(2))
-    group, history, _ = _history_panel(entries, tmp_path, lambda action: None)
+    actions: list[tuple[str, tuple[int, ...]]] = []
+    group, history, status = _history_panel(entries, tmp_path, lambda action: actions.append(
+        (action, tuple(index.row() for index in history.selectedIndexes()))))
     try:
-        buttons = {button.text(): button for button in group.findChildren(QPushButton)}
-        restore = buttons['Restore selected backup…']
-        delete = buttons['Delete selected backups…']
-        assert not restore.isEnabled() and not delete.isEnabled()
+        restore = group.findChild(QPushButton, 'backup_restore_1')
+        delete = group.findChild(QPushButton, 'backup_delete_0')
+        delete_all = group.findChild(QPushButton, 'backup_delete_all')
+        assert restore is not None and delete is not None and delete_all is not None
+        assert not restore.icon().isNull()
+        assert delete.text() == '🗑'
         history.setCurrentRow(0)
-        assert restore.isEnabled() and delete.isEnabled()
         history.setCurrentRow(1, QItemSelectionModel.SelectionFlag.Select)
-        assert not restore.isEnabled() and delete.isEnabled()
+        assert status.text() == '2 backups selected.'
+        from PySide6.QtGui import QPalette
+        item = history.item(1)
+        assert item is not None
+        selected_row = history.itemWidget(item)
+        assert selected_row is not None
+        assert selected_row.palette().color(selected_row.backgroundRole()) == history.palette().color(QPalette.ColorRole.Highlight)
+        restore.click()
+        delete.click()
+        delete_all.click()
+        assert actions == [('restore', (1,)), ('delete', (0,)), ('delete_all', (0,))]
+        assert status.text() == '1 backup selected.'
         history.clearSelection()
-        assert not restore.isEnabled() and not delete.isEnabled()
+        assert restore.isEnabled() and delete.isEnabled() and delete_all.isEnabled()
     finally:
         group.close()
         group.deleteLater()
@@ -505,7 +519,7 @@ def test_moved_master_tags_warn_and_enable_only_location_update(current_window: 
         dialog = QApplication.activeModalWidget()
         assert isinstance(dialog, QDialog)
         try:
-            panel = next(group for group in dialog.findChildren(QGroupBox) if group.title() == 'Experiment files')
+            panel = next(group for group in dialog.findChildren(QGroupBox) if group.objectName() == 'experiment_files')
             buttons = {button.text(): button for button in panel.findChildren(QPushButton)}
             assert len(buttons) == 3
             assert not buttons['Rebuild results…'].isEnabled()
@@ -551,7 +565,7 @@ def test_outdated_run_offers_one_targeted_rebuild(current_window: tuple[FischMai
         dialog = QApplication.activeModalWidget()
         assert isinstance(dialog, QDialog)
         try:
-            panel = next(group for group in dialog.findChildren(QGroupBox) if group.title() == 'Experiment files')
+            panel = next(group for group in dialog.findChildren(QGroupBox) if group.objectName() == 'experiment_files')
             buttons = {button.text(): button for button in panel.findChildren(QPushButton)}
             assert len(buttons) == 3
             assert buttons['Rebuild outdated results…'].isEnabled()

@@ -77,6 +77,61 @@ def test_selection_persistence_and_all_excluded_acquisition(tmp_path: Path) -> N
     assert not load_experiment_state(state.workdir).excluded
 
 
+def test_exclude_others_keeps_selected_series_active(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Isolate a selected series, preserve outputs, and safely handle empty or parent selections.
+    """
+    def split(source: ScopeIO) -> list[ScopeIO]:
+        """
+        Provide three converted series from one small acquisition.
+        """
+        return [source, source, source]
+
+    monkeypatch.setattr(ScopeIO, 'split_series', split)
+    states = _series(tmp_path)
+    outputs = {path: path.read_bytes() for state in states
+               if (path := state.artifact(cst.ARTI_IMG_RAW)) is not None}
+    set_excluded(tmp_path, [states[0].workdir], True)
+    set_excluded(tmp_path, [states[0].workdir], True, others=True)
+    assert [load_experiment_state(state.workdir).excluded for state in states] == [False, True, True]
+    config = {'convert': {'enabled': True, 'params': {'overwrite': True}}}
+    rebuilt = assemble_experiment_states(tmp_path, [states[0].original_image], config, 'Test')
+    assert len(rebuilt) == 1
+    result = convert(ConvertSettings(overwrite=True), rebuilt[0], REGISTRY[cst.StepName.CONVERT].profile)
+    assert [state.workdir for state in result] == [states[0].workdir]
+    for state in states[1:]:
+        path = state.artifact(cst.ARTI_IMG_RAW)
+        assert path is not None and path.read_bytes() == outputs[path]
+    set_excluded(tmp_path, [states[0].workdir], True)
+    set_excluded(tmp_path, [states[0].workdir], False, others=True)
+    assert [load_experiment_state(state.workdir).excluded for state in states] == [True, False, False]
+    set_excluded(tmp_path, [states[0].workdir], True, others=True)
+    set_excluded(tmp_path, [], True, others=True)
+    assert [load_experiment_state(state.workdir).excluded for state in states] == [False, True, True]
+    set_excluded(tmp_path, [states[0].workdir.parent, states[0].workdir], True, others=True)
+    assert all(not load_experiment_state(state.workdir).excluded for state in states)
+
+
+def test_exclude_others_checks_migrated_series_before_saving(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Avoid partial inclusion changes when an unselected series still requires rebuilding.
+    """
+    def split(source: ScopeIO) -> list[ScopeIO]:
+        """
+        Provide two converted branches for a migration restriction check.
+        """
+        return [source, source]
+
+    monkeypatch.setattr(ScopeIO, 'split_series', split)
+    first, second = _series(tmp_path)
+    set_excluded(tmp_path, [first.workdir], True)
+    save_experiment_state(replace(second, migration_checkpoint='bg_sub'))
+    with pytest.raises(ValueError, match='Fully rebuild'):
+        set_excluded(tmp_path, [first.workdir], True, others=True)
+    assert load_experiment_state(first.workdir).excluded
+    assert not load_experiment_state(second.workdir).excluded
+
+
 def test_conversion_rebuild_preserves_excluded_sibling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Rebuild an active sibling without touching the excluded series or its saved flag.

@@ -35,18 +35,26 @@ def selected_experiments(states: Iterable[ExperimentState], folders: Iterable[Pa
             and any(state.workdir == folder or folder in state.workdir.parents for folder in selected)]
 
 
-def set_excluded(root: Path, folders: Iterable[Path], excluded: bool) -> None:
+def set_excluded(root: Path, folders: Iterable[Path], excluded: bool, *, others: bool = False) -> None:
     """
-    Persist one inclusion choice under the shared writer lock.
+    Save inclusion under the writer lock, optionally applying it to the other series.
     """
     # The channel-label package imports task registration; keep that dependency
     # out of experiment discovery's module initialization.
     from fisch.channel_labels.lock import run_write_guard
 
     with run_write_guard(root):
-        states = selected_experiments(discover_saved_states(root), folders)
+        known = discover_saved_states(root)
+        selected = selected_experiments(known, folders)
+        if not selected:
+            return
+        selected_folders = {state.workdir for state in selected}
+        states = selected_experiments(known, [root]) if others else selected
+        if others and not excluded:
+            states = [state for state in states if state.workdir not in selected_folders]
         if any(state.migration_checkpoint is not None for state in states):
             raise ValueError('Fully rebuild migrated experiments before changing their inclusion.')
         for state in states:
-            if state.excluded != excluded:
-                save_experiment_state(replace(state, excluded=excluded))
+            value = excluded and state.workdir not in selected_folders if others else excluded
+            if state.excluded != value:
+                save_experiment_state(replace(state, excluded=value))

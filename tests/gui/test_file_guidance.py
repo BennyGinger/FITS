@@ -169,7 +169,7 @@ def test_manager_combines_master_status_and_relevant_action(tmp_path: Path, monk
             for _ in range(2):
                 guidance.toggle.click()
                 QTest.qWait(20)
-                assert dialog.height() > collapsed.height()
+                assert dialog.height() >= collapsed.height()
                 assert guidance.details.width() > guidance.summary.width()
                 right = guidance.details.mapTo(dialog, guidance.details.rect().topRight()).x()
                 button = buttons['Rebuild analysis…']

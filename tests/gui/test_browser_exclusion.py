@@ -47,6 +47,7 @@ def test_browser_mixed_selection_actions_and_parent_badges(tmp_path: Path) -> No
     browser.set_experiment_status(status)
     app.processEvents()
     assert not browser.exclusion_button.isEnabled()
+    assert not browser.exclude_others_button.isEnabled()
     for folder in (tmp_path, active.workdir.parent.parent, active.workdir.parent):
         assert browser.model.folder_exclusion[folder] == (1, 2)
         index = browser.model.index(str(folder))
@@ -56,7 +57,19 @@ def test_browser_mixed_selection_actions_and_parent_badges(tmp_path: Path) -> No
     browser.tree.selectionModel().select(index, QItemSelectionModel.SelectionFlag.ClearAndSelect
                                          | QItemSelectionModel.SelectionFlag.Rows)
     assert browser.exclusion_button.isEnabled()
-    assert browser.exclusion_button.text() == 'Re-include experiments'
+    assert browser.exclusion_button.text() == 'Re-include exps.'
+    assert browser.exclude_others_button.isEnabled()
+    others_requests: list[tuple[list[Path], bool]] = []
+
+    def capture_others(folders: list[Path], value: bool) -> None:
+        """
+        Record the requested inclusion of experiments outside the selection.
+        """
+        others_requests.append((folders, value))
+
+    browser.exclude_others_requested.connect(capture_others)
+    browser.exclude_others_button.click()
+    assert others_requests == [([excluded.workdir], True)]
     assert browser.model.data(index, Qt.ItemDataRole.ForegroundRole) == QColor('#999999')
     assert browser.model.flags(index) & Qt.ItemFlag.ItemIsEnabled
     assert browser.model.flags(index) & Qt.ItemFlag.ItemIsSelectable
@@ -75,18 +88,58 @@ def test_browser_mixed_selection_actions_and_parent_badges(tmp_path: Path) -> No
     parent_index = browser.model.index(str(active.workdir.parent))
     browser.tree.selectionModel().select(parent_index, QItemSelectionModel.SelectionFlag.Select
                                          | QItemSelectionModel.SelectionFlag.Rows)
-    assert browser.exclusion_button.text() == 'Exclude experiments'
+    assert browser.exclusion_button.text() == 'Exclude exps.'
+    browser._on_clicked(parent_index)
+    assert browser.selection_label.text() == 'Selected: 2 folders · 2 experiments'
     browser.exclusion_button.click()
     assert requests[-1][1] is True
     browser.set_processing(True)
     assert not browser.exclusion_button.isEnabled()
+    assert not browser.exclude_others_button.isEnabled()
     browser.set_processing(False)
     assert browser.exclusion_button.isEnabled()
     browser.set_experiment_status(replace(status, states=(replace(active, excluded=True), excluded)))
-    assert browser.exclusion_button.text() == 'Re-include experiments'
+    assert browser.exclusion_button.text() == 'Re-include exps.'
     assert browser.model.folder_exclusion[active.workdir.parent] == (2, 2)
     browser.tree.clearSelection()
     assert not browser.exclusion_button.isEnabled()
+    assert not browser.exclude_others_button.isEnabled()
+    browser.close()
+
+
+def test_other_experiments_button_toggles_with_their_exclusion(tmp_path: Path) -> None:
+    """
+    Re-include all excluded outsiders, exclude mixed outsiders, and disable an empty complement.
+    """
+    app = _application()
+    selected = _state(tmp_path, 'selected_s1', False)
+    others = [_state(tmp_path, f'other_s{index}', True) for index in (1, 2)]
+    browser = RunDirectoryBrowser()
+    browser.set_root(tmp_path)
+    status = RunCompatibility(tmp_path, (selected, *others), (), (), ())
+    browser.set_experiment_status(status)
+    app.processEvents()
+    browser.select_path(selected.workdir)
+    assert browser.exclude_others_button.text() == 'Re-include others'
+    assert browser.exclude_others_button.isEnabled()
+    requests: list[bool] = []
+
+    def capture(folders: list[Path], excluded: bool) -> None:
+        """
+        Record the action chosen for the other experiments.
+        """
+        assert folders == [selected.workdir]
+        requests.append(excluded)
+
+    browser.exclude_others_requested.connect(capture)
+    browser.exclude_others_button.click()
+    assert requests == [False]
+    browser.set_experiment_status(replace(status, states=(selected, replace(others[0], excluded=False), others[1])))
+    assert browser.exclude_others_button.text() == 'Exclude others'
+    browser.exclude_others_button.click()
+    assert requests == [False, True]
+    browser.select_path(selected.workdir.parent)
+    assert not browser.exclude_others_button.isEnabled()
     browser.close()
 
 
@@ -183,7 +236,7 @@ def test_main_browser_toggle_and_analysis_rebuild(tmp_path: Path, monkeypatch: p
         action()
         assert not master.exists()
         window._refresh_run_inventory()
-        assert window.run_browser.exclusion_button.text() == 'Re-include experiments'
+        assert window.run_browser.exclusion_button.text() == 'Re-include exps.'
         window.run_browser.exclusion_button.click()
         assert not load_experiment_state(state.workdir).excluded
         assert window._artifact_report is not None and window._artifact_report.outdated_masters == (master,)

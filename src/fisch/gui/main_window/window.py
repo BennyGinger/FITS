@@ -2,6 +2,8 @@ from __future__ import annotations
 from html import escape
 from fisch.settings.models import ExtractSettings
 from fisch.gui.theme import STEP_TAB_BAR_STYLE
+from fisch.gui.help.dialog import info_button, show_help
+from fisch.gui.settings.conversion_channels import ConversionChannelsWidget
 
 from fisch.workflows.checks.models import PreflightReport, RawInputReport
 from fisch.workflows.checks.raw_inputs import channel_label_warnings, inspect_raw_inputs
@@ -17,7 +19,7 @@ from pathlib import Path
 from fisch.environment.paths import is_internal_path, reports_dir
 from PySide6.QtCore import QEventLoop, QMimeData, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QShowEvent, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QDialog, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 from fisch.environment import constant as cst
 from fisch.workflows.metadata._values import distribution_version
 from fisch.workflows.artifacts.paths import first_image
@@ -135,7 +137,6 @@ class FischMainWindow(QMainWindow):
         self._tracking_viewer = None
         self._manual_tracking_editor: QWidget | None = None
         self._manual_tracking_path: Path | None = None
-        self._channel_labels_window = None
         self._prepared_available = False
         self._phases_unlocked = False
         self._populating_settings = False
@@ -237,26 +238,32 @@ class FischMainWindow(QMainWindow):
             "QPushButton { background-color: #d97706; color: white; font-weight: bold; } "
             "QPushButton:disabled { background-color: #6b4b2a; color: #aaa; }")
         self.tracking_viewer_button.clicked.connect(lambda: self._open_tracking_viewer())
-        self.run_browser.selection_layout.addWidget(self.tracking_viewer_button)
+
         self.tracking_edit_button = QPushButton("Edit Track")
         self.tracking_edit_button.setStyleSheet(self.tracking_viewer_button.styleSheet())
         self.tracking_edit_button.setToolTip(
             "Edit saved tracking results from the selected experiment, or the first tracked experiment in this run. "
             "Requires existing tracking files. Editing is opened separately from the pipeline.")
         self.tracking_edit_button.clicked.connect(self._open_manual_tracking_editor)
-        self.run_browser.selection_layout.addWidget(self.tracking_edit_button)
-        self.channel_labels_button = QPushButton("Edit Channel Labels")
-        self.channel_labels_button.setToolTip(
-            "Inspect and rename channel labels across this run's converted images, "
-            "masks, measurement tables and settings.")
-        self.channel_labels_button.clicked.connect(self._open_channel_labels)
-        self.run_browser.selection_layout.addWidget(self.channel_labels_button)
+
+        self.extra_tools = QGroupBox("Extra tools")
+        self.extra_tools.setStyleSheet("QGroupBox { border: 1px solid white; border-radius: 6px; margin-top: 10px; } "
+                                      "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 5px; }")
+        tools_layout = QHBoxLayout(self.extra_tools)
+        tools_layout.addWidget(self.tracking_viewer_button)
+        tools_layout.addWidget(self.tracking_edit_button)
+        self.run_browser.selection_layout.addWidget(self.extra_tools)
         self.report_button = QPushButton("Full Report")
+        report_font = self.report_button.font()
+        report_font.setPointSizeF(max(8.0, report_font.pointSizeF() - 1.0))
+        self.report_button.setFont(report_font)
+        self.report_button.setStyleSheet("QPushButton { padding: 3px 8px; }")
+        self.report_button.setAccessibleName("Open full report")
         self.report_button.setToolTip(
             "Open the latest run report with completed, skipped and failed work. "
             "If no report exists, show how to create one.")
         self.report_button.clicked.connect(self._open_latest_report)
-        self.run_browser.selection_layout.addWidget(self.report_button)
+        self.run_browser.title_layout.addWidget(self.report_button)
         browser_panels = QWidget()
         browser_layout = QVBoxLayout(browser_panels)
         browser_layout.setContentsMargins(0, 0, 0, 0)
@@ -293,10 +300,16 @@ class FischMainWindow(QMainWindow):
             label.setWordWrap(True)
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         summary_layout.addLayout(metadata_row)
-        browser_layout.addWidget(summary_panel)
+        status_row = QHBoxLayout()
+        status_row.addWidget(summary_panel, 1)
+        self.info_button = info_button()
+        self.info_button.clicked.connect(self._show_information)
+        status_row.addWidget(self.info_button, 0, Qt.AlignmentFlag.AlignTop)
+        browser_layout.addLayout(status_row)
         browser_layout.addWidget(self.run_browser, 1)
         self.run_browser.path_selected.connect(self._selection_status_changed)
         self.run_browser.exclusion_requested.connect(self._change_exclusion)
+        self.run_browser.exclude_others_requested.connect(self._exclude_other_experiments)
         top_splitter.addWidget(browser_panels)
         top_splitter.setStretchFactor(0, 1)
         top_splitter.setStretchFactor(1, 2)
@@ -426,6 +439,22 @@ class FischMainWindow(QMainWindow):
 
         self.setCentralWidget(central)
 
+    def _show_information(self) -> None:
+        """
+        Open help at the current workflow tab without following future tab changes.
+        """
+        pages = {
+            cst.StepName.CONVERT: "settings/convert.md",
+            cst.StepName.REGISTER_TIME: "settings/time_registration.md",
+            cst.StepName.REGISTER_CHANNEL: "settings/channel_registration.md",
+            cst.StepName.BG_SUB: "settings/background_subtraction.md",
+            cst.StepName.SEGMENT: "settings/segmentation.md",
+            cst.StepName.TRACK: "settings/tracking.md",
+            cst.StepName.EXTRACT: "settings/quantification.md",
+            cst.StepName.DISTANCE_PROFILE: "settings/distance_profiles.md",
+        }
+        show_help(self, title="FIScH", gui="Main", guide_page=pages.get(self._current_step, "README.md"))
+
     def _populate_from_adapter(self) -> None:
         """
         Populate from adapter.
@@ -516,6 +545,12 @@ class FischMainWindow(QMainWindow):
             tabs = self.convert_tabs if step == cst.StepName.CONVERT else self._step_tabs[_STEP_PHASE[step]]
             tabs.addTab(editor, STEP_LAYOUTS[step].title)
             self._editors[step] = editor
+
+        channels = self._editors[cst.StepName.CONVERT].widgets.get("channel_labels")
+        if isinstance(channels, ConversionChannelsWidget) and channels.manage_button is None:
+            channels.add_manage_button()
+            channels.manage_files_requested.connect(self._manage_files)
+            self._editors[cst.StepName.CONVERT].set_editable(self.adapter.step_enabled(cst.StepName.CONVERT))
 
         for step in (cst.StepName.CONVERT, cst.StepName.SEGMENT):
             self._editors[step].value_changed.connect(self._refresh_channel_choices)
@@ -914,12 +949,13 @@ class FischMainWindow(QMainWindow):
         for step, button in self._registration_tune_buttons.items():
             button.setEnabled(prepared and not self._running and step not in input_problems)
         self._refresh_tracking_viewer_button()
-        self.channel_labels_button.setEnabled(not self._running and root is not None and root.is_dir())
         if not self._phases_unlocked and self._current_step != cst.StepName.CONVERT:
             self._show_step(cst.StepName.CONVERT)
         self._update_run_button_text()
         outdated = self._run_status is not None and self._run_status.outdated
-        self.channel_labels_button.setEnabled(not self._running and not outdated and root is not None and root.is_dir())
+        channels = self._editors[cst.StepName.CONVERT].widgets.get("channel_labels")
+        if isinstance(channels, ConversionChannelsWidget) and channels.manage_button is not None:
+            channels.manage_button.setEnabled(prepared and not self._running)
         self.manage_files_button.setEnabled(not self._running and root is not None and root.is_dir())
         if outdated and not self._upgrading:
             for button in (*self._registration_tune_buttons.values(), getattr(self, 'bgtune_button', None), getattr(self,
@@ -1043,8 +1079,6 @@ class FischMainWindow(QMainWindow):
         Run dir text changed.
         """
         if value.strip():
-            self.channel_labels_button.setEnabled(not self._running and Path(value.strip()).expanduser().is_dir(),
-                                                  )
             return
         self.adapter.run_dir = ""
         self._refresh_raw_inputs(None)
@@ -1290,10 +1324,6 @@ class FischMainWindow(QMainWindow):
             if problems:
                 self._report_validation_errors(list(problems.values()))
                 return
-        label_window = self._channel_labels_window
-        if (label_window is not None and label_window._job is not None
-                and label_window._job.isRunning()):
-            return
         self._sync_identity()
         settings_path = self._save_settings()
         if settings_path is None:
@@ -1387,18 +1417,25 @@ class FischMainWindow(QMainWindow):
         self._refresh_tracking_viewer_button()
 
     @Slot(object, bool)
-    def _change_exclusion(self, folders: list[Path], excluded: bool) -> None:
+    def _change_exclusion(self, folders: list[Path], excluded: bool, *, others: bool = False) -> None:
         """
         Save the selected series' inclusion and refresh shared checker results.
         """
         if self._running or not self.adapter.run_dir:
             return
         try:
-            set_excluded(Path(self.adapter.run_dir), folders, excluded)
+            set_excluded(Path(self.adapter.run_dir), folders, excluded, others=others)
         except (OSError, RuntimeError, ValueError) as error:
             self._report_validation_errors([str(error)])
         self._refresh_run_inventory()
         self._refresh_phase_access()
+
+    @Slot(object, bool)
+    def _exclude_other_experiments(self, folders: list[Path], excluded: bool) -> None:
+        """
+        Persist the requested inclusion of experiments outside the selection.
+        """
+        self._change_exclusion(folders, excluded, others=True)
 
     def _refresh_raw_inputs(self, root: Path | None) -> None:
         """
@@ -1630,6 +1667,7 @@ class FischMainWindow(QMainWindow):
                                    reset_run=reset_action,
                                    input_problem=self._raw_input_error(),
                                    input_warning=self._channel_label_warning(),
+                                   labels_saved=self._channel_labels_saved,
                                    )
             if changed and not did_reset:
                 self._append_log('Experiment files updated. Measurements were reused for path/tag-only changes.')
@@ -1664,7 +1702,7 @@ class FischMainWindow(QMainWindow):
         if self._running or (self._thread is not None and self._thread.isRunning()):
             raise PipelineCancelled('Wait for the pipeline to finish before resetting this run.')
         for name in ('_manual_tracking_editor', '_tracking_viewer', '_segmentation_tuner',
-                     '_background_tuner', '_registration_tuner', '_channel_labels_window',
+                     '_background_tuner', '_registration_tuner',
                      '_mask_collection', '_tracking_editor'):
             window = getattr(self, name)
             if window is not None:
@@ -1972,8 +2010,6 @@ class FischMainWindow(QMainWindow):
         self._running = running
         self._refresh_file_status()
         self.run_browser.set_processing(running)
-        if self._channel_labels_window is not None:
-            self._channel_labels_window.setEnabled(not running)
         if running:
             self.pipeline_progress.begin(self._run_progress)
         else:
@@ -2032,17 +2068,14 @@ class FischMainWindow(QMainWindow):
             missing.append(input_error)
         if converting and not self.adapter.step_enabled(cst.StepName.CONVERT) and not self._conversion_is_current():
             missing.append("Include Convert in the workflow before continuing.")
-        label_job = (self._channel_labels_window is not None
-                     and self._channel_labels_window._job is not None
-                     and self._channel_labels_window._job.isRunning())
         outdated = self._run_status is not None and self._run_status.outdated
         if outdated and not self._upgrading:
             if converting:
-                self.run_button.setEnabled(not label_job)
+                self.run_button.setEnabled(True)
                 self.run_button.setToolTip("Inspect processing settings. This run remains read-only; no conversion or processing will run.")
                 return
             missing.append('This entire run is outdated/read-only. Use Manage files to migrate it.')
-        self.run_button.setEnabled(not missing and not label_job)
+        self.run_button.setEnabled(not missing)
         action_help = (
             "Continue to processing. Reuse the converted images when conversion settings "
             "are unchanged; otherwise run Convert first."
@@ -2151,51 +2184,11 @@ class FischMainWindow(QMainWindow):
         editor.raise_()
         editor.activateWindow()
 
-    @Slot()
-    def _open_channel_labels(self) -> None:
-        """
-        Open channel labels.
-        """
-        run_dir = self.run_dir_edit.text().strip()
-        if self._running or not run_dir or not Path(run_dir).expanduser().is_dir():
-            return
-        if Path(run_dir).expanduser().resolve() != Path(self.adapter.run_dir).expanduser().resolve():
-            self._switch_run_dir(run_dir)
-        from fisch.gui.channel_labels import ChannelLabelsWindow
-
-        window = self._channel_labels_window
-        if window is not None and window.root != Path(self.adapter.run_dir).resolve():
-            if window._job is not None and window._job.isRunning():
-                window.showNormal()
-                window.raise_()
-                window.activateWindow()
-                return
-            window.close()
-            window = None
-        if window is not None and window.isVisible():
-            if window.isMinimized():
-                window.showNormal()
-            window.raise_()
-            window.activateWindow()
-            return
-        window = ChannelLabelsWindow(self.adapter.run_dir)
-        window.labels_saved.connect(self._channel_labels_saved)
-        window.busy_changed.connect(self._update_run_button_text)
-        self._channel_labels_window = window
-        self._update_run_button_text()
-        window.show()
-        window.raise_()
-        window.activateWindow()
-
     @Slot(object)
-    def _channel_labels_saved(self, new_labels: dict[int, str]) -> None:
+    def _channel_labels_saved(self, mapping: dict[str, str]) -> None:
         """
-        Channel labels saved.
+        Rename in-memory settings as well as the files changed by Manage files.
         """
-
-        window = self._channel_labels_window
-        old_labels = window.plan.labels if window is not None and window.plan is not None else ()
-        mapping = {old: new_labels[index] for index, old in old_labels}
         self._sync_identity()
         rename_settings_document(self.adapter.document, mapping)
         self._populate_from_adapter()
@@ -2305,18 +2298,11 @@ class FischMainWindow(QMainWindow):
             event.ignore()
             self._force_quit()
             return
-        label_window = self._channel_labels_window
-        if (label_window is not None and label_window._job is not None
-                and label_window._job.isRunning()):
-            event.ignore()
-            return
         if self._manual_tracking_editor is not None and not self._manual_tracking_editor.close():
             event.ignore()
             return
         if self._tracking_viewer is not None:
             self._tracking_viewer.close()
-        if self._channel_labels_window is not None:
-            self._channel_labels_window.close()
         if self._segmentation_preview_pending:
             self._clear_segmentation_preview_request()
         super().closeEvent(event)

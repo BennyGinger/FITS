@@ -8,7 +8,7 @@ from fisch.workflows.experiments import ExperimentState
 from fisch.workflows.experiments.exclusion import selected_experiments
 from pathlib import Path
 from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QStandardItemModel
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QFileSystemModel, QHBoxLayout, QLabel, QPushButton, QStyle, QTreeView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QFileSystemModel, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QStyle, QTreeView, QVBoxLayout, QWidget
 
 
 COMPATIBLE_COLOR = '#94cda6'
@@ -127,7 +127,10 @@ class DirectoryBrowser(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.title_label = QLabel(title)
-        layout.addWidget(self.title_label)
+        self.title_layout = QHBoxLayout()
+        self.title_layout.addWidget(self.title_label)
+        self.title_layout.addStretch()
+        layout.addLayout(self.title_layout)
 
         self.model = _StatusFileSystemModel(self)
         self.model.setReadOnly(True)
@@ -304,6 +307,7 @@ class RunDirectoryBrowser(DirectoryBrowser):
     """Tree browser rooted inside the selected FIScH run directory."""
 
     exclusion_requested = Signal(object, bool)
+    exclude_others_requested = Signal(object, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """
@@ -312,19 +316,32 @@ class RunDirectoryBrowser(DirectoryBrowser):
         super().__init__("Run directory contents", parent=parent)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setIconSize(QSize(24, 24))
+        selection_policy = self.selection_label.sizePolicy()
+        selection_policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+        self.selection_label.setSizePolicy(selection_policy)
         self._states: tuple[ExperimentState, ...] = ()
         self._processing = False
-        self.exclusion_button = QPushButton('Exclude experiments')
+        self.exclusion_button = QPushButton('Exclude exps.')
         self.exclusion_button.setEnabled(False)
         self.exclusion_button.clicked.connect(self._request_exclusion)
         self.selection_path_layout.addWidget(self.exclusion_button)
+        self.exclude_others_button = QPushButton('Exclude others')
+        self.exclude_others_button.setEnabled(False)
+        self.exclude_others_button.setToolTip('Keep the selected experiments active and exclude all other converted experiments in this run.')
+        self.exclude_others_button.clicked.connect(self._request_exclude_others)
+        self.selection_path_layout.addWidget(self.exclude_others_button)
+        for button in (self.exclusion_button, self.exclude_others_button):
+            button.setStyleSheet('font-size: 11px;')
 
     def set_root(self, path: str | Path) -> None:
         """
         Reconnect selection updates when the filesystem model replaces the empty model.
         """
         previous = self.tree.selectionModel()
+        previous_root = self.root_path
         super().set_root(path)
+        if self.root_path != previous_root:
+            self.tree.clearSelection()
         current = self.tree.selectionModel()
         if current is not previous:
             current.selectionChanged.connect(self._refresh_exclusion_action)
@@ -352,12 +369,45 @@ class RunDirectoryBrowser(DirectoryBrowser):
         """
         states = selected_experiments(self._states, self.selected_folders())
         excluded = sum(state.excluded for state in states)
-        self.exclusion_button.setText('Re-include experiments' if states and excluded == len(states) else
-                                      'Exclude experiments')
+        self.exclusion_button.setText('Re-include exps.' if states and excluded == len(states) else
+                                      'Exclude exps.')
         eligible = bool(states) and all(state.migration_checkpoint is None for state in states)
         self.exclusion_button.setEnabled(eligible and not self._processing)
         self.exclusion_button.setToolTip('Exclude from processing and analysis; existing files remain inspectable.' if eligible else
                                          'Select converted experiments. Migrated results require a full rebuild first.')
+        others = self._other_experiments()
+        reinclude_others = bool(others) and all(state.excluded for state in others)
+        self.exclude_others_button.setText('Re-include others' if reinclude_others else 'Exclude others')
+        self.exclude_others_button.setToolTip('Re-include the other converted experiments in this run.' if reinclude_others else
+                                              'Keep the selected experiments active and exclude all other converted experiments in this run.')
+        others_eligible = eligible and bool(others) and all(state.migration_checkpoint is None for state in others)
+        self.exclude_others_button.setEnabled(others_eligible and not self._processing)
+        self._refresh_selection_display(states)
+
+    def _set_selected_path(self, selected: Path) -> None:
+        """
+        Keep the display consistent with the complete selection after a click.
+        """
+        super()._set_selected_path(selected)
+        self._refresh_selection_display(selected_experiments(self._states, self.selected_folders()))
+
+    def _refresh_selection_display(self, states: list[ExperimentState]) -> None:
+        """
+        Show one selected path or a summary of multiple selected folders and experiments.
+        """
+        if self.tree.model() is not self.model:
+            return
+        indexes = self.tree.selectionModel().selectedRows()
+        if len(indexes) > 1:
+            kind = 'folders' if all(self.model.isDir(index) for index in indexes) else 'items'
+            noun = 'experiment' if len(states) == 1 else 'experiments'
+            self.selection_label.setText(f'Selected: {len(indexes)} {kind} · {len(states)} {noun}')
+        elif indexes and self.root_path is not None:
+            path = Path(self.model.filePath(indexes[0])).relative_to(self.root_path)
+            self.selection_label.setText(f'Selected: {path}')
+        else:
+            self.selection_label.setText('Selected: none')
+        self.selection_label.show()
 
     def _request_exclusion(self) -> None:
         """
@@ -366,6 +416,21 @@ class RunDirectoryBrowser(DirectoryBrowser):
         if self.exclusion_button.isEnabled():
             states = selected_experiments(self._states, self.selected_folders())
             self.exclusion_requested.emit(self.selected_folders(), not all(state.excluded for state in states))
+
+    def _request_exclude_others(self) -> None:
+        """
+        Request one exclusion value for the other converted experiments.
+        """
+        if self.exclude_others_button.isEnabled():
+            self.exclude_others_requested.emit(self.selected_folders(),
+                                               not all(state.excluded for state in self._other_experiments()))
+
+    def _other_experiments(self) -> list[ExperimentState]:
+        """
+        Return converted experiments outside the current folder selection.
+        """
+        selected = {state.workdir for state in selected_experiments(self._states, self.selected_folders())}
+        return [state for state in self._states if 'convert' in state.completed_steps and state.workdir not in selected]
 
     def set_experiment_status(self, status: RunCompatibility | None,
                                conflicts: Iterable[Path] = (),

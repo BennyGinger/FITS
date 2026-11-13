@@ -705,15 +705,21 @@ class StepSettingsEditor(QWidget):
         """
         Refresh enabled states.
         """
+        channels = self.widgets.get("channel_labels")
+        keep_manage = isinstance(channels, ConversionChannelsWidget) and channels.manage_button is not None
         for row in self._field_rows:
-            row.setEnabled(self._editable)
+            row.setEnabled(self._editable or (keep_manage and channels is not None and row.isAncestorOf(channels)))
         for path, widget in self.widgets.items():
             if path != "workers":
                 section_enabled = (
                     path not in self._advanced_paths
                     or self._advanced_group.isChecked()
                 )
-                widget.setEnabled(self._editable and section_enabled)
+                if isinstance(widget, ConversionChannelsWidget) and widget.manage_button is not None:
+                    widget.setEnabled(True)
+                    widget.set_labels_editable(self._editable and section_enabled)
+                else:
+                    widget.setEnabled(self._editable and section_enabled)
         self._update_worker_state()
         self._update_mask_request_state()
         self._update_track_postprocess_state()

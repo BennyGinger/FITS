@@ -5,8 +5,9 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QTimer, Qt, Slot
 from PySide6.QtGui import QCloseEvent, QKeyEvent, QShowEvent
-from PySide6.QtWidgets import QAbstractSpinBox, QFileDialog, QCheckBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar, QPushButton, QSlider, QSplitter, QToolButton, QVBoxLayout, QWidget
-from fisch.gui.viewer.common.information_dialog import HelpRow, ViewerInformationDialog
+from PySide6.QtWidgets import QAbstractSpinBox, QFileDialog, QCheckBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar, QPushButton, QSlider, QSplitter, QVBoxLayout, QWidget
+from fisch.gui.viewer.common.information_dialog import HelpRow
+from fisch.gui.help.dialog import info_button, show_help
 from fisch.workflows.artifacts.paths import image_for, first_image
 from fisch.environment.constant import IMAGE_NAMES, ARRAY_NAME
 from fisch.gui.main_window.run_browser import DirectoryBrowser
@@ -142,13 +143,7 @@ class ImageToolWindow(QMainWindow):
         self._build_overlay_controls(right_controls)
         info_row.addLayout(right_controls, 1)
 
-        self.info_button = QToolButton()
-        self.info_button.setText("i")
-        self.info_button.setToolTip("Viewer information and keyboard shortcuts")
-        self.info_button.setFixedSize(26, 26)
-        self.info_button.setStyleSheet(
-            "QToolButton { border: 1px solid #888; border-radius: 13px; "
-            "font-weight: bold; font-style: italic; }")
+        self.info_button = info_button()
         info_row.addWidget(self.info_button)
         image_layout.addLayout(info_row)
         self.image_viewer = FischImageViewer()
@@ -293,14 +288,33 @@ class ImageToolWindow(QMainWindow):
         """
         Show information.
         """
-        dialog = ViewerInformationDialog(self,
-                                         title=self.windowTitle(),
-                                         version=self._package_version("fisch"),
-                                         gui=self.help_gui,
-                                         editing_enabled=getattr(self, "editing_enabled", True),
-                                         selection_enabled=getattr(self, "selection_enabled", False),
-                                         )
-        dialog.exec()
+        show_help(self, title=self.windowTitle(), gui=self.help_gui,
+                  guide_page=self._guide_page(),
+                  editing_enabled=getattr(self, "editing_enabled", True),
+                  selection_enabled=getattr(self, "selection_enabled", False))
+
+    def _guide_page(self) -> str:
+        """
+        Choose the active viewer tab's guide section when help opens.
+        """
+        if self.help_gui == "RegTune":
+            tabs = getattr(self, "tabs", None)
+            section = "time" if tabs is None or tabs.currentIndex() == 0 else "channel"
+            return f"tools/{section}_registration.md"
+        if self.help_gui == "SegTune":
+            tabs = getattr(self, "tool_tabs", None)
+            section = "segmentation" if tabs is None or tabs.currentIndex() == 0 else "compartments"
+            return f"tools/{section}.md"
+        if self.help_gui == "REF / ROI":
+            tabs = getattr(self, "tool_tabs", None)
+            section = "reference_masks" if tabs is None or tabs.currentIndex() == 0 else "roi_masks"
+            return f"tools/{section}.md"
+        if self.help_gui == "Tracking":
+            section = "tracking_editor" if getattr(self, "editing_enabled", False) else "tracking_viewer"
+            return f"tools/{section}.md"
+        if self.help_gui == "BGTune":
+            return "tools/background_subtraction.md"
+        return "viewers.md"
 
     @staticmethod
     def _package_version(distribution: str) -> str:

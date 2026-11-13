@@ -22,9 +22,9 @@ class StepName(StrEnum):
 
 WORKFLOW_ORDER: tuple[StepName, ...] = (
         StepName.CONVERT,
+        StepName.BG_SUB,
         StepName.REGISTER_CHANNEL,
         StepName.REGISTER_TIME,
-        StepName.BG_SUB,
         StepName.SEGMENT,
         StepName.TRACK,
         StepName.EDIT_TRACK,
@@ -58,8 +58,39 @@ ARTI_IMG_TIME = "image_time_registered"
 ARTI_IMG_BGSUB = "image_background_subtracted"
 ARTI_IMG_COMPACTED = "image_compacted"
 ARTI_MASK_COMPACTED = "mask_compacted"
-IMAGE_STAGE_ARTIFACTS = (ARTI_IMG_RAW, ARTI_IMG_CHANNEL, ARTI_IMG_TIME, ARTI_IMG_BGSUB)
-IMAGE_STAGE_NAMES = (ARRAY_RAW, ARRAY_REG_CHANNEL, ARRAY_REG_TIME, ARRAY_BGSUB)
+# Output identities are fixed; their processing and presentation order is not.
+IMAGE_OUTPUTS = {
+    StepName.CONVERT: ARTI_IMG_RAW,
+    StepName.REGISTER_CHANNEL: ARTI_IMG_CHANNEL,
+    StepName.REGISTER_TIME: ARTI_IMG_TIME,
+    StepName.BG_SUB: ARTI_IMG_BGSUB,
+}
+IMAGE_OUTPUT_NAMES = {
+    StepName.CONVERT: ARRAY_RAW,
+    StepName.REGISTER_CHANNEL: ARRAY_REG_CHANNEL,
+    StepName.REGISTER_TIME: ARRAY_REG_TIME,
+    StepName.BG_SUB: ARRAY_BGSUB,
+}
+
+
+def validate_workflow_order() -> None:
+    """Allow preprocessing permutations while rejecting broken stage dependencies."""
+    if len(WORKFLOW_ORDER) != len(StepName) or set(WORKFLOW_ORDER) != set(StepName):
+        raise ValueError("WORKFLOW_ORDER must contain every step exactly once.")
+    position = {step: index for index, step in enumerate(WORKFLOW_ORDER)}
+    dependencies = [(StepName.CONVERT, step) for step in StepName if step != StepName.CONVERT]
+    dependencies += [(step, StepName.SEGMENT) for step in IMAGE_OUTPUTS if step != StepName.CONVERT]
+    dependencies += [(StepName.SEGMENT, StepName.TRACK), (StepName.TRACK, StepName.EDIT_TRACK)]
+    dependencies += [(StepName.EDIT_TRACK, step) for step in (StepName.EXTRACT, StepName.DISTANCE_PROFILE)]
+    for before, after in dependencies:
+        if position[before] >= position[after]:
+            raise ValueError(f"Invalid WORKFLOW_ORDER: {before} must precede {after}.")
+
+
+validate_workflow_order()
+IMAGE_STEPS = tuple(step for step in WORKFLOW_ORDER if step in IMAGE_OUTPUTS)
+IMAGE_STAGE_ARTIFACTS = tuple(IMAGE_OUTPUTS[step] for step in IMAGE_STEPS)
+IMAGE_STAGE_NAMES = tuple(IMAGE_OUTPUT_NAMES[step] for step in IMAGE_STEPS)
 IMAGE_NAMES = (*naming.CURRENT_IMAGES, *naming.LEGACY_IMAGES)
 SEGMENTATION_NAMES = (MASK_SEG, *(name for name, target in naming.LEGACY_FILES.items() if target == MASK_SEG))
 UNEDITED_TRACKING_NAMES = (MASK_TRACK, *(name for name, target in naming.LEGACY_FILES.items() if target == MASK_TRACK))

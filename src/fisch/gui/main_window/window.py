@@ -69,6 +69,8 @@ _PHASE_STEPS = (
     ("Process", (cst.StepName.SEGMENT, cst.StepName.TRACK)),
     ("Analysis", (cst.StepName.EXTRACT, cst.StepName.DISTANCE_PROFILE)),
 )
+_PHASE_STEPS = tuple((title, tuple(step for step in cst.WORKFLOW_ORDER if step in steps))
+                     for title, steps in _PHASE_STEPS)
 _STEP_PHASE = {step: phase_index
                 for phase_index, (_, steps) in enumerate(_PHASE_STEPS)
                 for step in steps}

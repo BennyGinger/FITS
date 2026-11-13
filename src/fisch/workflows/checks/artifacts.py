@@ -32,6 +32,7 @@ def inspect_run(root: Path, config: Mapping[str, Any], *, for_execution: bool = 
     compacted intermediates should not produce execution warnings.
     Conversion-only launches defer master analysis checks to the next full run.
     """
+    cst.validate_workflow_order()
     states = discover_saved_states(root)
     states_by_directory: dict[Path, ExperimentState] = {}
     for state in states:
@@ -206,7 +207,8 @@ def _propagate_conflicts(records: list[ArtifactRecord],
             reason = record.problem
             if not reason:
                 included = record.step is None or config.get(record.step, {}).get("enabled", False)
-                reason = ((settings_problem(record, config) if included else "")
+                reason = (_workflow_order_problem(record)
+                          or (settings_problem(record, config) if included else "")
                           or _reference_problem(record, state, problems, for_execution=for_execution)
                           or (_configured_input_problem(record, state, config) if included else ""))
             if reason and not record.problem:
@@ -289,6 +291,24 @@ def _recorded_inputs(metadata: ImageMetadata) -> list[dict[str, Any]]:
     """
     refs = metadata.artifact.derived_from
     return refs if isinstance(refs, list) else []
+
+
+def _workflow_order_problem(record: ArtifactRecord) -> str:
+    """Compare portable executed ancestry to current order, even after compaction."""
+    if record.metadata is None:
+        return ""
+    saved = record.metadata.custom_metadata.get("workflow_order")
+    if saved is None:
+        # Earlier artifacts are checked through their actual input references.
+        return ""
+    if (not isinstance(saved, list) or any(not isinstance(step, str) for step in saved)
+            or len(saved) != len(set(saved)) or any(step not in cst.WORKFLOW_ORDER for step in saved)):
+        return "Cannot verify recorded workflow order; rebuild this result."
+    expected = [str(step) for step in cst.WORKFLOW_ORDER if step in saved]
+    if saved != expected:
+        return (f"Workflow order changed: recorded {' -> '.join(saved)}; "
+                f"current {' -> '.join(expected)}. Rebuild this result.")
+    return ""
 
 
 def _configured_input_problem(record: ArtifactRecord,

@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.12.*"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -465,7 +465,7 @@ wheels = [
 
 [[package]]
 name = "fisch"
-version = "5.1.0"
+version = "5.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "bg-sub" },

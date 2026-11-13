@@ -27,6 +27,8 @@ def require_workflow_steps(config: Mapping[str, Any]) -> None:
     """
     Reject incompatible included steps before processing or artifact decisions.
     """
+    from fisch.environment.constant import validate_workflow_order
+    validate_workflow_order()
     errors = [message for step, message in workflow_step_problems(config).items()
               if config.get(step, {}).get("enabled")]
     if errors:

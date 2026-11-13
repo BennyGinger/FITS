@@ -100,6 +100,10 @@ def revision_payload(reader: ScopeIO,
     if current is not None:
         steps[profile.step_name] = current
     custom["steps"] = steps
+    history = list(custom.get("workflow_order", ()))
+    if profile.step_name not in history:
+        history.append(str(profile.step_name))
+    custom["workflow_order"] = history
     custom["pipeline_meta"] = state.metadata_dump.get("pipeline_meta", {})
     payload = reader.build_payload(export_channels=export_channels,
                                    artifact_type=profile.output_artifact,

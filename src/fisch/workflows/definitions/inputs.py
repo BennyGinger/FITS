@@ -11,12 +11,7 @@ from fisch.workflows.definitions.models import StepProfile
 from fisch.workflows.experiments import ExperimentState
 
 
-IMAGE_OUTPUTS: dict[cst.StepName, cst.ArtifactType] = {
-    cst.StepName.CONVERT: cst.ARTI_IMG_RAW,
-    cst.StepName.REGISTER_CHANNEL: cst.ARTI_IMG_CHANNEL,
-    cst.StepName.REGISTER_TIME: cst.ARTI_IMG_TIME,
-    cst.StepName.BG_SUB: cst.ARTI_IMG_BGSUB,
-}
+IMAGE_OUTPUTS = cst.IMAGE_OUTPUTS
 
 
 def quantification_mask_kind(config: Mapping[str, Any]) -> cst.ArtifactType:
@@ -34,6 +29,7 @@ def configured_profile(profile: StepProfile, config: Mapping[str, Any]) -> StepP
     """
     Disabled preprocessing stages are bypassed, even when old files exist.
     """
+    cst.validate_workflow_order()
     image = cst.ARTI_IMG_RAW
     for step in cst.WORKFLOW_ORDER:
         if step == profile.step_name:
@@ -46,7 +42,7 @@ def configured_profile(profile: StepProfile, config: Mapping[str, Any]) -> StepP
                        use_tracking_edits=bool(config.get(cst.StepName.EDIT_TRACK, {}).get("enabled")))
     if profile.step_name in (*IMAGE_OUTPUTS.keys(), cst.StepName.SEGMENT) and profile.step_name != cst.StepName.CONVERT:
         return replace(profile, input_artifact=image, input_alternatives=())
-    if profile.input_artifact == cst.ARTI_IMG:
+    if profile.input_artifact in (cst.ARTI_IMG, *cst.IMAGE_STAGE_ARTIFACTS):
         return replace(profile, input_artifact=image, input_alternatives=())
     if cst.ARTI_IMG in profile.additional_artifacts:
         return replace(profile, additional_artifacts=tuple(

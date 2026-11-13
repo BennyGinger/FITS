@@ -62,7 +62,7 @@ def image_input_for(path: str | Path,
     from fisch.workflows.definitions.registry import REGISTRY
     source = Path(path).expanduser().resolve()
     directory = source if source.is_dir() else source.parent
-    states = [state for state in discover_saved_states(directory) if state.workdir == directory]
+    states = [state for state in discover_saved_states(directory.parent) if state.workdir == directory]
     if not states:
         return image_for(source)
     state = states[0]

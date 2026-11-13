@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 import fisch.environment.constant as cst
 from fisch.environment.constant import StepName
@@ -23,8 +24,7 @@ REGISTRY: dict[str, StepSpec[Any]] = {
     StepName.BG_SUB: StepSpec(
         profile=StepProfile(step_name=StepName.BG_SUB,
                             distribution=cst.DIST_BG_SUB,
-                            input_artifact=cst.ARTI_IMG_TIME,
-                            input_alternatives=(cst.ARTI_IMG_CHANNEL,cst.ARTI_IMG_RAW,),
+                            input_artifact=cst.ARTI_IMG,
                             output_artifact=cst.ARTI_IMG_BGSUB,
                             output_name=cst.ARRAY_BGSUB,
                             ),
@@ -35,8 +35,7 @@ REGISTRY: dict[str, StepSpec[Any]] = {
     StepName.REGISTER_TIME: StepSpec(
         profile=StepProfile(step_name=StepName.REGISTER_TIME,
                             distribution=cst.DIST_REGISTER,
-                            input_artifact=cst.ARTI_IMG_CHANNEL,
-                            input_alternatives=(cst.ARTI_IMG_RAW,),
+                            input_artifact=cst.ARTI_IMG,
                             output_artifact=cst.ARTI_IMG_TIME,
                             output_name=cst.ARRAY_REG_TIME,
                             ),
@@ -48,8 +47,7 @@ REGISTRY: dict[str, StepSpec[Any]] = {
     StepName.REGISTER_CHANNEL: StepSpec(
         profile=StepProfile(step_name=StepName.REGISTER_CHANNEL,
                             distribution=cst.DIST_REGISTER,
-                            input_artifact=cst.ARTI_IMG_RAW,
-                            input_alternatives=(),
+                            input_artifact=cst.ARTI_IMG,
                             output_artifact=cst.ARTI_IMG_CHANNEL,
                             output_name=cst.ARRAY_REG_CHANNEL,
                             ),
@@ -60,8 +58,7 @@ REGISTRY: dict[str, StepSpec[Any]] = {
     StepName.SEGMENT: StepSpec(
         profile=StepProfile(step_name=StepName.SEGMENT,
                             distribution=cst.DIST_SEG,
-                            input_artifact=cst.ARTI_IMG_BGSUB,
-                            input_alternatives=(cst.ARTI_IMG_TIME, cst.ARTI_IMG_CHANNEL, cst.ARTI_IMG_RAW),
+                            input_artifact=cst.ARTI_IMG,
                             output_artifact=cst.ARTI_SEG,
                             output_name=cst.MASK_SEG,
                             ),
@@ -119,3 +116,17 @@ REGISTRY: dict[str, StepSpec[Any]] = {
         pool="cpu",
     ),
 }
+
+
+# Default profiles also follow the current flow when used outside a configured run.
+# Configured execution narrows these alternatives to the latest enabled producer.
+_images: list[str] = []
+for _step in cst.WORKFLOW_ORDER:
+    _spec = REGISTRY[_step]
+    if _spec.profile.input_artifact == cst.ARTI_IMG:
+        _spec = replace(_spec, profile=replace(_spec.profile,
+                        input_artifact=_images[-1],
+                        input_alternatives=tuple(reversed(_images[:-1]))))
+        REGISTRY[_step] = _spec
+    if _step in cst.IMAGE_OUTPUTS:
+        _images.append(cst.IMAGE_OUTPUTS[_step])

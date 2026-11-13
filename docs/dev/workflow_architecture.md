@@ -141,3 +141,27 @@ is grouped into definitions, experiments, metadata, artifacts, file management
 and runtime execution. See the [workflow responsibility map](workflow_architecture.md)
 for module locations; `fisch.workflows.file_management.api` exposes file actions
 and compacting.
+
+
+## Changing processing order
+
+`WORKFLOW_ORDER` in `src/fisch/environment/constant.py` is the source of truth
+for stage order. Edit that tuple and restart FIScH. Image-stage discovery,
+registry input defaults, configured input selection, GUI ordering and file
+labels derive from it. Output artifact identities and filenames remain fixed.
+Background subtraction and the two registration steps may be permuted freely.
+Validation rejects missing or duplicate steps, conversion after processing,
+preprocessing after segmentation, and tracking or analysis before their
+prerequisites. This is a source configuration, not a per-run GUI preference.
+
+The checker compares portable recorded input references with the inputs required
+by the current enabled flow. New output metadata also carries `workflow_order`:
+the executed ancestry inherited from the input plus the producing step. The
+checker compares its relative order with the current tuple and reports a rebuild
+conflict; saved history never selects the execution order. That history survives
+moving acquisitions and compacting away intermediate images. Independent
+analysis branches do not become stale merely because they exchange positions.
+Older outputs without order history continue to use their existing input
+provenance checks; deleted intermediates in older compacted experiments cannot
+provide a complete historical order. Rebuild those experiments if changing their
+processing order.

@@ -29,8 +29,7 @@ STEP_TITLES: dict[str, str] = {
 STEP_ORDER = {str(step): index for index, step in enumerate(cst.WORKFLOW_ORDER)}
 
 
-_IMAGE_STEPS = (cst.StepName.CONVERT, cst.StepName.REGISTER_CHANNEL,
-                cst.StepName.REGISTER_TIME, cst.StepName.BG_SUB)
+_IMAGE_STEPS = cst.IMAGE_STEPS
 _FILE_STEPS: dict[str, str] = dict(zip(cst.IMAGE_STAGE_NAMES, _IMAGE_STEPS, strict=True))
 _FILE_STEPS.update({name: cst.StepName.SEGMENT for name in cst.SEGMENTATION_NAMES})
 _FILE_STEPS.update({name: cst.StepName.TRACK for name in cst.TRACKING_NAMES})

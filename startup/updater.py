@@ -46,6 +46,7 @@ class Updater(Installer):
         result = subprocess.run(
             ["git", *arguments], cwd=self.root, env=command_environment(self.root),
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if check and result.returncode:
             raise RuntimeError(result.stderr.strip() or f"Git failed: {' '.join(arguments)}")

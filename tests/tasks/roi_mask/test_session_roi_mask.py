@@ -323,9 +323,12 @@ def test_saving_replaces_an_artifact_without_current_encoding(
         "fisch.tasks.roi_mask.artifact.ScopeIO.from_path", lambda _: old_reader)
     current = np.full((2, 3, 3), 4, dtype=np.uint8)
 
+    with pytest.raises(FileExistsError, match="incompatible encoding"):
+        merge_roi_channels(output, current, channel_axes="TYX", source_axes="TCYX",
+                           channel_label="GFP", overwrite=False)
     merged, labels = merge_roi_channels(
         output, current, channel_axes="TYX", source_axes="TCYX",
-        channel_label="GFP", overwrite=False)
+        channel_label="GFP", overwrite=True)
 
     np.testing.assert_array_equal(merged, current)
     assert labels == ["GFP"]
@@ -345,10 +348,12 @@ def test_roi_tiff_round_trip_reads_encoding_from_image_metadata(tmp_path: Path) 
     assert reader.metadata.custom_metadata['roi_mask_encoding'] == ROI_MASK_ENCODING
     reloaded = RoiSession(source, roi_path=path)
     np.testing.assert_array_equal(reloaded.mask_array, session.mask_array)
-    # Existing current-format masks must require overwrite, not be mistaken for legacy files.
-    with pytest.raises(FileExistsError):
-        reloaded.save('region', channel=0)
+    # Saving unchanged pixels is a no-op, not an overwrite or a legacy conversion.
+    before = path.read_bytes()
+    reloaded.save('region', channel=0)
+    assert path.read_bytes() == before
     reloaded.save('region', channel=0, overwrite=True)
+    assert path.read_bytes() == before
     np.testing.assert_array_equal(RoiSession(source, roi_path=path).mask_array, session.mask_array)
 
 

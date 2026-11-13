@@ -113,6 +113,8 @@ def merge_roi_channels(output_path: Path, channel_mask: NDArray[np.uint8], *,
         reader = ScopeIO.from_path(output_path)
         encoding = reader.metadata.custom_metadata.get("roi_mask_encoding")
         if encoding != ROI_MASK_ENCODING:
+            if not overwrite:
+                raise FileExistsError(f"ROI mask {output_path} has an incompatible encoding; confirm replacement.")
             return channel_mask, [channel_label]
 
     def normalize_existing(array: NDArray[np.generic], reader: ScopeIO,

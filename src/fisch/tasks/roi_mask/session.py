@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 from fisch.environment.constant import ARTI_ROI, DIST_PIPELINE
 from fisch.interaction import BinaryMaskSession
 from fisch.interaction.planes import disk_copy
-from fisch.tasks.reference_mask.artifact import validate_reference_label
+from fisch.tasks.reference_mask.artifact import validate_reference_label, reuse_identical_mask
 from fisch.tasks.roi_mask.artifact import ROI_MASK_ENCODING, ROI_MASK_VALUE_TABLE, build_roi_path, load_roi_artifact, merge_roi_channels, saved_roi_channels
 from scipy.ndimage import binary_fill_holes
 from scipy.ndimage import label
@@ -509,6 +509,10 @@ class RoiSession(BinaryMaskSession):
                                                         overwrite=overwrite,
                                                         )
         self._mask.preserve_source(output_path)
+        saved_axes = output_axes if len(output_labels) == 1 else self._axes
+        if reuse_identical_mask(output_path, output_mask, output_axes=saved_axes,
+                               output_labels=output_labels, source_path=self.source_path):
+            return output_path
         return self._reader.save_array(
             disk_copy(output_mask, dtype=np.uint16),
             channel_labels=self._channel_labels,

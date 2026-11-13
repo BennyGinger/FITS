@@ -103,7 +103,7 @@ def install_shortcut(root: Path, *, output_dir: Path | None = None, refresh_only
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
              str(root / "startup" / "windows_shortcut.ps1")],
             env=environment, check=True,
-        )
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,)
         return
     if sys.platform == "darwin":
         install_macos_shortcut(root, output_dir, refresh_only, report)

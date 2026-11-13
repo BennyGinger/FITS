@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 from fisch.environment.constant import ARTI_REF, DIST_PIPELINE
 from fisch.interaction import BinaryMaskSession
 from fisch.interaction.planes import PlaneState, disk_copy
-from fisch.tasks.reference_mask.artifact import build_reference_path, load_reference_artifact, merge_reference_channels, saved_reference_channels, validate_reference_label
+from fisch.tasks.reference_mask.artifact import build_reference_path, load_reference_artifact, merge_reference_channels, saved_reference_channels, validate_reference_label, reuse_identical_mask
 from fisch.workflows.artifacts.provenance import require_writable
 from mask_interpolation import fill_missing_masks
 
@@ -77,7 +77,8 @@ class ReferenceMaskSession(BinaryMaskSession):
 
         A one-channel artifact has no ``C`` axis. Saving another source channel
         under the same label appends it to the existing artifact; saving a
-        channel already present requires ``overwrite=True``. Providing
+        channel with different pixels requires ``overwrite=True``. Identical pixels
+        only update registration review metadata when necessary. Providing
         ``interpolation_axis`` fills missing masks in the saved copy. The
         session's user-drawn anchors remain unchanged.
         """
@@ -108,6 +109,10 @@ class ReferenceMaskSession(BinaryMaskSession):
                                                               )
 
         self._mask.preserve_source(output_path)
+        saved_axes = output_axes if len(output_labels) == 1 else self._axes
+        if reuse_identical_mask(output_path, output_mask, output_axes=saved_axes,
+                               output_labels=output_labels, source_path=self.source_path):
+            return output_path
         return self._reader.save_array(disk_copy(output_mask, dtype=np.uint16),
                                        channel_labels=self._channel_labels,
                                        export_channels=output_labels,

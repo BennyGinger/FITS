@@ -160,8 +160,10 @@ def merge_reference_channels(output_path: Path,
     existing_stack = np.take(existing_stack, populated, axis=channel_position)
     existing_labels = [existing_labels[index] for index in populated]
     if channel_label in existing_labels and not overwrite:
-        raise FileExistsError(
-            f"{artifact_label} channel {channel_label!r} already exists in {output_path}.")
+        saved_channel = np.take(existing_stack, existing_labels.index(channel_label), axis=channel_position)
+        if not np.array_equal(saved_channel, channel_mask):
+            raise FileExistsError(
+                f"{artifact_label} channel {channel_label!r} has different pixels in {output_path}.")
 
     current_stack = np.expand_dims(channel_mask, axis=channel_position)
     if channel_label in existing_labels:
@@ -231,3 +233,22 @@ def _compact_channel_axis(array: NDArray[np.uint8],
               if len(labels) == 1
               else array)
     return output, labels
+
+
+def reuse_identical_mask(output_path: Path, output_mask: NDArray, *,
+                        output_axes: str, output_labels: list[str], source_path: Path) -> bool:
+    """Treat Save of identical REF/ROI pixels as an explicit geometry review."""
+    if not output_path.is_file():
+        return False
+    reader = ScopeIO.from_path(output_path)
+    saved = reader.get_array()
+    if (saved.axes != output_axes or list(reader.channel_labels) != output_labels
+            or not np.array_equal(saved.array, output_mask)):
+        return False
+    # A geometry revision can change even when the drawing still fits. Only
+    # explicit Save accepts that review; navigation never calls this helper.
+    from fisch.workflows.artifacts.branch_masks import geometry, refresh_branch
+    from fisch.workflows.artifacts.provenance import read_metadata
+    if geometry(reader.reader.metadata) != geometry(read_metadata(source_path)):
+        refresh_branch(output_path, source_path, accept_geometry=True)
+    return True

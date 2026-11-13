@@ -747,6 +747,8 @@ def test_terminal_success_requires_current_verification_receipt(modules, reposit
     monkeypatch.setattr(launcher, "needs_repair", lambda root: False)
 
     def run(command, **kwargs):
+        if os.name == "nt":
+            assert kwargs["creationflags"] == subprocess.CREATE_NEW_CONSOLE
         token = command[command.index("--result-token") + 1]
         if receipt_kind != "missing":
             state.write_json(updater.log_path.parent / "update-result.json", {
@@ -770,3 +772,42 @@ def test_receipt_detects_changed_dependencies_but_not_code(modules, repositories
     assert not state.needs_repair(root)
     (root / "uv.lock").write_text("changed dependencies")
     assert state.needs_repair(root)
+
+
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+def test_background_startup_commands_do_not_open_consoles(modules, tmp_path, monkeypatch, platform):
+    """Hide Git and bootstrap probes while retaining their captured results on both OSes."""
+    import state
+    module, _ = modules
+    platform_os = SimpleNamespace(**vars(os))
+    platform_os.name = platform
+    monkeypatch.setattr(state, "os", platform_os)
+    monkeypatch.setattr(module, "os", platform_os)
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    calls = []
+    python = tmp_path.parent / "managed python" / "python.exe"
+    python.parent.mkdir(exist_ok=True)
+    python.touch()
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[:2] == ["uv", "python"]:
+            output = str(python) + "\n"
+        elif command[:2] == ["git", "ls-tree"]:
+            output = b"160000 commit abc\tmodule\0"
+        elif command[:3] == ["git", "submodule", "foreach"]:
+            output = "module\0abc\0"
+        else:
+            output = "main\n"
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    engine = module.Updater(tmp_path)
+    assert engine.git("symbolic-ref", "--short", "HEAD").stdout == "main\n"
+    assert state.dependency_signature(tmp_path)
+    assert state.module_heads(tmp_path) == {"module": "abc"}
+    assert state.record_bootstrap(tmp_path) == python
+    assert len(calls) == 4
+    for command, kwargs in calls:
+        assert kwargs["creationflags"] == (subprocess.CREATE_NO_WINDOW if platform == "nt" else 0)
+        assert kwargs["capture_output"] is True

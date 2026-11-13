@@ -24,7 +24,8 @@ def show_project_files(root: Path) -> None:
         path = root / name
         try:
             if path.exists() and path.stat().st_file_attributes & stat.FILE_ATTRIBUTE_HIDDEN:
-                subprocess.run(["attrib.exe", "-H", str(path)], check=True, capture_output=True)
+                subprocess.run(["attrib.exe", "-H", str(path)], check=True, capture_output=True,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
         except (OSError, subprocess.SubprocessError):
             logging.getLogger(__name__).warning("Could not clear hidden attribute on %s", path)
 
@@ -66,6 +67,7 @@ def dependency_signature(root: Path) -> str:
     tree = subprocess.run(
         ["git", "ls-tree", "-rz", "HEAD"], cwd=root, check=True,
         capture_output=True, env=command_environment(root),
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     ).stdout
     for entry in tree.split(b"\0"):
         if entry.startswith(b"160000 "):
@@ -86,6 +88,7 @@ def module_heads(root: Path, *, recorded: bool = False) -> dict[str, str]:
         ["git", "submodule", "foreach", "--quiet", "--recursive", command],
         cwd=root, env=command_environment(root), check=True, capture_output=True,
         text=True, encoding="utf-8", errors="replace",
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     fields = result.stdout.split("\0")
     return dict(zip(fields[:-1:2], fields[1::2], strict=True))
@@ -110,6 +113,7 @@ def record_bootstrap(root: Path) -> Path:
         ["uv", "python", "find", "--system", "--managed-python", "3.12"], cwd=root,
         env=command_environment(root), check=True, capture_output=True,
         text=True, encoding="utf-8", errors="replace",
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     python = Path(result.stdout.strip())
     if not python.is_absolute() or not python.is_file() or python.is_relative_to(root / ".venv"):
